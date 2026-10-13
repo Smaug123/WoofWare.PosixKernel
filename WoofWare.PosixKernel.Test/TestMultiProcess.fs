@@ -31,17 +31,17 @@ module TestMultiProcess =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let machine = SimulatedMachine.ofSystem first
+        let machine = Machines.ofSystem first
 
         ((([ UnixSystem.processId first ], machine)), [ 2..count ])
         ||> List.fold (fun (pids, machine) _ ->
-            match SimulatedMachine.tryLaunch (launchOn platform) machine with
+            match Machines.tryLaunch (launchOn platform) machine with
             | Ok (pid, machine) -> pids @ [ pid ], machine
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         )
 
     let private viewOf (pid : ProcessId) (machine : SimulatedMachine<int, string>) : UnixSystem<int, string> =
-        match SimulatedMachine.focus pid machine with
+        match Machines.focus pid machine with
         | Some view -> view
         | None -> failwith $"no process %O{pid}"
 
@@ -52,14 +52,14 @@ module TestMultiProcess =
         (machine : SimulatedMachine<int, string>)
         : 'a * SimulatedMachine<int, string>
         =
-        match SimulatedMachine.inView pid f machine with
+        match Machines.inView pid f machine with
         | Some answered -> answered
         | None -> failwith $"no process %O{pid}"
 
     let private assertClean (machine : SimulatedMachine<int, string>) : unit =
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
-        for pid in SimulatedMachine.processIds machine do
+        for pid in Machines.processIds machine do
             let view = viewOf pid machine
             // A view of a machine with other processes checks only what one
             // process can check truthfully, which must hold too.
@@ -92,7 +92,7 @@ module TestMultiProcess =
         OsThreadId.toUInt64 worker |> shouldEqual 4243UL
 
         let pid, machine =
-            match SimulatedMachine.tryLaunch (launchOn platform) (SimulatedMachine.ofSystem first) with
+            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
@@ -105,7 +105,7 @@ module TestMultiProcess =
         |> OsThreadId.toUInt64
         |> shouldEqual 4244UL
 
-        SimulatedMachine.processIds machine
+        Machines.processIds machine
         |> shouldEqual (Set.ofList [ UnixSystem.processId first ; pid ])
 
         assertClean machine
@@ -124,9 +124,9 @@ module TestMultiProcess =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let pids, machine =
-            ((([], SimulatedMachine.ofSystem first)), [ 1..2 ])
+            ((([], Machines.ofSystem first)), [ 1..2 ])
             ||> List.fold (fun (pids, machine) _ ->
-                match SimulatedMachine.tryLaunch (launchOn platform) machine with
+                match Machines.tryLaunch (launchOn platform) machine with
                 | Ok (pid, machine) -> pids @ [ pid ], machine
                 | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
             )
@@ -163,7 +163,7 @@ module TestMultiProcess =
             |> Launched.processId (ProcessId.parseOrFail context (ProcessIdTable.darwinPidMax - 1))
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        SimulatedMachine.tryLaunch (launchOn platform) (SimulatedMachine.ofSystem first)
+        Machines.tryLaunch (launchOn platform) (Machines.ofSystem first)
         |> Result.map ignore
         |> shouldEqual (Error (ProcessCreationRefusal.DarwinPidMaxReached ProcessIdTable.darwinPidMax))
 
@@ -178,7 +178,7 @@ module TestMultiProcess =
             |> Launched.leaderThreadId (System.UInt64.MaxValue - 1UL)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        SimulatedMachine.tryLaunch (launchOn platform) (SimulatedMachine.ofSystem first)
+        Machines.tryLaunch (launchOn platform) (Machines.ofSystem first)
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.DarwinThreadIdCounterExhausted)
 
@@ -189,7 +189,7 @@ module TestMultiProcess =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let pid, machine =
-            match SimulatedMachine.tryLaunch (launchOn platform) (SimulatedMachine.ofSystem first) with
+            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
@@ -197,7 +197,7 @@ module TestMultiProcess =
         |> OsThreadId.toUInt64
         |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
-        SimulatedMachine.tryLaunch (launchOn platform) machine
+        Machines.tryLaunch (launchOn platform) machine
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.DarwinThreadIdCounterExhausted)
 
@@ -213,13 +213,13 @@ module TestMultiProcess =
             |> UnixSystem.writePidMaxSysctl context 301
 
         let pid, machine =
-            match SimulatedMachine.tryLaunch (launchOn platform) (SimulatedMachine.ofSystem first) with
+            match Machines.tryLaunch (launchOn platform) (Machines.ofSystem first) with
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
         ProcessId.toInt32 pid |> shouldEqual 300
 
-        SimulatedMachine.tryLaunch (launchOn platform) machine
+        Machines.tryLaunch (launchOn platform) machine
         |> Result.map ignore
         |> shouldEqual (Error ProcessCreationRefusal.NoFreeProcessId)
 
@@ -227,7 +227,7 @@ module TestMultiProcess =
     let ``a launch is refused for another platform, and for a directory the filesystem does not hold`` () : unit =
         let _, machine = machineOf SimulatedUnixPlatform.linuxX64 1
 
-        SimulatedMachine.tryLaunch (launchOn SimulatedUnixPlatform.linuxArm64) machine
+        Machines.tryLaunch (launchOn SimulatedUnixPlatform.linuxArm64) machine
         |> Result.map ignore
         |> shouldEqual (
             Error (
@@ -239,7 +239,7 @@ module TestMultiProcess =
 
         let nowhere = AbsoluteUnixPath.parseOrFail context "/nowhere"
 
-        SimulatedMachine.tryLaunch
+        Machines.tryLaunch
             (launchOn SimulatedUnixPlatform.linuxX64
              |> ProcessLaunch.withCurrentDirectory nowhere)
             machine
@@ -405,10 +405,9 @@ module TestMultiProcess =
         let second = viewOf pids.[1] machine
 
         let _, second = KeventWorld.dup 1 second
-        let machine' = SimulatedMachine.unfocus second machine
+        let machine' = Machines.unfocus second machine
 
-        let error =
-            Assert.Throws<exn> (fun () -> SimulatedMachine.unfocus first machine' |> ignore)
+        let error = Assert.Throws<exn> (fun () -> Machines.unfocus first machine' |> ignore)
 
         error.Message
         |> shouldContainText "was not focused from the machine as it stands"
@@ -428,22 +427,22 @@ module TestMultiProcess =
         let first = viewOf pids.[0] machine
         let second = viewOf pids.[1] machine
 
-        SimulatedMachine.holdsProcessOf first machine |> shouldEqual true
+        Machines.holdsProcessOf first machine |> shouldEqual true
 
         // Another process's change goes stale only the machine in `first`.
         let _, second = KeventWorld.dup 1 second
-        let machine = SimulatedMachine.unfocus second machine
-        SimulatedMachine.holdsProcessOf first machine |> shouldEqual true
+        let machine = Machines.unfocus second machine
+        Machines.holdsProcessOf first machine |> shouldEqual true
 
         // A change of `first`'s own process, written back from another view of it, is one
         // `first` never saw.
         let _, machine = inProcess pids.[0] (KeventWorld.dup 1) machine
-        SimulatedMachine.holdsProcessOf first machine |> shouldEqual false
+        Machines.holdsProcessOf first machine |> shouldEqual false
 
         // A process the machine does not hold.
         let otherPids, other = machineOf SimulatedUnixPlatform.linuxX64 3
 
-        SimulatedMachine.holdsProcessOf (viewOf otherPids.[2] other) machine
+        Machines.holdsProcessOf (viewOf otherPids.[2] other) machine
         |> shouldEqual false
 
     [<Test>]
@@ -485,7 +484,7 @@ module TestMultiProcess =
 
         UnixSystem.checkInvariants (viewOf pids.[0] forged) |> shouldEqual []
 
-        SimulatedMachine.checkInvariants forged
+        Machines.checkInvariants forged
         |> shouldEqual
             [
                 SimulatedMachineDefect.Machine (
@@ -505,7 +504,7 @@ module TestMultiProcess =
                 Machine = UnixMachineState.releaseCurrentDirectory root machine.Machine
             }
 
-        SimulatedMachine.checkInvariants short
+        Machines.checkInvariants short
         |> shouldEqual
             [
                 SimulatedMachineDefect.Machine (UnixSystemDefect.CurrentDirectoryHoldMismatch (root, 1, 2))

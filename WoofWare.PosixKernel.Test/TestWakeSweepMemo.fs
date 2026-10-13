@@ -31,8 +31,8 @@ module TestWakeSweepMemo =
         (machine : SimulatedMachine<int, string>)
         : ((ProcessId * int) * Set<WakePrimitive>) list * WakeSweepMemo<int, string>
         =
-        let woken, memo = SimulatedMachine.wakesRemembering memo asleep machine
-        woken |> shouldEqual (SimulatedMachine.wakes asleep machine)
+        let woken, memo = Machines.wakesRemembering memo asleep machine
+        woken |> shouldEqual (Machines.wakes asleep machine)
         woken, memo
 
     /// `thread` of `pid` in a blocking `accept` on `listener`, which must sleep.
@@ -117,7 +117,7 @@ module TestWakeSweepMemo =
             // one call makes no other.
             |> Machines.doIn pid (fun view -> KeventWorld.clientAs 2 8080us view |> snd)
 
-        SimulatedMachine.wakes (Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]) machine
+        Machines.wakes (Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]) machine
         |> List.map fst
         |> shouldEqual [ pid, 0 ]
 

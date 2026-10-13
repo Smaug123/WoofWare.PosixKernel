@@ -754,8 +754,7 @@ module TestMultiProcessFuzz =
     /// connected socket `socketId`, if one is.
     let private peerOwner (socketId : SocketId) (machine : SimulatedMachine<int, string>) : ProcessId option =
         let view =
-            SimulatedMachine.focus (Seq.head (SimulatedMachine.processIds machine)) machine
-            |> Option.get
+            Machines.focus (Seq.head (Machines.processIds machine)) machine |> Option.get
 
         match SocketPhase.connectionEnd (UnixMachineState.socket socketId view.Machine).Phase with
         | None -> None
@@ -772,7 +771,7 @@ module TestMultiProcessFuzz =
                 |> Map.toSeq
                 |> Seq.tryPick (fun (pid, _) ->
                     let names =
-                        fdsOf pid (SimulatedMachine.focus pid machine |> Option.get)
+                        fdsOf pid (Machines.focus pid machine |> Option.get)
                         |> Map.exists (fun _ target -> target = OpenFileTarget.Socket peer)
 
                     if names then Some pid else None
@@ -784,7 +783,7 @@ module TestMultiProcessFuzz =
         machine.Processes
         |> Map.toSeq
         |> Seq.tryPick (fun (pid, _) ->
-            let view = SimulatedMachine.focus pid machine |> Option.get
+            let view = Machines.focus pid machine |> Option.get
 
             fdsOf pid view
             |> Map.exists (fun _ target ->
@@ -1502,14 +1501,13 @@ module TestMultiProcessFuzz =
         |> Map.ofList
 
     let private wakeable (world : World) : Map<ProcessId * int, Set<WakePrimitive>> =
-        SimulatedMachine.wakes (asleepByProcess world.Asleep) world.Machine
-        |> Map.ofList
+        Machines.wakes (asleepByProcess world.Asleep) world.Machine |> Map.ofList
 
     let private assertClean (machine : SimulatedMachine<int, string>) : unit =
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
-        for pid in SimulatedMachine.processIds machine do
-            let view = SimulatedMachine.focus pid machine |> Option.get
+        for pid in Machines.processIds machine do
+            let view = Machines.focus pid machine |> Option.get
             UnixSystem.checkInvariants view |> shouldEqual []
 
             FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors view)
@@ -1521,7 +1519,7 @@ module TestMultiProcessFuzz =
         // Nothing passes a descriptor to another process, so each pipe's ends
         // are one process's.
         let pipesOf (pid : ProcessId) : Set<PipeId> =
-            fdsOf pid (SimulatedMachine.focus pid machine |> Option.get)
+            fdsOf pid (Machines.focus pid machine |> Option.get)
             |> Map.values
             |> Seq.choose (fun target ->
                 match target with
@@ -1530,7 +1528,7 @@ module TestMultiProcessFuzz =
             )
             |> Set.ofSeq
 
-        SimulatedMachine.processIds machine
+        Machines.processIds machine
         |> Seq.toList
         |> List.collect (fun pid -> pipesOf pid |> Set.toList)
         |> List.countBy id
@@ -1564,17 +1562,17 @@ module TestMultiProcessFuzz =
             world
         | Made.Answered view ->
             { world with
-                Machine = SimulatedMachine.unfocus view world.Machine
+                Machine = Machines.unfocus view world.Machine
             }
         | Made.Sleeps view ->
             cover FuzzLabel.Park
 
             { world with
-                Machine = SimulatedMachine.unfocus view world.Machine
+                Machine = Machines.unfocus view world.Machine
                 Asleep = Set.add (pid, thread) world.Asleep
             }
         | Made.Ended ended ->
-            match SimulatedMachine.tryEndProcess ended world.Machine with
+            match Machines.tryEndProcess ended world.Machine with
             | Error _ ->
                 cover FuzzLabel.ExitRefusal
                 world
@@ -1600,7 +1598,7 @@ module TestMultiProcessFuzz =
             let before = world.Machine
 
             let machine =
-                SimulatedMachine.inView
+                Machines.inView
                     pid
                     (fun view -> (), UnixSystem.advanceClock (int64 milliseconds * 1_000_000L) view)
                     world.Machine
@@ -1638,8 +1636,7 @@ module TestMultiProcessFuzz =
             }
         | Step.WakePass finishing ->
             let woken =
-                SimulatedMachine.wakes (asleepByProcess world.Asleep) world.Machine
-                |> List.map fst
+                Machines.wakes (asleepByProcess world.Asleep) world.Machine |> List.map fst
 
             let world =
                 { world with
@@ -1661,8 +1658,7 @@ module TestMultiProcessFuzz =
 
                 let before = world.Machine
 
-                let made =
-                    finish cover pid thread (SimulatedMachine.focus pid world.Machine |> Option.get)
+                let made = finish cover pid thread (Machines.focus pid world.Machine |> Option.get)
 
                 match made with
                 | Made.Refused ->
@@ -1713,7 +1709,7 @@ module TestMultiProcessFuzz =
 
             cover FuzzLabel.Call
             let before = world.Machine
-            let view = SimulatedMachine.focus pid before |> Option.get
+            let view = Machines.focus pid before |> Option.get
             let beforeFds = fdsOf pid view |> Map.keys |> Set.ofSeq
 
             let othersWakeable =
@@ -1747,7 +1743,7 @@ module TestMultiProcessFuzz =
 
             // The caller's new descriptors are the lowest its own table had free.
             let afterFds =
-                fdsOf pid (SimulatedMachine.focus pid world.Machine |> Option.get)
+                fdsOf pid (Machines.focus pid world.Machine |> Option.get)
                 |> Map.keys
                 |> Set.ofSeq
 
@@ -1843,7 +1839,7 @@ module TestMultiProcessFuzz =
             |> Map.toSeq
             |> Seq.tryPick (fun (pid, _) ->
                 let names =
-                    fdsOf pid (SimulatedMachine.focus pid machine |> Option.get)
+                    fdsOf pid (Machines.focus pid machine |> Option.get)
                     |> Map.exists (fun _ target -> target = OpenFileTarget.Socket socket)
 
                 if names then Some pid else None
@@ -2173,7 +2169,7 @@ module TestMultiProcessFuzz =
             let observe (step : Step) (world : World) : unit =
                 let asleep = asleepByProcess world.Asleep
                 let machine = world.Machine
-                let full = SimulatedMachine.wakes asleep machine
+                let full = Machines.wakes asleep machine
 
                 let skips, readsSame =
                     match memo.Value.Remembered with
@@ -2182,7 +2178,7 @@ module TestMultiProcessFuzz =
                         WakeSweepMemo.covers remembered asleep machine.Machine machine.Scheduling machine.Processes,
                         WakeSweepMemo.readsSame remembered asleep machine.Machine machine.Processes
 
-                let answer, next = SimulatedMachine.wakesRemembering memo.Value asleep machine
+                let answer, next = Machines.wakesRemembering memo.Value asleep machine
                 answer |> shouldEqual full
 
                 if skips then

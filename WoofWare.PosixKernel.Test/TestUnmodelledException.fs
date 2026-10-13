@@ -450,7 +450,7 @@ module TestUnmodelledException =
                         (fun () -> UnixSystem.tryStep 0 call system)
                         (fun () -> UnixSystem.step 0 call system)
 
-                let machine = SimulatedMachine.ofSystem system
+                let machine = Machines.ofSystem system
                 let pid = UnixSystem.processId system
 
                 let unwrap (answer : 'a option) : 'a =
@@ -463,11 +463,11 @@ module TestUnmodelledException =
                         SyscallRefusal.kind
                         SyscallRefusal.describe
                         (fun () ->
-                            match unwrap (SimulatedMachine.tryStep pid 0 call machine) with
+                            match unwrap (Machines.tryStep pid 0 call machine) with
                             | Ok outcome, machine -> Ok (outcome, machine)
                             | Error refusal, _ -> Error refusal
                         )
-                        (fun () -> unwrap (SimulatedMachine.step pid 0 call machine))
+                        (fun () -> unwrap (Machines.step pid 0 call machine))
 
                 onMachine |> shouldEqual onSystem
                 onSystem
