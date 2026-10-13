@@ -19,6 +19,9 @@ open WoofWare.PosixKernel
 /// Darwin's rows replay call by call. Linux connects the socket to itself, a
 /// simultaneous open this library does not model, so there each row is
 /// checked to be the self-connect the kernel made, and the model to refuse it.
+/// Darwin's row H, where another socket holds the port at another address,
+/// is checked to pass the port over, and the model, whose search does not, to
+/// refuse.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestImplicitSelfConnectMeasured =
@@ -163,6 +166,7 @@ module TestImplicitSelfConnectMeasured =
         let mutable listenerPort : uint16 option = None
         let mutable rows : Map<string, Replay> = Map.empty
         let mutable replayed : Set<string> = Set.empty
+        let mutable passedOver : int list = []
 
         let check (row : string) (what : string) (measured : string) (modelled : string) : unit =
             replayed <- Set.add row replayed
@@ -256,11 +260,44 @@ module TestImplicitSelfConnectMeasured =
                             rows
                 | Ok (ListenAnswer.Failed error, _) -> check row "listen" measured $"%A{error}"
                 | Error refusal -> failwith $"%s{row} listen: refused %A{refusal}"
+            | Row @"^H holder bind <other address>:T -> OK$" [] -> ()
+            | Row @"^H connect 127\.0\.0\.1:T -> ECONNREFUSED from port T([+-][0-9]+)$" [ offset ] ->
+                passedOver <- Int32.Parse offset :: passedOver
             | Row ignored _ -> ()
             | _ -> failwith $"unparsed line: %s{line}"
 
         replayed
         |> shouldEqual (Set.ofList [ "D1" ; "D2" ; "D3" ; "D4" ; "N1" ; "N2" ; "N3" ; "N4" ; "E1" ; "E2" ])
+
+        // Row H: with another socket holding T at another local address, the
+        // sequence went past T without taking it.
+        let taken = List.rev passedOver
+
+        if
+            List.contains 0 taken
+            || not (List.exists (fun offset -> offset < 0) taken)
+            || not (List.exists (fun offset -> offset > 0) taken)
+        then
+            failwith $"row H: the ports taken, relative to T, were %A{taken}, which do not pass over T"
+
+        // The model's search, judging the port for 127.0.0.1, can take it, and
+        // so refuses rather than answer.
+        let elsewhere = Ipv4Address 0x0A000005u
+
+        let system =
+            UnixSystem.initial platform
+            |> UnixBootImage.withLocalIpv4Addresses [ Ipv4Address.loopback ; elsewhere ] []
+            |> UnixBootImage.tryWithEphemeralPortRange (40000us, 40000us)
+            |> Configured.expectOk EphemeralPortRangeRefusal.describe
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        let holder, system = newSocket false system
+        let system = bindOrFail holder (Ipv4Endpoint.ofParts elsewhere 40000us) system
+        let fd, system = newSocket false system
+
+        match connect fd (loopback 40000us) system with
+        | Error (ConnectRefusal.DarwinImplicitBindHeld _) -> ()
+        | other -> failwith $"row H: the model answered %A{other}"
 
     [<Test>]
     let ``Linux connected each self-tuple to itself, which the model refuses`` () : unit =

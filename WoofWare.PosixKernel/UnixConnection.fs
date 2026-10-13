@@ -267,6 +267,12 @@ type internal ConnectRefusal =
     /// the caller's length stopped short of `sin6_scope_id`, as Linux reads
     /// such a length.
     | Ipv6Destination of socket : SocketId * destination : Ipv6Endpoint
+    /// Under Darwin, the connect's implicit bind took the destination's own
+    /// port, with nothing listening there, and another socket holds that port
+    /// against the wildcard, which is what Darwin's implicit bind binds before
+    /// it resolves the source. Darwin's search would have passed the port
+    /// over, and which port it would have taken instead is not modelled.
+    | DarwinImplicitBindHeld of binding : SocketAddress
 
 [<RequireQualifiedAccess>]
 module internal ConnectRefusal =
@@ -308,6 +314,8 @@ module internal ConnectRefusal =
             $"AF_UNSPEC on stream socket %O{socket} in %A{phase} under Linux runs tcp_disconnect, whose consequences for this phase (a connected socket's peer, a listener's queue) are unmeasured and unmodelled."
         | ConnectRefusal.Ipv6Destination (socket, destination) ->
             $"IPv6 socket %O{socket} would connect to %s{Ipv6Endpoint.toString destination}. This kernel has no IPv6 transport: an IPv6 socket reaches only IPv4 peers, through v4-mapped addresses (::ffff:a.b.c.d), with IPV6_V6ONLY off."
+        | ConnectRefusal.DarwinImplicitBindHeld binding ->
+            $"this connect's implicit bind took %s{SocketAddress.toString binding}, the destination's own port, where nothing listens, and Darwin would answer EINVAL keeping that binding. But another socket holds the port against the wildcard, which is what Darwin's implicit bind binds, so Darwin's search would have passed the port over; which port it would have taken instead is not modelled. Bind the socket before connecting, or widen the machine's EphemeralPortRange."
         | ConnectRefusal.DatagramGroupDestination (socket, destination) ->
             $"datagram socket %O{socket} would connect to %s{SocketAddress.toString destination}, a broadcast or multicast destination. This kernel models no group membership and no interface to broadcast on, so it does not record such a peer. Model multicast and broadcast before connecting to either."
 
@@ -328,6 +336,7 @@ module internal ConnectRefusal =
         | ConnectRefusal.LinuxUnspecOnPhase _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DatagramGroupDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.Ipv6Destination _ -> RefusalKind.Unmodelled
+        | ConnectRefusal.DarwinImplicitBindHeld _ -> RefusalKind.Unmodelled
 
 /// What `connect(2)`'s ladder reads out of the sockaddr it copied in, from a
 /// `struct sockaddr_in` on an IPv4 socket and a `struct sockaddr_in6` on an
@@ -922,6 +931,17 @@ module UnixConnection =
                                     Address = Ipv4Address.any
                                 }
                         }
+
+                    match flavour with
+                    | SimulatedUnixFlavour.Darwin when
+                        UnixMachineState.bindingConflicts socketId sock implicitBinding system.Machine
+                        ->
+                        // The search judged the port for 127.0.0.1, where
+                        // Darwin judges it for the wildcard it binds first, and
+                        // another socket holds it against the wildcard: Darwin
+                        // would have passed it over.
+                        Error (ConnectRefusal.DarwinImplicitBindHeld (SocketAddress.Inet implicitBinding.Endpoint))
+                    | _ ->
 
                     selfTuple
                         { system with

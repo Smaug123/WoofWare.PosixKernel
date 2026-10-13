@@ -31,6 +31,10 @@
 //       D3 a connect to a listener on the same socket;
 //       D4 listen(2) on the same socket.
 //   N*  Darwin, the same with O_NONBLOCK set before the connect.
+//   H   Darwin: another socket bound at T on the machine's first non-loopback
+//       address, which 127.0.0.1 does not overlap; connects to 127.0.0.1:T
+//       from fresh sockets until the sequence has passed T, printing each
+//       port taken. A port taken equal to T would be a hit.
 //   E1  Both, for comparison: bind(2) 127.0.0.1:P, then connect 127.0.0.1:P.
 //   E2  Both: bind(2) 0.0.0.0:P, then connect 127.0.0.1:P.
 #define _GNU_SOURCE
@@ -45,6 +49,9 @@
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <ifaddrs.h>
+#endif
 
 static struct sockaddr_in at(const char *addr, int port)
 {
@@ -249,6 +256,44 @@ static int hit(int target, int nonblocking, int *answer)
     }
 }
 
+// The machine's first IPv4 address other than loopback, as text.
+static int other_address(char *out, size_t len)
+{
+    struct ifaddrs *all;
+    if (getifaddrs(&all) != 0) return 0;
+    int found = 0;
+    for (struct ifaddrs *i = all; i && !found; i = i->ifa_next) {
+        if (!i->ifa_addr || i->ifa_addr->sa_family != AF_INET) continue;
+        struct in_addr a = ((struct sockaddr_in *)i->ifa_addr)->sin_addr;
+        if ((ntohl(a.s_addr) >> 24) == 127) continue;
+        inet_ntop(AF_INET, &a, out, len);
+        found = 1;
+    }
+    freeifaddrs(all);
+    return found;
+}
+
+static void held_elsewhere_row(void)
+{
+    char other[INET_ADDRSTRLEN];
+    if (!other_address(other, sizeof other)) {
+        printf("H no non-loopback IPv4 address to hold the port at\n");
+        return;
+    }
+    int target = next_target();
+    int holder = socket(AF_INET, SOCK_STREAM, 0);
+    int eh = bind_at(holder, other, target);
+    printf("H holder bind <other address>:T -> %s\n", err_name(eh));
+    for (int attempt = 0; attempt < 6; attempt++) {
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        int e = connect_to(fd, "127.0.0.1", target);
+        int p = port_of(fd);
+        printf("H connect 127.0.0.1:T -> %s from port T%+d\n", err_name(e), p - target);
+        close(fd);
+    }
+    close(holder);
+}
+
 static void darwin_rows(const char *prefix, int nonblocking, int listener_port)
 {
     char row[16];
@@ -326,6 +371,7 @@ int main(int argc, char **argv)
     printf("listener at 127.0.0.1:%d -> %s\n", listener_port, err_name(el));
     darwin_rows("D", 0, listener_port);
     darwin_rows("N", 1, listener_port);
+    held_elsewhere_row();
     close(l);
 #endif
     return 0;

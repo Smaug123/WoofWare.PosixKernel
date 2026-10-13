@@ -632,6 +632,41 @@ module TestConnect =
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
+    /// Darwin's implicit bind binds the wildcard at the port before it resolves
+    /// the source, so a port another socket holds against the wildcard is one
+    /// its search passes over, though this library's search, judging the port
+    /// for 127.0.0.1, can take it. Where it took the destination's own port,
+    /// the EINVAL answer would leave the socket holding the wildcard over that
+    /// other socket's binding, so it is refused instead.
+    [<Test>]
+    let ``Darwin refuses an implicit self-tuple on a port held against the wildcard`` () : unit =
+        let platform = SimulatedUnixPlatform.macOsArm64
+
+        // Held at another address, which 127.0.0.1 does not overlap; a holder
+        // that did would have Darwin drop the SYN before any port is chosen.
+        let system =
+            let system = systemWithOnePort platform 40000us
+
+            { system with
+                Machine =
+                    { system.Machine with
+                        LocalRoutes = UnixSystem.defaultLocalRoutes
+                    }
+            }
+
+        let holder =
+            streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle
+
+        let _, system = withSocket (SocketId 0L) holder system
+
+        let fd, system =
+            withSocket (SocketId 1L) (streamSocket None SocketPhase.Idle) system
+
+        refusedBy fd (loopback 40000us) system
+        |> shouldEqual (
+            ConnectRefusal.DarwinImplicitBindHeld (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
+        )
+
     /// The sockaddr copy's refusals come through `connect` under `Copy`, so a
     /// client matching on one type sees both kinds of refusal.
     [<TestCaseSource(nameof platforms)>]

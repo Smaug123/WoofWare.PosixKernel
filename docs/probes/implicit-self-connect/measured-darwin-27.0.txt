@@ -4,39 +4,46 @@ E1 getsockname=127.0.0.1:46000 getpeername=ENOTCONN SO_ERROR=OK
 E2 bind 0.0.0.0:46001 -> OK; connect 127.0.0.1:46001 -> EINVAL
 E2 getsockname=0.0.0.0:46001 getpeername=ENOTCONN SO_ERROR=OK
 listener at 127.0.0.1:45123 -> OK
-  attempt 2 had port 65365; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
-D1 connect 127.0.0.1:65365 -> EINVAL
-D1 getsockname=0.0.0.0:65365 getpeername=ENOTCONN SO_ERROR=OK
-D1 fresh bind 127.0.0.1:65365 -> EADDRINUSE
-D1 fresh bind 0.0.0.0:65365 -> EADDRINUSE
-  attempt 2 had port 65368; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
-D2 connect 127.0.0.1:65368 -> EINVAL
-D2 second connect 127.0.0.1:65368 -> EINVAL
-D2 getsockname=0.0.0.0:65368 getpeername=ENOTCONN SO_ERROR=OK
-  attempt 2 had port 65371; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
-D3 connect 127.0.0.1:65371 -> EINVAL
+  attempt 2 had port 52075; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D1 connect 127.0.0.1:52075 -> EINVAL
+D1 getsockname=0.0.0.0:52075 getpeername=ENOTCONN SO_ERROR=OK
+D1 fresh bind 127.0.0.1:52075 -> EADDRINUSE
+D1 fresh bind 0.0.0.0:52075 -> EADDRINUSE
+  attempt 2 had port 52078; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D2 connect 127.0.0.1:52078 -> EINVAL
+D2 second connect 127.0.0.1:52078 -> EINVAL
+D2 getsockname=0.0.0.0:52078 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 52081; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D3 connect 127.0.0.1:52081 -> EINVAL
 D3 connect to the listener at 127.0.0.1:45123 -> OK
-D3 getsockname=127.0.0.1:65371 getpeername=127.0.0.1:45123 SO_ERROR=OK
-  attempt 2 had port 65374; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
-D4 connect 127.0.0.1:65374 -> EINVAL
+D3 getsockname=127.0.0.1:52081 getpeername=127.0.0.1:45123 SO_ERROR=OK
+  attempt 2 had port 52084; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D4 connect 127.0.0.1:52084 -> EINVAL
 D4 listen -> OK
-D4 getsockname=0.0.0.0:65374 getpeername=ENOTCONN SO_ERROR=OK
-  attempt 2 had port 65377; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
-N1 connect 127.0.0.1:65377 -> EINVAL
+D4 getsockname=0.0.0.0:52084 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 52087; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N1 connect 127.0.0.1:52087 -> EINVAL
 N1 poll -> 0 revents=0x0
-N1 getsockname=0.0.0.0:65377 getpeername=ENOTCONN SO_ERROR=OK
-N1 fresh bind 127.0.0.1:65377 -> EADDRINUSE
-N1 fresh bind 0.0.0.0:65377 -> EADDRINUSE
-  attempt 2 had port 49186; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
-N2 connect 127.0.0.1:49186 -> EINVAL
-N2 second connect 127.0.0.1:49186 -> EINVAL
-N2 getsockname=0.0.0.0:49186 getpeername=ENOTCONN SO_ERROR=OK
-  attempt 2 had port 49189; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
-N3 connect 127.0.0.1:49189 -> EINVAL
+N1 getsockname=0.0.0.0:52087 getpeername=ENOTCONN SO_ERROR=OK
+N1 fresh bind 127.0.0.1:52087 -> EADDRINUSE
+N1 fresh bind 0.0.0.0:52087 -> EADDRINUSE
+  attempt 2 had port 52092; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N2 connect 127.0.0.1:52092 -> EINVAL
+N2 second connect 127.0.0.1:52092 -> EINVAL
+N2 getsockname=0.0.0.0:52092 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 52095; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N3 connect 127.0.0.1:52095 -> EINVAL
 N3 connect to the listener at 127.0.0.1:45123 -> EINPROGRESS
 N3 poll -> 1 revents=0x4
-N3 getsockname=127.0.0.1:49189 getpeername=127.0.0.1:45123 SO_ERROR=OK
-  attempt 2 had port 49192; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
-N4 connect 127.0.0.1:49192 -> EINVAL
+N3 getsockname=127.0.0.1:52095 getpeername=127.0.0.1:45123 SO_ERROR=OK
+  attempt 2 had port 52098; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N4 connect 127.0.0.1:52098 -> EINVAL
 N4 listen -> OK
-N4 getsockname=0.0.0.0:49192 getpeername=ENOTCONN SO_ERROR=OK
+N4 getsockname=0.0.0.0:52098 getpeername=ENOTCONN SO_ERROR=OK
+H holder bind <other address>:T -> OK
+H connect 127.0.0.1:T -> ECONNREFUSED from port T-1
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+1
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+2
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+3
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+4
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+5
