@@ -102,15 +102,8 @@ module private RenameChecks =
     /// Partial in `inode`, which every caller has just obtained from a
     /// resolution or from a directory entry.
     let lacksWrite (role : string) (credentials : Credentials) (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
-        match VirtualFileSystem.tryGet inode vfs with
-        | Some entry ->
-            PermissionBits.deniedTo
-                (Standing.toward credentials entry.Owner)
-                AccessRequest.Write
-                (Inode.permissions entry)
-        | None ->
-            failwith
-                $"RenameChecks.lacksWrite: %s{role} is inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
+        let entry = VirtualFileSystem.get $"RenameChecks.lacksWrite: %s{role}" inode vfs
+        PermissionBits.deniedTo (Standing.toward credentials entry.Owner) AccessRequest.Write (Inode.permissions entry)
 
     /// The inode the destination name is bound to, when that inode is a
     /// directory. `None` covers both "the name is free" and "it names something

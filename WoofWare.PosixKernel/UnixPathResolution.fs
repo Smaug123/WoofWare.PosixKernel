@@ -1249,11 +1249,7 @@ module UnixPathResolution =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, AttributeChangeRefusal<ModeChangeRefusal>>
         =
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixPathResolution.changeModeOf: inode %O{inode} is not in the filesystem, but a path or a descriptor resolved to it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixPathResolution.changeModeOf" inode system.Machine.FileSystem
 
         let rule = SimulatedUnixPlatform.privilegedModeChange system.Machine.UnixPlatform
 
@@ -1310,11 +1306,8 @@ module UnixPathResolution =
         | Error (PathFailure.Refused refusal) -> Error (ChModRefusal.Path refusal)
         | Ok (inode, through) ->
 
-        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-        | None ->
-            failwith
-                $"UnixPathResolution.chmodParsed: resolving %O{path} returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
-        | Some entry ->
+        let entry =
+            VirtualFileSystem.get "UnixPathResolution.chmodParsed" inode system.Machine.FileSystem
 
         let changeable =
             match entry.Content with
@@ -1486,11 +1479,7 @@ module UnixPathResolution =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, AttributeChangeRefusal<OwnerChangeRefusal>>
         =
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixPathResolution.changeOwnerOf: inode %O{inode} is not in the filesystem, but a path or a descriptor resolved to it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixPathResolution.changeOwnerOf" inode system.Machine.FileSystem
 
         let platform = system.Machine.UnixPlatform
         let credentials = system.Process.Credentials
@@ -1974,11 +1963,7 @@ module UnixPathResolution =
         match target with
         | TimesTarget.Inode (inode, through) ->
             let entry =
-                match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-                | Some entry -> entry
-                | None ->
-                    failwith
-                        $"UnixPathResolution.utimensat: inode %O{inode} is not in the filesystem, but a path or a descriptor resolved to it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+                VirtualFileSystem.get "UnixPathResolution.utimensat" inode system.Machine.FileSystem
 
             let isSymlink =
                 match entry.Content with
@@ -2561,17 +2546,17 @@ module UnixPathResolution =
         | Error (PathFailure.Refused refusal) -> Error refusal
         | Ok target ->
 
-        match VirtualFileSystem.tryGetContent target system.Machine.FileSystem with
-        | None ->
-            failwith
-                $"UnixPathResolution.chdir: the walk resolved \"%s{UnixPath.toEscaped path}\" to inode %O{target}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
+        let reached =
+            VirtualFileSystem.get "UnixPathResolution.chdir" target system.Machine.FileSystem
+
+        match reached.Content with
         // Reached by a symbolic link to a regular file as well as by a plain
         // one: `Follow` lands on the file, and only then is it a type error.
-        | Some (InodeContent.RegularFile _)
-        | Some (InodeContent.Socket _)
-        | Some (InodeContent.Fifo _)
-        | Some (InodeContent.CharacterDevice _) -> Ok (SyscallAnswer.Failed UnixError.ENOTDIR, system)
-        | Some (InodeContent.Symlink _) ->
+        | InodeContent.RegularFile _
+        | InodeContent.Socket _
+        | InodeContent.Fifo _
+        | InodeContent.CharacterDevice _ -> Ok (SyscallAnswer.Failed UnixError.ENOTDIR, system)
+        | InodeContent.Symlink _ ->
             // Unreachable, and asserted rather than answered: `Follow` traverses
             // a final symlink, so the walk above cannot hand back a link — a
             // chain that never terminates is ELOOP and one that ends nowhere is
@@ -2581,7 +2566,7 @@ module UnixPathResolution =
             // dead, so nothing could tell the two apart.
             failwith
                 $"UnixPathResolution.chdir: the walk resolved \"%s{UnixPath.toEscaped path}\" to inode %O{target}, which is a symbolic link -- but it ran under SymlinkPolicy.Follow, which never finishes on one (this is a bug in this library)."
-        | Some (InodeContent.Directory directory) ->
+        | InodeContent.Directory directory ->
 
         // The *search* bit, and not the read bit: measured on both kernels, a
         // 0o100 directory can be entered and a 0o400 one is EACCES. That is the
@@ -2590,12 +2575,7 @@ module UnixPathResolution =
         //
         // The walk above checks search on every directory it *traverses*; this
         // is the target's own bit, which nothing has asked about yet.
-        let owner =
-            match VirtualFileSystem.tryGet target system.Machine.FileSystem with
-            | Some inode -> inode.Owner
-            | None ->
-                failwith
-                    $"UnixPathResolution.chdir: inode %O{target} was a directory a moment ago and is now absent (this is a bug in this library)."
+        let owner = reached.Owner
 
         if
             PermissionBits.deniedTo
@@ -2823,12 +2803,7 @@ module UnixPathResolution =
             Error (AccessRefusal.ExtendedRights (inode, arguments.ExtendedRights))
         else
 
-        let entry =
-            match VirtualFileSystem.tryGet inode vfs with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixPathResolution.faccessat: inode %O{inode} is not in the filesystem, but a path or a descriptor resolved to it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+        let entry = VirtualFileSystem.get "UnixPathResolution.faccessat" inode vfs
 
         let bits = Inode.permissions entry
 

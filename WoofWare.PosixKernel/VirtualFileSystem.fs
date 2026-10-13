@@ -626,6 +626,17 @@ module VirtualFileSystem =
     let tryGetContent (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeContent option =
         Map.tryFind inode vfs.Inodes |> Option.map (fun inode -> inode.Content)
 
+    /// The inode at `inode`, which the caller, `operation`, has just reached
+    /// in this filesystem by a walk, an entry or a descriptor. Loudly partial:
+    /// an inode it does not hold is a broken graph, and `operation` is named
+    /// in the failure.
+    let internal get (operation : string) (inode : InodeNumber) (vfs : VirtualFileSystem) : Inode =
+        match Map.tryFind inode vfs.Inodes with
+        | Some found -> found
+        | None ->
+            failwith
+                $"%s{operation}: inode %O{inode} is not in the filesystem, though the caller had just reached it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+
     /// How many bytes a read of `count` bytes starting at `offset` transfers,
     /// from a file whose contents are `length` bytes long.
     ///

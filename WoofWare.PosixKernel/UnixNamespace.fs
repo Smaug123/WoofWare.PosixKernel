@@ -1026,11 +1026,7 @@ module UnixNamespace =
         | CreatingOpenVerdict.OpenExisting inode ->
 
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixNamespace.openPath: resolution returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixNamespace.openPath" inode system.Machine.FileSystem
 
         match entry.Content with
         | InodeContent.Symlink _ ->
@@ -1371,11 +1367,7 @@ module UnixNamespace =
         | Ok (Ok inode) ->
 
         let record =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some record -> record
-            | None ->
-                failwith
-                    $"UnixNamespace.readlink: resolution returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixNamespace.readlink" inode system.Machine.FileSystem
 
         match record.Content with
         | InodeContent.Directory _
@@ -1628,11 +1620,8 @@ module UnixNamespace =
         | Some (name, target, next) ->
 
         let kind =
-            match VirtualFileSystem.tryGetContent target system.Machine.FileSystem with
-            | Some content -> DirectoryEntryKind.ofContent content
-            | None ->
-                failwith
-                    $"UnixNamespace.readDirectoryEntry: the entry \"%O{name}\" names inode %O{target}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            (VirtualFileSystem.get "UnixNamespace.readDirectoryEntry" target system.Machine.FileSystem).Content
+            |> DirectoryEntryKind.ofContent
 
         // A name a filesystem is mounted over reports the inode number of the
         // directory the mount covers, not the mounted root's: measured on both
@@ -3091,13 +3080,10 @@ module UnixNamespace =
                 | Ok (PathStart.StartingObject inode) ->
                     // An unlinked regular file goes on: `LinkRules.verdict`
                     // answers it once the destination has been looked at.
-                    match VirtualFileSystem.tryGetContent inode vfs with
-                    | Some (InodeContent.Directory _) when VirtualFileSystem.isOrphanedDirectory inode vfs ->
+                    match (VirtualFileSystem.get "UnixNamespace.linkat" inode vfs).Content with
+                    | InodeContent.Directory _ when VirtualFileSystem.isOrphanedDirectory inode vfs ->
                         Error (LinkRefusal.NamelessSource inode)
-                    | Some _ -> Ok (Ok inode)
-                    | None ->
-                        failwith
-                            $"UnixNamespace.linkat: the descriptor names inode %O{inode}, which the filesystem does not contain (this is a bug in this library)."
+                    | _ -> Ok (Ok inode)
                 | Ok (PathStart.Walk _) ->
                     failwith
                         "UnixNamespace.linkat: an empty path naming its starting point walked instead (this is a bug in this library)."

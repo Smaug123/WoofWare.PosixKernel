@@ -1523,11 +1523,7 @@ module UnixReadWrite =
         : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
         =
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixSystem.%s{syscall}: fd %d{fd} names inode %O{inode}, which the filesystem does not contain. A descriptor outliving its inode means an unlink or rmdir removed a still-open file or directory; the open file description must keep it alive (this is a bug in this library)."
+            VirtualFileSystem.get "UnixReadWrite: the inode a read's descriptor names" inode system.Machine.FileSystem
 
         match entry.Content with
         | InodeContent.Directory _ ->

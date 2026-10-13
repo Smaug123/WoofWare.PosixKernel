@@ -898,11 +898,7 @@ module UnixDescriptor =
                     $"UnixDescriptor.lseek: fd %d{fd} is not a seekable file, but the descriptor checks above did not reject it (this is a bug in this library)"
 
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixDescriptor.lseek: fd %d{fd} names inode %O{inode}, which the filesystem does not contain. A descriptor outliving its inode means an unlink or rmdir removed a still-open file or directory; the open file description must keep it alive (this is a bug in this library)."
+            VirtualFileSystem.get "UnixDescriptor.lseek" inode system.Machine.FileSystem
 
         // The content is inspected only where a size is wanted, which is
         // `SEEK_END` alone. Some directories have none this kernel will state,
