@@ -923,9 +923,9 @@ module TestLink =
             for bit in 0..31 do
                 let flag = 1 <<< bit
 
-                match LinkRules.screen flavour flag, rejected.Contains flag with
-                | LinkScreen.Failed UnixError.EINVAL, true -> ()
-                | (LinkScreen.Screened _ | LinkScreen.Unmodelled _), false -> ()
+                match AtFlags.screen flavour (AtFlagRules.linkat flavour) flag, rejected.Contains flag with
+                | AtFlagScreen.Failed UnixError.EINVAL, true -> ()
+                | (AtFlagScreen.Screened _ | AtFlagScreen.Unmodelled _), false -> ()
                 | other, measured ->
                     failwith $"%O{flavour} 0x%x{flag}: screened as %A{other}, the probe rejected it: %b{measured}"
 

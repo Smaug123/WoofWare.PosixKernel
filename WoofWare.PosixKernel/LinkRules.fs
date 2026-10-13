@@ -26,29 +26,6 @@ type LinkRules =
         DirectorySource : DirectorySourceRefusal
     }
 
-/// The arguments of `linkat(2)` its flag word decides, once screened.
-type internal LinkArguments =
-    {
-        /// Whether a symbolic link in the source's final position is followed:
-        /// `AT_SYMLINK_FOLLOW` says so.
-        Source : SymlinkPolicy
-        /// What the call makes of an empty source pathname: Linux's
-        /// `AT_EMPTY_PATH` names the object the source's `dirfd` names.
-        EmptyPath : EmptyPathMeaning
-    }
-
-/// What screening `linkat(2)`'s flag word came to.
-[<RequireQualifiedAccess>]
-type internal LinkScreen =
-    /// A word this kernel accepts, and what it says.
-    | Screened of LinkArguments
-    /// The call fails with this errno before either pathname is copied in.
-    | Failed of error : UnixError
-    /// The word carries flags the flavour accepts and this library does not
-    /// model: Darwin's `AT_SYMLINK_NOFOLLOW_ANY` (0x800), `AT_RESOLVE_BENEATH`
-    /// (0x2000) and `AT_UNIQUE` (0x8000).
-    | Unmodelled of flags : int
-
 /// What `link(2)` should do, now that both pathnames have resolved.
 [<RequireQualifiedAccess>]
 type internal LinkVerdict =
@@ -59,56 +36,6 @@ type internal LinkVerdict =
 
 [<RequireQualifiedAccess>]
 module internal LinkRules =
-
-    // `<fcntl.h>`'s numbering, measured by `at-dirfd.c` (CONST and FLAGS) on
-    // Linux 6.18.5 and Darwin 27.0.
-    let private linuxAtSymlinkFollow : int = 0x400
-    let private linuxAtEmptyPath : int = 0x1000
-    let private darwinAtSymlinkFollow : int = 0x40
-    // AT_SYMLINK_NOFOLLOW_ANY, AT_RESOLVE_BENEATH and AT_UNIQUE.
-    let private darwinUnmodelledFlags : int = 0x800 ||| 0x2000 ||| 0x8000
-
-    /// Screen `linkat(2)`'s raw flag word as `flavour` does, before either
-    /// pathname is copied in. Linux answers EINVAL for any flag beyond
-    /// `AT_SYMLINK_FOLLOW` (0x400) and `AT_EMPTY_PATH` (0x1000); Darwin for any
-    /// beyond `AT_SYMLINK_FOLLOW` (0x40) and the three it accepts and this
-    /// library does not model (see `LinkScreen.Unmodelled`).
-    let screen (flavour : SimulatedUnixFlavour) (flags : int) : LinkScreen =
-        // Measured by `at-dirfd.c` (FLAGS, FLAGORDER): every single bit, and a
-        // bad bit against a NULL source, a bad dirfd and the empty path.
-        match flavour with
-        | SimulatedUnixFlavour.Linux ->
-            if flags &&& ~~~(linuxAtSymlinkFollow ||| linuxAtEmptyPath) <> 0 then
-                LinkScreen.Failed UnixError.EINVAL
-            else
-                LinkScreen.Screened
-                    {
-                        Source =
-                            if flags &&& linuxAtSymlinkFollow <> 0 then
-                                SymlinkPolicy.Follow
-                            else
-                                SymlinkPolicy.NoFollowFinal
-                        EmptyPath =
-                            if flags &&& linuxAtEmptyPath <> 0 then
-                                EmptyPathMeaning.NamesStartingPoint
-                            else
-                                EmptyPathMeaning.Walked
-                    }
-        | SimulatedUnixFlavour.Darwin ->
-            if flags &&& ~~~(darwinAtSymlinkFollow ||| darwinUnmodelledFlags) <> 0 then
-                LinkScreen.Failed UnixError.EINVAL
-            elif flags &&& darwinUnmodelledFlags <> 0 then
-                LinkScreen.Unmodelled flags
-            else
-                LinkScreen.Screened
-                    {
-                        Source =
-                            if flags &&& darwinAtSymlinkFollow <> 0 then
-                                SymlinkPolicy.Follow
-                            else
-                                SymlinkPolicy.NoFollowFinal
-                        EmptyPath = EmptyPathMeaning.Walked
-                    }
 
     /// Decide what a `link(2)` owes once its source has resolved to the inode
     /// `source` and its new pathname to `resolution`.

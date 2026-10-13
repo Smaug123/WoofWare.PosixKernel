@@ -56,6 +56,7 @@
         <Compile Include="SimulatedUnixArchitecture.fs" />
         <Compile Include="OpenFlagNumbering.fs" />
         <Compile Include="StartingPointRules.fs" />
+        <Compile Include="AtFlags.fs" />
         <Compile Include="EmulatedFileSystemType.fs" />
         <Compile Include="DeviceFileSystem.fs" />
         <Compile Include="UserBuffer.fs" />
@@ -72,7 +73,6 @@
         <Compile Include="RemovalRules.fs" />
         <Compile Include="RenameRules.fs" />
         <Compile Include="AccessRules.fs" />
-        <Compile Include="StatRules.fs" />
         <Compile Include="AttributeChangeRules.fs" />
         <Compile Include="TimestampChangeRules.fs" />
         <Compile Include="OwnerChangeRules.fs" />
