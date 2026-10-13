@@ -608,11 +608,7 @@ module UnixKqueue =
             failwith
                 $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
 
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixKqueue.kevent: thread %O{thread} is parked in %A{parked}, and is issuing a kevent. A thread blocks in one syscall at a time; a parked wait is finished with `finishKevent` (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixKqueue.kevent" thread system.Threads
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -777,14 +773,15 @@ module UnixKqueue =
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some (ParkedSyscall.Kevent parked) -> parked
-            | Some other ->
-                failwith
-                    $"UnixKqueue.finishKevent: thread %O{thread} is parked in %A{other}, not in a kevent, so there is no wait to finish (this is a bug in the client)."
-            | None ->
-                failwith
-                    $"UnixKqueue.finishKevent: thread %O{thread} is not parked, so there is no wait to finish. Only a thread `kevent` answered `WouldBlock` finishes here (this is a bug in the client)."
+            UnixThreadTable.expectParked
+                "UnixKqueue.finishKevent"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.Kevent parked -> Some parked
+                    | _ -> None
+                )
+                thread
+                system.Threads
 
         let isDrained = drained thread parked.Kqueue system
 

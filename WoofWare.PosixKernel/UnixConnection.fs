@@ -1767,11 +1767,7 @@ module UnixConnection =
         // Loudly partial in an unregistered or parked thread, before anything is
         // answered, as every call that can sleep is. The paused call holds the
         // system it was made in, so the thread is still unparked when it resumes.
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixConnection.connect: thread %O{thread} is parked in %A{parked}, and is issuing a connect. A thread blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixConnection.connect" thread system.Threads
 
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd address declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
@@ -2159,11 +2155,7 @@ module UnixConnection =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixConnection.accept: thread %O{thread} is parked in %A{parked}, and is issuing an accept. A thread blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixConnection.accept" thread system.Threads
 
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
@@ -2319,14 +2311,15 @@ module UnixConnection =
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some (ParkedSyscall.Accept parked) -> parked
-            | Some other ->
-                failwith
-                    $"UnixConnection.finishAccept: thread %O{thread} is parked in %A{other}, not in an accept, so there is no accept to finish (this is a bug in the client)."
-            | None ->
-                failwith
-                    $"UnixConnection.finishAccept: thread %O{thread} is not parked, so there is no accept to finish. Only a thread `accept` answered `WouldBlock` finishes here (this is a bug in the client)."
+            UnixThreadTable.expectParked
+                "UnixConnection.finishAccept"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.Accept parked -> Some parked
+                    | _ -> None
+                )
+                thread
+                system.Threads
 
         match parked.Listener with
         | SleepTarget.EndedByClose _ ->

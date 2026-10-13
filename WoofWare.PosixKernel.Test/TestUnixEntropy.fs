@@ -101,6 +101,41 @@ module TestUnixEntropy =
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip3 malformedFlags bufferGen countGen)) property)
 
+    /// A thread that cannot be making the call, because the process has no
+    /// such thread or because it is asleep in another call, is a bug in the
+    /// client, reported before anything is answered: before malformed flags'
+    /// EINVAL, and before Darwin's refusal of a call it does not have.
+    [<Test>]
+    let ``getrandom by a thread that cannot be making it fails loudly before anything is answered`` () : unit =
+        let mismatches =
+            [
+                for flavour, system in [ "Linux", linux () ; "Darwin", darwin () ] do
+                    let parked = UnixWait.park 0 ParkedSyscall.SigSuspend system
+
+                    for flags in [ 0u ; 6u ] do
+                        for thread, system, expected in
+                            [ 7, system, "not one of the process's threads" ; 0, parked, "is parked in" ] do
+                            let case = $"%s{flavour}, flags 0x%x{flags}, thread %d{thread}"
+
+                            let outcome =
+                                try
+                                    Ok (UnixEntropy.tryGetRandom thread UserBuffer.Mapped 8UL flags system)
+                                with e ->
+                                    Error e
+
+                            match outcome with
+                            | Ok answered -> yield $"%s{case}: answered %A{Result.map fst answered}"
+                            | Error e when e.GetType () <> typeof<exn> ->
+                                yield $"%s{case}: threw %s{e.GetType().Name}: %s{e.Message}"
+                            | Error e when
+                                not (e.Message.Contains "UnixEntropy.getRandom" && e.Message.Contains expected)
+                                ->
+                                yield $"%s{case}: threw, saying %s{e.Message}"
+                            | Error _ -> ()
+            ]
+
+        mismatches |> shouldEqual []
+
     /// There is one pool, so every accepted combination of flags draws the same
     /// bytes from it, and moves it the same distance.
     [<Test>]

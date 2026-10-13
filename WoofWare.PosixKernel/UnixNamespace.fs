@@ -1162,11 +1162,7 @@ module UnixNamespace =
         =
         // Loudly partial in an unregistered or parked thread, before anything is
         // answered, as every call that can sleep is.
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixNamespace.%s{operation}: thread %O{thread} is parked in %A{parked}, and is issuing an open. A thread blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer $"UnixNamespace.%s{operation}" thread system.Threads
 
         // No open sleeps yet: nothing can make an object whose open waits.
         let answered
