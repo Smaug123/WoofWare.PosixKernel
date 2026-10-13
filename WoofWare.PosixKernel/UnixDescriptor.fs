@@ -1106,9 +1106,11 @@ module UnixDescriptor =
             Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
         else
 
-        match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some description ->
+        | Some reached ->
+
+        let description = reached.Description
 
         match description.Target with
         | OpenFileTarget.Pipe _
@@ -1143,18 +1145,12 @@ module UnixDescriptor =
             Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
         else
 
-        let id =
-            match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
-            | Some id -> id
-            | None ->
-                failwith
-                    $"UnixDescriptor.ftruncate: fd %d{fd} named a description a moment ago and is not live now (this is a bug in this library)."
+        let id = reached.Id
 
         // Measured on Darwin 27.0.0 (`fcntl-dup.c`, WRITTEN rows): a truncation
         // that succeeds marks the description written, even to the length the
         // file already had; one that fails does not.
-        let through =
-            FileDescriptorRegistry.openedThrough "UnixDescriptor.ftruncate" fd (UnixSystemState.fileDescriptors system)
+        let through = ReachedDescription.through "UnixDescriptor.ftruncate" reached
 
         truncateAt through inode length system
         |> Result.map (fun system ->

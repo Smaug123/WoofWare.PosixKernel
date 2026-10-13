@@ -1320,6 +1320,16 @@ module UnixPathResolution =
         else
             Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
 
+    /// What `fd` names, if it is live, and the object a description of it is:
+    /// one lookup.
+    let private objectReached<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fd : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (ReachedDescription * OpenFileObject) option
+        =
+        FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system)
+        |> Option.map (fun reached -> reached, OpenFileDescription.object reached.Id reached.Description)
+
     /// `chmod`, with a refusal answered as the `Error` rather than raised.
     let internal tryChmod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
@@ -1378,25 +1388,21 @@ module UnixPathResolution =
         // ends' ctime and nothing else.
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+        match objectReached fd system with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some (OpenFileObject.File inode) ->
-            let through =
-                FileDescriptorRegistry.openedThrough
-                    "UnixPathResolution.fchmod"
-                    fd
-                    (UnixSystemState.fileDescriptors system)
+        | Some (reached, OpenFileObject.File inode) ->
+            let through = ReachedDescription.through "UnixPathResolution.fchmod" reached
 
             changeModeOf through inode mode system
             |> Result.mapError (attributeChangeRefusal FChModRefusal.UnmeasuredModeChange FChModRefusal.UnplacedChange)
         // An epoll instance (Linux) and a kqueue (Darwin).
-        | Some OpenFileObject.AnonymousInode -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
-        | Some (OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (OpenFileObject.Socket socket) ->
+        | Some (_, OpenFileObject.AnonymousInode) -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
+        | Some (_, OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
+        | Some (_, OpenFileObject.Socket socket) ->
             match flavour with
             | SimulatedUnixFlavour.Linux -> Error (FChModRefusal.Socket socket)
             | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (OpenFileObject.Pipe pipeId) ->
+        | Some (_, OpenFileObject.Pipe pipeId) ->
             match flavour with
             | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
             | SimulatedUnixFlavour.Linux ->
@@ -1665,25 +1671,21 @@ module UnixPathResolution =
         // for a pipe end, every one of those sockets, and a kqueue.
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+        match objectReached fd system with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some (OpenFileObject.File inode) ->
-            let through =
-                FileDescriptorRegistry.openedThrough
-                    "UnixPathResolution.fchown"
-                    fd
-                    (UnixSystemState.fileDescriptors system)
+        | Some (reached, OpenFileObject.File inode) ->
+            let through = ReachedDescription.through "UnixPathResolution.fchown" reached
 
             changeOwnerOf through inode user group system
             |> Result.mapError (attributeChangeRefusal FChOwnRefusal.UnmeasuredOwnerChange FChOwnRefusal.UnplacedChange)
         // An epoll instance (Linux) and a kqueue (Darwin).
-        | Some OpenFileObject.AnonymousInode -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
-        | Some (OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (OpenFileObject.Socket socket) ->
+        | Some (_, OpenFileObject.AnonymousInode) -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
+        | Some (_, OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
+        | Some (_, OpenFileObject.Socket socket) ->
             match flavour with
             | SimulatedUnixFlavour.Linux -> Error (FChOwnRefusal.Socket socket)
             | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (OpenFileObject.Pipe pipeId) ->
+        | Some (_, OpenFileObject.Pipe pipeId) ->
             match flavour with
             | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
             | SimulatedUnixFlavour.Linux ->
@@ -2132,17 +2134,13 @@ module UnixPathResolution =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UTimensAtRefusal>
         =
-        match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+        match objectReached fd system with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some (OpenFileObject.File inode) ->
-            let through =
-                FileDescriptorRegistry.openedThrough
-                    "UnixPathResolution.utimensat"
-                    fd
-                    (UnixSystemState.fileDescriptors system)
+        | Some (reached, OpenFileObject.File inode) ->
+            let through = ReachedDescription.through "UnixPathResolution.utimensat" reached
 
             setTimesOf (TimesTarget.Inode (inode, through)) access modification system
-        | Some object -> setTimesOf (TimesTarget.NotInode object) access modification system
+        | Some (_, object) -> setTimesOf (TimesTarget.NotInode object) access modification system
 
     /// `utimensat` once the times are read: screen the flag word, copy the
     /// path in (the null pointer is EFAULT here), and set the times of what
