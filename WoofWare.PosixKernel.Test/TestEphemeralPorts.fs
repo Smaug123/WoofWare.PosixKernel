@@ -728,6 +728,33 @@ module TestEphemeralPorts =
         coverage.Count "a call on a socket whose refused connect gave its port back"
         |> shouldBeGreaterThan 10
 
+    /// Linux's search for a port to bind passes over a port another socket
+    /// holds, both carrying `SO_REUSEADDR`, though an explicit bind of it
+    /// would be admitted beside it (measured, `docs/probes/ephemeral-search`,
+    /// row lr/Br): the search never relaxes the bind rule.
+    [<Test>]
+    let ``Linux bind(0) with SO_REUSEADDR does not share a port another reuse socket holds`` () : unit =
+        let system = systemOn SimulatedUnixPlatform.linuxX64 (40000us, 40001us)
+        let holder, system = newStream system
+
+        let system =
+            match bindWithReuse true holder (loopback 40000us) system with
+            | Ok (BindAnswer.Bound _), system -> system
+            | other, _ -> failwith $"binding the holder: %A{other}"
+
+        // The control: an explicit bind beside it is admitted.
+        let beside, system = newStream system
+
+        match bindWithReuse true beside (loopback 40000us) system with
+        | Ok (BindAnswer.Bound _), _ -> ()
+        | other, _ -> failwith $"an explicit bind beside the holder: %A{other}"
+
+        match bindWithReuse true beside (loopback 0us) system with
+        | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), system ->
+            endpoint.Port |> shouldEqual 40001us
+            noDefects system
+        | other, _ -> failwith $"bind(127.0.0.1:0): %A{other}"
+
     // ------------------------------------------------------------------
     // Linux's search, against a reference written from the measured rule
     // ------------------------------------------------------------------
