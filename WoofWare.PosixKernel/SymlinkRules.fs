@@ -62,37 +62,14 @@ module internal SymlinkRules =
         // and Darwin 27.0: "." is EEXIST; EEXIST and the trailing separator's
         // ENOENT each beat an unwritable directory's EACCES, and EACCES beats
         // Darwin's EILSEQ. `at-dirfd.c` measured the orphan's ENOENT.
-        match resolution.Target with
-        | ResolvedTarget.Directory _ -> SymlinkVerdict.Refuse UnixError.EEXIST
-        | ResolvedTarget.Entry (directory, name, existing) ->
-
-        if VirtualFileSystem.isOrphanedDirectory directory vfs then
-            SymlinkVerdict.Refuse UnixError.ENOENT
-        else
-
-        match existing with
-        | Some _ -> SymlinkVerdict.Refuse UnixError.EEXIST
-        | None ->
-
-        if resolution.TrailingSeparatorDemanded then
-            SymlinkVerdict.Refuse UnixError.ENOENT
-        else
-
-        let parent =
-            match VirtualFileSystem.tryGet directory vfs with
-            | Some parent -> parent
-            | None ->
-                failwith
-                    $"SymlinkRules.verdict: resolution named inode %O{directory} as the directory to create \"%s{DirectoryEntryName.toEscaped name}\" in, but the filesystem does not contain it. Run VirtualFileSystem.checkInvariants."
-
-        if
-            PermissionBits.deniedTo
-                (Standing.toward credentials parent.Owner)
-                AccessRequest.Write
-                (Inode.permissions parent)
-        then
-            SymlinkVerdict.Refuse UnixError.EACCES
-        elif not (BindableEntryNames.admits bindable name) then
-            SymlinkVerdict.Refuse UnixError.EILSEQ
-        else
-            SymlinkVerdict.Create (directory, name)
+        match
+            NewNameRules.verdict
+                FreeNameTrailingSeparator.NoSuchEntry
+                NewNameSource.Fresh
+                bindable
+                credentials
+                resolution
+                vfs
+        with
+        | NewNameVerdict.Refuse error -> SymlinkVerdict.Refuse error
+        | NewNameVerdict.Bind (directory, name, _) -> SymlinkVerdict.Create (directory, name)

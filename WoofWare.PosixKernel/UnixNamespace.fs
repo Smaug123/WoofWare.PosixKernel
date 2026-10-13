@@ -2762,62 +2762,28 @@ module UnixNamespace =
         | Error (PathFailure.Refused refusal) -> Error (CloneFileRefusal.Path refusal)
         | Ok resolution ->
 
-        match resolution.Target with
-        | ResolvedTarget.Directory _
-        | ResolvedTarget.Entry (_, _, Some _) -> failed UnixError.EEXIST
-        | ResolvedTarget.Entry (_, _, None) when resolution.TrailingSeparatorDemanded -> failed UnixError.ENOENT
-        | ResolvedTarget.Entry (directory, name, None) ->
+        match
+            NewNameRules.verdict
+                FreeNameTrailingSeparator.NoSuchEntry
+                (NewNameSource.Cloned paused.Source)
+                (SimulatedUnixPlatform.bindableEntryNames system.Machine.UnixPlatform)
+                credentials
+                resolution
+                system.Machine.FileSystem
+        with
+        | NewNameVerdict.Refuse error -> failed error
+        | NewNameVerdict.Bind (directory, name, _) ->
 
-        if VirtualFileSystem.isOrphanedDirectory directory system.Machine.FileSystem then
-            failed UnixError.ENOENT
-        else
-
-        let source =
+        // The verdict has found the source a readable regular file.
+        let sourceBits, sourceStanding =
             match VirtualFileSystem.tryGet paused.Source system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixNamespace.cloneFileWithDestination: the source, inode %O{paused.Source}, is no longer in the filesystem, but nothing ran between resolving it and now (this is a bug in this library)."
-
-        let sourceBits =
-            match source.Content with
-            | InodeContent.RegularFile (_, bits) -> bits
-            | InodeContent.Directory _
-            | InodeContent.Socket _
-            | InodeContent.Fifo _
-            | InodeContent.CharacterDevice _
-            | InodeContent.Symlink _ ->
-                failwith
-                    $"UnixNamespace.cloneFileWithDestination: the source, inode %O{paused.Source}, is not a regular file, but the source phase admitted only a regular file (this is a bug in this library)."
-
-        let sourceStanding = Standing.toward credentials source.Owner
-
-        if PermissionBits.deniedTo sourceStanding AccessRequest.Read sourceBits then
-            failed UnixError.EACCES
-        else
-
-        let parent =
-            match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
             | Some ({
-                        Content = InodeContent.Directory parent
-                    } as entry) -> entry, parent
+                        Content = InodeContent.RegularFile (_, bits)
+                    } as source) -> bits, Standing.toward credentials source.Owner
             | Some _
             | None ->
                 failwith
-                    $"UnixNamespace.cloneFileWithDestination: the walk resolved \"%s{DirectoryEntryName.toEscaped name}\" inside inode %O{directory}, which is absent or not a directory (this is a bug in this library)."
-
-        if
-            PermissionBits.deniedTo
-                (Standing.toward credentials (fst parent).Owner)
-                AccessRequest.Write
-                (snd parent).Permissions
-        then
-            failed UnixError.EACCES
-        elif
-            not (BindableEntryNames.admits (SimulatedUnixPlatform.bindableEntryNames system.Machine.UnixPlatform) name)
-        then
-            failed UnixError.EILSEQ
-        else
+                    $"UnixNamespace.cloneFileWithDestination: the source, inode %O{paused.Source}, is no longer a regular file in the filesystem, but nothing ran between resolving it and now (this is a bug in this library)."
 
         let raw = PermissionBits.toInt sourceBits
 

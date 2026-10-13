@@ -65,6 +65,7 @@
         <Compile Include="UnixThread.fs" />
         <Compile Include="Sockaddr.fs" />
         <Compile Include="MessageFlag.fs" />
+        <Compile Include="NewNameRules.fs" />
         <Compile Include="CreatingOpenRules.fs" />
         <Compile Include="MkDirRules.fs" />
         <Compile Include="SymlinkRules.fs" />

@@ -108,43 +108,12 @@ module internal MkDirRules =
         (vfs : VirtualFileSystem)
         : MkDirVerdict
         =
-        match resolution.Target with
-        | ResolvedTarget.Directory _ -> MkDirVerdict.Refuse UnixError.EEXIST
-        | ResolvedTarget.Entry (directory, name, existing) ->
-
-        // Nothing can be created inside a directory whose own last name has
-        // gone. Measured on both, at 0o755 and at 0o555, so ENOENT beats the
-        // EACCES below; and `mkdir(".")` inside an orphan is still EEXIST, which
-        // is why this sits under the `Directory` arm rather than above it.
-        //
-        // Above the `existing` match because that is where a real kernel puts
-        // it: the ENOENT comes from the lookup itself failing against a dead
-        // parent. The ordering is not observable — an orphan is necessarily
-        // empty, since `rmdir` refuses a populated directory and this rule stops
-        // one ever gaining an entry.
-        if VirtualFileSystem.isOrphanedDirectory directory vfs then
-            MkDirVerdict.Refuse UnixError.ENOENT
-        else
-
-        // Write alone: the search half of the rule is the walk's, and a
-        // resolution that reached here has already passed it.
-        let parent, parentPermissions =
-            match VirtualFileSystem.tryGet directory vfs with
-            | Some parent -> parent, Inode.permissions parent
-            | None ->
-                failwith
-                    $"MkDirRules.verdict: resolution named inode %O{directory} as the directory to create \"%s{DirectoryEntryName.toEscaped name}\" in, but the filesystem does not contain it. Run VirtualFileSystem.checkInvariants."
-
-        match existing with
-        | Some _ -> MkDirVerdict.Refuse UnixError.EEXIST
-        | None ->
-
-        if PermissionBits.deniedTo (Standing.toward credentials parent.Owner) AccessRequest.Write parentPermissions then
-            MkDirVerdict.Refuse UnixError.EACCES
-        elif not (BindableEntryNames.admits bindable name) then
-            MkDirVerdict.Refuse UnixError.EILSEQ
-        else
-            MkDirVerdict.Create (directory, name, parentPermissions)
+        match
+            NewNameRules.verdict FreeNameTrailingSeparator.Binds NewNameSource.Fresh bindable credentials resolution vfs
+        with
+        | NewNameVerdict.Refuse error -> MkDirVerdict.Refuse error
+        | NewNameVerdict.Bind (directory, name, parent) ->
+            MkDirVerdict.Create (directory, name, Inode.permissions parent)
 
     /// <summary>
     /// The permission bits a directory created with this <c>mode</c> argument ends up

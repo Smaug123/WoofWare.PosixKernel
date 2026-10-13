@@ -143,8 +143,6 @@ module internal CreatingOpenRules =
             | None -> false
 
         match resolution.Target with
-        | ResolvedTarget.Entry (_, _, None) when resolution.TrailingSeparatorDemanded ->
-            CreatingOpenVerdict.Refuse UnixError.ENOENT
         | ResolvedTarget.Directory (_, FinalNavigation.Root) when rules.RootNavigation.IsSome ->
             CreatingOpenVerdict.Refuse rules.RootNavigation.Value
         | ResolvedTarget.Directory (inode, _) ->
@@ -179,30 +177,21 @@ module internal CreatingOpenRules =
                 CreatingOpenVerdict.OpenExisting inode
         | ResolvedTarget.Entry (directory, name, None) ->
 
-        // Nothing can be created inside a directory whose own last name has
-        // gone: measured on both, `open("x", O_CREAT)` from inside an orphan is
-        // ENOENT, at 0o755 and at 0o555 alike, so this beats the EACCES below.
-        // `MkDirRules.verdict` states the same rule for the other creating
-        // syscall.
-        if VirtualFileSystem.isOrphanedDirectory directory vfs then
-            CreatingOpenVerdict.Refuse UnixError.ENOENT
-        else
-
-        // Write alone: the search half of the rule is the walk's, and a
-        // resolution that reached here has already passed it.
-        let parent, parentBits =
-            match VirtualFileSystem.tryGet directory vfs with
-            | Some parent -> parent, Inode.permissions parent
-            | None ->
-                failwith
-                    $"CreatingOpenRules.verdict: resolution named inode %O{directory} as the directory to create \"%s{DirectoryEntryName.toEscaped name}\" in, but the filesystem does not contain it. Run VirtualFileSystem.checkInvariants."
-
-        if PermissionBits.deniedTo (Standing.toward credentials parent.Owner) AccessRequest.Write parentBits then
-            CreatingOpenVerdict.Refuse UnixError.EACCES
-        elif not (BindableEntryNames.admits bindable name) then
-            CreatingOpenVerdict.Refuse UnixError.EILSEQ
-        else
-            CreatingOpenVerdict.Create (directory, name)
+        // `open("x", O_CREAT)` from inside an orphan is ENOENT, at 0o755 and at
+        // 0o555 alike, as `mkdir` is.
+        match
+            NewNameRules.freeName
+                FreeNameTrailingSeparator.NoSuchEntry
+                NewNameSource.Fresh
+                bindable
+                credentials
+                directory
+                name
+                resolution.TrailingSeparatorDemanded
+                vfs
+        with
+        | NewNameVerdict.Refuse error -> CreatingOpenVerdict.Refuse error
+        | NewNameVerdict.Bind (directory, name, _) -> CreatingOpenVerdict.Create (directory, name)
 
     /// <summary>
     /// The permission bits you get under <c>umask</c> when you create a file with this <c>mode</c>,
