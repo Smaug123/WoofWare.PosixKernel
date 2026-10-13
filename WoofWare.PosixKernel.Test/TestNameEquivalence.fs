@@ -164,6 +164,17 @@ module TestNameEquivalence =
         | Error fault -> failwith $"Linux refused the seed: %s{FileSystemSeedFault.describe fault}"
 
     [<Test>]
+    let ``a seeded Darwin filesystem matches names as one a process built`` () : unit =
+        let system =
+            match seeded SimulatedUnixPlatform.macOsArm64 (seedOf [ nfc ]) with
+            | Ok image -> image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            | Error fault -> failwith $"Darwin refused the seed: %s{FileSystemSeedFault.describe fault}"
+
+        match UnixPathResolution.tryStat SymlinkPolicy.Follow (arg ([ byte '/' ] @ nfd)) system with
+        | Error (StatRefusal.Path (PathRefusal.UndecidedNameEquivalence _)) -> ()
+        | other -> failwith $"expected the NFD spelling's lookup to be refused, got %A{other}"
+
+    [<Test>]
     let ``checkInvariants reports a directory holding two names that might be one, where names match by equivalence``
         ()
         : unit
