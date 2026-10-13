@@ -295,8 +295,6 @@ module UnixKqueue =
         tryKqueue system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe
 
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
-
     /// Whether a close has drained the kqueue `kqueue`: the same question the
     /// wake condition of a waiter on it asks.
     let private drained<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -624,7 +622,7 @@ module UnixKqueue =
                 seconds < 0L
                 || seconds > int64 System.Int32.MaxValue
                 || nanoseconds < 0L
-                || nanoseconds > nanosecondsPerSecond
+                || nanoseconds > UnixTimestamp.nanosecondsPerSecond
                 ->
                 Error UnixError.EINVAL
             | KeventTimeout.Readable (seconds, nanoseconds) -> Ok (Some (seconds, nanoseconds))
@@ -694,7 +692,7 @@ module UnixKqueue =
         | Some (seconds, nanoseconds) ->
 
         // Within `int64`: the screen above bounds `seconds` by INT32_MAX.
-        let duration = seconds * nanosecondsPerSecond + nanoseconds
+        let duration = seconds * UnixTimestamp.nanosecondsPerSecond + nanoseconds
         let now = system.Scheduling.NanosecondsSinceBoot
 
         if now > System.Int64.MaxValue - duration then
@@ -787,10 +785,7 @@ module UnixKqueue =
 
         let deliverable = KqueueQueue.hasDeliverableEvent parked.Kqueue system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let completing (outcome : KeventOutcome) (answered : UnixSystem<'Thread, 'Handler>) =
             SyscallInterruption.beforeCompleting thread system

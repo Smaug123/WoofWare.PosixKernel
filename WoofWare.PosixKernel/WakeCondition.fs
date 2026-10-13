@@ -217,6 +217,17 @@ type WakeCondition =
 [<RequireQualifiedAccess>]
 module WakeCondition =
 
+    /// Whether the machine's monotonic clock has reached `deadline`, if the call
+    /// has one: what `WakePrimitive.DeadlinePassed` waits for.
+    let internal deadlinePassed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (deadline : int64 option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        match deadline with
+        | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
+        | None -> false
+
     /// The pipe the open file description `description` names `pipeEnd` of, and
     /// that pipe; fails loudly, naming the waiter's `primitive`, for a
     /// description that is gone or names something else.
@@ -417,7 +428,7 @@ module WakeCondition =
         | WakePrimitive.ConnectionWritable (writer, remaining) ->
             let connectionEnd, transfer = connectionOfWaiter primitive writer system
             TcpTransfer.writeResumes connectionEnd remaining transfer
-        | WakePrimitive.DeadlinePassed deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
+        | WakePrimitive.DeadlinePassed deadline -> deadlinePassed (Some deadline) system
         | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes thread system
         // `satisfied` answers a call a close has ended before it asks any
         // primitive, so this is asked only of one no close has ended.

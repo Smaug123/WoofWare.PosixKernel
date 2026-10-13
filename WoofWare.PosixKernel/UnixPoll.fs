@@ -1007,10 +1007,7 @@ module UnixPoll =
 
         let system = polledEntries entries system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1303,10 +1300,7 @@ module UnixPoll =
 
         let reported = triggered revents
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1688,10 +1682,7 @@ module UnixPoll =
 
         let delivered, system = EpollReadyList.drain parked.Epoll parked.MaxEvents system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 
