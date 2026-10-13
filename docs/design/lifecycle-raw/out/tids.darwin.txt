@@ -1,0 +1,31 @@
+# kernel: Darwin 27.0.0 arm64
+leader	pid	58948
+leader	tid	2897490
+leader	tid_equals_pid	0
+concurrent	0	2897497	delta_from_leader=7
+concurrent	1	2897498	delta_from_leader=8
+concurrent	2	2897499	delta_from_leader=9
+concurrent	3	2897500	delta_from_leader=10
+concurrent	4	2897501	delta_from_leader=11
+concurrent	5	2897502	delta_from_leader=12
+concurrent	6	2897503	delta_from_leader=13
+concurrent	7	2897504	delta_from_leader=14
+sequential	0	2897505	delta_from_previous=0
+sequential	1	2897506	delta_from_previous=1
+sequential	2	2897507	delta_from_previous=1
+sequential	3	2897508	delta_from_previous=1
+sequential	4	2897509	delta_from_previous=1
+sequential	5	2897510	delta_from_previous=1
+sequential	6	2897511	delta_from_previous=1
+sequential	7	2897512	delta_from_previous=1
+fork_between	thread_before	2897513
+fork_between	child_pid	58950
+fork_between	thread_after	2897515
+width	leader_high_word	0
+reuse	rounds	20000
+reuse	first	2897516
+reuse	min	2897516
+reuse	max	2917537
+reuse	backwards_steps	0
+reuse	first_id_seen_again	0
+reuse	leader_id_seen_again	0

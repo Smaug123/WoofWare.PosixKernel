@@ -1,0 +1,14 @@
+# kernel: Darwin 27.0.0 arm64
+stage2	cwd	"/private/tmp/exepathxO6IfR"	argv0="argv0-is-not-the-path"
+initial	proc_pidpath	"/private/tmp/exepathxO6IfR/exe-copy"
+initial	_NSGetExecutablePath	"/private/tmp/exepathxO6IfR/exe-copy"
+initial	realpath(_NSGetExecutablePath)	"/private/tmp/exepathxO6IfR/exe-copy"
+after_rename	proc_pidpath	"/private/tmp/exepathxO6IfR/exe-renamed"
+after_rename	_NSGetExecutablePath	"/private/tmp/exepathxO6IfR/exe-copy"
+after_rename	realpath(_NSGetExecutablePath)	No such file or directory
+after_unlink	proc_pidpath	ret=0 errno=2 (No such file or directory)
+after_unlink	_NSGetExecutablePath	"/private/tmp/exepathxO6IfR/exe-copy"
+after_unlink	realpath(_NSGetExecutablePath)	No such file or directory
+after_new_file_at_original_name	proc_pidpath	ret=0 errno=2 (No such file or directory)
+after_new_file_at_original_name	_NSGetExecutablePath	"/private/tmp/exepathxO6IfR/exe-copy"
+after_new_file_at_original_name	realpath(_NSGetExecutablePath)	"/private/tmp/exepathxO6IfR/exe-copy"

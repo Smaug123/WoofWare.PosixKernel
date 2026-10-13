@@ -1,0 +1,36 @@
+# run: container run --cap-add ALL gcc:14; mount -o remount,rw /proc/sys; echo 1000 > /proc/sys/kernel/pid_max; tids 3000
+# kernel: Linux 6.18.5 aarch64
+# pid_max=1000
+leader	pid	10
+leader	tid	10
+leader	tid_equals_pid	1
+concurrent	0	11	delta_from_leader=1
+concurrent	1	12	delta_from_leader=2
+concurrent	2	13	delta_from_leader=3
+concurrent	3	14	delta_from_leader=4
+concurrent	4	15	delta_from_leader=5
+concurrent	5	16	delta_from_leader=6
+concurrent	6	17	delta_from_leader=7
+concurrent	7	18	delta_from_leader=8
+sequential	0	19	delta_from_previous=0
+sequential	1	20	delta_from_previous=1
+sequential	2	21	delta_from_previous=1
+sequential	3	22	delta_from_previous=1
+sequential	4	23	delta_from_previous=1
+sequential	5	24	delta_from_previous=1
+sequential	6	25	delta_from_previous=1
+sequential	7	26	delta_from_previous=1
+fork_between	thread_before	27
+fork_between	child_pid	28
+fork_between	thread_after	29
+width	leader_high_word	0
+reuse	wrap_at_round	970	from=999	to=300
+reuse	wrap_at_round	1670	from=999	to=300
+reuse	wrap_at_round	2370	from=999	to=300
+reuse	rounds	3000
+reuse	first	30
+reuse	min	30
+reuse	max	999
+reuse	backwards_steps	3
+reuse	first_id_seen_again	0
+reuse	leader_id_seen_again	0

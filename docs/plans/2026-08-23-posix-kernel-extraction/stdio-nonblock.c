@@ -54,7 +54,7 @@ static const int sizes[] = {1, 511, 512, 513, 4095, 4096, 4097, 16384, 16385, 65
 static FILE *out;
 
 // How many bytes the pipe behind `fd` holds, from its write end: FIONREAD
-// on Linux (row 12 of stdio-options.md: both ends report it), st_size on
+// on Linux (row 12 of docs/design/stdio-options.md: both ends report it), st_size on
 // Darwin (row 11: both ends report the unread bytes). -1 if unknown.
 static long held_on(int fd) {
 #ifdef __APPLE__

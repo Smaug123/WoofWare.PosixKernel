@@ -1,0 +1,5 @@
+# kernel: Linux 6.18.5 aarch64
+self	pid=8 ppid=1 pgrp=1 sid=1
+grandchild	before	pid=10 ppid=9 pgrp=1 sid=1
+grandchild	after_parent_exit	ppid=1
+self	middle_pid=9

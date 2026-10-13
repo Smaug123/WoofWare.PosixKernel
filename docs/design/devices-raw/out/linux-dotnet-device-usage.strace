@@ -1,0 +1,1534 @@
+237   execve("./out/w", ["./out/w"], 0xffffe4f2ddb8 /* 16 vars */) = 0
+237   brk(NULL)                         = 0xaaab07623000
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18ef000
+237   faccessat(AT_FDCWD, "/etc/ld.so.preload", R_OK) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=7023, ...}) = 0
+237   mmap(NULL, 7023, PROT_READ, MAP_PRIVATE, 3, 0) = 0xffffa18ed000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libdl.so.2", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=67440, ...}) = 0
+237   mmap(NULL, 196624, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa1888000
+237   mmap(0xffffa1890000, 131088, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa1890000
+237   munmap(0xffffa1888000, 32768)     = 0
+237   munmap(0xffffa18b1000, 28688)     = 0
+237   mprotect(0xffffa1891000, 122880, PROT_NONE) = 0
+237   mmap(0xffffa18af000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xf000) = 0xffffa18af000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=67440, ...}) = 0
+237   mmap(NULL, 196624, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa185f000
+237   mmap(0xffffa1860000, 131088, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa1860000
+237   munmap(0xffffa185f000, 4096)      = 0
+237   munmap(0xffffa1881000, 57360)     = 0
+237   mprotect(0xffffa1861000, 122880, PROT_NONE) = 0
+237   mmap(0xffffa187f000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xf000) = 0xffffa187f000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libstdc++.so.6", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=2633224, ...}) = 0
+237   mmap(NULL, 2714760, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa15c9000
+237   mmap(0xffffa15d0000, 2649224, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa15d0000
+237   munmap(0xffffa15c9000, 28672)     = 0
+237   munmap(0xffffa1857000, 35976)     = 0
+237   mprotect(0xffffa183d000, 32768, PROT_NONE) = 0
+237   mmap(0xffffa1845000, 57344, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x275000) = 0xffffa1845000
+237   mmap(0xffffa1853000, 15496, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xffffa1853000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libm.so.6", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=591800, ...}) = 0
+237   mmap(NULL, 720920, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa151f000
+237   mmap(0xffffa1520000, 655384, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa1520000
+237   munmap(0xffffa151f000, 4096)      = 0
+237   munmap(0xffffa15c1000, 57368)     = 0
+237   mprotect(0xffffa15a5000, 106496, PROT_NONE) = 0
+237   mmap(0xffffa15bf000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x8f000) = 0xffffa15bf000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libgcc_s.so.1", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=133696, ...}) = 0
+237   mmap(NULL, 263104, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa14df000
+237   mmap(0xffffa14e0000, 197568, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa14e0000
+237   munmap(0xffffa14df000, 4096)      = 0
+237   munmap(0xffffa1511000, 58304)     = 0
+237   mprotect(0xffffa14ff000, 65536, PROT_NONE) = 0
+237   mmap(0xffffa150f000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1f000) = 0xffffa150f000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\3\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\360\206\2\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0755, st_size=1722920, ...}) = 0
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18eb000
+237   mmap(NULL, 1892240, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa1312000
+237   mmap(0xffffa1320000, 1826704, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa1320000
+237   munmap(0xffffa1312000, 57344)     = 0
+237   munmap(0xffffa14de000, 8080)      = 0
+237   mprotect(0xffffa14ba000, 77824, PROT_NONE) = 0
+237   mmap(0xffffa14cd000, 20480, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x19d000) = 0xffffa14cd000
+237   mmap(0xffffa14d2000, 49040, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xffffa14d2000
+237   close(3)                          = 0
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18e9000
+237   set_tid_address(0xffffa18e90f0)   = 237
+237   set_robust_list(0xffffa18e9100, 24) = 0
+237   rseq(0xffffa18e9740, 0x20, 0, 0xd428bc00) = 0
+237   mprotect(0xffffa14cd000, 12288, PROT_READ) = 0
+237   mprotect(0xffffa150f000, 4096, PROT_READ) = 0
+237   mprotect(0xffffa15bf000, 4096, PROT_READ) = 0
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18e7000
+237   mprotect(0xffffa1845000, 45056, PROT_READ) = 0
+237   mprotect(0xffffa187f000, 4096, PROT_READ) = 0
+237   mprotect(0xffffa18af000, 4096, PROT_READ) = 0
+237   mprotect(0xaaaacf921000, 4096, PROT_READ) = 0
+237   mprotect(0xffffa18f7000, 8192, PROT_READ) = 0
+237   prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+237   munmap(0xffffa18ed000, 7023)      = 0
+237   futex(0xffffa18537ec, FUTEX_WAKE_PRIVATE, 2147483647) = 0
+237   getrandom("\xc5\x70\x55\xe2\x2c\xbd\x1a\x84", 8, GRND_NONBLOCK) = 8
+237   brk(NULL)                         = 0xaaab07623000
+237   brk(0xaaab07644000)               = 0xaaab07644000
+237   readlinkat(AT_FDCWD, "/proc", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/proc/self", "237", 1023) = 3
+237   readlinkat(AT_FDCWD, "/proc/237", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/proc/237/exe", "/tmp/w/out/w", 1023) = 12
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w", 0xffffd1d136d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.dll", 0xffffd1d13690, 1023) = -1 EINVAL (Invalid argument)
+237   faccessat(AT_FDCWD, "/tmp/w/out/libhostfxr.so", F_OK) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/etc/dotnet/install_location_arm64", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/etc/dotnet/install_location", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/host/fxr", F_OK) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/host/fxr", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
+237   fstat(3, {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+237   getdents64(3, 0xaaab07635570 /* 3 entries */, 32768) = 80
+237   getdents64(3, 0xaaab07635570 /* 0 entries */, 32768) = 0
+237   close(3)                          = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/host/fxr/10.0.11/libhostfxr.so", F_OK) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/host/fxr/10.0.11/libhostfxr.so", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0755, st_size=313912, ...}) = 0
+237   mmap(NULL, 574179, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa1293000
+237   mmap(0xffffa12a0000, 508643, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa12a0000
+237   munmap(0xffffa1293000, 53248)     = 0
+237   munmap(0xffffa131d000, 8931)      = 0
+237   mprotect(0xffffa12b5000, 417792, PROT_NONE) = 0
+237   mmap(0xffffa12c4000, 229376, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x14000) = 0xffffa12c4000
+237   mmap(0xffffa130b000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4b000) = 0xffffa130b000
+237   mmap(0xffffa131b000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x4b000) = 0xffffa131b000
+237   close(3)                          = 0
+237   mprotect(0xffffa130b000, 4096, PROT_READ) = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/libcoreclr.so", F_OK) = -1 ENOENT (No such file or directory)
+237   faccessat(AT_FDCWD, "/tmp/w/out/w.dll", F_OK) = 0
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d13300, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d13300, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d13300, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.dll", 0xffffd1d13300, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d12d20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d12d20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d12d20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.runtimeconfig.dev.json", 0xffffd1d12d20, 1023) = -1 ENOENT (No such file or directory)
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d12e20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d12e20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d12e20, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.runtimeconfig.json", 0xffffd1d12e20, 1023) = -1 EINVAL (Invalid argument)
+237   openat(AT_FDCWD, "/tmp/w/out/w.runtimeconfig.json", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=330, ...}) = 0
+237   mmap(NULL, 330, PROT_READ|PROT_WRITE, MAP_PRIVATE, 3, 0) = 0xffffa18ee000
+237   close(3)                          = 0
+237   brk(0xaaab0766e000)               = 0xaaab0766e000
+237   munmap(0xffffa18ee000, 330)       = 0
+237   brk(0xaaab0765e000)               = 0xaaab0765e000
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
+237   fstat(3, {st_mode=S_IFDIR|0755, st_size=4096, ...}) = 0
+237   getdents64(3, 0xaaab0763d5e0 /* 3 entries */, 32768) = 80
+237   getdents64(3, 0xaaab0763d5e0 /* 0 entries */, 32768) = 0
+237   close(3)                          = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.deps.json", F_OK) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d126d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.runtimeconfig.dev.json", 0xffffd1d126d0, 1023) = -1 ENOENT (No such file or directory)
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.runtimeconfig.json", 0xffffd1d127d0, 1023) = -1 EINVAL (Invalid argument)
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.runtimeconfig.json", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=50, ...}) = 0
+237   mmap(NULL, 50, PROT_READ|PROT_WRITE, MAP_PRIVATE, 3, 0) = 0xffffa18ee000
+237   close(3)                          = 0
+237   munmap(0xffffa18ee000, 50)        = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.deps.json", F_OK) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.deps.json", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=52760, ...}) = 0
+237   mmap(NULL, 52760, PROT_READ|PROT_WRITE, MAP_PRIVATE, 3, 0) = 0xffffa1883000
+237   close(3)                          = 0
+237   munmap(0xffffa1883000, 52760)     = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libhostpolicy.so", F_OK) = 0
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libhostpolicy.so", F_OK) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libhostpolicy.so", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0755, st_size=299536, ...}) = 0
+237   mmap(NULL, 560571, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa1217000
+237   mmap(0xffffa1220000, 495035, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa1220000
+237   munmap(0xffffa1217000, 36864)     = 0
+237   munmap(0xffffa1299000, 28091)     = 0
+237   mprotect(0xffffa1234000, 409600, PROT_NONE) = 0
+237   mmap(0xffffa1243000, 217088, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x13000) = 0xffffa1243000
+237   mmap(0xffffa1287000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x47000) = 0xffffa1287000
+237   mmap(0xffffa1298000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x48000) = 0xffffa1298000
+237   close(3)                          = 0
+237   mprotect(0xffffa1287000, 8192, PROT_READ) = 0
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d13050, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d13050, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d13050, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.dll", 0xffffd1d13050, 1023) = -1 EINVAL (Invalid argument)
+237   faccessat(AT_FDCWD, "", F_OK)     = -1 ENOENT (No such file or directory)
+237   faccessat(AT_FDCWD, "opt/coreservicing", F_OK) = -1 ENOENT (No such file or directory)
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.deps.json", 0xffffd1d12bc0, 1023) = -1 EINVAL (Invalid argument)
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.NETCore.App.deps.json", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=52760, ...}) = 0
+237   mmap(NULL, 52760, PROT_READ|PROT_WRITE, MAP_PRIVATE, 3, 0) = 0xffffa1883000
+237   close(3)                          = 0
+237   brk(0xaaab07685000)               = 0xaaab07685000
+237   munmap(0xffffa1883000, 52760)     = 0
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d12be0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d12be0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d12be0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w.deps.json", 0xffffd1d12be0, 1023) = -1 EINVAL (Invalid argument)
+237   openat(AT_FDCWD, "/tmp/w/out/w.deps.json", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=375, ...}) = 0
+237   mmap(NULL, 375, PROT_READ|PROT_WRITE, MAP_PRIVATE, 3, 0) = 0xffffa18ee000
+237   close(3)                          = 0
+237   munmap(0xffffa18ee000, 375)       = 0
+237   faccessat(AT_FDCWD, "", F_OK)     = -1 ENOENT (No such file or directory)
+237   faccessat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", F_OK) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libcoreclr.so", 0xffffd1d12ec0, 1023) = -1 EINVAL (Invalid argument)
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libcoreclr.so", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0755, st_size=6845544, ...}) = 0
+237   mmap(NULL, 7404744, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa0b10000
+237   mmap(0xffffa0b10000, 7339208, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa0b10000
+237   munmap(0xffffa1210000, 64712)     = 0
+237   mprotect(0xffffa0ce8000, 4939776, PROT_NONE) = 0
+237   mmap(0xffffa0cf7000, 4587520, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x1d7000) = 0xffffa0cf7000
+237   mmap(0xffffa1166000, 167936, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x636000) = 0xffffa1166000
+237   mmap(0xffffa119e000, 167936, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x65e000) = 0xffffa119e000
+237   mmap(0xffffa11c7000, 298184, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xffffa11c7000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=7023, ...}) = 0
+237   mmap(NULL, 7023, PROT_READ, MAP_PRIVATE, 3, 0) = 0xffffa18ed000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/librt.so.1", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=67512, ...}) = 0
+237   mmap(NULL, 196624, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa0adf000
+237   mmap(0xffffa0ae0000, 131088, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa0ae0000
+237   munmap(0xffffa0adf000, 4096)      = 0
+237   munmap(0xffffa0b01000, 57360)     = 0
+237   mprotect(0xffffa0ae1000, 122880, PROT_NONE) = 0
+237   mmap(0xffffa0aff000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xf000) = 0xffffa0aff000
+237   close(3)                          = 0
+237   mprotect(0xffffa0aff000, 4096, PROT_READ) = 0
+237   mprotect(0xffffa1166000, 167936, PROT_READ) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libcoreclrtraceptprovider.so", O_RDONLY|O_CLOEXEC) = 3
+237   read(3, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(3, {st_mode=S_IFREG|0755, st_size=898104, ...}) = 0
+237   mmap(NULL, 1158384, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffffa09c5000
+237   mmap(0xffffa09d0000, 1092848, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0) = 0xffffa09d0000
+237   munmap(0xffffa09c5000, 45056)     = 0
+237   munmap(0xffffa0adb000, 19696)     = 0
+237   mprotect(0xffffa0a14000, 806912, PROT_NONE) = 0
+237   mmap(0xffffa0a23000, 188416, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x43000) = 0xffffa0a23000
+237   mmap(0xffffa0a60000, 434176, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0x70000) = 0xffffa0a60000
+237   mmap(0xffffa0ad9000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 3, 0xd9000) = 0xffffa0ad9000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/liblttng-ust.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/lib/aarch64-linux-gnu/", {st_mode=S_IFDIR|0755, st_size=8192, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/lib/aarch64-linux-gnu/liblttng-ust.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/usr/lib/aarch64-linux-gnu/", {st_mode=S_IFDIR|0755, st_size=8192, ...}, 0) = 0
+237   openat(AT_FDCWD, "/lib/liblttng-ust.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/lib/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/lib/liblttng-ust.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/usr/lib/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   munmap(0xffffa18ed000, 7023)      = 0
+237   munmap(0xffffa09d0000, 1092848)   = 0
+237   openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=7023, ...}) = 0
+237   mmap(NULL, 7023, PROT_READ, MAP_PRIVATE, 3, 0) = 0xffffa18ed000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/usr/lib/aarch64-linux-gnu/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/lib/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/usr/lib/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   munmap(0xffffa18ed000, 7023)      = 0
+237   openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+237   fstat(3, {st_mode=S_IFREG|0644, st_size=7023, ...}) = 0
+237   mmap(NULL, 7023, PROT_READ, MAP_PRIVATE, 3, 0) = 0xffffa18ed000
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/lib/aarch64-linux-gnu/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/usr/lib/aarch64-linux-gnu/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/lib/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/usr/lib/liblttng-ust-tracepoint.so.0", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   munmap(0xffffa18ed000, 7023)      = 0
+237   getpid()                          = 237
+237   getsid(237)                       = 1
+237   statfs("/sys/fs/cgroup", {f_type=CGROUP2_SUPER_MAGIC, f_bsize=4096, f_blocks=0, f_bfree=0, f_bavail=0, f_files=0, f_ffree=0, f_fsid={val=[0x456e7525, 0x1b533656]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_NODEV|ST_NOEXEC|ST_RELATIME}) = 0
+237   openat(AT_FDCWD, "/proc/self/mountinfo", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(3, "46 33 254:16 / / rw,relatime - e"..., 1024) = 1024
+237   read(3, "38 47 0:29 /fs /proc/fs ro,relat"..., 1024) = 157
+237   read(3, "", 1024)                 = 0
+237   close(3)                          = 0
+237   openat(AT_FDCWD, "/proc/self/cgroup", O_RDONLY) = 3
+237   fstat(3, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(3, "0::/\n", 1024)           = 5
+237   close(3)                          = 0
+237   prlimit64(0, RLIMIT_NOFILE, NULL, {rlim_cur=1024*1024, rlim_max=1024*1024}) = 0
+237   prlimit64(0, RLIMIT_NOFILE, {rlim_cur=1024*1024, rlim_max=1024*1024}, NULL) = 0
+237   gettid()                          = 237
+237   pipe2([3, 4], O_CLOEXEC)          = 0
+237   readlinkat(AT_FDCWD, "/proc", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/proc/self", "237", 1023) = 3
+237   readlinkat(AT_FDCWD, "/proc/237", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/proc/237/exe", "/tmp/w/out/w", 1023) = 12
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out/w", 0xffffd1d12f00, 1023) = -1 EINVAL (Invalid argument)
+237   prlimit64(0, RLIMIT_AS, NULL, {rlim_cur=RLIM64_INFINITY, rlim_max=RLIM64_INFINITY}) = 0
+237   mmap(0xffff98b10000, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff98ae0000
+237   munmap(0xffff98ae0000, 134217728) = 0
+237   mmap(NULL, 1073741824, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff60ae0000
+237   madvise(0xffff60ae0000, 1073741824, MADV_DONTDUMP) = 0
+237   membarrier(MEMBARRIER_CMD_QUERY, 0) = 0x3ff (MEMBARRIER_CMD_GLOBAL|MEMBARRIER_CMD_GLOBAL_EXPEDITED|MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED|MEMBARRIER_CMD_PRIVATE_EXPEDITED|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED|MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE|MEMBARRIER_CMD_PRIVATE_EXPEDITED_RSEQ|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_RSEQ|MEMBARRIER_CMD_GET_REGISTRATIONS)
+237   membarrier(MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0) = 0
+237   rt_sigaction(SIGRT_1, {sa_handler=0xffffa13a2710, sa_mask=[], sa_flags=SA_ONSTACK|SA_RESTART|SA_SIGINFO}, NULL, 8) = 0
+237   rt_sigprocmask(SIG_UNBLOCK, [RTMIN RT_1], NULL, 8) = 0
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffff602d0000
+237   mprotect(0xffff602e0000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff60adf230, parent_tid=0xffff60adf230, exit_signal=0, stack=0xffff602d0000, stack_size=0x80ea20, tls=0xffff60adf8a0} => {parent_tid=[238]}, 88) = 238
+238   rseq(0xffff60adf880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+238   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+238   set_robust_list(0xffff60adf240, 24 <unfinished ...>
+237   futex(0xaaab0763dbe0, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+238   <... set_robust_list resumed>)    = 0
+238   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+238   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+238   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+238   mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff582d0000
+238   munmap(0xffff582d0000, 64159744)  = 0
+238   munmap(0xffff60000000, 2949120)   = 0
+238   mprotect(0xffff5c000000, 135168, PROT_READ|PROT_WRITE) = 0
+238   gettid()                          = 238
+238   futex(0xaaab0763dbe0, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+238   getpid( <unfinished ...>
+237   futex(0xaaab0763db88, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+238   <... getpid resumed>)             = 237
+237   <... futex resumed>)              = 0
+238   prctl(PR_SET_NAME, ".NET SynchManag"... <unfinished ...>
+237   rt_sigaction(SIGILL, {sa_handler=0xffffa10f9d1c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO},  <unfinished ...>
+238   <... prctl resumed>)              = 0
+237   <... rt_sigaction resumed>{sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+238   ppoll([{fd=3, events=POLLIN}], 1, NULL, NULL, 0 <unfinished ...>
+237   rt_sigaction(SIGFPE, {sa_handler=0xffffa10f9d9c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGBUS, {sa_handler=0xffffa10f9e1c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGABRT, {sa_handler=0xffffa10f9ea4, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGINT, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGINT, {sa_handler=0xffffa10f9ec4, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGQUIT, NULL, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGQUIT, {sa_handler=0xffffa10f9f0c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGTRAP, {sa_handler=0xffffa10f9f54, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGSEGV, {sa_handler=0xffffa10fa094, sa_mask=[RT_2], sa_flags=SA_ONSTACK|SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+237   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa18e1000
+237   mprotect(0xffffa18e1000, 4096, PROT_NONE) = 0
+237   sigaltstack({ss_sp=0xffffa18e1000, ss_flags=0, ss_size=24576}, NULL) = 0
+237   mmap(NULL, 45056, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa1885000
+237   mprotect(0xffffa1885000, 4096, PROT_NONE) = 0
+237   rt_sigaction(SIGPIPE, {sa_handler=SIG_IGN, sa_mask=[PIPE], sa_flags=SA_RESTART}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGTERM, {sa_handler=0xffffa10fa300, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   rt_sigaction(SIGRT_2, {sa_handler=0xffffa10fa460, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   fcntl(0, F_DUPFD_CLOEXEC, 0)      = 5
+237   fcntl(1, F_DUPFD_CLOEXEC, 0)      = 6
+237   fcntl(2, F_DUPFD_CLOEXEC, 0)      = 7
+237   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+237   openat(AT_FDCWD, "/sys/fs/cgroup//cpu.max", O_RDONLY) = 8
+237   fstat(8, {st_mode=S_IFREG|0644, st_size=0, ...}) = 0
+237   read(8, "400000 100000\n", 4096)  = 14
+237   close(8)                          = 0
+237   memfd_create("doublemapper", MFD_CLOEXEC) = 8
+237   sysinfo({uptime=17, loads=[5248, 1088, 352], totalram=4255531008, freeram=3563405312, sharedram=46116864, bufferram=21905408, totalswap=0, freeswap=0, procs=102, totalhigh=0, freehigh=0, mem_unit=1}) = 0
+237   prlimit64(0, RLIMIT_AS, NULL, {rlim_cur=RLIM64_INFINITY, rlim_max=RLIM64_INFINITY}) = 0
+237   prlimit64(0, RLIMIT_FSIZE, NULL, {rlim_cur=RLIM64_INFINITY, rlim_max=RLIM64_INFINITY}) = 0
+237   ftruncate(8, 4255531008)          = 0
+237   mmap(0xffff60b20000, 4096, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0) = 0xffff60b20000
+237   mprotect(0xffff60b20000, 4096, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0) = 0xffffa18ee000
+237   openat(AT_FDCWD, "/dev/urandom", O_RDONLY|O_CLOEXEC) = 9
+237   read(9, "\213\6L\247`\7P\217\312\v\205\245\224\227\320\257", 16) = 16
+237   openat(AT_FDCWD, "/proc/237/stat", O_RDONLY) = 10
+237   fstat(10, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(10, "237 (w) R 234 1 1 0 -1 4194304 4"..., 1024) = 302
+237   close(10)                         = 0
+237   socket(AF_UNIX, SOCK_STREAM|SOCK_CLOEXEC, 0) = 10
+237   fchmod(10, 0600)                  = 0
+237   bind(10, {sa_family=AF_UNIX, sun_path="/tmp/dotnet-diagnostic-237-1629-socket"}, 110) = 0
+237   listen(10, 255)                   = 0
+237   memfd_create("dotnet_ipc_created", MFD_CLOEXEC) = 11
+237   mmap(NULL, 1, PROT_NONE, MAP_PRIVATE, 11, 0) = 0xffffa18ed000
+237   close(11)                         = 0
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffff5b7f0000
+237   mprotect(0xffff5b800000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff5bfff230, parent_tid=0xffff5bfff230, exit_signal=0, stack=0xffff5b7f0000, stack_size=0x80ea20, tls=0xffff5bfff8a0} => {parent_tid=[239]}, 88) = 239
+239   rseq(0xffff5bfff880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+239   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+239   set_robust_list(0xffff5bfff240, 24 <unfinished ...>
+237   futex(0xaaab07668530, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+239   <... set_robust_list resumed>)    = 0
+239   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+239   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+239   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+239   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+239   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa18b3000
+239   mprotect(0xffffa18b3000, 4096, PROT_NONE) = 0
+239   sigaltstack({ss_sp=0xffffa18b3000, ss_flags=0, ss_size=24576}, NULL) = 0
+239   mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff537f0000
+239   munmap(0xffff537f0000, 8454144)   = 0
+239   munmap(0xffff58000000, 58654720)  = 0
+239   mprotect(0xffff54000000, 135168, PROT_READ|PROT_WRITE) = 0
+239   gettid()                          = 239
+239   futex(0xaaab07668530, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+239   getpid( <unfinished ...>
+237   futex(0xaaab076684d8, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+239   <... getpid resumed>)             = 237
+237   <... futex resumed>)              = 0
+239   prctl(PR_SET_NAME, ".NET EventPipe" <unfinished ...>
+237   mprotect(0xffffa0bc7000, 4096, PROT_READ|PROT_WRITE <unfinished ...>
+239   <... prctl resumed>)              = 0
+237   <... mprotect resumed>)           = 0
+239   ppoll([{fd=10, events=POLLIN}], 1, NULL, NULL, 0 <unfinished ...>
+237   madvise(0xffffa0bc7000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xffffa0bc7000, 4096, PROT_READ) = 0
+237   madvise(0xffffa0bc7000, 4096, MADV_DODUMP) = 0
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/possible", O_RDONLY|O_CLOEXEC) = 11
+237   read(11, "0-4\n", 1024)           = 4
+237   close(11)                         = 0
+237   membarrier(MEMBARRIER_CMD_QUERY, 0) = 0x3ff (MEMBARRIER_CMD_GLOBAL|MEMBARRIER_CMD_GLOBAL_EXPEDITED|MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED|MEMBARRIER_CMD_PRIVATE_EXPEDITED|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED|MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE|MEMBARRIER_CMD_PRIVATE_EXPEDITED_RSEQ|MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_RSEQ|MEMBARRIER_CMD_GET_REGISTRATIONS)
+237   membarrier(MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED, 0) = 0
+237   statfs("/sys/fs/cgroup", {f_type=CGROUP2_SUPER_MAGIC, f_bsize=4096, f_blocks=0, f_bfree=0, f_bavail=0, f_files=0, f_ffree=0, f_fsid={val=[0x456e7525, 0x1b533656]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_NODEV|ST_NOEXEC|ST_RELATIME}) = 0
+237   openat(AT_FDCWD, "/proc/self/mountinfo", O_RDONLY) = 11
+237   fstat(11, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(11, "46 33 254:16 / / rw,relatime - e"..., 1024) = 1024
+237   read(11, "38 47 0:29 /fs /proc/fs ro,relat"..., 1024) = 157
+237   read(11, "", 1024)                = 0
+237   close(11)                         = 0
+237   openat(AT_FDCWD, "/proc/self/cgroup", O_RDONLY) = 11
+237   fstat(11, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(11, "0::/\n", 1024)          = 5
+237   close(11)                         = 0
+237   getpid()                          = 237
+237   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+237   get_mempolicy(NULL, NULL, 0, NULL, 0) = 0
+237   openat(AT_FDCWD, "/sys/devices/system/node", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 11
+237   fstat(11, {st_mode=S_IFDIR|0755, st_size=0, ...}) = 0
+237   getdents64(11, 0xaaab076690e0 /* 10 entries */, 32768) = 328
+237   getdents64(11, 0xaaab076690e0 /* 0 entries */, 32768) = 0
+237   close(11)                         = 0
+237   sysinfo({uptime=17, loads=[5248, 1088, 352], totalram=4255531008, freeram=3563405312, sharedram=46116864, bufferram=21905408, totalswap=0, freeswap=0, procs=103, totalhigh=0, freehigh=0, mem_unit=1}) = 0
+237   mmap(NULL, 126976, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff602b1000
+237   munmap(0xffff602b1000, 61440)     = 0
+237   madvise(0xffff602c0000, 65536, MADV_DONTDUMP) = 0
+237   mprotect(0xffff602c0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xffff602c0000, 4096, MADV_DODUMP) = 0
+237   mmap(0xffff60b30000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1000) = 0xffff60b30000
+237   mmap(0xffff60b40000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x11000) = 0xffff60b40000
+237   openat(AT_FDCWD, "/proc/237/stat", O_RDONLY) = 11
+237   fstat(11, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(11, "237 (w) R 234 1 1 0 -1 4194304 4"..., 1024) = 302
+237   close(11)                         = 0
+237   openat(AT_FDCWD, "/proc/237/stat", O_RDONLY) = 11
+237   fstat(11, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(11, "237 (w) R 234 1 1 0 -1 4194304 4"..., 1024) = 302
+237   close(11)                         = 0
+237   unlinkat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-in", 0) = -1 ENOENT (No such file or directory)
+237   mknodat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-in", S_IFIFO|0700) = 0
+237   unlinkat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-out", 0) = -1 ENOENT (No such file or directory)
+237   mknodat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-out", S_IFIFO|0700) = 0
+237   brk(0xaaab076af000)               = 0xaaab076af000
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffff5afe0000
+237   mprotect(0xffff5aff0000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff5b7ef230, parent_tid=0xffff5b7ef230, exit_signal=0, stack=0xffff5afe0000, stack_size=0x80ea20, tls=0xffff5b7ef8a0} => {parent_tid=[240]}, 88) = 240
+240   rseq(0xffff5b7ef880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+240   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+240   set_robust_list(0xffff5b7ef240, 24 <unfinished ...>
+237   futex(0xaaab0768ee00, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+240   <... set_robust_list resumed>)    = 0
+240   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+240   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+240   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+240   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+240   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa185a000
+240   mprotect(0xffffa185a000, 4096, PROT_NONE) = 0
+240   sigaltstack({ss_sp=0xffffa185a000, ss_flags=0, ss_size=24576}, NULL) = 0
+240   mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff4c000000
+240   munmap(0xffff50000000, 67108864)  = 0
+240   mprotect(0xffff4c000000, 135168, PROT_READ|PROT_WRITE) = 0
+240   gettid()                          = 240
+240   futex(0xaaab0768ee00, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+240   getpid( <unfinished ...>
+237   futex(0xaaab0768eda8, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+240   <... getpid resumed>)             = 237
+237   <... futex resumed>)              = 0
+240   prctl(PR_SET_NAME, ".NET DebugPipe" <unfinished ...>
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0 <unfinished ...>
+240   <... prctl resumed>)              = 0
+237   <... mmap resumed>)               = 0xffff5a7d0000
+240   openat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-in", O_RDONLY <unfinished ...>
+237   mprotect(0xffff5a7e0000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff5afdf230, parent_tid=0xffff5afdf230, exit_signal=0, stack=0xffff5a7d0000, stack_size=0x80ea20, tls=0xffff5afdf8a0} => {parent_tid=[241]}, 88) = 241
+241   rseq(0xffff5afdf880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+241   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+241   set_robust_list(0xffff5afdf240, 24 <unfinished ...>
+237   futex(0xaaab0768f5b0, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+241   <... set_robust_list resumed>)    = 0
+241   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+241   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+241   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+241   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+241   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa15ca000
+241   mprotect(0xffffa15ca000, 4096, PROT_NONE) = 0
+241   sigaltstack({ss_sp=0xffffa15ca000, ss_flags=0, ss_size=24576}, NULL) = 0
+241   mmap(0xffff50000000, 67108864, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff50000000
+241   mprotect(0xffff50000000, 135168, PROT_READ|PROT_WRITE) = 0
+241   gettid()                          = 241
+241   pipe2([12, 13], O_CLOEXEC)        = 0
+241   futex(0xaaab0768f5b0, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+241   read(12,  <unfinished ...>
+237   futex(0xaaab0768f558, FUTEX_WAKE_PRIVATE, 1) = 0
+237   write(13, "*", 1)                 = 1
+241   <... read resumed>"*", 1)         = 1
+237   openat(AT_FDCWD, "/proc/237/stat", O_RDONLY <unfinished ...>
+241   close(12 <unfinished ...>
+237   <... openat resumed>)             = 14
+241   <... close resumed>)              = 0
+237   fstat(14,  <unfinished ...>
+241   close(13 <unfinished ...>
+237   <... fstat resumed>{st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+241   <... close resumed>)              = 0
+237   read(14,  <unfinished ...>
+241   getpid( <unfinished ...>
+237   <... read resumed>"237 (w) R 234 1 1 0 -1 4194304 4"..., 1024) = 302
+241   <... getpid resumed>)             = 237
+237   close(14 <unfinished ...>
+241   prctl(PR_SET_NAME, ".NET Debugger" <unfinished ...>
+237   <... close resumed>)              = 0
+241   <... prctl resumed>)              = 0
+237   openat(AT_FDCWD, "/dev/shm/sem.clrst000000ed000000000000065d", O_RDWR|O_NOFOLLOW|O_CLOEXEC <unfinished ...>
+241   futex(0xaaab0768f668, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+237   <... openat resumed>)             = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/sys/fs/cgroup//memory.max", O_RDONLY) = 12
+237   fstat(12, {st_mode=S_IFREG|0644, st_size=0, ...}) = 0
+237   read(12, "4294967296\n", 4096)    = 11
+237   close(12)                         = 0
+237   openat(AT_FDCWD, "/sys/fs/cgroup/memory.max", O_RDONLY) = 12
+237   fstat(12, {st_mode=S_IFREG|0644, st_size=0, ...}) = 0
+237   read(12, "4294967296\n", 4096)    = 11
+237   close(12)                         = 0
+237   prlimit64(0, RLIMIT_AS, NULL, {rlim_cur=RLIM64_INFINITY, rlim_max=RLIM64_INFINITY}) = 0
+237   sysinfo({uptime=17, loads=[5248, 1088, 352], totalram=4255531008, freeram=3563405312, sharedram=46116864, bufferram=21905408, totalswap=0, freeswap=0, procs=105, totalhigh=0, freehigh=0, mem_unit=1}) = 0
+237   prlimit64(0, RLIMIT_AS, NULL, {rlim_cur=RLIM64_INFINITY, rlim_max=RLIM64_INFINITY}) = 0
+237   mmap(NULL, 15958245376, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xfffb94d08000
+237   munmap(0xffff4bfff000, 4096)      = 0
+237   madvise(0xfffb94d08000, 15958241280, MADV_DONTDUMP) = 0
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/cpu0/cache/index0/size", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/cpu0/cache/index1/size", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/cpu0/cache/index2/size", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/cpu0/cache/index3/size", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   openat(AT_FDCWD, "/sys/devices/system/cpu/cpu0/cache/index4/size", O_RDONLY) = -1 ENOENT (No such file or directory)
+237   mmap(NULL, 144740352, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xfffb8c2ff000
+237   madvise(0xfffb8c2ff000, 144740352, MADV_DONTDUMP) = 0
+237   mprotect(0xfffb8c2ff000, 40960, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8c2ff000, 40960, MADV_DODUMP) = 0
+237   mprotect(0xfffb8ca6c000, 45056, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8ca6c000, 45056, MADV_DODUMP) = 0
+237   mprotect(0xfffb8d1da000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8d1da000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb8d1db000, 24576, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8d1db000, 24576, MADV_DODUMP) = 0
+237   mprotect(0xfffb8d592000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8d592000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb8d593000, 8192, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb8d593000, 8192, MADV_DODUMP) = 0
+237   mmap(NULL, 823296, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff601f7000
+237   openat(AT_FDCWD, "/sys/fs/cgroup//memory.current", O_RDONLY) = 12
+237   fstat(12, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(12, "419926016\n", 4096)     = 10
+237   close(12)                         = 0
+237   openat(AT_FDCWD, "/sys/fs/cgroup//memory.stat", O_RDONLY) = 12
+237   fstat(12, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(12, "anon 45260800\nfile 366866432\nker"..., 4096) = 949
+237   close(12)                         = 0
+237   mprotect(0xfffb97000000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97000000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb97400000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97400000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb97800000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97800000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb97c00000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97c00000, 4096, MADV_DODUMP) = 0
+237   mprotect(0xfffb95000000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb95000000, 4096, MADV_DODUMP) = 0
+237   mmap(NULL, 151552, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff601d2000
+237   mprotect(0xffff602c1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xffff602c1000, 4096, MADV_DODUMP) = 0
+237   openat(AT_FDCWD, "/proc/self/maps", O_RDONLY|O_CLOEXEC) = 12
+237   prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+237   fstat(12, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(12, "aaaacf8f0000-aaaacf8f7000 r--p 0"..., 1024) = 1024
+237   read(12, "-fffb97401000 rw-p 00000000 00:0"..., 1024) = 1024
+237   read(12, "d0000-ffff602e0000 ---p 00000000"..., 1024) = 1024
+237   read(12, "lr.so\nffffa0bc7000-ffffa0bc8000 "..., 1024) = 1024
+237   read(12, "0 rw-p 0065e000 fe:10 5378      "..., 1024) = 1024
+237   read(12, "ostpolicy.so\nffffa1298000-ffffa1"..., 1024) = 1024
+237   read(12, "-ffffa14ba000 r-xp 00000000 fe:1"..., 1024) = 1024
+237   read(12, "inux-gnu/libm.so.6\nffffa15a5000-"..., 1024) = 1024
+237   read(12, "\nffffa185b000-ffffa1860000 rw-p "..., 1024) = 1024
+237   read(12, "ib/aarch64-linux-gnu/libdl.so.2\n"..., 1024) = 1024
+237   read(12, "000-ffffd1d15000 rw-p 00000000 0"..., 1024) = 72
+237   close(12)                         = 0
+237   sched_getaffinity(237, 32, [0 1 2 3 4]) = 32
+237   openat(AT_FDCWD, "/proc/self/maps", O_RDONLY|O_CLOEXEC) = 12
+237   prlimit64(0, RLIMIT_STACK, NULL, {rlim_cur=8192*1024, rlim_max=RLIM64_INFINITY}) = 0
+237   fstat(12, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(12, "aaaacf8f0000-aaaacf8f7000 r--p 0"..., 1024) = 1024
+237   read(12, "-fffb97401000 rw-p 00000000 00:0"..., 1024) = 1024
+237   read(12, "d0000-ffff602e0000 ---p 00000000"..., 1024) = 1024
+237   read(12, "lr.so\nffffa0bc7000-ffffa0bc8000 "..., 1024) = 1024
+237   read(12, "0 rw-p 0065e000 fe:10 5378      "..., 1024) = 1024
+237   read(12, "ostpolicy.so\nffffa1298000-ffffa1"..., 1024) = 1024
+237   read(12, "-ffffa14ba000 r-xp 00000000 fe:1"..., 1024) = 1024
+237   read(12, "inux-gnu/libm.so.6\nffffa15a5000-"..., 1024) = 1024
+237   read(12, "\nffffa185b000-ffffa1860000 rw-p "..., 1024) = 1024
+237   read(12, "ib/aarch64-linux-gnu/libdl.so.2\n"..., 1024) = 1024
+237   read(12, "000-ffffd1d15000 rw-p 00000000 0"..., 1024) = 72
+237   close(12)                         = 0
+237   sched_getaffinity(237, 32, [0 1 2 3 4]) = 32
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffff59fc0000
+237   mprotect(0xffff59fd0000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff5a7cf230, parent_tid=0xffff5a7cf230, exit_signal=0, stack=0xffff59fc0000, stack_size=0x80ea20, tls=0xffff5a7cf8a0} => {parent_tid=[242]}, 88) = 242
+242   rseq(0xffff5a7cf880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+242   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+242   set_robust_list(0xffff5a7cf240, 24 <unfinished ...>
+237   futex(0xaaab0769bc00, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+242   <... set_robust_list resumed>)    = 0
+242   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+242   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+242   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+242   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+242   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa15c4000
+242   mprotect(0xffffa15c4000, 4096, PROT_NONE) = 0
+242   sigaltstack({ss_sp=0xffffa15c4000, ss_flags=0, ss_size=24576}, NULL) = 0
+242   mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xfffb842ff000
+242   munmap(0xfffb842ff000, 63967232)  = 0
+242   munmap(0xfffb8c000000, 3141632)   = 0
+242   mprotect(0xfffb88000000, 135168, PROT_READ|PROT_WRITE) = 0
+242   gettid()                          = 242
+242   pipe2([12, 13], O_CLOEXEC)        = 0
+242   futex(0xaaab0769bc00, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+237   <... futex resumed>)              = 0
+242   <... futex resumed>)              = 1
+237   futex(0xaaab0769bba8, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+242   futex(0xaaab0769bba8, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+237   <... futex resumed>)              = -1 EAGAIN (Resource temporarily unavailable)
+242   <... futex resumed>)              = 0
+237   futex(0xaaab0769bba8, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+242   read(12,  <unfinished ...>
+237   <... futex resumed>)              = 0
+237   getpid()                          = 237
+237   openat(AT_FDCWD, "/proc/self/task/242/comm", O_RDWR) = 14
+237   write(14, ".NET Finalizer", 14)   = 14
+237   close(14)                         = 0
+237   write(13, "*", 1)                 = 1
+242   <... read resumed>"*", 1)         = 1
+237   readlinkat(AT_FDCWD, "/usr",  <unfinished ...>
+242   close(12 <unfinished ...>
+237   <... readlinkat resumed>0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+242   <... close resumed>)              = 0
+237   readlinkat(AT_FDCWD, "/usr/share",  <unfinished ...>
+242   close(13 <unfinished ...>
+237   <... readlinkat resumed>0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+242   <... close resumed>)              = 0
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet",  <unfinished ...>
+242   sched_getaffinity(242, 32,  <unfinished ...>
+237   <... readlinkat resumed>0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+242   <... sched_getaffinity resumed>[0 1 2 3 4]) = 32
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared",  <unfinished ...>
+242   sched_getaffinity(242, 32,  <unfinished ...>
+237   <... readlinkat resumed>0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+242   <... sched_getaffinity resumed>[0 1 2 3 4]) = 32
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App",  <unfinished ...>
+242   futex(0xaaab0769bcb8, FUTEX_WAIT_BITSET_PRIVATE, 0, {tv_sec=18, tv_nsec=390633049}, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+237   <... readlinkat resumed>0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d116d0, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Private.CoreLib.dll", {st_mode=S_IFREG|0644, st_size=17080104, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Private.CoreLib.dll", O_RDONLY) = 12
+237   fcntl(12, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(12, {st_mode=S_IFREG|0644, st_size=17080104, ...}) = 0
+237   fcntl(12, F_DUPFD_CLOEXEC, 0)     = 13
+237   fstat(13, {st_mode=S_IFREG|0644, st_size=17080104, ...}) = 0
+237   mmap(NULL, 17080104, PROT_READ, MAP_SHARED, 13, 0) = 0xffff58f76000
+237   pread64(12, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(12, "PE\0\0\35\321\3\0\265<\332\317\0\0\0\0\0\0\0\0\360\0\" \v\2\v\0\0\250\320\0"..., 264, 128) = 264
+237   mmap(0xffff60b50000, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 12, 0) = 0xffff60b50000
+237   mmap(0xffff60b60000, 13675008, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED, 12, 0) = 0xffff60b60000
+237   mmap(0xffff6188a000, 3353600, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 12, 0xd0a000) = 0xffff6188a000
+237   mmap(0xffff61bdc000, 47104, PROT_READ, MAP_PRIVATE|MAP_FIXED, 12, 0x103c000) = 0xffff61bdc000
+237   mprotect(0xffff60b60000, 13676544, PROT_READ|PROT_WRITE|PROT_EXEC) = 0
+237   madvise(0xffff60b60000, 13676544, MADV_DODUMP) = 0
+237   mprotect(0xffff60b60000, 13676544, PROT_READ|PROT_EXEC) = 0
+237   madvise(0xffff60b60000, 13676544, MADV_DODUMP) = 0
+237   mprotect(0xffff60b34000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61bf0000, 589824, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x21000) = 0xffff61bf0000
+237   mprotect(0xffff61bf0000, 528384, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c71000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c72000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61c80000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0xb1000) = 0xffff61c80000
+237   mprotect(0xffff61c84000, 16384, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c80000, 16384, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 16384, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0xb1000) = 0xffffa1881000
+237   munmap(0xffffa1881000, 16384)     = 0
+237   mmap(0xffff61c90000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0xc1000) = 0xffff61c90000
+237   mprotect(0xffff61c94000, 16384, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c90000, 16384, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 16384, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0xc1000) = 0xffffa1881000
+237   munmap(0xffffa1881000, 16384)     = 0
+237   mprotect(0xffff60b35000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b36000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab076d0000)               = 0xaaab076d0000
+237   mprotect(0xffff60b37000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b38000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab076c9000)               = 0xaaab076c9000
+237   brk(0xaaab076c7000)               = 0xaaab076c7000
+237   brk(0xaaab076c5000)               = 0xaaab076c5000
+237   mprotect(0xffff61c73000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b39000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b3a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61ca0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0xd1000) = 0xffff61ca0000
+237   mprotect(0xffff61ca0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c74000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c75000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ca9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61caa000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c76000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cab000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cac000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cad000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cae000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61caf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61cb0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0xe1000) = 0xffff61cb0000
+237   mprotect(0xffff61cb0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c77000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cb9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cba000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cbb000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cbc000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c78000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cbd000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cbe000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cbf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61cc0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0xf1000) = 0xffff61cc0000
+237   mprotect(0xffff61cc0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c79000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cc9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cca000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ccb000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xfffb95001000, 65536, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb95001000, 65536, MADV_DODUMP) = 0
+237   mprotect(0xffff61c7a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ccc000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ccd000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cce000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ccf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61cd0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x101000) = 0xffff61cd0000
+237   mprotect(0xffff61cd0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c7b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c7c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b3b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(NULL, 4194304, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffff58b76000
+237   madvise(0xffff58b76000, 4194304, MADV_DONTDUMP) = 0
+237   mprotect(0xffff58b76000, 65536, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xffff58b76000, 65536, MADV_DODUMP) = 0
+237   mmap(NULL, 65536, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa1210000
+237   mprotect(0xffffa1210000, 65536, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cd9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cda000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c7d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cdb000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cdc000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffff58366000
+237   mprotect(0xffff58376000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xffff58b75230, parent_tid=0xffff58b75230, exit_signal=0, stack=0xffff58366000, stack_size=0x80ea20, tls=0xffff58b758a0} => {parent_tid=[243]}, 88) = 243
+243   rseq(0xffff58b75880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+243   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+243   set_robust_list(0xffff58b75240, 24 <unfinished ...>
+237   futex(0xaaab076a1210, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+243   <... set_robust_list resumed>)    = 0
+243   rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+243   sched_getaffinity(237, 128, [0 1 2 3 4]) = 32
+243   sched_setaffinity(0, 128, [0 1 2 3 4]) = 0
+243   sigaltstack(NULL, {ss_sp=NULL, ss_flags=SS_DISABLE, ss_size=0}) = 0
+243   mmap(NULL, 24576, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xffffa151a000
+243   mprotect(0xffffa151a000, 4096, PROT_NONE) = 0
+243   sigaltstack({ss_sp=0xffffa151a000, ss_flags=0, ss_size=24576}, NULL) = 0
+243   mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xfffb80000000
+243   munmap(0xfffb84000000, 67108864)  = 0
+243   mprotect(0xfffb80000000, 135168, PROT_READ|PROT_WRITE) = 0
+243   gettid()                          = 243
+243   pipe2([14, 15], O_CLOEXEC)        = 0
+243   futex(0xaaab076a1210, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+243   read(14,  <unfinished ...>
+237   futex(0xaaab076a11b8, FUTEX_WAKE_PRIVATE, 1) = 0
+237   getpid()                          = 237
+237   openat(AT_FDCWD, "/proc/self/task/243/comm", O_RDWR) = 16
+237   write(16, ".NET Tiered Com", 15)  = 15
+237   close(16)                         = 0
+237   write(15, "*", 1)                 = 1
+243   <... read resumed>"*", 1)         = 1
+237   mmap(0xffff61ce0000, 524288, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x111000 <unfinished ...>
+243   close(14 <unfinished ...>
+237   <... mmap resumed>)               = 0xffff61ce0000
+243   <... close resumed>)              = 0
+237   mprotect(0xffff61ce0000, 4096, PROT_READ|PROT_EXEC <unfinished ...>
+243   close(15 <unfinished ...>
+237   <... mprotect resumed>)           = 0
+243   <... close resumed>)              = 0
+237   mprotect(0xffff61c7e000, 8192, PROT_READ|PROT_WRITE <unfinished ...>
+243   sched_getaffinity(243, 32,  <unfinished ...>
+237   <... mprotect resumed>)           = 0
+243   <... sched_getaffinity resumed>[0 1 2 3 4]) = 32
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x111000 <unfinished ...>
+243   sched_getaffinity(243, 32,  <unfinished ...>
+237   <... mmap resumed>)               = 0xffffa18e0000
+243   <... sched_getaffinity resumed>[0 1 2 3 4]) = 32
+243   futex(0xaaab076a12c8, FUTEX_WAIT_BITSET_PRIVATE, 0, {tv_sec=16, tv_nsec=518403132}, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+237   mprotect(0xffff61cdd000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b30000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cde000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b31000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61cdf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61d60000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x191000) = 0xffff61d60000
+237   mprotect(0xffff61d60000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b32000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d61000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d62000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xfffb97801000, 65536, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97801000, 65536, MADV_DODUMP) = 0
+237   mprotect(0xffff61d63000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d64000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d65000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b40000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ce1000, 4096, PROT_READ|PROT_EXEC) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libSystem.Native.so", O_RDONLY|O_CLOEXEC) = 14
+237   read(14, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(14, {st_mode=S_IFREG|0755, st_size=97440, ...}) = 0
+237   mmap(NULL, 357666, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xffff6017a000
+237   mmap(0xffff60180000, 292130, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 14, 0) = 0xffff60180000
+237   munmap(0xffff6017a000, 24576)     = 0
+237   munmap(0xffff601c8000, 38178)     = 0
+237   mprotect(0xffff6018b000, 245760, PROT_NONE) = 0
+237   mmap(0xffff6019a000, 53248, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 14, 0xa000) = 0xffff6019a000
+237   mmap(0xffff601b6000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 14, 0x16000) = 0xffff601b6000
+237   mmap(0xffff601c7000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 14, 0x17000) = 0xffff601c7000
+237   close(14)                         = 0
+237   mprotect(0xffff601b6000, 8192, PROT_READ) = 0
+237   mprotect(0xffff61d66000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61d70000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1a1000) = 0xffff61d70000
+237   mprotect(0xffff61d70000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d67000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d68000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d69000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d6a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d6b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d71000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d6c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x112000) = 0xffffa18b2000
+237   mprotect(0xffff61d6d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab076e8000)               = 0xaaab076e8000
+237   mprotect(0xffff61d6e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab076e0000)               = 0xaaab076e0000
+237   brk(0xaaab076de000)               = 0xaaab076de000
+237   brk(0xaaab076dc000)               = 0xaaab076dc000
+237   mprotect(0xffff61d6f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61d80000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1b1000) = 0xffff61d80000
+237   mprotect(0xffff61d80000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d81000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d72000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d82000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d83000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d84000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d85000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d86000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d87000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d73000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d88000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d89000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d74000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d8f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61d90000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1c1000) = 0xffff61d90000
+237   mprotect(0xffff61d90000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff60b3d000, 4096, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0xe000) = 0xffffa18b1000
+237   munmap(0xffffa18ee000, 4096)      = 0
+237   mprotect(0xffff61d91000, 4096, PROT_READ|PROT_WRITE) = 0
+237   faccessat(AT_FDCWD, "", F_OK)     = -1 ENOENT (No such file or directory)
+237   faccessat(AT_FDCWD, "opt/corebreadcrumbs", F_OK) = -1 ENOENT (No such file or directory)
+237   readlinkat(AT_FDCWD, "/tmp", 0xffffd1d127f0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w", 0xffffd1d127f0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/tmp/w/out", 0xffffd1d127f0, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/tmp/w/out/w.dll", {st_mode=S_IFREG|0644, st_size=6144, ...}, 0) = 0
+237   openat(AT_FDCWD, "/tmp/w/out/w.dll", O_RDONLY) = 14
+237   fcntl(14, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(14, {st_mode=S_IFREG|0644, st_size=6144, ...}) = 0
+237   fcntl(14, F_DUPFD_CLOEXEC, 0)     = 15
+237   fstat(15, {st_mode=S_IFREG|0644, st_size=6144, ...}) = 0
+237   mmap(NULL, 6144, PROT_READ, MAP_SHARED, 15, 0) = 0xffffa1883000
+237   pread64(14, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(14, "PE\0\0L\1\3\0\235\f\272\276\0\0\0\0\0\0\0\0\340\0\"\0\v\0010\0\0\16\0\0"..., 264, 128) = 264
+237   mprotect(0xffff61d75000, 8192, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d92000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d93000, 4096, PROT_READ|PROT_WRITE) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d0e320, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Runtime.dll", {st_mode=S_IFREG|0644, st_size=44880, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Runtime.dll", O_RDONLY) = 16
+237   fcntl(16, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(16, {st_mode=S_IFREG|0644, st_size=44880, ...}) = 0
+237   fcntl(16, F_DUPFD_CLOEXEC, 0)     = 17
+237   fstat(17, {st_mode=S_IFREG|0644, st_size=44880, ...}) = 0
+237   mmap(NULL, 44880, PROT_READ, MAP_SHARED, 17, 0) = 0xffffa0b05000
+237   pread64(16, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(16, "PE\0\0L\1\3\0=S{\220\0\0\0\0\0\0\0\0\340\0\"!\v\0010\0\0~\0\0"..., 264, 128) = 264
+237   mprotect(0xffff61d77000, 8192, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d79000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d7f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61da0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1d1000) = 0xffff61da0000
+237   mprotect(0xffff61da0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/libclrjit.so", O_RDONLY|O_CLOEXEC) = 18
+237   read(18, "\177ELF\2\1\1\0\0\0\0\0\0\0\0\0\3\0\267\0\1\0\0\0\0\0\0\0\0\0\0\0"..., 832) = 832
+237   fstat(18, {st_mode=S_IFREG|0755, st_size=3783032, ...}) = 0
+237   mmap(NULL, 4271349, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_DENYWRITE, -1, 0) = 0xfffb87bed000
+237   mmap(0xfffb87bf0000, 4205813, PROT_READ, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 18, 0) = 0xfffb87bf0000
+237   munmap(0xfffb87bed000, 12288)     = 0
+237   munmap(0xfffb87ff3000, 52469)     = 0
+237   mprotect(0xfffb87c71000, 3444736, PROT_NONE) = 0
+237   mmap(0xfffb87c80000, 3174400, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 18, 0x80000) = 0xfffb87c80000
+237   mmap(0xfffb87f96000, 86016, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 18, 0x386000) = 0xfffb87f96000
+237   mmap(0xfffb87fba000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_DENYWRITE, 18, 0x39a000) = 0xfffb87fba000
+237   mmap(0xfffb87fbb000, 228597, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, -1, 0) = 0xfffb87fbb000
+237   close(18)                         = 0
+237   mprotect(0xfffb87f96000, 86016, PROT_READ) = 0
+237   getpid()                          = 237
+237   getsid(237)                       = 1
+237   statfs("/sys/fs/cgroup", {f_type=CGROUP2_SUPER_MAGIC, f_bsize=4096, f_blocks=0, f_bfree=0, f_bavail=0, f_files=0, f_ffree=0, f_fsid={val=[0x456e7525, 0x1b533656]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_NODEV|ST_NOEXEC|ST_RELATIME}) = 0
+237   openat(AT_FDCWD, "/proc/self/mountinfo", O_RDONLY) = 18
+237   fstat(18, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(18, "46 33 254:16 / / rw,relatime - e"..., 1024) = 1024
+237   read(18, "38 47 0:29 /fs /proc/fs ro,relat"..., 1024) = 157
+237   read(18, "", 1024)                = 0
+237   close(18)                         = 0
+237   openat(AT_FDCWD, "/proc/self/cgroup", O_RDONLY) = 18
+237   fstat(18, {st_mode=S_IFREG|0444, st_size=0, ...}) = 0
+237   read(18, "0::/\n", 1024)          = 5
+237   close(18)                         = 0
+237   prlimit64(0, RLIMIT_NOFILE, NULL, {rlim_cur=1024*1024, rlim_max=1024*1024}) = 0
+237   prlimit64(0, RLIMIT_NOFILE, {rlim_cur=1024*1024, rlim_max=1024*1024}, NULL) = 0
+237   gettid()                          = 237
+237   pipe2([18, 19], O_CLOEXEC)        = 0
+237   rt_sigaction(SIGPIPE, {sa_handler=SIG_IGN, sa_mask=[PIPE], sa_flags=SA_RESTART}, {sa_handler=SIG_IGN, sa_mask=[PIPE], sa_flags=SA_RESTART}, 8) = 0
+237   mprotect(0xffff61d94000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d95000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d96000, 4096, PROT_READ|PROT_WRITE) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d0cda0, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Console.dll", {st_mode=S_IFREG|0644, st_size=226600, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Console.dll", O_RDONLY) = 20
+237   fcntl(20, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(20, {st_mode=S_IFREG|0644, st_size=226600, ...}) = 0
+237   fcntl(20, F_DUPFD_CLOEXEC, 0)     = 21
+237   fstat(21, {st_mode=S_IFREG|0644, st_size=226600, ...}) = 0
+237   mmap(NULL, 226600, PROT_READ, MAP_SHARED, 21, 0) = 0xffff60148000
+237   pread64(20, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(20, "PE\0\0\35\321\3\0\7\245\23\367\0\0\0\0\0\0\0\0\360\0\" \v\2\v\0\0\300\2\0"..., 264, 128) = 264
+237   mmap(0xffff61db0000, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 20, 0) = 0xffff61db0000
+237   mmap(0xffff61dc0000, 180736, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED, 20, 0) = 0xffff61dc0000
+237   mmap(0xffff61e0c000, 34816, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 20, 0x2c000) = 0xffff61e0c000
+237   mmap(0xffff61e34000, 3584, PROT_READ, MAP_PRIVATE|MAP_FIXED, 20, 0x34000) = 0xffff61e34000
+237   mprotect(0xffff61dc0000, 184320, PROT_READ|PROT_WRITE|PROT_EXEC) = 0
+237   madvise(0xffff61dc0000, 184320, MADV_DODUMP) = 0
+237   mprotect(0xffff61dc0000, 184320, PROT_READ|PROT_EXEC) = 0
+237   madvise(0xffff61dc0000, 184320, MADV_DODUMP) = 0
+237   mprotect(0xffff61d97000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da1000, 12288, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d98000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d99000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07700000)               = 0xaaab07700000
+237   mprotect(0xffff61ce2000, 4096, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x113000) = 0xffffa18ee000
+237   munmap(0xffffa18b1000, 4096)      = 0
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x112000) = 0xffffa1881000
+237   munmap(0xffffa18b2000, 4096)      = 0
+237   mprotect(0xffff61da4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d9a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d9b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d9c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c9c000, 16384, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61c98000, 16384, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 16384, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0xc9000) = 0xffffa1516000
+237   munmap(0xffffa1516000, 16384)     = 0
+237   mprotect(0xffff61d9d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d9e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61d9f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61e40000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1e1000) = 0xffff61e40000
+237   mprotect(0xffff61e40000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e41000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e42000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e43000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e44000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e45000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e46000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e47000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e48000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e49000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07721000)               = 0xaaab07721000
+237   mprotect(0xffff61e4a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e4b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab0771f000)               = 0xaaab0771f000
+237   mprotect(0xffff61e4c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e4d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab0771b000)               = 0xaaab0771b000
+237   brk(0xaaab07714000)               = 0xaaab07714000
+237   brk(0xaaab07712000)               = 0xaaab07712000
+237   brk(0xaaab07710000)               = 0xaaab07710000
+237   mprotect(0xffff61e4e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e4f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61e50000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x1f1000) = 0xffff61e50000
+237   mprotect(0xffff61e50000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e51000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e52000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e53000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e54000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e55000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e56000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e57000, 4096, PROT_READ|PROT_WRITE) = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-exists", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   mprotect(0xffff61e58000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e59000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e5a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e5b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e5c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e5d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   brk(0xaaab07732000)               = 0xaaab07732000
+237   mprotect(0xffff61e5e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e5f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61e60000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x201000) = 0xffff61e60000
+237   mprotect(0xffff61e60000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e61000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e62000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e63000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e64000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e65000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e66000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07730000)               = 0xaaab07730000
+237   brk(0xaaab0772e000)               = 0xaaab0772e000
+237   brk(0xaaab0772c000)               = 0xaaab0772c000
+237   brk(0xaaab0772a000)               = 0xaaab0772a000
+237   brk(0xaaab07728000)               = 0xaaab07728000
+237   brk(0xaaab07726000)               = 0xaaab07726000
+237   brk(0xaaab07724000)               = 0xaaab07724000
+237   brk(0xaaab07722000)               = 0xaaab07722000
+237   brk(0xaaab07720000)               = 0xaaab07720000
+237   brk(0xaaab0771e000)               = 0xaaab0771e000
+237   brk(0xaaab0771c000)               = 0xaaab0771c000
+237   brk(0xaaab0771a000)               = 0xaaab0771a000
+237   brk(0xaaab07718000)               = 0xaaab07718000
+237   brk(0xaaab07710000)               = 0xaaab07710000
+237   mprotect(0xffff61e67000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e68000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e69000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e6a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e6b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e6c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07732000)               = 0xaaab07732000
+237   mprotect(0xffff61e6d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e6e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07730000)               = 0xaaab07730000
+237   brk(0xaaab0772c000)               = 0xaaab0772c000
+237   brk(0xaaab07726000)               = 0xaaab07726000
+237   brk(0xaaab07724000)               = 0xaaab07724000
+237   mprotect(0xffff61e6f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07720000)               = 0xaaab07720000
+237   brk(0xaaab07719000)               = 0xaaab07719000
+237   brk(0xaaab07716000)               = 0xaaab07716000
+237   mmap(0xffff61e70000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x211000) = 0xffff61e70000
+237   mprotect(0xffff61e70000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e71000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e72000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e73000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e74000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e75000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07739000)               = 0xaaab07739000
+237   mprotect(0xffff61e76000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e77000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e78000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab07732000)               = 0xaaab07732000
+237   brk(0xaaab07730000)               = 0xaaab07730000
+237   mprotect(0xffff61e79000, 4096, PROT_READ|PROT_WRITE) = 0
+237   brk(0xaaab0772c000)               = 0xaaab0772c000
+237   brk(0xaaab07726000)               = 0xaaab07726000
+237   brk(0xaaab07724000)               = 0xaaab07724000
+237   brk(0xaaab07720000)               = 0xaaab07720000
+237   brk(0xaaab07719000)               = 0xaaab07719000
+237   brk(0xaaab07716000)               = 0xaaab07716000
+237   mprotect(0xffff61e7a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e7b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e7c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e7d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e7e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0xe000) = 0xffffa18b2000
+237   munmap(0xffffa18ee000, 4096)      = 0
+237   mprotect(0xffff61e7f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61e80000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x221000) = 0xffff61e80000
+237   mprotect(0xffff61e80000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e81000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61da9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e82000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e83000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e84000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e85000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e86000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e87000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e88000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61daa000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e89000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e8a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e8b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e8c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e8d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61dab000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e8e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ce3000, 4096, PROT_READ|PROT_EXEC) = 0
+237   mprotect(0xffff61e8f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(0xffff61e90000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x231000) = 0xffff61e90000
+237   mprotect(0xffff61e90000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e91000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e92000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e93000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e94000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61dac000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e95000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61dad000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61dae000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e96000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e97000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61daf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e98000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e99000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9b000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18ee000
+237   mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0xffffa18b1000
+237   pipe2([22, 23], O_NONBLOCK|O_CLOEXEC) = 0
+237   futex(0xffffa120ba94, FUTEX_WAKE_PRIVATE, 2147483647) = 0
+237   msync(0xffffa0fa8000, 8, MS_ASYNC) = 0
+237   read(22, 0xffffd1d11977, 1)       = -1 EAGAIN (Resource temporarily unavailable)
+237   write(23, "\340", 1)              = 1
+237   newfstatat(AT_FDCWD, "/dev/null", {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}, AT_SYMLINK_NOFOLLOW) = 0
+237   mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x113000) = 0xffffa1858000
+237   munmap(0xffffa18b2000, 4096)      = 0
+237   mmap(0xffff61ea0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x241000) = 0xffff61ea0000
+237   mprotect(0xffff61ea4000, 16384, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61ea0000, 16384, PROT_READ|PROT_EXEC) = 0
+237   mmap(NULL, 16384, PROT_READ|PROT_WRITE, MAP_SHARED, 8, 0x241000) = 0xffffa1516000
+237   munmap(0xffffa1516000, 16384)     = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d10680, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Threading.dll", {st_mode=S_IFREG|0644, st_size=80680, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Threading.dll", O_RDONLY) = 24
+237   fcntl(24, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(24, {st_mode=S_IFREG|0644, st_size=80680, ...}) = 0
+237   fcntl(24, F_DUPFD_CLOEXEC, 0)     = 25
+237   fstat(25, {st_mode=S_IFREG|0644, st_size=80680, ...}) = 0
+237   mmap(NULL, 80680, PROT_READ, MAP_SHARED, 25, 0) = 0xffff60134000
+237   pread64(24, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(24, "PE\0\0\35\321\3\0\35\372M\271\0\0\0\0\0\0\0\0\360\0\" \v\2\v\0\0\344\0\0"..., 264, 128) = 264
+237   mmap(0xffff61eb0000, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 24, 0) = 0xffff61eb0000
+237   mmap(0xffff61ec0000, 58880, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED, 24, 0) = 0xffff61ec0000
+237   mmap(0xffff61eee000, 12800, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 24, 0xe000) = 0xffff61eee000
+237   mmap(0xffff61f11000, 1024, PROT_READ, MAP_PRIVATE|MAP_FIXED, 24, 0x11000) = 0xffff61f11000
+237   mprotect(0xffff61ec0000, 61440, PROT_READ|PROT_WRITE|PROT_EXEC) = 0
+237   madvise(0xffff61ec0000, 61440, MADV_DODUMP) = 0
+237   mprotect(0xffff61ec0000, 61440, PROT_READ|PROT_EXEC) = 0
+237   madvise(0xffff61ec0000, 61440, MADV_DODUMP) = 0
+237   mmap(0xffff61f20000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x251000) = 0xffff61f20000
+237   mprotect(0xffff61f20000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9c000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f21000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9d000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9e000, 4096, PROT_READ|PROT_WRITE) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d10570, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Runtime.InteropServices.dll", {st_mode=S_IFREG|0644, st_size=111400, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/System.Runtime.InteropServices.dll", O_RDONLY) = 26
+237   fcntl(26, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(26, {st_mode=S_IFREG|0644, st_size=111400, ...}) = 0
+237   fcntl(26, F_DUPFD_CLOEXEC, 0)     = 27
+237   fstat(27, {st_mode=S_IFREG|0644, st_size=111400, ...}) = 0
+237   mmap(NULL, 111400, PROT_READ, MAP_SHARED, 27, 0) = 0xffff60118000
+237   pread64(26, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(26, "PE\0\0\35\321\3\0\\\335\334\234\0\0\0\0\0\0\0\0\360\0\" \v\2\v\0\0F\1\0"..., 264, 128) = 264
+237   mmap(0xffff61f30000, 4096, PROT_READ, MAP_PRIVATE|MAP_FIXED, 26, 0) = 0xffff61f30000
+237   mmap(0xffff61f40000, 83968, PROT_READ|PROT_EXEC, MAP_PRIVATE|MAP_FIXED, 26, 0) = 0xffff61f40000
+237   mmap(0xffff61f74000, 18432, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 26, 0x14000) = 0xffff61f74000
+237   mmap(0xffff61f98000, 3072, PROT_READ, MAP_PRIVATE|MAP_FIXED, 26, 0x18000) = 0xffff61f98000
+237   mprotect(0xffff61f40000, 86016, PROT_READ|PROT_WRITE|PROT_EXEC) = 0
+237   madvise(0xffff61f40000, 86016, MADV_DODUMP) = 0
+237   mprotect(0xffff61f40000, 86016, PROT_READ|PROT_EXEC) = 0
+237   madvise(0xffff61f40000, 86016, MADV_DODUMP) = 0
+237   mprotect(0xffff61f22000, 8192, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61e9f000, 4096, PROT_READ|PROT_WRITE) = 0
+237   fcntl(1, F_DUPFD_CLOEXEC, 0)      = 28
+237   mmap(0xffff61fa0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x261000) = 0xffff61fa0000
+237   mprotect(0xffff61fa0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f24000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f25000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa7000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa8000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fa9000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61faa000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fab000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fac000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fad000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f26000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fae000, 4096, PROT_READ|PROT_WRITE) = 0
+237   readlinkat(AT_FDCWD, "/usr", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   readlinkat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11", 0xffffd1d0f6b0, 1023) = -1 EINVAL (Invalid argument)
+237   newfstatat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.Win32.Primitives.dll", {st_mode=S_IFREG|0644, st_size=15696, ...}, 0) = 0
+237   openat(AT_FDCWD, "/usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.11/Microsoft.Win32.Primitives.dll", O_RDONLY) = 29
+237   fcntl(29, F_SETFD, FD_CLOEXEC)    = 0
+237   fstat(29, {st_mode=S_IFREG|0644, st_size=15696, ...}) = 0
+237   fcntl(29, F_DUPFD_CLOEXEC, 0)     = 30
+237   fstat(30, {st_mode=S_IFREG|0644, st_size=15696, ...}) = 0
+237   mmap(NULL, 15696, PROT_READ, MAP_SHARED, 30, 0) = 0xffffa1516000
+237   pread64(29, "MZ\220\0\3\0\0\0\4\0\0\0\377\377\0\0\270\0\0\0\0\0\0\0@\0\0\0\0\0\0\0"..., 64, 0) = 64
+237   pread64(29, "PE\0\0L\1\3\0\2405\204\346\0\0\0\0\0\0\0\0\340\0\"!\v\0010\0\0\f\0\0"..., 264, 128) = 264
+237   mprotect(0xffff61f27000, 8192, PROT_READ|PROT_WRITE) = 0
+237   ioctl(0, TCGETS, 0xffffd1d12680)  = -1 ENOTTY (Inappropriate ioctl for device)
+237   getpid()                          = 237
+237   pipe2([31, 32], O_CLOEXEC)        = 0
+237   mmap(NULL, 8454144, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0xfffb873e0000
+237   mprotect(0xfffb873f0000, 8388608, PROT_READ|PROT_WRITE) = 0
+237   rt_sigprocmask(SIG_BLOCK, ~[], [], 8) = 0
+237   clone3({flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID, child_tid=0xfffb87bef230, parent_tid=0xfffb87bef230, exit_signal=0, stack=0xfffb873e0000, stack_size=0x80ea20, tls=0xfffb87bef8a0} => {parent_tid=[244]}, 88) = 244
+244   rseq(0xfffb87bef880, 0x20, 0, 0xd428bc00 <unfinished ...>
+237   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+244   <... rseq resumed>)               = 0
+237   <... rt_sigprocmask resumed>NULL, 8) = 0
+244   set_robust_list(0xfffb87bef240, 24 <unfinished ...>
+237   rt_sigaction(SIGINT, NULL,  <unfinished ...>
+244   <... set_robust_list resumed>)    = 0
+237   <... rt_sigaction resumed>{sa_handler=0xffffa10f9ec4, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, 8) = 0
+244   rt_sigprocmask(SIG_SETMASK, [],  <unfinished ...>
+237   rt_sigaction(SIGINT, {sa_handler=0xffff601a3fe0, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO},  <unfinished ...>
+244   <... rt_sigprocmask resumed>NULL, 8) = 0
+237   <... rt_sigaction resumed>{sa_handler=0xffffa10f9ec4, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, 8) = 0
+244   mmap(0xfffb84000000, 67108864, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0 <unfinished ...>
+237   rt_sigaction(SIGQUIT, NULL,  <unfinished ...>
+244   <... mmap resumed>)               = 0xfffb7c000000
+237   <... rt_sigaction resumed>{sa_handler=0xffffa10f9f0c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, 8) = 0
+244   mprotect(0xfffb7c000000, 135168, PROT_READ|PROT_WRITE <unfinished ...>
+237   rt_sigaction(SIGQUIT, {sa_handler=0xffff601a3fe0, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO},  <unfinished ...>
+244   <... mprotect resumed>)           = 0
+237   <... rt_sigaction resumed>{sa_handler=0xffffa10f9f0c, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, 8) = 0
+244   prctl(PR_SET_NAME, ".NET SigHandler"... <unfinished ...>
+237   rt_sigaction(SIGCONT, NULL,  <unfinished ...>
+244   <... prctl resumed>)              = 0
+237   <... rt_sigaction resumed>{sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+244   read(31,  <unfinished ...>
+237   rt_sigaction(SIGCONT, {sa_handler=0xffff601a3fe0, sa_mask=[], sa_flags=SA_RESTART|SA_SIGINFO}, {sa_handler=SIG_DFL, sa_mask=[], sa_flags=0}, 8) = 0
+237   mprotect(0xffff61faf000, 4096, PROT_READ|PROT_WRITE) = 0
+237   ioctl(1, TCGETS, 0xffffd1d125e0)  = -1 ENOTTY (Inappropriate ioctl for device)
+237   ioctl(0, TCGETS, 0xffffd1d125e0)  = -1 ENOTTY (Inappropriate ioctl for device)
+237   write(28, "True", 4)              = 4
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-length", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   mmap(0xffff61fb0000, 65536, PROT_NONE, MAP_SHARED|MAP_FIXED, 8, 0x271000) = 0xffff61fb0000
+237   mprotect(0xffff61fb0000, 4096, PROT_READ|PROT_WRITE) = 0
+237   newfstatat(AT_FDCWD, "/dev/urandom", {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x9), ...}, AT_SYMLINK_NOFOLLOW) = 0
+237   mprotect(0xffff61fb1000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f29000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fb2000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61f2a000, 4096, PROT_READ|PROT_WRITE) = 0
+237   mprotect(0xffff61fb3000, 4096, PROT_READ|PROT_WRITE) = 0
+237   write(28, "0", 1)                 = 1
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-openread", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   openat(AT_FDCWD, "/dev/urandom", O_RDONLY|O_CLOEXEC) = 33
+237   fstat(33, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x9), ...}) = 0
+237   flock(33, LOCK_SH|LOCK_NB)        = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-canseek", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   mprotect(0xffff61fb4000, 4096, PROT_READ|PROT_WRITE) = 0
+237   lseek(33, 0, SEEK_CUR)            = 0
+237   write(28, "True", 4)              = 4
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-read", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   pread64(33, "e|\306\354\360\0\374@8!:\27\342j\220\214\204\f\32\212W\204\2440\200\236\361m\206\10\330\272"..., 4096, 0) = 4096
+237   write(28, "16", 2)                = 2
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-read2", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   write(28, "16", 2)                = 2
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-position", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   write(28, "32", 2)                = 2
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-dispose", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   flock(33, LOCK_UN)                = 0
+237   close(33)                         = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-writealltext", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   mprotect(0xffff61fb5000, 4096, PROT_READ|PROT_WRITE) = 0
+237   openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_CLOEXEC, 0666) = 33
+237   mprotect(0xffff61fb6000, 4096, PROT_READ|PROT_WRITE) = 0
+237   fstatfs(33, {f_type=TMPFS_MAGIC, f_bsize=4096, f_blocks=519234, f_bfree=519234, f_bavail=519234, f_files=519234, f_ffree=519096, f_fsid={val=[0xa2f8e1b4, 0x28d6ec69]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_RELATIME}) = 0
+237   flock(33, LOCK_SH|LOCK_NB)        = 0
+237   ftruncate(33, 0)                  = -1 EINVAL (Invalid argument)
+237   lseek(33, 0, SEEK_CUR)            = 0
+237   pwrite64(33, "hello", 5, 0)       = 5
+237   flock(33, LOCK_UN)                = 0
+237   close(33)                         = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-appendalltext", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CREAT|O_CLOEXEC, 0666) = 33
+237   fstatfs(33, {f_type=TMPFS_MAGIC, f_bsize=4096, f_blocks=519234, f_bfree=519234, f_bavail=519234, f_files=519234, f_ffree=519096, f_fsid={val=[0xa2f8e1b4, 0x28d6ec69]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_RELATIME}) = 0
+237   flock(33, LOCK_SH|LOCK_NB)        = 0
+237   lseek(33, 0, SEEK_CUR)            = 0
+237   fstat(33, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0
+237   pwrite64(33, "hello", 5, 0)       = 5
+237   flock(33, LOCK_UN)                = 0
+237   close(33)                         = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-readallbytes", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+243   <... futex resumed>)              = -1 ETIMEDOUT (Connection timed out)
+237   openat(AT_FDCWD, "/dev/null", O_RDONLY|O_CLOEXEC <unfinished ...>
+243   futex(0xaaab076a1270, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+237   <... openat resumed>)             = 33
+243   <... futex resumed>)              = 0
+237   fstat(33,  <unfinished ...>
+243   futex(0xaaab076a12c8, FUTEX_WAIT_BITSET_PRIVATE, 0, {tv_sec=16, tv_nsec=619048174}, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+237   <... fstat resumed>{st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0
+237   flock(33, LOCK_SH|LOCK_NB)        = 0
+237   lseek(33, 0, SEEK_CUR)            = 0
+237   fstat(33, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0
+237   pread64(33, "", 512, 0)           = 0
+237   flock(33, LOCK_UN)                = 0
+237   close(33)                         = 0
+237   write(28, "0", 1)                 = 1
+237   write(28, "\n", 1)                = 1
+237   openat(AT_FDCWD, "/nonexistent-marker-filestreamwrite", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   openat(AT_FDCWD, "/dev/null", O_WRONLY|O_CLOEXEC) = 33
+237   fstatfs(33, {f_type=TMPFS_MAGIC, f_bsize=4096, f_blocks=519234, f_bfree=519234, f_bavail=519234, f_files=519234, f_ffree=519096, f_fsid={val=[0xa2f8e1b4, 0x28d6ec69]}, f_namelen=255, f_frsize=4096, f_flags=ST_VALID|ST_NOSUID|ST_RELATIME}) = 0
+237   flock(33, LOCK_SH|LOCK_NB)        = 0
+237   mprotect(0xfffb97811000, 65536, PROT_READ|PROT_WRITE) = 0
+237   madvise(0xfffb97811000, 65536, MADV_DODUMP) = 0
+237   lseek(33, 0, SEEK_CUR)            = 0
+237   pwrite64(33, "\0\0\0\0\0", 5, 0)  = 5
+237   fsync(33)                         = -1 EINVAL (Invalid argument)
+237   flock(33, LOCK_UN)                = 0
+237   close(33)                         = 0
+237   openat(AT_FDCWD, "/nonexistent-marker-end", O_RDONLY|O_CLOEXEC) = -1 ENOENT (No such file or directory)
+237   newfstatat(AT_FDCWD, "/", {st_mode=S_IFDIR|0755, st_size=4096, ...}, 0) = 0
+237   unlinkat(AT_FDCWD, "/tmp/dotnet-diagnostic-237-1629-socket", 0) = 0
+237   futex(0xaaab0769bcb8, FUTEX_WAKE_PRIVATE, 1) = 1
+242   <... futex resumed>)              = 0
+237   futex(0xaaab076436c8, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+242   futex(0xaaab0769bc60, FUTEX_WAKE_PRIVATE, 1) = 0
+242   sched_getparam(242, [0])          = 0
+242   sched_getscheduler(242)           = 0 (SCHED_OTHER)
+242   sched_get_priority_max(SCHED_OTHER) = 0
+242   sched_get_priority_min(SCHED_OTHER) = 0
+242   sched_setscheduler(242, SCHED_OTHER, [0]) = 0
+242   mprotect(0xffff61fb7000, 4096, PROT_READ|PROT_WRITE) = 0
+242   mprotect(0xffff61f2b000, 4096, PROT_READ|PROT_WRITE) = 0
+242   mprotect(0xffff61fb8000, 4096, PROT_READ|PROT_WRITE) = 0
+242   futex(0xaaab076436c8, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+237   <... futex resumed>)              = 0
+242   <... futex resumed>)              = 1
+237   futex(0xaaab07643670, FUTEX_WAIT_PRIVATE, 2, NULL <unfinished ...>
+242   futex(0xaaab07643670, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+237   <... futex resumed>)              = -1 EAGAIN (Resource temporarily unavailable)
+242   <... futex resumed>)              = 0
+237   futex(0xaaab07643670, FUTEX_WAKE_PRIVATE, 1 <unfinished ...>
+242   futex(0xaaab0769bcbc, FUTEX_WAIT_BITSET_PRIVATE|FUTEX_CLOCK_REALTIME, 0, NULL, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+237   <... futex resumed>)              = 0
+237   unlinkat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-in", 0) = 0
+237   unlinkat(AT_FDCWD, "/tmp/clr-debug-pipe-237-1629-out", 0) = 0
+237   write(4, "\1", 1)                 = 1
+238   <... ppoll resumed>)              = 1 ([{fd=3, revents=POLLIN}])
+237   futex(0xaaab0763dc98, FUTEX_WAIT_BITSET_PRIVATE, 0, {tv_sec=18, tv_nsec=526109132}, FUTEX_BITSET_MATCH_ANY <unfinished ...>
+238   read(3, "\1", 1)                  = 1
+238   close(4)                          = 0
+238   ppoll([{fd=3, events=POLLIN}], 1, {tv_sec=1, tv_nsec=0}, NULL, 0) = 1 ([{fd=3, revents=POLLHUP}], left {tv_sec=0, tv_nsec=999999208})
+238   read(3, "", 1)                    = 0
+238   futex(0xaaab0763dc98, FUTEX_WAKE_PRIVATE, 1) = 1
+237   <... futex resumed>)              = 0
+238   ppoll(NULL, 0, NULL, NULL, 0 <unfinished ...>
+237   futex(0xaaab0763dc40, FUTEX_WAKE_PRIVATE, 1) = 0
+237   munmap(0xffffa12a0000, 508643)    = 0
+237   exit_group(0)                     = ?
+243   <... futex resumed>)              = ?
+242   <... futex resumed>)              = ?
+238   <... ppoll resumed> <unfinished ...>) = ?
+244   <... read resumed> <unfinished ...>) = ?
+243   +++ exited with 0 +++
+242   +++ exited with 0 +++
+241   <... futex resumed>)              = ?
+240   <... openat resumed>)             = ?
+239   <... ppoll resumed> <unfinished ...>) = ?
+238   +++ exited with 0 +++
+244   +++ exited with 0 +++
+241   +++ exited with 0 +++
+240   +++ exited with 0 +++
+239   +++ exited with 0 +++
+237   +++ exited with 0 +++

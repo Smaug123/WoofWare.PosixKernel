@@ -1,0 +1,134 @@
+# kernel: Linux 6.18.5 aarch64
+/probe/states.c: In function 'main':
+/probe/states.c:162:9: warning: argument 2 is null but the corresponding size argument 3 value is 10 [-Wnonnull]
+  162 |     r = read(p[0], NULL, 10);
+      |         ^~~~~~~~~~~~~~~~~~~~
+In file included from /usr/include/aarch64-linux-gnu/bits/sigstksz.h:24,
+                 from /usr/include/signal.h:328,
+                 from /probe/states.c:10:
+/usr/include/unistd.h:371:16: note: in a call to function 'read' declared with attribute 'access (write_only, 2, 3)'
+  371 | extern ssize_t read (int __fd, void *__buf, size_t __nbytes) __wur
+      |                ^~~~
+/probe/states.c:165:9: warning: 'read' writing 10 bytes into a region of size 0 overflows the destination [-Wstringop-overflow=]
+  165 |     r = read(p[0], (void *)8, 10);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+cc1: note: destination object is likely at address zero
+/usr/include/unistd.h:371:16: note: in a call to function 'read' declared with attribute 'access (write_only, 2, 3)'
+  371 | extern ssize_t read (int __fd, void *__buf, size_t __nbytes) __wur
+      |                ^~~~
+/probe/states.c:183:9: warning: argument 2 is null but the corresponding size argument 3 value is 10 [-Wnonnull]
+  183 |     r = read(p[0], NULL, 10);
+      |         ^~~~~~~~~~~~~~~~~~~~
+/usr/include/unistd.h:371:16: note: in a call to function 'read' declared with attribute 'access (write_only, 2, 3)'
+  371 | extern ssize_t read (int __fd, void *__buf, size_t __nbytes) __wur
+      |                ^~~~
+/probe/states.c:237:9: warning: 'write' reading 10 bytes from a region of size 0 [-Wstringop-overread]
+  237 |     r = write(p[1], (void *)8, 10);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~
+cc1: note: source object is likely at address zero
+/usr/include/unistd.h:378:16: note: in a call to function 'write' declared with attribute 'access (read_only, 2, 3)'
+  378 | extern ssize_t write (int __fd, const void *__buf, size_t __n) __wur
+      |                ^~~~~
+/probe/states.c:242:9: warning: 'write' reading 10 bytes from a region of size 0 [-Wstringop-overread]
+  242 |     r = write(p[1], (void *)8, 10);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~
+cc1: note: source object is likely at address zero
+/usr/include/unistd.h:378:16: note: in a call to function 'write' declared with attribute 'access (read_only, 2, 3)'
+  378 | extern ssize_t write (int __fd, const void *__buf, size_t __n) __wur
+      |                ^~~~~
+/probe/states.c:308:18: warning: 'pipe2' accessing 8 bytes in a region of size 0 [-Wstringop-overflow=]
+  308 |         int rc = pipe2((int *)8, 0);
+      |                  ^~~~~~~~~~~~~~~~~~
+/probe/states.c:308:18: note: referencing argument 1 of type 'int[2]'
+/usr/include/unistd.h:442:12: note: in a call to function 'pipe2'
+  442 | extern int pipe2 (int __pipedes[2], int __flags) __THROW __wur;
+      |            ^~~~~
+/probe/states.c:317:22: warning: 'pipe' accessing 8 bytes in a region of size 0 [-Wstringop-overflow=]
+  317 |             int rc = pipe((int *)8);
+      |                      ^~~~~~~~~~~~~~
+/probe/states.c:317:22: note: referencing argument 1 of type 'int[2]'
+/usr/include/unistd.h:437:12: note: in a call to function 'pipe'
+  437 | extern int pipe (int __pipedes[2]) __THROW __wur;
+      |            ^~~~
+## poll and FIONREAD per state (ASK=0x23c7)
+empty, both open           read  poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=0(0) st_size=0
+empty, both open           write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=0
+100 bytes, both open       read  poll(ASK)=0x0041 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=100(0) st_size=0
+100 bytes, both open       write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=100(0) st_size=0
+full, both open            read  poll(ASK)=0x0041 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=61540(0) st_size=0
+full, both open            write poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=61540(0) st_size=0
+full less 1 byte           read  poll(ASK)=0x0041 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=61539(0) st_size=0
+full less 1 byte           write poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=61539(0) st_size=0
+full less 4096 bytes       read  poll(ASK)=0x0041 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=57444(0) st_size=0
+full less 4096 bytes       write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=57444(0) st_size=0
+data, reader closed        write poll(ASK)=0x010c poll(0)=0x8 poll(IN)=0x8 poll(OUT)=0xc FIONREAD=57444(0) st_size=0
+empty, reader closed       write poll(ASK)=0x010c poll(0)=0x8 poll(IN)=0x8 poll(OUT)=0xc FIONREAD=0(0) st_size=0
+empty, writer closed       read  poll(ASK)=0x0010 poll(0)=0x10 poll(IN)=0x10 poll(OUT)=0x10 FIONREAD=0(0) st_size=0
+100 bytes, writer closed   read  poll(ASK)=0x0051 poll(0)=0x10 poll(IN)=0x11 poll(OUT)=0x10 FIONREAD=100(0) st_size=0
+16000 written at once      write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=16000(0) st_size=0
+then 1000 more (17000)     write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=17000(0) st_size=0
+then drained to 0          write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=0
+then 16000 again           write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=16000(0) st_size=0
+## reads
+nonblocking read, empty, writer open -> -1 errno 11
+nonblocking read(0), empty, writer open -> 0 errno 0
+nonblocking read(NULL, 0), empty, writer open -> 0 errno 0
+nonblocking read(NULL, 10), empty, writer open -> -1 errno 11
+nonblocking read(bad ptr, 10), 5 bytes held -> -1 errno 14; FIONREAD after 5
+read(100) after writes of 5,5,5 -> 15 (writes coalesce: abcdefghijklmno)
+read(3) of 10 held -> 3; then read(100) -> 7
+blocking read, empty, writer closed -> 0 errno 0
+blocking read(NULL, 10), empty, writer closed -> 0 errno 0
+blocking read, empty, writer open, 3 bytes arrive after 200ms -> 3 after 202 ms
+blocking read, empty, writer closed after 200ms -> 0 after 201 ms
+blocking read interrupted by SIGALRM, SA_RESTART=0 -> -1 errno 4 after 103 ms
+blocking read interrupted by SIGALRM, SA_RESTART=1 -> 3 errno 0 after 204 ms
+## writes
+write(0), empty -> 0 errno 0
+write(NULL, 0) -> 0 errno 0
+write(bad ptr, 10), empty -> -1 errno 14
+write(0), full, nonblocking -> 0 errno 0
+write(bad ptr, 10), full, nonblocking -> -1 errno 11
+## fstat
+fstat read end     mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat write end    mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat 2nd pipe r   mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2085 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat 2nd pipe w   mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2085 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat r after write mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat w after write mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat r after read mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+fstat w after read mode=010600 nlink=1 uid=0 gid=0 size=0 blksize=4096 blocks=0 dev=0xc ino=2084 rdev=0 atime=1790437876.552000000 mtime=1790437876.552000000 ctime=1790437876.552000000
+## terminal and seek questions on a pipe
+read end: isatty=0 errno=25; tcgetattr=-1 errno=25; TIOCGWINSZ=-1 errno=25; fpathconf(PIPE_BUF)=4096
+  lseek(0, 0) -> -1 errno 29
+  lseek(0, 1) -> -1 errno 29
+  lseek(0, 2) -> -1 errno 29
+  lseek(0, 3) -> -1 errno 29
+  lseek(0, 4) -> -1 errno 29
+  lseek(-1, SET) -> -1 errno 29
+  lseek(0, 99) -> -1 errno 22
+  pread -> -1 errno 29
+  F_GETFL -> 0 (accmode 0)
+write end: isatty=0 errno=25; tcgetattr=-1 errno=25; TIOCGWINSZ=-1 errno=25; fpathconf(PIPE_BUF)=4096
+  lseek(0, 0) -> -1 errno 29
+  lseek(0, 1) -> -1 errno 29
+  lseek(0, 2) -> -1 errno 29
+  lseek(0, 3) -> -1 errno 29
+  lseek(0, 4) -> -1 errno 29
+  lseek(-1, SET) -> -1 errno 29
+  lseek(0, 99) -> -1 errno 22
+  pread -> -1 errno 29
+  F_GETFL -> 0x1 (accmode 1)
+pipe2(0=0) -> 0 errno 0 fds 3 4 F_GETFL 0 0x1 F_GETFD 0 0
+pipe2(O_CLOEXEC=0x80000) -> 0 errno 0 fds 3 4 F_GETFL 0 0x1 F_GETFD 1 1
+pipe2(O_NONBLOCK=0x800) -> 0 errno 0 fds 3 4 F_GETFL 0x800 0x801 F_GETFD 0 0
+pipe2(O_DIRECT=0x10000) -> 0 errno 0 fds 3 4 F_GETFL 0 0x10001 F_GETFD 0 0
+pipe2(O_NOTIFICATION_PIPE=0x80) -> -1 errno 65 fds -1 -1
+pipe2(1=0x1) -> -1 errno 22 fds -1 -1
+pipe2(O_RDWR=0x2) -> -1 errno 22 fds -1 -1
+pipe2(O_APPEND=0x400) -> -1 errno 22 fds -1 -1
+pipe2(INT_MAX=0x7fffffff) -> -1 errno 22 fds -1 -1
+pipe2(bad ptr) -> -1 errno 14
+pipe(bad ptr) -> -1 errno 14
+pipe(bad ptr) child: exited=1 status=0 signalled=0 sig=0
+pipe fds after 0,1,2 + 0 more: 3 4; close read end, pipe again -> 3 5

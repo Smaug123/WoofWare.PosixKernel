@@ -1,0 +1,84 @@
+# kernel: Linux 6.18.5 aarch64
+/probe/mainexit.c: In function 'probe_after_leader_gone':
+/probe/mainexit.c:80:48: warning: '%s' directive output may be truncated writing up to 255 bytes into a region of size 112 [-Wformat-truncation=]
+   80 |         snprintf(p, sizeof p, "/proc/self/task/%s/status", e->d_name);
+      |                                                ^~
+/probe/mainexit.c:80:9: note: 'snprintf' output between 24 and 279 bytes into a destination of size 128
+   80 |         snprintf(p, sizeof p, "/proc/self/task/%s/status", e->d_name);
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+=== main_pthread_exit_then_worker_returns
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=10 leader_tid=9 getpid=9
+worker	kill(getpid(),0)=0
+worker	task 9 State:	Z (zombie)
+worker	task 10 State:	R (running)
+worker	/proc/self/status State:	Z (zombie)
+worker	/proc/self/status Threads:	2
+worker	kill(getpid(),SIGUSR1)=0 receiver=10 (self=10)
+atexit	run in tid=10
+parent	status=0x0 exited(0)
+=== main_pthread_exit_then_worker_exit5
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=12 leader_tid=11 getpid=11
+worker	kill(getpid(),0)=0
+worker	task 11 State:	Z (zombie)
+worker	task 12 State:	R (running)
+worker	/proc/self/status State:	Z (zombie)
+worker	/proc/self/status Threads:	2
+worker	kill(getpid(),SIGUSR1)=0 receiver=12 (self=12)
+atexit	run in tid=12
+parent	status=0x500 exited(5)
+=== main_pthread_exit_then_worker_pexit
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=14 leader_tid=13 getpid=13
+worker	kill(getpid(),0)=0
+worker	task 13 State:	Z (zombie)
+worker	task 14 State:	R (running)
+worker	/proc/self/status State:	Z (zombie)
+worker	/proc/self/status Threads:	2
+worker	kill(getpid(),SIGUSR1)=0 receiver=14 (self=14)
+atexit	run in tid=14
+parent	status=0x0 exited(0)
+=== worker_exit9_main_blocked
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	about to end the process, how=0
+atexit	run in tid=16
+parent	status=0x900 exited(9)
+=== worker__exit9_main_blocked
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	about to end the process, how=1
+parent	status=0x900 exited(9)
+=== worker_exit_atexit_race
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	about to end the process, how=2
+atexit_slow	ticks advanced during handler by 196
+atexit	run in tid=21
+parent	status=0x400 exited(4)
+=== linux_main_sys_exit3_worker_sys_exit5
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=23 leader_tid=22 getpid=22
+worker	kill(getpid(),0)=0
+worker	task 22 State:	Z (zombie)
+worker	task 23 State:	R (running)
+worker	/proc/self/status State:	Z (zombie)
+worker	/proc/self/status Threads:	2
+worker	kill(getpid(),SIGUSR1)=0 receiver=23 (self=23)
+parent	status=0x500 exited(5)
+=== linux_main_sys_exit3_worker_returns
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=25 leader_tid=24 getpid=24
+worker	kill(getpid(),0)=0
+worker	task 24 State:	Z (zombie)
+worker	task 25 State:	R (running)
+worker	/proc/self/status State:	Z (zombie)
+worker	/proc/self/status Threads:	2
+worker	kill(getpid(),SIGUSR1)=0 receiver=25 (self=25)
+parent	status=0x0 exited(0)
+=== linux_worker_sys_exit_group6
+parent	waitpid(WNOHANG) at 100ms returned the pid (already dead)
+worker	about to end the process, how=3
+parent	status=0x600 exited(6)
+=== single_pthread_exit
+parent	waitpid(WNOHANG) at 100ms returned the pid (already dead)
+atexit	run in tid=28
+parent	status=0x0 exited(0)

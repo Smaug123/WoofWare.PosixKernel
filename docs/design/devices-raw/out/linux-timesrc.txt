@@ -1,0 +1,4 @@
+# arch: aarch64 ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+TIMESRC readings=493506564 both=491716024 fine_only=0 coarse_only=1790540 neither=0
+# arch: x86_64 ldd (Debian GLIBC 2.41-12+deb13u4) 2.41
+TIMESRC readings=81893750 both=81633553 fine_only=260197 coarse_only=0 neither=0

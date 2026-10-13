@@ -1,0 +1,30 @@
+BIG /dev/zero count=0x7ffff000 -> 2147479552 (0x7ffff000) errno=0
+BIG /dev/zero count=0x7ffff001 -> 2147479553 (0x7ffff001) errno=0
+BIG /dev/zero count=0x7fffffff -> 2147483647 (0x7fffffff) errno=0
+BIG /dev/zero count=0x80000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/zero count=0x100000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/zero count=0x7fffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/zero count=0xffffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/random count=0x7ffff000 -> 2147479552 (0x7ffff000) errno=0
+BIG /dev/random count=0x7ffff001 -> 2147479553 (0x7ffff001) errno=0
+BIG /dev/random count=0x7fffffff -> 2147483647 (0x7fffffff) errno=0
+BIG /dev/random count=0x80000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/random count=0x100000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/random count=0x7fffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/random count=0xffffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/urandom count=0x7ffff000 -> 2147479552 (0x7ffff000) errno=0
+BIG /dev/urandom count=0x7ffff001 -> 2147479553 (0x7ffff001) errno=0
+BIG /dev/urandom count=0x7fffffff -> 2147483647 (0x7fffffff) errno=0
+BIG /dev/urandom count=0x80000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/urandom count=0x100000000 -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/urandom count=0x7fffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+BIG /dev/urandom count=0xffffffffffffffff -> -1 (0xffffffffffffffff) errno=22
+SIGNAL /dev/zero size=16777216 reps=300 signals=300 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/zero size=1048576 reps=300 signals=113 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/zero size=4097 reps=20000 signals=127 whole=20000 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/random size=16777216 reps=300 signals=325 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/random size=1048576 reps=300 signals=307 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/random size=4097 reps=20000 signals=4381 whole=20000 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/urandom size=16777216 reps=300 signals=327 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/urandom size=1048576 reps=300 signals=314 whole=300 short=0 eintr=0 other=0 short_counts:
+SIGNAL /dev/urandom size=4097 reps=20000 signals=4451 whole=20000 short=0 eintr=0 other=0 short_counts:

@@ -1,0 +1,5 @@
+# kernel: Darwin 27.0.0 arm64
+waitpid(-1,0)	ret=-1	errno=10 (No child processes)
+waitpid(-1,WNOHANG)	ret=-1	errno=10 (No child processes)
+waitpid(self,WNOHANG)	ret=-1	errno=10 (No child processes)
+waitid(P_ALL,WNOHANG)	ret=-1	errno=10 (No child processes)

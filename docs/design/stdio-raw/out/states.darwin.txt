@@ -1,0 +1,72 @@
+# kernel: Darwin 27.0.0 arm64
+## poll and FIONREAD per state (ASK=0x1c7)
+empty, both open           read  poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=0(0) st_size=0
+empty, both open           write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=0
+100 bytes, both open       read  poll(ASK)=0x00c3 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=100(0) st_size=100
+100 bytes, both open       write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=100
+full, both open            read  poll(ASK)=0x00c3 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=65536(0) st_size=65536
+full, both open            write poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=0(0) st_size=65536
+full less 1 byte           read  poll(ASK)=0x00c3 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=65535(0) st_size=65535
+full less 1 byte           write poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=0(0) st_size=65535
+full less 4096 bytes       read  poll(ASK)=0x00c3 poll(0)=0 poll(IN)=0x1 poll(OUT)=0 FIONREAD=61440(0) st_size=61440
+full less 4096 bytes       write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=61440
+data, reader closed        write poll(ASK)=0x00d3 poll(0)=0 poll(IN)=0x11 poll(OUT)=0x10 FIONREAD=0(0) st_size=0
+empty, reader closed       write poll(ASK)=0x00d3 poll(0)=0 poll(IN)=0x11 poll(OUT)=0x10 FIONREAD=0(0) st_size=0
+empty, writer closed       read  poll(ASK)=0x00d3 poll(0)=0 poll(IN)=0x11 poll(OUT)=0x10 FIONREAD=0(0) st_size=0
+100 bytes, writer closed   read  poll(ASK)=0x00d3 poll(0)=0 poll(IN)=0x11 poll(OUT)=0x10 FIONREAD=100(0) st_size=100
+16000 written at once      write poll(ASK)=000000 poll(0)=0 poll(IN)=0 poll(OUT)=0 FIONREAD=0(0) st_size=16000
+then 1000 more (17000)     write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=17000
+then drained to 0          write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=0
+then 16000 again           write poll(ASK)=0x0104 poll(0)=0 poll(IN)=0 poll(OUT)=0x4 FIONREAD=0(0) st_size=16000
+## reads
+nonblocking read, empty, writer open -> -1 errno 35
+nonblocking read(0), empty, writer open -> 0 errno 0
+nonblocking read(NULL, 0), empty, writer open -> 0 errno 0
+nonblocking read(NULL, 10), empty, writer open -> -1 errno 35
+nonblocking read(bad ptr, 10), 5 bytes held -> -1 errno 14; FIONREAD after 5
+read(100) after writes of 5,5,5 -> 15 (writes coalesce: abcdefghijklmno)
+read(3) of 10 held -> 3; then read(100) -> 7
+blocking read, empty, writer closed -> 0 errno 0
+blocking read(NULL, 10), empty, writer closed -> 0 errno 0
+blocking read, empty, writer open, 3 bytes arrive after 200ms -> 3 after 200 ms
+blocking read, empty, writer closed after 200ms -> 0 after 205 ms
+blocking read interrupted by SIGALRM, SA_RESTART=0 -> -1 errno 4 after 101 ms
+blocking read interrupted by SIGALRM, SA_RESTART=1 -> 3 errno 0 after 205 ms
+## writes
+write(0), empty -> 0 errno 0
+write(NULL, 0) -> 0 errno 0
+write(bad ptr, 10), empty -> -1 errno 14
+write(0), full, nonblocking -> 0 errno 0
+write(bad ptr, 10), full, nonblocking -> -1 errno 35
+## fstat
+fstat read end     mode=010660 nlink=0 uid=501 gid=20 size=0 blksize=16384 blocks=0 dev=0 ino=16846924791144662550 rdev=0 atime=1790437853.819246760 mtime=1790437853.819246760 ctime=1790437853.819246760
+fstat write end    mode=010660 nlink=0 uid=501 gid=20 size=0 blksize=16384 blocks=0 dev=0 ino=13041258094153072229 rdev=0 atime=1790437853.819246802 mtime=1790437853.819246802 ctime=1790437853.819246802
+fstat 2nd pipe r   mode=010660 nlink=0 uid=501 gid=20 size=0 blksize=16384 blocks=0 dev=0 ino=18046221324731675323 rdev=0 atime=1790437853.819259593 mtime=1790437853.819259593 ctime=1790437853.819259593
+fstat 2nd pipe w   mode=010660 nlink=0 uid=501 gid=20 size=0 blksize=16384 blocks=0 dev=0 ino=8576715409355962749 rdev=0 atime=1790437853.819259635 mtime=1790437853.819259635 ctime=1790437853.819259635
+fstat r after write mode=010660 nlink=0 uid=501 gid=20 size=5 blksize=16384 blocks=1 dev=0 ino=16846924791144662550 rdev=0 atime=1790437853.819246760 mtime=1790437853.839735861 ctime=1790437853.839735861
+fstat w after write mode=010660 nlink=0 uid=501 gid=20 size=5 blksize=16384 blocks=1 dev=0 ino=13041258094153072229 rdev=0 atime=1790437853.819246802 mtime=1790437853.839735819 ctime=1790437853.839735819
+fstat r after read mode=010660 nlink=0 uid=501 gid=20 size=3 blksize=16384 blocks=1 dev=0 ino=16846924791144662550 rdev=0 atime=1790437853.859964335 mtime=1790437853.839735861 ctime=1790437853.839735861
+fstat w after read mode=010660 nlink=0 uid=501 gid=20 size=3 blksize=16384 blocks=1 dev=0 ino=13041258094153072229 rdev=0 atime=1790437853.819246802 mtime=1790437853.839735819 ctime=1790437853.839735819
+## terminal and seek questions on a pipe
+read end: isatty=0 errno=25; tcgetattr=-1 errno=25; TIOCGWINSZ=-1 errno=25; fpathconf(PIPE_BUF)=512
+  lseek(0, 0) -> -1 errno 29
+  lseek(0, 1) -> -1 errno 29
+  lseek(0, 2) -> -1 errno 29
+  lseek(0, 3) -> -1 errno 29
+  lseek(0, 4) -> -1 errno 29
+  lseek(-1, SET) -> -1 errno 29
+  lseek(0, 99) -> -1 errno 29
+  pread -> -1 errno 29
+  F_GETFL -> 0 (accmode 0)
+write end: isatty=0 errno=25; tcgetattr=-1 errno=25; TIOCGWINSZ=-1 errno=25; fpathconf(PIPE_BUF)=512
+  lseek(0, 0) -> -1 errno 29
+  lseek(0, 1) -> -1 errno 29
+  lseek(0, 2) -> -1 errno 29
+  lseek(0, 3) -> -1 errno 29
+  lseek(0, 4) -> -1 errno 29
+  lseek(-1, SET) -> -1 errno 29
+  lseek(0, 99) -> -1 errno 29
+  pread -> -1 errno 9
+  F_GETFL -> 0x10001 (accmode 1)
+pipe(bad ptr) child: exited=0 status=-1 signalled=1 sig=11
+pipe fds after 0,1,2 + 0 more: 3 4; close read end, pipe again -> 3 5
