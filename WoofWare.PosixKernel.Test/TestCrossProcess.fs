@@ -1617,7 +1617,7 @@ module TestCrossProcess =
             | Ok (Ok created) -> created
             | other -> failwith $"inotify_init1: %A{other}"
 
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask view with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask view with
         | Ok (SyscallAnswer.Completed _, view) -> fd, view
         | other -> failwith $"inotify_add_watch(%s{path}): %A{other}"
 

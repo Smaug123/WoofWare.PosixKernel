@@ -579,7 +579,7 @@ module TestPermissionStanding =
             | Call.Unlink p -> sticky (UnixNamespace.tryUnlink (PathArg.ofPath (path p)) system)
             | Call.RmDir p -> sticky (UnixNamespace.tryRmdir (PathArg.ofPath (path p)) system)
             | Call.Rename (source, destination) ->
-                match UnixNamespace.tryRenameEager (argument source) (argument destination) system with
+                match Eager.tryRename (argument source) (argument destination) system with
                 | Ok answer -> Ok answer
                 | Error (RenameRefusal.Sticky refusal) -> Error refusal
                 | Error other ->
@@ -1293,7 +1293,7 @@ module TestPermissionStanding =
             | SyscallAnswer.Failed error -> failwith $"expected success or EACCES, got %O{error}"
 
         let renamed (source : string) (destination : string) (system : UnixSystem<int, string>) : bool =
-            UnixNamespace.tryRenameEager (argument source) (argument destination) system
+            Eager.tryRename (argument source) (argument destination) system
             |> ok
             |> succeeds
 
@@ -1395,9 +1395,7 @@ module TestPermissionStanding =
                     "/w/k", "/d/e"
                     "/w/k", "/d/f"
                 ] do
-                yield
-                    UnixNamespace.tryRenameEager (argument source) (argument destination) system
-                    |> refused
+                yield Eager.tryRename (argument source) (argument destination) system |> refused
         ]
         |> List.choose id
 

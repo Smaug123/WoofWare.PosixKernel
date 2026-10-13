@@ -90,7 +90,7 @@ module TestDeviceFileSystemAgainstHost =
             let destination = $"/dev/posixkernel-%s{unique ()}"
 
             let model =
-                UnixNamespace.tryRenameEager (PathArg.ofText "/nonexistent") (PathArg.ofText destination) system
+                Eager.tryRename (PathArg.ofText "/nonexistent") (PathArg.ofText destination) system
 
             match flavour with
             | SimulatedUnixFlavour.Darwin ->

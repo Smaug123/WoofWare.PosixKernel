@@ -66,7 +66,7 @@ module TestInotifyInvariants =
         | other -> failwith $"inotify_init1: %A{other}"
 
     let private add (fd : int) (path : string) (mask : uint32) (system : UnixSystem<int, string>) =
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask system with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
         | Ok answered -> answered
         | Error refusal -> failwith $"add: %s{InotifyAddWatchRefusal.describe refusal}"
 
@@ -329,7 +329,7 @@ module TestInotifyInvariants =
         UnixInotify.tryInotifyInit1 0 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
-        UnixInotify.tryInotifyAddWatchEager 0 (PathArg.ofText "d1") 0x100u darwin
+        Eager.tryInotifyAddWatch 0 (PathArg.ofText "d1") 0x100u darwin
         |> shouldEqual (Error (InotifyAddWatchRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
         UnixInotify.tryInotifyRmWatch 0 1 darwin
@@ -483,7 +483,7 @@ module TestInotifyInvariants =
             |> Machines.inProcess
                 pid
                 (fun view ->
-                    match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) 0x100u view with
+                    match Eager.tryInotifyAddWatch fd (PathArg.ofText path) 0x100u view with
                     | Ok answered -> answered
                     | Error refusal -> failwith $"%A{refusal}"
                 )
@@ -674,7 +674,7 @@ module TestInotifyInvariants =
                 | Op.Add (slot, path, mask) ->
                     let fd = slots.[slot] |> Option.defaultValue 99
 
-                    match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask system with
+                    match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
                     | Ok (_, after) -> system <- after
                     | Error refusal -> failwith $"%A{refusal}"
                 | Op.Remove (slot, wd) ->

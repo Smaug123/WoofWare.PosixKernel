@@ -54,7 +54,7 @@ module internal Pipe2Refusal =
         | Pipe2Refusal.DescriptorLimit _ -> RefusalKind.Unmodelled
         | Pipe2Refusal.PacketMode _ -> RefusalKind.Unmodelled
         | Pipe2Refusal.NotificationPipe _ -> RefusalKind.Unmodelled
-        | Pipe2Refusal.Buffer _ -> RefusalKind.Unmodelled
+        | Pipe2Refusal.Buffer refusal -> BufferRefusal.kind refusal
         | Pipe2Refusal.FatalToTheProcess -> RefusalKind.Unmodelled
 
 /// `pipe2(2)`: making a pipe.
