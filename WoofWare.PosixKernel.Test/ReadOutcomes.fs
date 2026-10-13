@@ -7,8 +7,25 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal ReadOutcomes =
 
-    /// `UnixReadWrite.read` by the process's leader, failing the test if the
-    /// call sleeps.
+    /// `UnixReadWrite.read` by the leader of the process `pid`, failing the
+    /// test if the call sleeps.
+    let readIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (fd : int)
+        (buffer : UserBuffer)
+        (count : uint64)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        =
+        UnixReadWrite.tryRead (Proc.leader pid system) fd buffer count system
+        |> Result.map (fun (outcome, after) ->
+            match outcome with
+            | ReadOutcome.Answered answer -> answer, after
+            | ReadOutcome.WouldBlock _
+            | ReadOutcome.Restarts -> failwith $"expected a read that returns, got %A{outcome}"
+        )
+
+    /// `readIn` the only process on the machine.
     let read<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (buffer : UserBuffer)
@@ -16,10 +33,4 @@ module internal ReadOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        UnixReadWrite.tryRead (Lone.leader system) fd buffer count system
-        |> Result.map (fun (outcome, after) ->
-            match outcome with
-            | ReadOutcome.Answered answer -> answer, after
-            | ReadOutcome.WouldBlock _
-            | ReadOutcome.Restarts -> failwith $"expected a read that returns, got %A{outcome}"
-        )
+        readIn (Lone.pid system) fd buffer count system

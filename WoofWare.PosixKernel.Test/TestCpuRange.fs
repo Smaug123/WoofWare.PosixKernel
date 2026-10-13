@@ -126,7 +126,7 @@ module TestCpuRange =
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixThreadTable.get 0 (Lone.threads (Machines.viewOf pid after))).Cpu
+                (UnixThreadTable.get 0 (Proc.threads pid (Machines.viewOf pid after))).Cpu
                 |> shouldEqual (CpuId cpu)
 
                 SimulatedMachine.checkInvariants after |> shouldEqual []

@@ -507,7 +507,7 @@ module TestUnixScheduling =
                 if answered <> running then
                     failwith $"runningOn %A{answered}: %s{context}"
 
-            (UnixThreadTable.get thread.Name (Lone.threads view)).Cpu
+            (UnixThreadTable.get thread.Name (Proc.threads thread.Pid view)).Cpu
             |> shouldEqual (cpuOracle thread.Serial world.Events)
 
             let parked = thread.Asleep || thread.Woken
@@ -642,7 +642,7 @@ module TestUnixScheduling =
                 getcpu pid machine |> shouldEqual true
                 getcpu other machine |> shouldEqual false
                 // The displaced thread keeps the processor as its own.
-                (UnixThreadTable.get 0 (Lone.threads (Machines.viewOf other machine))).Cpu
+                (UnixThreadTable.get 0 (Proc.threads other (Machines.viewOf other machine))).Cpu
                 |> shouldEqual (CpuId 0)
 
                 Machines.assertClean machine
@@ -706,7 +706,7 @@ module TestUnixScheduling =
         }
 
     let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
-        (UnixThreadTable.get thread (Lone.threads (Machines.viewOf pid machine))).OsThreadId
+        (UnixThreadTable.get thread (Proc.threads pid (Machines.viewOf pid machine))).OsThreadId
 
     [<Test>]
     let ``checkInvariants reports an occupied processor the machine does not have`` () : unit =
@@ -743,7 +743,7 @@ module TestUnixScheduling =
 
         // The thread ID of a thread that has exited.
         let nobody, machine =
-            let machine = Machines.doIn first (Threads.spawn 1) machine
+            let machine = Machines.doIn first (Threads.spawnIn first 1) machine
             let nobody = threadIdOf first 1 machine
 
             let exited =

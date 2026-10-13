@@ -3064,7 +3064,7 @@ module TestBlockingConnection =
                     (fun view ->
                         let fd, view = KeventWorld.stream false view
 
-                        match KeventWorld.connect fd port view with
+                        match KeventWorld.connectIn a fd port view with
                         | SyscallAnswer.Completed 0L, view -> fd, view
                         | other, _ -> failwith $"connect: %A{other}"
                     )

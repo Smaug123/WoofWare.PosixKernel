@@ -510,7 +510,7 @@ module TestInotifyInvariants =
         SimulatedMachine.checkInvariants machine |> shouldEqual []
 
         let state =
-            match FileDescriptorRegistry.tryFindTarget fdB (Lone.fileDescriptors (Machines.viewOf b machine)) with
+            match FileDescriptorRegistry.tryFindTarget fdB (Proc.fileDescriptors b (Machines.viewOf b machine)) with
             | Some (OpenFileTarget.Inotify state) -> state
             | other -> failwith $"%A{other}"
 
