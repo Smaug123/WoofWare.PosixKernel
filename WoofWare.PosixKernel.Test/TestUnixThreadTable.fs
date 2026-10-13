@@ -29,16 +29,16 @@ module TestUnixThreadTable =
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{name} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{name} was refused: %s{SpawnRefusal.describe refusal}"
 
-    let private idOf (name : int) (tasks : Map<int, UnixThreadState>) : uint64 =
-        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get name tasks))
+    let private idOf (name : int) (threads : Map<int, UnixThreadState>) : uint64 =
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get name threads))
 
     [<Test>]
     let ``a spawned task is readable`` () : unit =
-        let tasks = (initial |> withThread 7 3).Tasks
+        let threads = (initial |> withThread 7 3).Threads
 
-        UnixThreadState.cpu (UnixThreadTable.get 7 tasks) |> shouldEqual (CpuId 3)
-        idOf 7 tasks |> shouldEqual 4243UL
-        UnixThreadTable.parkedFor 7 tasks |> shouldEqual None
+        UnixThreadState.cpu (UnixThreadTable.get 7 threads) |> shouldEqual (CpuId 3)
+        idOf 7 threads |> shouldEqual 4243UL
+        UnixThreadTable.parkedFor 7 threads |> shouldEqual None
 
     [<Test>]
     let ``a name that was never spawned is refused loudly`` () : unit =
@@ -83,7 +83,7 @@ module TestUnixThreadTable =
                     Syscall = ParkedSyscall.EpollWait wait
                     Ordinal = ParkOrdinal 0L
                 }
-                system.Tasks
+                system.Threads
 
         UnixThreadTable.parkedFor 7 parked
         |> shouldEqual (Some (ParkedSyscall.EpollWait wait))
@@ -97,30 +97,30 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``reconcile is silent when the table matches`` () : unit =
-        let tasks = (initial |> withThread 1 0 |> withThread 2 1).Tasks
+        let threads = (initial |> withThread 1 0 |> withThread 2 1).Threads
 
-        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) tasks
+        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([], [])
 
     [<Test>]
     let ``reconcile reports a live task the table has no entry for`` () : unit =
-        let tasks = (initial |> withThread 1 0).Tasks
+        let threads = (initial |> withThread 1 0).Threads
 
-        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) tasks
+        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [])
 
     [<Test>]
     let ``reconcile reports an entry no live task claims`` () : unit =
-        let tasks = (initial |> withThread 1 0 |> withThread 2 1).Tasks
+        let threads = (initial |> withThread 1 0 |> withThread 2 1).Threads
 
-        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) tasks
+        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) threads
         |> shouldEqual ([], [ 2 ])
 
     [<Test>]
     let ``reconcile reports both directions at once`` () : unit =
         // The row that separates "reports both" from "reports whichever it
         // happens to check first".
-        let tasks = (initial |> withThread 1 0 |> withThread 3 1).Tasks
+        let threads = (initial |> withThread 1 0 |> withThread 3 1).Threads
 
-        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) tasks
+        UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [ 3 ])

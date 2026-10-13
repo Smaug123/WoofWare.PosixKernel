@@ -70,31 +70,31 @@ module TestKqueue =
 
     /// A wait for one event, with no changes.
     let private waits
-        (task : int)
+        (thread : int)
         (fd : int)
         (timeout : KeventTimeout)
         (system : UnixSystem<int, string>)
         : Result<KeventOutcome * UnixSystem<int, string>, KeventRefusal>
         =
-        UnixKqueue.tryKevent task fd 0 [] 1 UserBuffer.Mapped timeout system
+        UnixKqueue.tryKevent thread fd 0 [] 1 UserBuffer.Mapped timeout system
 
-    let private parks (task : int) (fd : int) (timeout : KeventTimeout) (system : UnixSystem<int, string>) =
-        match waits task fd timeout system with
+    let private parks (thread : int) (fd : int) (timeout : KeventTimeout) (system : UnixSystem<int, string>) =
+        match waits thread fd timeout system with
         | Ok (KeventOutcome.WouldBlock condition, parked) -> condition, parked
-        | other -> failwith $"expected task %d{task} to park, got %A{other}"
+        | other -> failwith $"expected task %d{thread} to park, got %A{other}"
 
-    let private finishes (task : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
-        match UnixKqueue.tryFinishKevent task system with
+    let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
+        match UnixKqueue.tryFinishKevent thread system with
         | Ok (outcome, finished) ->
-            UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
             outcome, finished
-        | Error refusal -> failwith $"expected task %d{task}'s wait to finish, got %s{KeventRefusal.describe refusal}"
+        | Error refusal -> failwith $"expected task %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
 
     let private woken (asleep : int list) (system : UnixSystem<int, string>) : (int * Set<WakePrimitive>) list =
         UnixWait.wakes (Set.ofList asleep) system
 
     /// `system` with a caught SIGUSR1 pending for `task`.
-    let private signalled (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -106,7 +106,7 @@ module TestKqueue =
                         |> SignalState.enqueue
                             {
                                 Signal = Signal.SIGUSR1
-                                Target = ValueSome task
+                                Target = ValueSome thread
                             }
                 }
         }
@@ -286,7 +286,7 @@ module TestKqueue =
         (outcome : KeventOutcome)
         (before : UnixSystem<int, string>)
         (after : UnixSystem<int, string>)
-        (task : int)
+        (thread : int)
         : unit
         =
         match rv, errno, slept, outcome with
@@ -295,13 +295,13 @@ module TestKqueue =
             after |> shouldEqual before
         | "rv=0", "-", "slept=0", KeventOutcome.Answered [] -> after |> shouldEqual before
         | "rv=0", "-", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor task after.Tasks with
+            match UnixThreadTable.parkedFor thread after.Threads with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = Some deadline
                                          }) -> deadline - now |> shouldBeSmallerThan probeTimer
             | other -> failwith $"expected a park with a deadline, got %A{other}"
         | "rv=-1", "EINTR", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor task after.Tasks with
+            match UnixThreadTable.parkedFor thread after.Threads with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = None
                                          }) -> ()
@@ -600,7 +600,7 @@ module TestKqueue =
             | Error expected, actual -> actual |> shouldEqual (Error expected)
             | Ok (Some expected), actual -> actual |> shouldEqual (Ok (expected, system))
             | Ok None, Ok (KeventOutcome.WouldBlock _, parked) ->
-                match UnixThreadTable.parkedFor 1 parked.Tasks with
+                match UnixThreadTable.parkedFor 1 parked.Threads with
                 | Some (ParkedSyscall.Kevent wait) ->
                     wait.Kqueue |> shouldEqual (idOf fd system)
                     wait.Fd |> shouldEqual fd
@@ -672,13 +672,13 @@ module TestKqueue =
             let short = after (deadline - 1L - now) parked
             woken [ 1 ] short |> shouldEqual []
 
-            let ordinalBefore = (UnixThreadTable.parkOf 1 parked.Tasks).Value.Ordinal
+            let ordinalBefore = (UnixThreadTable.parkOf 1 parked.Threads).Value.Ordinal
 
             match UnixKqueue.tryFinishKevent 1 short with
             | Ok (KeventOutcome.WouldBlock _, reparked) ->
                 UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
 
-                (UnixThreadTable.parkOf 1 reparked.Tasks).Value.Ordinal
+                (UnixThreadTable.parkOf 1 reparked.Threads).Value.Ordinal
                 |> shouldBeGreaterThan ordinalBefore
             | other -> failwith $"expected a re-park, got %A{other}"
 
@@ -716,7 +716,7 @@ module TestKqueue =
             )
         )
 
-        match UnixThreadTable.parkedFor 1 parked.Tasks with
+        match UnixThreadTable.parkedFor 1 parked.Threads with
         | Some (ParkedSyscall.Kevent wait) ->
             wait
             |> shouldEqual
@@ -813,17 +813,17 @@ module TestKqueue =
             let k, system = createKqueue darwin
             let d, system = dup k system
             let kqueue = idOf k system
-            let tasks = List.mapi (fun i _ -> i + 1) sleepers
+            let threads = List.mapi (fun i _ -> i + 1) sleepers
 
             let parked =
-                (system, List.zip tasks sleepers)
-                ||> List.fold (fun system (task, entered) ->
+                (system, List.zip threads sleepers)
+                ||> List.fold (fun system (thread, entered) ->
                     let fd =
                         match entered with
                         | ThroughK -> k
                         | ThroughD -> d
 
-                    parks task fd KeventTimeout.Null system |> snd
+                    parks thread fd KeventTimeout.Null system |> snd
                 )
 
             let closing, surviving, through = if closeK then k, d, ThroughK else d, k, ThroughD
@@ -837,16 +837,16 @@ module TestKqueue =
             | other -> failwith $"expected the surviving kqueue, got %A{other}"
 
             if drains then
-                woken tasks closed
+                woken threads closed
                 |> shouldEqual (
-                    tasks
-                    |> List.map (fun task -> task, Set.singleton (WakePrimitive.KqueueDrained kqueue))
+                    threads
+                    |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
                 )
 
                 let finished =
-                    (closed, tasks)
-                    ||> List.fold (fun system task ->
-                        let outcome, system = finishes task system
+                    (closed, threads)
+                    ||> List.fold (fun system thread ->
+                        let outcome, system = finishes thread system
                         outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
                         system
                     )
@@ -862,7 +862,7 @@ module TestKqueue =
                     waits 9 surviving timeout (Threads.ensure 9 finished)
                     |> shouldEqual (Ok (KeventOutcome.Failed UnixError.EBADF, Threads.ensure 9 finished))
             else
-                woken tasks closed |> shouldEqual []
+                woken threads closed |> shouldEqual []
 
         let gen =
             Gen.zip
@@ -880,17 +880,17 @@ module TestKqueue =
             let k, system = createKqueue darwin
             let d, system = dup k system
             let kqueue = idOf k system
-            let tasks = List.mapi (fun i _ -> i + 1) sleepers
+            let threads = List.mapi (fun i _ -> i + 1) sleepers
 
             let parked =
-                (system, List.zip tasks sleepers)
-                ||> List.fold (fun system (task, entered) ->
+                (system, List.zip threads sleepers)
+                ||> List.fold (fun system (thread, entered) ->
                     let fd =
                         match entered with
                         | ThroughK -> k
                         | ThroughD -> d
 
-                    parks task fd KeventTimeout.Null system |> snd
+                    parks thread fd KeventTimeout.Null system |> snd
                 )
 
             let closed = parked |> close k |> close d
@@ -911,22 +911,22 @@ module TestKqueue =
                 )
             )
 
-            woken tasks closed
+            woken threads closed
             |> shouldEqual (
-                tasks
-                |> List.map (fun task -> task, Set.singleton (WakePrimitive.KqueueDrained kqueue))
+                threads
+                |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
             )
 
             let finished =
-                (closed, tasks)
-                ||> List.fold (fun system task ->
-                    let outcome, system = finishes task system
+                (closed, threads)
+                ||> List.fold (fun system thread ->
+                    let outcome, system = finishes thread system
                     outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
                     UnixSystem.checkInvariants system |> shouldEqual []
 
                     OpenFileTable.descriptions system.Machine.OpenFiles
                     |> Map.containsKey kqueue
-                    |> shouldEqual (task < List.length tasks)
+                    |> shouldEqual (thread < List.length threads)
 
                     system
                 )

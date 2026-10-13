@@ -38,7 +38,7 @@ module TestWakeSweepMemo =
     /// `task` of `pid` in a blocking `accept` on `listener`, which must sleep.
     let private parkInAccept
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (listener : int)
         (machine : SimulatedMachine<int, string>)
         : SimulatedMachine<int, string>
@@ -46,9 +46,9 @@ module TestWakeSweepMemo =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept task listener UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept thread listener UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
-                | other -> failwith $"accept by task %d{task}: %A{other}"
+                | other -> failwith $"accept by task %d{thread}: %A{other}"
             )
             machine
 
@@ -92,7 +92,7 @@ module TestWakeSweepMemo =
         LanguagePrimitives.PhysicalEquality signalled.Machine machine.Machine
         |> shouldEqual true
 
-        LanguagePrimitives.PhysicalEquality signalled.Processes.[pid].Tasks machine.Processes.[pid].Tasks
+        LanguagePrimitives.PhysicalEquality signalled.Processes.[pid].Threads machine.Processes.[pid].Threads
         |> shouldEqual true
 
         remembering memo asleep signalled
@@ -138,7 +138,7 @@ module TestWakeSweepMemo =
                 Map.add
                     pid
                     { slot with
-                        Tasks = UnixThreadTable.unpark 0 slot.Tasks
+                        Threads = UnixThreadTable.unpark 0 slot.Threads
                     }
                     machine.Processes
         }
@@ -188,7 +188,7 @@ module TestWakeSweepMemo =
                     Map.add
                         (ProcessId.parseOrFail "TestWakeSweepMemo" 9998)
                         { machine.Processes.[pid] with
-                            Tasks = Map.empty
+                            Threads = Map.empty
                         }
                         finished.Processes
             }
@@ -223,7 +223,7 @@ module TestWakeSweepMemo =
             Machines.inProcess pid (KeventWorld.listenerAt 8080us) machine
 
         // Tasks 0 and 1 poll the idle listener, for 5 ms and for 10 ms.
-        let pollFor (task : int) (milliseconds : int) (machine : SimulatedMachine<int, string>) =
+        let pollFor (thread : int) (milliseconds : int) (machine : SimulatedMachine<int, string>) =
             Machines.doIn
                 pid
                 (fun view ->
@@ -233,9 +233,9 @@ module TestWakeSweepMemo =
                             Events = 0x0001s
                         }
 
-                    match UnixPoll.tryPoll task [ entry ] milliseconds view with
+                    match UnixPoll.tryPoll thread [ entry ] milliseconds view with
                     | Ok (PollOutcome.WouldBlock _, view) -> view
-                    | other -> failwith $"poll by task %d{task}: %A{other}"
+                    | other -> failwith $"poll by task %d{thread}: %A{other}"
                 )
                 machine
 
@@ -314,7 +314,7 @@ module TestWakeSweepMemo =
                     Map.add
                         pid
                         { slot with
-                            Tasks = Map.ofList (Map.toList slot.Tasks)
+                            Threads = Map.ofList (Map.toList slot.Threads)
                         }
                         machine.Processes
             }

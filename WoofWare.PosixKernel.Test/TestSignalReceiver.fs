@@ -54,7 +54,7 @@ module TestSignalReceiver =
             }
 
         (system, blocking)
-        ||> Set.fold (fun system task -> HandlerFrames.enterIn "carrier" task (Set.singleton Signal.SIGUSR1) system)
+        ||> Set.fold (fun system thread -> HandlerFrames.enterIn "carrier" thread (Set.singleton Signal.SIGUSR1) system)
 
     let private usr1 (flavour : SimulatedUnixFlavour) : int =
         Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)) Signal.SIGUSR1
@@ -66,14 +66,14 @@ module TestSignalReceiver =
     /// `None` for a task that takes nothing.
     let private takenBy (system : UnixSystem<int, string>) : HandlerFrame<int, string> list option list =
         [ 0..3 ]
-        |> List.map (fun task ->
-            match UnixSignal.tryOnReturnToUser task system with
+        |> List.map (fun thread ->
+            match UnixSignal.tryOnReturnToUser thread system with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> None
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) -> Some frames
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other)
-            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"task %d{task} took %A{other}"
-            | Error refusal -> failwith $"task %d{task} was refused: %O{refusal}"
+            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"task %d{thread} took %A{other}"
+            | Error refusal -> failwith $"task %d{thread} was refused: %O{refusal}"
         )
 
     /// Send SIGUSR1 to the process, and say which tasks take it.
@@ -85,11 +85,11 @@ module TestSignalReceiver =
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
             takenBy system
             |> List.indexed
-            |> List.choose (fun (task, delivery) ->
+            |> List.choose (fun (thread, delivery) ->
                 match delivery with
-                | Some [ frame ] when frame.Entry.Signal = Signal.SIGUSR1 && frame.Action.Handler = "h" -> Some task
+                | Some [ frame ] when frame.Entry.Signal = Signal.SIGUSR1 && frame.Action.Handler = "h" -> Some thread
                 | None -> None
-                | Some other -> failwith $"task %d{task} took %A{other}"
+                | Some other -> failwith $"task %d{thread} took %A{other}"
             )
             |> Ok
         | Ok other -> failwith $"kill did not leave the signal to be taken: %A{other}"
@@ -248,10 +248,10 @@ module TestSignalReceiver =
                             }
                     }
 
-                for task in 0..3 do
-                    match UnixSignal.tryOnReturnToUser task after with
+                for thread in 0..3 do
+                    match UnixSignal.tryOnReturnToUser thread after with
                     | Error refusal -> refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
-                    | Ok answer -> failwith $"%O{flavour}: task %d{task} was answered %A{answer}"
+                    | Ok answer -> failwith $"%O{flavour}: task %d{thread} was answered %A{answer}"
             | other -> failwith $"%O{flavour}: %A{other}"
 
     [<Test>]

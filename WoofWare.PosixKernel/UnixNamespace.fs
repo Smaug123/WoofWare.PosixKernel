@@ -1152,7 +1152,7 @@ module UnixNamespace =
 
     let private openFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
-        (task : 'Thread)
+        (thread : 'Thread)
         (directory : AtDirectory)
         (flags : int)
         (path : PathArgumentBytes)
@@ -1162,10 +1162,10 @@ module UnixNamespace =
         =
         // Loudly partial in an unregistered or parked task, before anything is
         // answered, as every call that can sleep is.
-        match UnixThreadTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixNamespace.%s{operation}: task %O{task} is parked in %A{parked}, and is issuing an open. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
+                $"UnixNamespace.%s{operation}: task %O{thread} is parked in %A{parked}, and is issuing an open. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
         | None ->
 
         // No open sleeps yet: nothing can make an object whose open waits.
@@ -1205,14 +1205,14 @@ module UnixNamespace =
 
     /// `openPath`, with a refusal answered as the `Error` rather than raised.
     let internal tryOpenPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        openFrom "openPath" task AtDirectory.CurrentDirectory flags path mode system
+        openFrom "openPath" thread AtDirectory.CurrentDirectory flags path mode system
 
     /// `open(2)`, made by `task`: resolve `path`, apply every check a kernel
     /// makes, and return a descriptor onto what it names. It is `openat` from
@@ -1257,19 +1257,19 @@ module UnixNamespace =
     /// empty path's ENOENT among them) and before the walk's. Every other
     /// outcome is a descriptor or an errno.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryOpenPath task flags path mode system
+        tryOpenPath thread flags path mode system
         |> Refusal.orRaise "UnixNamespace.openPath" OpenRefusal.kind OpenRefusal.describe
 
     /// `openat`, with a refusal answered as the `Error` rather than raised.
     let internal tryOpenat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
@@ -1278,7 +1278,7 @@ module UnixNamespace =
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
-        openFrom "openat" task (AtDirectory.decode flavour dirfd) flags path mode system
+        openFrom "openat" thread (AtDirectory.decode flavour dirfd) flags path mode system
 
     /// `openat(2)`, made by `task`: `openPath` of `path`, starting from `dirfd`
     /// if it is relative; `openPath` is this from `AT_FDCWD`.
@@ -1292,7 +1292,7 @@ module UnixNamespace =
     /// Linux an unreadable, over-long or empty path is answered ahead of that
     /// refusal, while on Darwin the refusal comes first.
     let openat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
@@ -1300,7 +1300,7 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryOpenat task dirfd path flags mode system
+        tryOpenat thread dirfd path flags mode system
         |> Refusal.orRaise "UnixNamespace.openat" OpenRefusal.kind OpenRefusal.describe
 
     /// `readlinkat`, of a path this kernel has already copied in, starting

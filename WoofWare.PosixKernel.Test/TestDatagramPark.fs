@@ -70,12 +70,12 @@ module TestDatagramPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
     let ``a task parked in a datagram transfer is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Threads.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =
@@ -94,14 +94,14 @@ module TestDatagramPark =
                             ParkedDatagramSend.Socket = socket
                         }
                 ] do
-                let asleep = UnixWait.park task parked awake
+                let asleep = UnixWait.park thread parked awake
 
                 asleep
                 |> UnixSystem.checkInvariants
-                |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+                |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
                 // The park holds the description it names, once.
                 OpenFileTable.holdCount socket awake.Machine.OpenFiles |> shouldEqual (Some 0)
                 OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-                UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual []
-                UnixWait.satisfied task asleep |> shouldEqual (Some Set.empty)
+                UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
+                UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)

@@ -393,7 +393,7 @@ module TestUnixSignal =
             Flavour : SimulatedUnixFlavour
             CoreDumps : CoreDumps
             /// How many tasks the process has, numbered from 0, its leader.
-            Tasks : int
+            Threads : int
             Dispositions : (Signal * SignalDisposition<string>) list
             /// Each task's mask while the signals are sent.
             BlockedWhileSent : Set<Signal> list
@@ -407,7 +407,7 @@ module TestUnixSignal =
         gen {
             let! flavour = Gen.elements flavours
             let! coreDumps = Gen.elements [ CoreDumps.Suppressed ; CoreDumps.Written ]
-            let! tasks = Gen.choose (1, 2)
+            let! threads = Gen.choose (1, 2)
 
             let disposition : Gen<SignalDisposition<string>> =
                 Gen.frequency
@@ -425,11 +425,11 @@ module TestUnixSignal =
             let blocked =
                 Gen.frequency [ 3, Gen.constant (Set.ofList returnPool) ; 1, someSignals ]
 
-            let! blockedWhileSent = Gen.listOfLength tasks blocked
+            let! blockedWhileSent = Gen.listOfLength threads blocked
 
             let send =
                 gen {
-                    let! target = Gen.elements (None :: List.init tasks Some)
+                    let! target = Gen.elements (None :: List.init threads Some)
                     let! signal = Gen.elements returnPool
 
                     return
@@ -440,14 +440,14 @@ module TestUnixSignal =
                 }
 
             let! sends = Gen.choose (0, 5) |> Gen.bind (fun n -> Gen.listOfLength n send)
-            let! returning = Gen.choose (0, tasks - 1)
+            let! returning = Gen.choose (0, threads - 1)
             let! maskOnReturn = someSignals
 
             return
                 {
                     Flavour = flavour
                     CoreDumps = coreDumps
-                    Tasks = tasks
+                    Threads = threads
                     Dispositions = List.zip returnPool dispositions
                     BlockedWhileSent = blockedWhileSent
                     Sends = sends
@@ -469,19 +469,19 @@ module TestUnixSignal =
         | RanHandlers
 
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
-        let setMask (task : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
+        let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
             let mask =
                 SignalMask.ofSignals (SignalState.numbering system.Process.Signals) signals
 
-            match UnixSignal.pthreadSigmask task (sigBlock case.Flavour + 2) (Some mask) system with
+            match UnixSignal.pthreadSigmask thread (sigBlock case.Flavour + 2) (Some mask) system with
             | Ok (_, system) -> system
             | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
         let booted =
             systemLaunchedWith (ProcessLaunch.withCoreDumps case.CoreDumps) case.Flavour
             |> fun system ->
-                (system, [ 1 .. case.Tasks - 1 ])
-                ||> List.fold (fun system task -> Threads.spawn task system)
+                (system, [ 1 .. case.Threads - 1 ])
+                ||> List.fold (fun system thread -> Threads.spawn thread system)
 
         let configured =
             (booted, case.Dispositions)
@@ -498,7 +498,7 @@ module TestUnixSignal =
 
         let masked =
             (configured, List.indexed case.BlockedWhileSent)
-            ||> List.fold (fun system (task, signals) -> setMask task signals system)
+            ||> List.fold (fun system (thread, signals) -> setMask thread signals system)
 
         let sent =
             (Some masked, case.Sends)
@@ -515,8 +515,8 @@ module TestUnixSignal =
                     | None ->
                         UnixSignal.tryKill self signo system
                         |> Result.mapError (fun refusal -> $"%O{refusal}")
-                    | Some task ->
-                        UnixSignal.tryPthreadKill task signo system
+                    | Some thread ->
+                        UnixSignal.tryPthreadKill thread signo system
                         |> Result.mapError (fun refusal -> $"%O{refusal}")
 
                 match answer with
@@ -541,13 +541,13 @@ module TestUnixSignal =
             | None -> ()
             | Some system ->
 
-            let tasks = system.Tasks |> Map.keys |> Set.ofSeq
+            let threads = system.Threads |> Map.keys |> Set.ofSeq
 
             let decided =
                 SignalState.onReturnToUser
                     system.Process.CoreDumps
                     system.Leader
-                    tasks
+                    threads
                     case.Returning
                     system.Process.Signals
 

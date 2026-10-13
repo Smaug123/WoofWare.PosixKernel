@@ -868,23 +868,23 @@ module UnixThreadState =
     /// The logical processor `task` last ran on, or, before the client first
     /// dispatched it (`UnixScheduling.dispatch`), the one its creator named.
     /// Whether it is running there now is `UnixScheduling.runningOn`'s answer.
-    let cpu (task : UnixThreadState) : CpuId = task.Cpu
+    let cpu (thread : UnixThreadState) : CpuId = thread.Cpu
 
     /// The OS thread ID `task` reports, as `gettid(2)` does: fixed when the
     /// task is created, and held by no other live task on the machine.
-    let osThreadId (task : UnixThreadState) : OsThreadId = task.OsThreadId
+    let osThreadId (thread : UnixThreadState) : OsThreadId = thread.OsThreadId
 
     /// The syscall `task` is blocked in, and where that park stands in park
     /// order, if it is blocked in one. The park holds kernel objects by
     /// identity, never by descriptor number: a sleeping task keeps the object
     /// rather than the number, and descriptor numbers are reused as soon as
     /// they are free.
-    let park (task : UnixThreadState) : ThreadPark option = task.Parked
+    let park (thread : UnixThreadState) : ThreadPark option = thread.Parked
 
     /// The syscall `task` is blocked in, if it is blocked in one: `park`
     /// without its place in park order.
-    let parkedIn (task : UnixThreadState) : ParkedSyscall option =
-        task.Parked |> Option.map (fun park -> park.Syscall)
+    let parkedIn (thread : UnixThreadState) : ParkedSyscall option =
+        thread.Parked |> Option.map (fun park -> park.Syscall)
 
 /// The tasks a simulated process owns, by whatever a client uses to name one.
 ///
@@ -900,15 +900,15 @@ module UnixThreadTable =
     /// resolves to nothing is a client bug rather than anything a process did.
     let internal get<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
-        let mutable task = Unchecked.defaultof<UnixThreadState>
+        let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if tasks.TryGetValue (name, &task) then
-            task
+        if threads.TryGetValue (name, &thread) then
+            thread
         else
             failwith
                 $"UnixThreadTable.get: %O{name} names no task. Every task enters the table when its thread is created, as its process's leader or by `UnixThreadLifecycle.spawn`, and leaves it when the thread exits, so this one was never created or has already exited (this is a bug in the client)."
@@ -921,10 +921,10 @@ module UnixThreadTable =
         (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : Map<'Thread, UnixThreadState>
         =
-        if Map.containsKey name tasks then
+        if Map.containsKey name threads then
             failwith
                 $"UnixThreadTable.add: %O{name} already names a task. A task is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
@@ -935,25 +935,25 @@ module UnixThreadTable =
                 OsThreadId = osThreadId
                 Parked = None
             }
-            tasks
+            threads
 
     /// The syscall `name` is blocked in, if any. Fails loudly, as `get` does,
     /// for a name that is not a task; a client reads `UnixThreadState.parkedIn`
     /// of the state it looked up instead.
     let internal parkedFor<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : ParkedSyscall option
         =
-        UnixThreadState.parkedIn (get name tasks)
+        UnixThreadState.parkedIn (get name threads)
 
     /// The park `name` is in, with its place in park order, if it is parked.
     let internal parkOf<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : ThreadPark option
         =
-        (get name tasks).Parked
+        (get name threads).Parked
 
     /// Record that `name` is in `park`.
     ///
@@ -976,10 +976,10 @@ module UnixThreadTable =
     let internal withPark<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (park : ThreadPark)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : Map<'Thread, UnixThreadState>
         =
-        let existing = get name tasks
+        let existing = get name threads
 
         // Which syscall a park is of, and nothing else about it.
         let kind (parked : ParkedSyscall) : int =
@@ -1018,7 +1018,7 @@ module UnixThreadTable =
             { existing with
                 Parked = Some park
             }
-            tasks
+            threads
 
     /// Record that `name` is no longer parked: its syscall has finished.
     ///
@@ -1028,17 +1028,17 @@ module UnixThreadTable =
     /// its holds.
     let internal unpark<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : Map<'Thread, UnixThreadState>
         =
-        let existing = get name tasks
+        let existing = get name threads
 
         Map.add
             name
             { existing with
                 Parked = None
             }
-            tasks
+            threads
 
     /// Compare the table against the tasks a client believes are live,
     /// answering those it has no entry for and those it has an entry for but
@@ -1048,8 +1048,8 @@ module UnixThreadTable =
     /// own vocabulary: this library has no opinion on what a defect is called.
     let reconcile<'Thread when 'Thread : comparison>
         (live : Set<'Thread>)
-        (tasks : Map<'Thread, UnixThreadState>)
+        (threads : Map<'Thread, UnixThreadState>)
         : 'Thread list * 'Thread list
         =
-        let named = tasks |> Map.toList |> List.map fst |> Set.ofList
+        let named = threads |> Map.toList |> List.map fst |> Set.ofList
         Set.difference live named |> Set.toList, Set.difference named live |> Set.toList

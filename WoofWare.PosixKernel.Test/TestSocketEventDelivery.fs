@@ -59,7 +59,7 @@ module TestSocketEventDelivery =
         : UnixSystem<int, string>
         =
         { system with
-            Tasks = f system.Tasks
+            Threads = f system.Threads
         }
 
     /// `EpollReadyList.drain` against a kernel, with the claim its two readers
@@ -1046,7 +1046,7 @@ module TestSocketEventDelivery =
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             OpenFileTable.descriptions closed.Machine.OpenFiles
             |> Map.containsKey (
-                match UnixThreadTable.parkedFor 1 closed.Tasks with
+                match UnixThreadTable.parkedFor 1 closed.Threads with
                 | Some (ParkedSyscall.EpollWait wait) -> wait.Epoll
                 | other -> failwith $"expected the wait to stay parked, got %A{other}"
             )

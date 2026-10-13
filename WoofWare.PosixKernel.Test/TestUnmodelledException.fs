@@ -596,14 +596,14 @@ module TestUnmodelledException =
         covering
             40
             (Gen.zip platformGen (Gen.choose (0, 2)))
-            (fun (platform, task) ->
+            (fun (platform, thread) ->
                 let system = world platform
 
                 agrees
                     ThreadExitRefusal.kind
                     ThreadExitRefusal.describe
-                    (fun () -> UnixThreadLifecycle.tryExitThread task 0 system)
-                    (fun () -> UnixThreadLifecycle.exitThread task 0 system)
+                    (fun () -> UnixThreadLifecycle.tryExitThread thread 0 system)
+                    (fun () -> UnixThreadLifecycle.exitThread thread 0 system)
             )
             [
                 Observed.Answered

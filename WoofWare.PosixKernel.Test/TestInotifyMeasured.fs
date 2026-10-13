@@ -271,14 +271,14 @@ module TestInotifyMeasured =
         go 0 []
 
     let private read
-        (task : int)
+        (thread : int)
         (fd : int)
         (buffer : UserBuffer)
         (count : int)
         (system : UnixSystem<int, string>)
         : ReadOutcome * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead task fd buffer (uint64 count) system with
+        match UnixReadWrite.tryRead thread fd buffer (uint64 count) system with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"read(%d{fd}, %d{count}) refused: %s{ReadRefusal.describe refusal}"
 
@@ -772,7 +772,7 @@ module TestInotifyMeasured =
                 }
         }
 
-    let private signalThread (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalThread (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -780,28 +780,28 @@ module TestInotifyMeasured =
                         SignalState.enqueue
                             {
                                 Signal = Signal.SIGUSR1
-                                Target = ValueSome task
+                                Target = ValueSome thread
                             }
                             system.Process.Signals
                 }
         }
 
-    let private returned (task : int) (system : UnixSystem<int, string>) : bool =
-        match UnixWait.satisfied task system with
+    let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
+        match UnixWait.satisfied thread system with
         | Some woken -> not (Set.isEmpty woken)
-        | None -> failwith $"task %d{task} is not asleep"
+        | None -> failwith $"task %d{thread} is not asleep"
 
     /// What the woken read of `task` answers, as the probe prints it.
-    let private finish (task : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        match UnixReadWrite.tryFinishRead task system with
+    let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
+        match UnixReadWrite.tryFinishRead thread system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
         | Ok (ReadOutcome.Restarts, s) -> "restarts", s
         | other -> failwith $"%A{other}"
 
-    let private sleeps (task : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match read task fd UserBuffer.Mapped 4096 system with
+    let private sleeps (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match read thread fd UserBuffer.Mapped 4096 system with
         | ReadOutcome.WouldBlock _, system -> system
         | other, _ -> failwith $"expected the read to sleep, got %A{other}"
 

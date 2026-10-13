@@ -74,8 +74,8 @@ module TestUnixWait =
 
     /// The park each task makes: 1 and 2 wait on an epoll instance, 3 and 4 for a
     /// lock, so that both kinds of park are in the table at once.
-    let private parkOfThread (task : int) : ParkedSyscall =
-        if task <= 2 then
+    let private parkOfThread (thread : int) : ParkedSyscall =
+        if thread <= 2 then
             ParkedSyscall.EpollWait
                 {
                     Epoll = blocked
@@ -97,19 +97,19 @@ module TestUnixWait =
 
     [<RequireQualifiedAccess>]
     type private Op =
-        | Park of task : int
-        | Unpark of task : int
+        | Park of thread : int
+        | Unpark of thread : int
         | AdvanceClock of nanoseconds : int64
         | CreateEpoll
-        | Register of task : int
+        | Register of thread : int
 
     let private opGen : Gen<Op> =
-        let task = Gen.choose (1, 4)
+        let thread = Gen.choose (1, 4)
 
         Gen.frequency
             [
-                4, task |> Gen.map Op.Park
-                2, task |> Gen.map Op.Unpark
+                4, thread |> Gen.map Op.Park
+                2, thread |> Gen.map Op.Unpark
                 1, Gen.choose (0, 1000) |> Gen.map (int64 >> Op.AdvanceClock)
                 1, Gen.constant Op.CreateEpoll
                 1, Gen.choose (5, 1000) |> Gen.map Op.Register
@@ -117,8 +117,8 @@ module TestUnixWait =
 
     let private apply (op : Op) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match op with
-        | Op.Park task -> UnixWait.park task (parkOfThread task) system
-        | Op.Unpark task -> UnixParkState.unpark task system
+        | Op.Park thread -> UnixWait.park thread (parkOfThread thread) system
+        | Op.Unpark thread -> UnixParkState.unpark thread system
         | Op.AdvanceClock nanoseconds ->
             { system with
                 Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
@@ -128,11 +128,11 @@ module TestUnixWait =
                 FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
 
             withRegistry registry system
-        | Op.Register task ->
-            if Map.containsKey task system.Tasks then
+        | Op.Register thread ->
+            if Map.containsKey thread system.Threads then
                 system
             else
-                withThread task system
+                withThread thread system
 
     /// The parks a walk must make.
     [<RequireQualifiedAccess>]
@@ -149,37 +149,37 @@ module TestUnixWait =
 
                 let subject =
                     match op with
-                    | Op.Park task
-                    | Op.Unpark task -> Some task
+                    | Op.Park thread
+                    | Op.Unpark thread -> Some thread
                     | Op.AdvanceClock _
                     | Op.CreateEpoll
                     | Op.Register _ -> None
 
                 // Every other task keeps its park, ordinal and all.
-                for task in Map.keys before.Tasks do
-                    if Some task <> subject then
-                        UnixThreadTable.parkOf task after.Tasks
-                        |> shouldEqual (UnixThreadTable.parkOf task before.Tasks)
+                for thread in Map.keys before.Threads do
+                    if Some thread <> subject then
+                        UnixThreadTable.parkOf thread after.Threads
+                        |> shouldEqual (UnixThreadTable.parkOf thread before.Threads)
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
                 match op with
-                | Op.Park task ->
-                    if (UnixThreadTable.parkOf task before.Tasks).IsSome then
+                | Op.Park thread ->
+                    if (UnixThreadTable.parkOf thread before.Threads).IsSome then
                         cover ParkLabel.Repark
 
-                    match UnixThreadTable.parkOf task after.Tasks with
+                    match UnixThreadTable.parkOf thread after.Threads with
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
-                        park.Syscall |> shouldEqual (parkOfThread task)
+                        park.Syscall |> shouldEqual (parkOfThread thread)
 
                         match lastMinted with
                         | Some last -> park.Ordinal |> shouldBeGreaterThan last
                         | None -> ()
 
                         after, Some park.Ordinal
-                | Op.Unpark task ->
-                    UnixThreadTable.parkOf task after.Tasks |> shouldEqual None
+                | Op.Unpark thread ->
+                    UnixThreadTable.parkOf thread after.Threads |> shouldEqual None
                     after, lastMinted
                 | Op.AdvanceClock _
                 | Op.CreateEpoll
@@ -262,7 +262,7 @@ module TestUnixWait =
             UnixParkState.unpark 1 parked
 
         UnixWait.park 1 (parkOfThread 3) cleared
-        |> fun system -> UnixThreadTable.parkedFor 1 system.Tasks
+        |> fun system -> UnixThreadTable.parkedFor 1 system.Threads
         |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]

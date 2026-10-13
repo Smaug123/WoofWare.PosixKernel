@@ -45,7 +45,7 @@ module TestUnblockForAnotherThread =
     let private setmaskHow (flavour : SimulatedUnixFlavour) : int = unblockHow flavour + 1
 
     /// The process's tasks: 0 is the leader.
-    let private tasks : int list = [ 0 ; 1 ; 2 ]
+    let private threads : int list = [ 0 ; 1 ; 2 ]
 
     /// The task holding the lock a sleeper in `flock` waits for. A lock is
     /// the open file description's, so this task may sleep or unblock too.
@@ -116,10 +116,10 @@ module TestUnblockForAnotherThread =
         /// `kill(2)` of the process.
         | Process
         /// `pthread_kill(3)` of this task.
-        | Task of int
+        | Thread of int
 
     let private targets : Target list =
-        Target.Process :: (tasks |> List.map Target.Task)
+        Target.Process :: (threads |> List.map Target.Thread)
 
     /// The mask call the unblocker makes.
     [<RequireQualifiedAccess>]
@@ -157,8 +157,8 @@ module TestUnblockForAnotherThread =
                 for sleep in sleeps do
                     for disposition in dispositions do
                         for target in targets do
-                            for sleeper in tasks do
-                                for unblocker in tasks do
+                            for sleeper in threads do
+                                for unblocker in threads do
                                     if unblocker <> sleeper then
                                         for before in [ true ; false ] do
                                             for route in routes do
@@ -199,7 +199,7 @@ module TestUnblockForAnotherThread =
         let system =
             (UnixSystem.initial<int, string> (HostPlatform.platformOf flavour)
              |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0),
-             tasks)
+             threads)
             ||> List.fold (fun system name -> Threads.ensure name system)
 
         let listener, system =
@@ -326,17 +326,17 @@ module TestUnblockForAnotherThread =
 
     /// `world` with `task` asleep in `sleep`, or `None` if the call answered
     /// at once.
-    let private asleep (world : World) (task : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
+    let private asleep (world : World) (thread : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
         let parkedOrNot (what : string) (result : Result<'outcome * UnixSystem<int, string>, 'refusal>) =
             match result with
-            | Ok (_, system) when (UnixThreadTable.parkOf task system.Tasks).IsSome -> Some system
+            | Ok (_, system) when (UnixThreadTable.parkOf thread system.Threads).IsSome -> Some system
             | Ok _ -> None
             | Error refusal -> failwith $"%s{what} was refused: %A{refusal}"
 
         match sleep with
         | Sleep.PollOfNothing ->
             UnixPoll.tryPoll
-                task
+                thread
                 [
                     {
                         Fd = -1
@@ -348,7 +348,7 @@ module TestUnblockForAnotherThread =
             |> parkedOrNot "the poll of nothing"
         | Sleep.PollListener ->
             UnixPoll.tryPoll
-                task
+                thread
                 [
                     {
                         Fd = world.Listener
@@ -359,18 +359,18 @@ module TestUnblockForAnotherThread =
                 system
             |> parkedOrNot "the poll"
         | Sleep.Accept ->
-            UnixConnection.tryAccept task world.Listener UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u system
             |> parkedOrNot "the accept"
         | Sleep.Flock ->
-            UnixDescriptor.tryFlock task world.WaitingThrough 2 system
+            UnixDescriptor.tryFlock thread world.WaitingThrough 2 system
             |> parkedOrNot "the flock"
         | Sleep.PipeRead ->
-            UnixReadWrite.tryRead task world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
+            UnixReadWrite.tryRead thread world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
             |> parkedOrNot "the read"
         | Sleep.PipeWrite ->
             match
                 WriteOutcomes.admitThenWrite
-                    task
+                    thread
                     world.FullPipeWriteEnd
                     UserBuffer.Mapped
                     (ImmutableArray.Create 0x62uy)
@@ -382,15 +382,15 @@ module TestUnblockForAnotherThread =
         | Sleep.EventPort ->
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
-                UnixPoll.tryEpollWait task world.Port 8 UserBuffer.Mapped -1 system
+                UnixPoll.tryEpollWait thread world.Port 8 UserBuffer.Mapped -1 system
                 |> parkedOrNot "the epoll_wait"
             | SimulatedUnixFlavour.Darwin ->
-                UnixKqueue.tryKevent task world.Port 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent thread world.Port 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
-            let mask = SignalState.maskOf task system.Process.Signals
-            UnixSignal.trySigsuspend task mask system |> parkedOrNot "the sigsuspend"
-        | Sleep.Pause -> UnixSignal.tryPause task system |> parkedOrNot "the pause"
+            let mask = SignalState.maskOf thread system.Process.Signals
+            UnixSignal.trySigsuspend thread mask system |> parkedOrNot "the sigsuspend"
+        | Sleep.Pause -> UnixSignal.tryPause thread system |> parkedOrNot "the pause"
 
     let private orFail (what : string) (result : Result<'a * UnixSystem<int, string>, 'e>) : UnixSystem<int, string> =
         match result with
@@ -407,8 +407,8 @@ module TestUnblockForAnotherThread =
             | Target.Process ->
                 UnixSignal.tryKill (ProcessId.toInt32 (UnixSystem.processId system)) raw system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
-            | Target.Task task ->
-                UnixSignal.tryPthreadKill task raw system
+            | Target.Thread thread ->
+                UnixSignal.tryPthreadKill thread raw system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
 
         match outcome with
@@ -477,9 +477,9 @@ module TestUnblockForAnotherThread =
                 |> orFail "sigaction"
 
         let system =
-            (system, tasks)
-            ||> List.fold (fun system task ->
-                UnixSignal.pthreadSigmask task (setmaskHow case.Flavour) (Some s) system
+            (system, threads)
+            ||> List.fold (fun system thread ->
+                UnixSignal.pthreadSigmask thread (setmaskHow case.Flavour) (Some s) system
                 |> orFail "pthread_sigmask"
             )
 
@@ -518,7 +518,7 @@ module TestUnblockForAnotherThread =
                 let holder =
                     match case.Target with
                     | Target.Process -> 0
-                    | Target.Task task -> task
+                    | Target.Thread thread -> thread
 
                 if holder = case.Unblocker then None else Some holder
 
@@ -528,7 +528,7 @@ module TestUnblockForAnotherThread =
         match UnixWait.wakes (Set.singleton case.Sleeper) after with
         | [] -> None
         | _ ->
-            let tasks = after.Tasks |> Map.keys |> Set.ofSeq
+            let threads = after.Threads |> Map.keys |> Set.ofSeq
 
             let suspended =
                 match case.Sleep with
@@ -541,7 +541,12 @@ module TestUnblockForAnotherThread =
             // death, which ends a sigsuspend and which every other call
             // refuses; and anything else refused or slept on.
             match
-                SignalState.onReturnToUser after.Process.CoreDumps after.Leader tasks case.Sleeper after.Process.Signals
+                SignalState.onReturnToUser
+                    after.Process.CoreDumps
+                    after.Leader
+                    threads
+                    case.Sleeper
+                    after.Process.Signals
             with
             | Ok (Some (SignalDelivery.RunHandlers frames), _) ->
                 Some $"handlers for %A{frames |> List.map (fun frame -> frame.Entry.Signal)}"
@@ -562,19 +567,19 @@ module TestUnblockForAnotherThread =
         else
 
         match unblock case system, leftDeliverableTo case with
-        | Unblocked.Refused refusal, Some task ->
-            if refusal = SigprocmaskRefusal.DarwinUnblockedForAnotherThread (task, signalOf case.Disposition) then
+        | Unblocked.Refused refusal, Some thread ->
+            if refusal = SigprocmaskRefusal.DarwinUnblockedForAnotherThread (thread, signalOf case.Disposition) then
                 None
             else
                 Some $"refused with %A{refusal}"
         | Unblocked.Refused refusal, None -> Some $"refused with %A{refusal} where Darwin leaves no task deliverable"
-        | Unblocked.Answered after, Some task ->
+        | Unblocked.Answered after, Some thread ->
             let woken =
                 match wokenInto case after with
                 | Some taken -> $", and woke the sleeper into %s{taken}"
                 | None -> ""
 
-            Some $"answered, leaving the signal deliverable to task %d{task}%s{woken}"
+            Some $"answered, leaving the signal deliverable to task %d{thread}%s{woken}"
         | Unblocked.Answered after, None ->
             // Darwin's sleeper slept on, and Linux's mask call does not touch
             // the sleeper's mask. A wake is right only into a refusal.

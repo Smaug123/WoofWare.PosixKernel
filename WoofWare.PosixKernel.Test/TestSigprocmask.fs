@@ -26,13 +26,13 @@ module TestSigprocmask =
 
     /// `UnixSignal.sigprocmask`, failing the test on a refusal.
     let private sigprocmask
-        (task : int)
+        (thread : int)
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
         : Result<SignalMask * UnixSystem<int, string>, UnixError>
         =
-        match UnixSignal.trySigprocmask task how set system with
+        match UnixSignal.trySigprocmask thread how set system with
         | Ok answered -> answered
         | Error refusal -> failwith $"sigprocmask was refused: %s{SigprocmaskRefusal.describe refusal}"
 
@@ -65,24 +65,24 @@ module TestSigprocmask =
 
     let private call
         (route : Route)
-        (task : int)
+        (thread : int)
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
         : Result<SignalMask * UnixSystem<int, string>, UnixError>
         =
         match route with
-        | Route.Libc -> sigprocmask task how set system
-        | Route.Pthread -> UnixSignal.pthreadSigmask task how set system
-        | Route.Raw -> UnixSignal.rtSigprocmask task how set 8UL system
+        | Route.Libc -> sigprocmask thread how set system
+        | Route.Pthread -> UnixSignal.pthreadSigmask thread how set system
+        | Route.Raw -> UnixSignal.rtSigprocmask thread how set 8UL system
 
     let private maskOfWord (flavour : SimulatedUnixFlavour) (word : uint64) : SignalMask =
         match SignalMask.ofWord (numberingOf flavour) word with
         | Ok mask -> mask
         | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
-    let private wordOf (task : int) (system : UnixSystem<int, string>) : uint64 =
-        SignalState.maskOf task system.Process.Signals |> SignalMask.toWord
+    let private wordOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
+        SignalState.maskOf thread system.Process.Signals |> SignalMask.toWord
 
     let private orFail (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : UnixSystem<int, string> =
         match result with
@@ -92,12 +92,12 @@ module TestSigprocmask =
     /// `task` with exactly `word` blocked, set through `pthread_sigmask`.
     let private withMask
         (flavour : SimulatedUnixFlavour)
-        (task : int)
+        (thread : int)
         (word : uint64)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSignal.pthreadSigmask task (setmask flavour) (Some (maskOfWord flavour word)) system
+        UnixSignal.pthreadSigmask thread (setmask flavour) (Some (maskOfWord flavour word)) system
         |> orFail
 
     // HUP, INT and TERM are 1, 2 and 15 under both numberings.
@@ -566,7 +566,7 @@ module TestSigprocmask =
             // it.
             let parked =
                 match UnixPoll.tryPoll 1 [] -1 system with
-                | Ok (_, system) when UnixThreadTable.parkOf 1 system.Tasks |> Option.isSome -> system
+                | Ok (_, system) when UnixThreadTable.parkOf 1 system.Threads |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
             UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
@@ -583,7 +583,7 @@ module TestSigprocmask =
     type private MaskCall =
         {
             Route : Route
-            Task : int
+            Thread : int
             How : int
             Set : uint64 option
             /// `rt_sigprocmask`'s `sigsetsize`; read for `Route.Raw` alone.
@@ -598,7 +598,7 @@ module TestSigprocmask =
         (call : MaskCall)
         : Result<uint64 * Map<int, uint64>, UnixError>
         =
-        let old = Map.find call.Task masks
+        let old = Map.find call.Thread masks
 
         let killStop =
             match flavour with
@@ -639,11 +639,11 @@ module TestSigprocmask =
                     if flavour = SimulatedUnixFlavour.Darwin && call.Route = Route.Libc then
                         masks |> Map.keys |> List.ofSeq
                     else
-                        [ call.Task ]
+                        [ call.Thread ]
 
                 let masks =
                     (masks, targets)
-                    ||> List.fold (fun masks task -> Map.add task (change (Map.find task masks)) masks)
+                    ||> List.fold (fun masks thread -> Map.add thread (change (Map.find thread masks)) masks)
 
                 Ok (old, masks)
 
@@ -676,7 +676,7 @@ module TestSigprocmask =
                 let callGen =
                     gen {
                         let! route = Gen.elements (routesOf flavour)
-                        let! task = Gen.elements [ 0 ; 1 ]
+                        let! thread = Gen.elements [ 0 ; 1 ]
 
                         let! how =
                             Gen.frequency
@@ -691,7 +691,7 @@ module TestSigprocmask =
                         return
                             {
                                 Route = route
-                                Task = task
+                                Thread = thread
                                 How = how
                                 Set = set
                                 Size = size
@@ -711,8 +711,8 @@ module TestSigprocmask =
 
                 let actual =
                     match c.Route with
-                    | Route.Raw -> UnixSignal.rtSigprocmask c.Task c.How set c.Size system
-                    | route -> call route c.Task c.How set system
+                    | Route.Raw -> UnixSignal.rtSigprocmask c.Thread c.How set c.Size system
+                    | route -> call route c.Thread c.How set system
 
                 let expected = referenceCall flavour masks c
 
@@ -720,8 +720,9 @@ module TestSigprocmask =
                 | Ok (old, system'), Ok (expectedOld, masks') ->
                     (c, SignalMask.toWord old) |> shouldEqual (c, expectedOld)
 
-                    for task in [ 0 ; 1 ] do
-                        (c, task, wordOf task system') |> shouldEqual (c, task, Map.find task masks')
+                    for thread in [ 0 ; 1 ] do
+                        (c, thread, wordOf thread system')
+                        |> shouldEqual (c, thread, Map.find thread masks')
 
                     SignalState.threadsWithMasks system'.Process.Signals
                     |> shouldEqual (masks' |> Map.filter (fun _ w -> w <> 0UL) |> Map.keys |> Set.ofSeq)

@@ -71,7 +71,7 @@ module KeventWorld =
 
     /// A connect of `fd` to `port`, made by `task`, which must be awake.
     let connectAs
-        (task : int)
+        (thread : int)
         (fd : int)
         (port : uint16)
         (system : UnixSystem<int, string>)
@@ -79,7 +79,7 @@ module KeventWorld =
         =
         match
             CopyIn.connectAs
-                task
+                thread
                 fd
                 UserBuffer.Mapped
                 16u
@@ -100,9 +100,9 @@ module KeventWorld =
 
     /// A new non-blocking socket connecting to `port`, as the probe's `client`
     /// makes, connected by `task`, which must be awake.
-    let clientAs (task : int) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+    let clientAs (thread : int) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, system = stream true system
-        let _, system = connectAs task fd port system
+        let _, system = connectAs thread fd port system
         fd, system
 
     /// `clientAs` the process's leader.

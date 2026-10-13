@@ -3244,7 +3244,7 @@ module TestUnixSystemStep =
             )
         )
 
-        UnixThreadTable.parkedFor waiterThread parkedIn.Tasks
+        UnixThreadTable.parkedFor waiterThread parkedIn.Threads
         |> shouldEqual (
             Some (
                 ParkedSyscall.Flock
@@ -3256,19 +3256,19 @@ module TestUnixSystemStep =
         )
 
         // ...and the holder, whose call was answered, is not parked.
-        UnixThreadTable.parkedFor holderThread parkedIn.Tasks |> shouldEqual None
+        UnixThreadTable.parkedFor holderThread parkedIn.Threads |> shouldEqual None
 
     [<Test>]
     let ``a granted or failed flock records no park`` () : unit =
         let first, second, system = withTwoDescriptions linux
 
         let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        UnixThreadTable.parkedFor holderThread held.Tasks |> shouldEqual None
+        UnixThreadTable.parkedFor holderThread held.Threads |> shouldEqual None
 
         // A non-blocking contended acquisition fails rather than parks.
         match UnixDescriptor.tryFlock waiterThread second (2 ||| 4) held with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) ->
-            UnixThreadTable.parkedFor waiterThread after.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor waiterThread after.Threads |> shouldEqual None
         | other -> failwith $"expected EAGAIN, got %A{other}"
 
     [<Test>]
@@ -3309,10 +3309,10 @@ module TestUnixSystemStep =
 
         let opens : (string * (int -> UnixSystem<int, string> -> unit)) list =
             [
-                "openPath", (fun task system -> UnixNamespace.tryOpenPath task 0 root 0 system |> ignore)
+                "openPath", (fun thread system -> UnixNamespace.tryOpenPath thread 0 root 0 system |> ignore)
                 "openat",
-                (fun task system ->
-                    UnixNamespace.tryOpenat task (AtDirectory.atFdCwd SimulatedUnixFlavour.Linux) root 0 0 system
+                (fun thread system ->
+                    UnixNamespace.tryOpenat thread (AtDirectory.atFdCwd SimulatedUnixFlavour.Linux) root 0 0 system
                     |> ignore
                 )
             ]
@@ -3340,8 +3340,8 @@ module TestUnixSystemStep =
         let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
         let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
 
-        let connect (task : int) : unit =
-            UnixConnection.tryConnect task first UserBuffer.Mapped 0u parkedIn |> ignore
+        let connect (thread : int) : unit =
+            UnixConnection.tryConnect thread first UserBuffer.Mapped 0u parkedIn |> ignore
 
         let parkedExn = Assert.Throws<exn> (fun () -> connect waiterThread)
         parkedExn.Message |> shouldContainText "UnixConnection.connect"
@@ -3369,13 +3369,13 @@ module TestUnixSystemStep =
         let taken = UnixDescriptor.tryFlock thirdThread another 2 released |> granted
         let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
 
-        UnixThreadTable.parkedFor waiterThread beaten.Tasks
-        |> shouldEqual (UnixThreadTable.parkedFor waiterThread parkedIn.Tasks)
+        UnixThreadTable.parkedFor waiterThread beaten.Threads
+        |> shouldEqual (UnixThreadTable.parkedFor waiterThread parkedIn.Threads)
 
         // Granted: the record is gone, and the task may issue an flock again.
         let freed = UnixDescriptor.tryFlock thirdThread another 8 beaten |> granted
         let finished = UnixDescriptor.tryFlockAcquire waiterThread freed |> granted
-        UnixThreadTable.parkedFor waiterThread finished.Tasks |> shouldEqual None
+        UnixThreadTable.parkedFor waiterThread finished.Threads |> shouldEqual None
 
         UnixDescriptor.tryFlock waiterThread second 8 finished
         |> granted
@@ -3444,18 +3444,18 @@ module TestUnixSystemStep =
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), closed) when linuxFlavour ->
                 UnixSystem.checkInvariants closed |> shouldEqual []
                 holds waiterThread condition closed |> shouldEqual false
-            | Error (SyscallRefusal.Close (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, task))) when
+            | Error (SyscallRefusal.Close (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread))) when
                 not linuxFlavour
                 ->
                 description |> shouldEqual (descriptionOf second parkedIn)
-                task |> shouldEqual waiterThread
+                thread |> shouldEqual waiterThread
                 holds waiterThread condition parkedIn |> shouldEqual false
             | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{other}"
 
     /// `operation` by `task` through `fd`, which must be answered at once: the
     /// answer.
-    let private flockAnswer (task : int) (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-        match UnixDescriptor.tryFlock task fd operation system with
+    let private flockAnswer (thread : int) (fd : int) (operation : int) (system : UnixSystem<int, string>) =
+        match UnixDescriptor.tryFlock thread fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"expected flock %d{operation} on fd %d{fd} to be answered, got %A{other}"
 
@@ -3558,9 +3558,9 @@ module TestUnixSystemStep =
 
         for fd in [ second ; alias ] do
             match UnixDescriptor.tryClose fd parkedIn with
-            | Error (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, task)) ->
+            | Error (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread)) ->
                 description |> shouldEqual requester
-                task |> shouldEqual waiterThread
+                thread |> shouldEqual waiterThread
             | other -> failwith $"closing fd %d{fd}: expected the close to be refused, got %A{other}"
 
     [<Test>]
@@ -3829,7 +3829,7 @@ module TestUnixSystemStep =
         let condition, parkedIn =
             UnixDescriptor.tryFlock waiterThread second 2 held |> parked
 
-        match UnixThreadTable.parkedFor waiterThread parkedIn.Tasks with
+        match UnixThreadTable.parkedFor waiterThread parkedIn.Threads with
         | Some parked -> WakeCondition.ofPark parked |> shouldEqual condition
         | None -> failwith "expected the park to have been recorded"
 
@@ -3907,10 +3907,10 @@ module TestUnixSystemStep =
         : UnixSystem<int, string>
         =
         (system, waiters)
-        ||> List.fold (fun system task ->
-            withThread task system
+        ||> List.fold (fun system thread ->
+            withThread thread system
             |> UnixWait.park
-                task
+                thread
                 (ParkedSyscall.EpollWait
                     {
                         ParkedEpollWait.Epoll = descriptionOf fd system

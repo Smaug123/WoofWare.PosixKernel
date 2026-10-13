@@ -161,7 +161,7 @@ module internal CopyIn =
     /// protocol, held to the internal steps it is made of, as `bind` is, and
     /// failing the test if the call sleeps.
     let connectAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
@@ -178,7 +178,7 @@ module internal CopyIn =
                 system
 
         let actual =
-            match UnixConnection.tryConnect task fd destination declaredLength system with
+            match UnixConnection.tryConnect thread fd destination declaredLength system with
             | Error refusal -> Error refusal
             | Ok (CallProgress.Answered answer) -> Ok answer
             | Ok (CallProgress.NeedsCopyIn paused) ->

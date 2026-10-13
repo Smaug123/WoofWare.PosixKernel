@@ -27,13 +27,13 @@ module TestCallHolds =
     /// One step: each index is read modulo whatever it picks from.
     [<RequireQualifiedAccess>]
     type private Op =
-        | Park of task : int * shape : int * a : int * b : int
-        | Unpark of task : int
+        | Park of thread : int * shape : int * a : int * b : int
+        | Unpark of thread : int
         | Close of fd : int
         | Dup of fd : int
         | Spawn of child : int
-        | Exit of task : int
-        | ExitGroup of task : int
+        | Exit of thread : int
+        | ExitGroup of thread : int
 
     let private opGen : Gen<Op> =
         let small = Gen.choose (0, 63)
@@ -277,17 +277,17 @@ module TestCallHolds =
     /// first makes the kqueue it holds, empty, as the call does before it
     /// sleeps, unless the task is already asleep in one, whose it keeps.
     let private park
-        (task : int)
+        (thread : int)
         (parked : ParkedSyscall)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
         match parked with
         | ParkedSyscall.KqueuePoll poll ->
-            match UnixThreadTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some (ParkedSyscall.KqueuePoll existing) ->
                 UnixWait.park
-                    task
+                    thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
                             Queue = existing.Queue
@@ -304,7 +304,7 @@ module TestCallHolds =
                         system.Machine
 
                 UnixWait.park
-                    task
+                    thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
                             Queue = queue
@@ -312,7 +312,7 @@ module TestCallHolds =
                     { system with
                         Machine = machine
                     }
-        | _ -> UnixWait.park task parked system
+        | _ -> UnixWait.park thread parked system
 
     // Which syscall a park is of: its case's name, which no two cases share.
     let private kindOf (parked : ParkedSyscall) : string =
@@ -359,24 +359,24 @@ module TestCallHolds =
         let model =
             {
                 Holds = Map.empty
-                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (UnixThreadTable.get 0 initial.Tasks) ]
+                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (UnixThreadTable.get 0 initial.Threads) ]
             }
 
         agree "initial" model initial
 
         let step ((system, model) : UnixSystem<int, string> * Model) (op : Op) =
-            let live = system.Tasks |> Map.keys |> List.ofSeq
+            let live = system.Threads |> Map.keys |> List.ofSeq
             let liveThread (i : int) = live.[i % live.Length]
 
             let system, model =
                 match op with
                 | Op.Park (t, shape, a, b) ->
-                    let task = liveThread t
+                    let thread = liveThread t
 
                     match shapeOf shape a b system with
                     | None -> system, model
                     | Some (parked, held) ->
-                        match UnixThreadTable.parkedFor task system.Tasks with
+                        match UnixThreadTable.parkedFor thread system.Threads with
                         | Some existing when kindOf existing <> kindOf parked -> system, model
                         | existing ->
                             if existing.IsSome then
@@ -393,15 +393,15 @@ module TestCallHolds =
                             let released =
                                 existing |> Option.map ParkedSyscall.descriptions |> Option.defaultValue []
 
-                            park task parked system
+                            park thread parked system
                             |> ObjectLifetime.releaseUnreferencedUnrefusable "test" released,
                             { model with
-                                Holds = Map.add task held model.Holds
+                                Holds = Map.add thread held model.Holds
                             }
                 | Op.Unpark t ->
-                    let task = liveThread t
+                    let thread = liveThread t
 
-                    match UnixThreadTable.parkedFor task system.Tasks with
+                    match UnixThreadTable.parkedFor thread system.Threads with
                     | None -> system, model
                     | Some parked ->
                         // As a finishing call does: the park goes, then whatever it
@@ -410,7 +410,7 @@ module TestCallHolds =
                         let before = OpenFileTable.descriptions system.Machine.OpenFiles |> Map.count
 
                         let after =
-                            UnixParkState.unpark task system
+                            UnixParkState.unpark thread system
                             |> ObjectLifetime.releaseUnreferencedUnrefusable "test" held
 
                         if OpenFileTable.descriptions after.Machine.OpenFiles |> Map.count < before then
@@ -420,7 +420,7 @@ module TestCallHolds =
 
                         after,
                         { model with
-                            Holds = Map.remove task model.Holds
+                            Holds = Map.remove thread model.Holds
                         }
                 | Op.Close i ->
                     match fds system with
@@ -438,8 +438,8 @@ module TestCallHolds =
                                     model.Holds
                                 else
                                     model.Holds
-                                    |> Map.map (fun task held ->
-                                        match UnixThreadTable.parkedFor task system.Tasks with
+                                    |> Map.map (fun thread held ->
+                                        match UnixThreadTable.parkedFor thread system.Threads with
                                         | Some (ParkedSyscall.PipeRead {
                                                                            Reader = SleepTarget.Waiting (_, entered)
                                                                        })
@@ -475,13 +475,13 @@ module TestCallHolds =
                 | Op.Spawn c ->
                     let child = threadNames.[c % threadNames.Length]
 
-                    if Map.containsKey child system.Tasks then
+                    if Map.containsKey child system.Threads then
                         system, model
                     else
 
                     let parent = system.Leader
 
-                    if (UnixThreadTable.parkedFor parent system.Tasks).IsSome then
+                    if (UnixThreadTable.parkedFor parent system.Threads).IsSome then
                         system, model
                     else
 
@@ -499,32 +499,32 @@ module TestCallHolds =
                             Tids = Map.add child id model.Tids
                         }
                 | Op.Exit t ->
-                    let task = liveThread t
+                    let thread = liveThread t
 
-                    if task = system.Leader then
+                    if thread = system.Leader then
                         system, model
                     else
 
-                    match UnixThreadLifecycle.tryExitThread task 0 system with
+                    match UnixThreadLifecycle.tryExitThread thread 0 system with
                     | Ok (ProcessFate.Continues ((), after)) ->
                         cover Reached.Exit
 
                         after,
                         { model with
-                            Tids = Map.remove task model.Tids
+                            Tids = Map.remove thread model.Tids
                         }
                     | Error (ThreadExitRefusal.Parked _) -> system, model
-                    | other -> failwith $"exit of %d{task}: %A{other}"
+                    | other -> failwith $"exit of %d{thread}: %A{other}"
                 | Op.ExitGroup t ->
-                    let task = liveThread t
+                    let thread = liveThread t
 
-                    if (UnixThreadTable.parkedFor task system.Tasks).IsSome then
+                    if (UnixThreadTable.parkedFor thread system.Threads).IsSome then
                         system, model
                     else
 
                     // Every task goes, with the holds its call had and its thread
                     // ID; descriptors are not closed, so what they name stays.
-                    let ended = UnixThreadLifecycle.exitGroup task 0 system
+                    let ended = UnixThreadLifecycle.exitGroup thread 0 system
 
                     if not model.Holds.IsEmpty then
                         cover Reached.EndedWithHolds
@@ -641,7 +641,7 @@ module TestCallHolds =
         =
         for platform in platforms do
             let system = world platform |> Threads.spawn 1 |> Threads.spawn 2
-            let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Tasks)
+            let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Threads)
 
             // Task 1's ID freed behind its back: the allocator could hand it out again.
             let freed =
@@ -658,7 +658,7 @@ module TestCallHolds =
             // Task 1 gone without its ID: the allocator never hands it out again.
             let leaked =
                 { system with
-                    Tasks = Map.remove 1 system.Tasks
+                    Threads = Map.remove 1 system.Threads
                 }
 
             UnixSystem.checkInvariants leaked

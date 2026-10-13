@@ -19,7 +19,7 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSignalDispositions =
 
-    type private Task = | Task of int
+    type private Thread = | Thread of int
 
     type private Handler =
         | H
@@ -37,46 +37,46 @@ module TestSignalDispositions =
         | Disposition.Ign -> SignalDisposition.Ignore
         | Disposition.Handler h -> SignalDisposition.Catch (SignalCatch.ofHandler h)
 
-    let private t0 : Task = Task 0
+    let private t0 : Thread = Thread 0
 
-    let private tasks : Set<Task> = Set.singleton t0
+    let private threads : Set<Thread> = Set.singleton t0
 
     /// `SignalState.generate` in a process whose only task is `t0`.
     let private generateIn
-        (entry : PendingSignal<Task>)
-        (s : SignalState<Task, Handler>)
-        : SignalGeneration<Task, Handler>
+        (entry : PendingSignal<Thread>)
+        (s : SignalState<Thread, Handler>)
+        : SignalGeneration<Thread, Handler>
         =
-        match SignalState.generate CoreDumps.Suppressed t0 tasks entry s with
+        match SignalState.generate CoreDumps.Suppressed t0 threads entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
     /// What `t0` takes next.
     let private leaderDelivery
-        (s : SignalState<Task, Handler>)
-        : SignalDelivery<Task, Handler> option * SignalState<Task, Handler>
+        (s : SignalState<Thread, Handler>)
+        : SignalDelivery<Thread, Handler> option * SignalState<Thread, Handler>
         =
-        match SignalState.onReturnToUser CoreDumps.Suppressed t0 tasks t0 s with
+        match SignalState.onReturnToUser CoreDumps.Suppressed t0 threads t0 s with
         | Ok answer -> answer
         | Error refusal -> failwith $"onReturnToUser refused: %O{refusal}"
 
     /// `t0` inside a handler that blocks `signal`, delivered through a carrier
     /// the sweep is not looking at.
-    let private block (signal : Signal) (s : SignalState<Task, Handler>) : SignalState<Task, Handler> =
+    let private block (signal : Signal) (s : SignalState<Thread, Handler>) : SignalState<Thread, Handler> =
         let carrier =
             if signal = HandlerFrames.carrier then
                 Signal.SIGVTALRM
             else
                 HandlerFrames.carrier
 
-        HandlerFrames.enterVia carrier H t0 tasks t0 (Set.singleton signal) s
+        HandlerFrames.enterVia carrier H t0 threads t0 (Set.singleton signal) s
 
     /// `t0` returns from its handler for `signal`, and the frame of every
     /// handler it entered after.
-    let private unblock (s : SignalState<Task, Handler>) : SignalState<Task, Handler> = HandlerFrames.leave t0 s
+    let private unblock (s : SignalState<Thread, Handler>) : SignalState<Thread, Handler> = HandlerFrames.leave t0 s
 
     /// The signals a process that `generation` did not kill has.
-    let private stateAfter (generation : SignalGeneration<Task, Handler>) : SignalState<Task, Handler> =
+    let private stateAfter (generation : SignalGeneration<Thread, Handler>) : SignalState<Thread, Handler> =
         match generation with
         | SignalGeneration.ProcessContinues state
         | SignalGeneration.ProcessStopped (_, state) -> state
@@ -151,7 +151,7 @@ module TestSignalDispositions =
                 for target in [ ValueNone ; ValueSome t0 ] do
                     for from in everyDisposition do
                         for toward in everyDisposition @ [ Disposition.Handler H2 ] do
-                            let blocked : SignalState<Task, Handler> =
+                            let blocked : SignalState<Thread, Handler> =
                                 SignalState.initial numbering Set.empty
                                 |> block signal
                                 |> SignalState.setDisposition signal (toDisposition from)
@@ -168,7 +168,7 @@ module TestSignalDispositions =
                                 | SignalGeneration.ProcessContinues generated -> generated
                                 | other -> failwith $"expected the process to carry on, got %A{other}"
 
-                            let isPending (s : SignalState<Task, Handler>) : bool =
+                            let isPending (s : SignalState<Thread, Handler>) : bool =
                                 SignalState.pending s |> List.exists (fun e -> e.Signal = signal)
 
                             let atGeneration = isPending generated
@@ -260,14 +260,14 @@ module TestSignalDispositions =
                                         let firstSignal = signalOf numbering first
                                         let secondSignal = signalOf numbering second
 
-                                        let start : SignalState<Task, Handler> =
+                                        let start : SignalState<Thread, Handler> =
                                             SignalState.initial numbering Set.empty
                                             |> block firstSignal
                                             |> block secondSignal
                                             |> SignalState.setDisposition firstSignal (toDisposition firstDisposition)
                                             |> SignalState.setDisposition secondSignal (toDisposition secondDisposition)
 
-                                        let generate (signal : Signal) target (s : SignalState<Task, Handler>) =
+                                        let generate (signal : Signal) target (s : SignalState<Thread, Handler>) =
                                             generateIn
                                                 {
                                                     Signal = signal
@@ -276,7 +276,7 @@ module TestSignalDispositions =
                                                 s
                                             |> stateAfter
 
-                                        let isPending (signal : Signal) (s : SignalState<Task, Handler>) : bool =
+                                        let isPending (signal : Signal) (s : SignalState<Thread, Handler>) : bool =
                                             SignalState.pending s |> List.exists (fun e -> e.Signal = signal)
 
                                         let afterFirst = start |> generate firstSignal firstTarget
@@ -326,7 +326,7 @@ module TestSignalDispositions =
                             let firstSignal = signalOf numbering first
                             let secondSignal = signalOf numbering second
 
-                            let s : SignalState<Task, Handler> =
+                            let s : SignalState<Thread, Handler> =
                                 SignalState.initial numbering Set.empty
                                 |> block firstSignal
                                 |> SignalState.setDisposition

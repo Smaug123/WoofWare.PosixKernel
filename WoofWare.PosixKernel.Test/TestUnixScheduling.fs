@@ -21,10 +21,10 @@ type SchedulingOp =
     | Spawn of proc : int * cpu : int
     /// The client dispatches a live task, parked or not: to `cpu` modulo the
     /// count, or with `beyond`, to a processor the machine does not have.
-    | Dispatch of task : int * cpu : int * beyond : int option
+    | Dispatch of thread : int * cpu : int * beyond : int option
     /// The client dispatches a task it has woken and not yet finished, to
     /// `cpu` modulo the count: how a woken task gets back onto a processor.
-    | DispatchWoken of task : int * cpu : int
+    | DispatchWoken of thread : int * cpu : int
     /// A task other than a leader reads a byte from its process's pipe, which
     /// parks it if the pipe is empty.
     | Park of proc : int
@@ -32,9 +32,9 @@ type SchedulingOp =
     /// which of the readers it holds asleep that wakes.
     | Wake of proc : int
     /// The client finishes a woken read, which returns or parks again.
-    | Finish of task : int
+    | Finish of thread : int
     /// A task that may exit does: a leader only when it is its process's last.
-    | ExitThread of task : int
+    | ExitThread of thread : int
     /// The process's leader calls `exit_group`.
     | EndProcess of proc : int
     /// A process is launched, its leader on `cpu`, modulo the count.
@@ -236,11 +236,11 @@ module TestUnixScheduling =
     let private processes (world : World) : ProcessId list =
         world.NextName |> Map.keys |> List.ofSeq
 
-    let private replace (task : Live) (world : World) : World =
+    let private replace (thread : Live) (world : World) : World =
         { world with
             Live =
                 world.Live
-                |> List.map (fun live -> if live.Serial = task.Serial then task else live)
+                |> List.map (fun live -> if live.Serial = thread.Serial then thread else live)
         }
 
     /// The process `pid` ended: every task of it exits.
@@ -304,40 +304,43 @@ module TestUnixScheduling =
         | SchedulingOp.Dispatch (index, cpu, beyond) ->
             match pick index world.Live with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 match beyond with
                 | Some k ->
                     let cpus = beyondCpus world.Count
                     let cpu = CpuId (List.item (k % List.length cpus) cpus)
                     cover Reached.BeyondDispatch
 
-                    throws (fun () -> UnixScheduling.dispatch task.Name cpu (viewOf task.Pid world))
+                    throws (fun () -> UnixScheduling.dispatch thread.Name cpu (viewOf thread.Pid world))
                     |> shouldEqual true
 
                     world
                 | None ->
                     let cpu = CpuId (cpu % world.Count)
 
-                    if task.Woken then
+                    if thread.Woken then
                         cover Reached.WokenDispatched
 
                     let displacesAnotherProcess =
                         world.Live
                         |> List.exists (fun other ->
-                            other.Pid <> task.Pid && runningOracle other.Serial world.Events = Some cpu
+                            other.Pid <> thread.Pid && runningOracle other.Serial world.Events = Some cpu
                         )
 
                     if displacesAnotherProcess then
                         cover Reached.CrossProcessDisplacement
 
                     { world with
-                        Machine = world.Machine |> Machines.doIn task.Pid (UnixScheduling.dispatch task.Name cpu)
-                        Events = Event.Dispatched (task.Serial, cpu) :: world.Events
+                        Machine =
+                            world.Machine
+                            |> Machines.doIn thread.Pid (UnixScheduling.dispatch thread.Name cpu)
+                        Events = Event.Dispatched (thread.Serial, cpu) :: world.Events
                     }
         | SchedulingOp.DispatchWoken (index, cpu) ->
             match pick index (world.Live |> List.filter (fun live -> live.Woken)) with
             | None -> world
-            | Some task -> apply cover (SchedulingOp.Dispatch (List.findIndex ((=) task) world.Live, cpu, None)) world
+            | Some thread ->
+                apply cover (SchedulingOp.Dispatch (List.findIndex ((=) thread) world.Live, cpu, None)) world
         | SchedulingOp.Park proc ->
             let candidates =
                 world.Live
@@ -345,13 +348,13 @@ module TestUnixScheduling =
 
             match pick proc candidates with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 let outcome, machine =
                     world.Machine
                     |> Machines.inProcess
-                        task.Pid
+                        thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryRead task.Name 3 UserBuffer.Mapped 1UL view with
+                            match UnixReadWrite.tryRead thread.Name 3 UserBuffer.Mapped 1UL view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -365,11 +368,11 @@ module TestUnixScheduling =
 
                 if outcome then
                     { replace
-                          { task with
+                          { thread with
                               Asleep = true
                           }
                           world with
-                        Events = Event.Parked task.Serial :: world.Events
+                        Events = Event.Parked thread.Serial :: world.Events
                     }
                 else
                     world
@@ -393,7 +396,7 @@ module TestUnixScheduling =
                     world.Live
                     |> List.filter (fun live -> live.Asleep)
                     |> List.groupBy (fun live -> live.Pid)
-                    |> List.map (fun (pid, tasks) -> pid, tasks |> List.map (fun live -> live.Name) |> Set.ofList)
+                    |> List.map (fun (pid, threads) -> pid, threads |> List.map (fun live -> live.Name) |> Set.ofList)
                     |> Map.ofList
 
                 let woken = SimulatedMachine.wakes asleep machine |> List.map fst |> Set.ofList
@@ -415,13 +418,13 @@ module TestUnixScheduling =
         | SchedulingOp.Finish index ->
             match pick index (world.Live |> List.filter (fun live -> live.Woken)) with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 let parksAgain, machine =
                     world.Machine
                     |> Machines.inProcess
-                        task.Pid
+                        thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryFinishRead task.Name view with
+                            match UnixReadWrite.tryFinishRead thread.Name view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -430,7 +433,7 @@ module TestUnixScheduling =
 
                 let world =
                     replace
-                        { task with
+                        { thread with
                             Asleep = parksAgain
                             Woken = false
                         }
@@ -440,7 +443,7 @@ module TestUnixScheduling =
 
                 if parksAgain then
                     { world with
-                        Events = Event.Parked task.Serial :: world.Events
+                        Events = Event.Parked thread.Serial :: world.Events
                     }
                 else
                     world
@@ -462,19 +465,19 @@ module TestUnixScheduling =
 
             match pick index candidates with
             | None -> world
-            | Some task ->
-                match UnixThreadLifecycle.tryExitThread task.Name 0 (viewOf task.Pid world) with
+            | Some thread ->
+                match UnixThreadLifecycle.tryExitThread thread.Name 0 (viewOf thread.Pid world) with
                 | Ok (ProcessFate.Continues ((), view)) ->
                     { world with
                         Machine = SimulatedMachine.unfocus view world.Machine
-                        Live = world.Live |> List.filter (fun live -> live.Serial <> task.Serial)
-                        Events = Event.Exited task.Serial :: world.Events
+                        Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
+                        Events = Event.Exited thread.Serial :: world.Events
                     }
                 | Ok (ProcessFate.ProcessEnded e) ->
                     { world with
                         Machine = endOn e world.Machine
                     }
-                    |> ended task.Pid
+                    |> ended thread.Pid
                 | Error refusal -> failwith $"exitThread: %s{ThreadExitRefusal.describe refusal}"
         | SchedulingOp.EndProcess proc ->
             match pick proc (processes world) with
@@ -494,31 +497,31 @@ module TestUnixScheduling =
         let linux =
             SimulatedUnixPlatform.flavour world.Platform = SimulatedUnixFlavour.Linux
 
-        for task in world.Live do
-            let view = viewOf task.Pid world
-            let running = runningOracle task.Serial world.Events
-            let context = $"%A{task}, after %A{List.rev world.Events}"
+        for thread in world.Live do
+            let view = viewOf thread.Pid world
+            let running = runningOracle thread.Serial world.Events
+            let context = $"%A{thread}, after %A{List.rev world.Events}"
 
-            UnixScheduling.runningOn task.Name view
+            UnixScheduling.runningOn thread.Name view
             |> fun answered ->
                 if answered <> running then
                     failwith $"runningOn %A{answered}: %s{context}"
 
-            (UnixThreadTable.get task.Name view.Tasks).Cpu
-            |> shouldEqual (cpuOracle task.Serial world.Events)
+            (UnixThreadTable.get thread.Name view.Threads).Cpu
+            |> shouldEqual (cpuOracle thread.Serial world.Events)
 
-            let parked = task.Asleep || task.Woken
+            let parked = thread.Asleep || thread.Woken
 
             match running with
             | Some cpu ->
-                if not (obj.ReferenceEquals (UnixScheduling.dispatch task.Name cpu view, view)) then
+                if not (obj.ReferenceEquals (UnixScheduling.dispatch thread.Name cpu view, view)) then
                     failwith $"re-dispatching to %O{cpu} changed the system: %s{context}"
             | None -> ()
 
             if linux then
                 match running with
                 | Some cpu when not parked ->
-                    UnixScheduling.tryGetcpu task.Name view
+                    UnixScheduling.tryGetcpu thread.Name view
                     |> shouldEqual (
                         Ok
                             {
@@ -528,13 +531,13 @@ module TestUnixScheduling =
                     )
                 | Some _
                 | None ->
-                    if not parked && lastDispatched task.Serial world.Events then
+                    if not parked && lastDispatched thread.Serial world.Events then
                         cover Reached.DisplacedGetCpu
 
-                    if not (throws (fun () -> UnixScheduling.tryGetcpu task.Name view)) then
+                    if not (throws (fun () -> UnixScheduling.tryGetcpu thread.Name view)) then
                         failwith $"getcpu answered for a task not running, or parked: %s{context}"
             else
-                UnixScheduling.tryGetcpu task.Name view
+                UnixScheduling.tryGetcpu thread.Name view
                 |> shouldEqual (Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
     let private op : Gen<SchedulingOp> =
@@ -639,7 +642,7 @@ module TestUnixScheduling =
                 getcpu pid machine |> shouldEqual true
                 getcpu other machine |> shouldEqual false
                 // The displaced task keeps the processor as its own.
-                (UnixThreadTable.get 0 (Machines.viewOf other machine).Tasks).Cpu
+                (UnixThreadTable.get 0 (Machines.viewOf other machine).Threads).Cpu
                 |> shouldEqual (CpuId 0)
 
                 Machines.assertClean machine
@@ -659,7 +662,7 @@ module TestUnixScheduling =
             |> UnixScheduling.dispatch 0 (CpuId 1)
 
         system.Scheduling.Occupants
-        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 system.Tasks).OsThreadId ])
+        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 system.Threads).OsThreadId ])
 
         UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 1))
         UnixScheduling.runningOn 1 system |> shouldEqual None
@@ -702,8 +705,8 @@ module TestUnixScheduling =
                 }
         }
 
-    let private threadIdOf (pid : ProcessId) (task : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
-        (UnixThreadTable.get task (Machines.viewOf pid machine).Tasks).OsThreadId
+    let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
+        (UnixThreadTable.get thread (Machines.viewOf pid machine).Threads).OsThreadId
 
     [<Test>]
     let ``checkInvariants reports an occupied processor the machine does not have`` () : unit =

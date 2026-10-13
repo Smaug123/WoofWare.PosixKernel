@@ -20,7 +20,7 @@ module internal Machines =
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (platform : SimulatedUnixPlatform)
         (count : int)
-        (tasks : int)
+        (threads : int)
         : ProcessId list * SimulatedMachine<int, string>
         =
         let first =
@@ -42,7 +42,7 @@ module internal Machines =
                 match
                     SimulatedMachine.inView
                         pid
-                        (fun view -> (), ([ 1 .. tasks - 1 ], view) ||> List.foldBack Threads.ensure)
+                        (fun view -> (), ([ 1 .. threads - 1 ], view) ||> List.foldBack Threads.ensure)
                         machine
                 with
                 | Some ((), machine) -> machine
@@ -55,10 +55,10 @@ module internal Machines =
     let withThreads
         (platform : SimulatedUnixPlatform)
         (count : int)
-        (tasks : int)
+        (threads : int)
         : ProcessId list * SimulatedMachine<int, string>
         =
-        withThreadsOn id platform count tasks
+        withThreadsOn id platform count threads
 
     /// `withThreads` with tasks 0 to 4 in each process, as `KeventWorld`'s
     /// helpers expect.

@@ -25,7 +25,7 @@ module TestDeviceDescriptors =
     let private linux : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
     /// The one task `UnixSystem.initial` registers.
-    let private task : int = 0
+    let private thread : int = 0
 
     let private rootOwner : InodeOwner =
         {
@@ -134,7 +134,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : ReadAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead task fd buffer count system with
+        match UnixReadWrite.tryRead thread fd buffer count system with
         | Ok (ReadOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"read(%d{fd}, %A{buffer}, %d{count}): expected an answer, got %A{other}"
 
@@ -154,7 +154,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : WriteAdmission * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryAdmitWrite task fd buffer count system with
+        match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
         | Ok (WriteStep.Returns (admission, system)) -> admission, system
         | other -> failwith $"admitWrite(%d{fd}, %A{buffer}, %d{count}): expected an admission, got %A{other}"
 
@@ -470,7 +470,7 @@ module TestDeviceDescriptors =
     let ``a urandom read into memory the caller cannot produce is refused, and an empty one is not`` () : unit =
         let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
 
-        match UnixReadWrite.tryRead task fd UserBuffer.Opaque 16UL system with
+        match UnixReadWrite.tryRead thread fd UserBuffer.Opaque 16UL system with
         | Error (ReadRefusal.Buffer BufferRefusal.OpaqueAtTransfer) -> ()
         | other -> failwith $"expected a refusal, got %A{other}"
 
@@ -488,16 +488,16 @@ module TestDeviceDescriptors =
         // matter, and a read of exactly a page never reaches a check.
         let property (count : uint64) (pending : PendingSignal) (pread : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-            let system = PendingSignal.make task pending system
+            let system = PendingSignal.make thread pending system
 
             let outcome =
                 if pread then
-                    match UnixReadWrite.tryPread task fd UserBuffer.Mapped count 0L system with
+                    match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count 0L system with
                     | Ok answer -> Ok answer
                     | Error (PReadRefusal.SignalAtPageBoundary count) -> Error count
                     | Error (PReadRefusal.Buffer refusal) -> failwith $"pread: %A{refusal}"
                 else
-                    match UnixReadWrite.tryRead task fd UserBuffer.Mapped count system with
+                    match UnixReadWrite.tryRead thread fd UserBuffer.Mapped count system with
                     | Ok (ReadOutcome.Answered answer, system) -> Ok (answer, system)
                     | Error (ReadRefusal.SignalAtPageBoundary count) -> Error count
                     | other -> failwith $"read: %A{other}"
@@ -536,12 +536,12 @@ module TestDeviceDescriptors =
         // `write_pool_user` stops at a page boundary as the read does.
         let property (count : int) (pending : PendingSignal) (positioned : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.WriteOnly booted
-            let system = PendingSignal.make task pending system
+            let system = PendingSignal.make thread pending system
             let refused = count > 4096 && PendingSignal.transferrerHasSignal pending
             let bytes = ImmutableArray.CreateRange (Seq.init count byte)
 
             if positioned then
-                match UnixReadWrite.tryAdmitPWrite task fd UserBuffer.Mapped (uint64 count) 0L system with
+                match UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L system with
                 | Error (PWriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -554,14 +554,14 @@ module TestDeviceDescriptors =
                 | Error other -> failwith $"admitPWrite: %A{other}"
 
                 // The commit asks too, for a caller that skipped the admission.
-                match UnixReadWrite.tryPwriteBytes task fd bytes 0L system with
+                match UnixReadWrite.tryPwriteBytes thread fd bytes 0L system with
                 | Error (PWriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
                 | Ok (answer, _) ->
                     refused |> shouldEqual false
                     answer |> shouldEqual (WriteAnswer.Completed (int64 count))
                 | Error other -> failwith $"pwrite: %A{other}"
             else
-                match UnixReadWrite.tryAdmitWrite task fd UserBuffer.Mapped (uint64 count) system with
+                match UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) system with
                 | Error (WriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -574,7 +574,7 @@ module TestDeviceDescriptors =
                     | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
                 | other -> failwith $"admitWrite: %A{other}"
 
-                match UnixReadWrite.tryWriteBytes task fd bytes system with
+                match UnixReadWrite.tryWriteBytes thread fd bytes system with
                 | Error (WriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
                 | Ok (WriteStep.Returns (answer, _)) ->
                     refused |> shouldEqual false
@@ -594,7 +594,7 @@ module TestDeviceDescriptors =
     [<Test>]
     let ``a pending signal changes nothing a write to null answers`` () : unit =
         let fd, system = openDevice CharacterDevice.Null FileAccessMode.WriteOnly booted
-        let system = PendingSignal.make task PendingSignal.CaughtForTransferrer system
+        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
 
         admitWriteOf fd UserBuffer.Mapped 65536UL system
         |> fst
@@ -603,14 +603,14 @@ module TestDeviceDescriptors =
     [<Test>]
     let ``a pending signal changes nothing a read of null or a faulting read answers`` () : unit =
         let fd, system = openDevice CharacterDevice.Null FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make task PendingSignal.CaughtForTransferrer system
+        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
 
         readOf fd UserBuffer.Mapped 65536UL system
         |> fst
         |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
 
         let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make task PendingSignal.CaughtForTransferrer system
+        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
 
         readOf fd (UserBuffer.Unmapped 0UL) 65536UL system
         |> fst
@@ -647,7 +647,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (count : uint64) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixReadWrite.tryPread task fd UserBuffer.Mapped count offset system with
+            match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count offset system with
             | Error refusal -> failwith $"pread refused: %A{refusal}"
             | Ok (answer, after) ->
 
@@ -692,10 +692,10 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixReadWrite.tryPread task fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
+            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EINVAL, system))
 
-            UnixReadWrite.tryPread task fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
+            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EFAULT, system))
 
     // ------------------------------------------------------------------ write
@@ -741,7 +741,7 @@ module TestDeviceDescriptors =
         let property (count : uint64) (buffer : UserBuffer) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadWrite booted
 
-            match UnixReadWrite.tryAdmitWrite task fd buffer count system with
+            match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
             | Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer) ->
                 buffer |> shouldEqual UserBuffer.Opaque
                 count |> shouldNotEqual 0UL
@@ -762,7 +762,7 @@ module TestDeviceDescriptors =
 
                     let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                    match UnixReadWrite.tryWriteBytes task fd bytes after with
+                    match UnixReadWrite.tryWriteBytes thread fd bytes after with
                     | Ok (WriteStep.Returns (answer, written)) ->
                         answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                         // Bytes written to the device are not what it reads back:
@@ -992,7 +992,7 @@ module TestDeviceDescriptors =
         let lockExclusiveNonBlocking = 2 ||| 4
 
         let flock (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryFlock task fd lockExclusiveNonBlocking system with
+            match UnixDescriptor.tryFlock thread fd lockExclusiveNonBlocking system with
             | Ok (SyscallOutcome.Answered answer, system) -> answer, system
             | other -> failwith $"flock(%d{fd}): %A{other}"
 
@@ -1023,7 +1023,7 @@ module TestDeviceDescriptors =
 
             match
                 UnixPoll.tryPoll
-                    task
+                    thread
                     [
                         {
                             Fd = fd

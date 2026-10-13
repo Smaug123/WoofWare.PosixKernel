@@ -275,12 +275,12 @@ module WakeCondition =
 
     /// Whether a close has ended the call `task` is asleep in.
     let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match
-            Map.tryFind task system.Tasks
+            Map.tryFind thread system.Threads
             |> Option.bind UnixThreadState.park
             |> Option.map (fun park -> park.Syscall)
         with
@@ -324,7 +324,7 @@ module WakeCondition =
     // A primitive that names a description no longer in the table has had its
     // wait broken underneath it: see `satisfied`.
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (primitive : WakePrimitive)
         (system : UnixSystem<'Thread, 'Handler>)
         : bool
@@ -342,7 +342,7 @@ module WakeCondition =
                 |> not
         | WakePrimitive.EpollEventDeliverable epoll -> EpollReadyList.hasDeliverableEvent epoll system
         | WakePrimitive.KqueueEventDeliverable kqueue -> KqueueQueue.hasDeliverableEvent kqueue system
-        | WakePrimitive.KqueuePollReportable -> KqueuePoll.reportable task system
+        | WakePrimitive.KqueuePollReportable -> KqueuePoll.reportable thread system
         | WakePrimitive.KqueueDrained kqueue ->
             match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
             | None ->
@@ -418,16 +418,16 @@ module WakeCondition =
             let connectionEnd, transfer = connectionOfWaiter primitive writer system
             TcpTransfer.writeResumes connectionEnd remaining transfer
         | WakePrimitive.DeadlinePassed deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-        | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes task system
+        | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes thread system
         // `satisfied` answers a call a close has ended before it asks any
         // primitive, so this is asked only of one no close has ended.
         | WakePrimitive.EndedByClose -> false
         | WakePrimitive.FifoPartnerOpened _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but this library keeps no count of a FIFO's opens to evaluate it against: nothing parks a task in a FIFO open yet (`ParkedSyscall.FifoOpen` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: task %O{thread} waits for %A{primitive}, but this library keeps no count of a FIFO's opens to evaluate it against: nothing parks a task in a FIFO open yet (`ParkedSyscall.FifoOpen` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
         | WakePrimitive.AcceptQueueHasRoom _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but nothing parks a task in a connect yet (`ParkedSyscall.Connect` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: task %O{thread} waits for %A{primitive}, but nothing parks a task in a connect yet (`ParkedSyscall.Connect` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
         | WakePrimitive.InotifyRecordQueued reader ->
             not (
                 InotifyQueue.isEmpty
@@ -435,7 +435,7 @@ module WakeCondition =
             )
         | WakePrimitive.AwaitedSignalPending _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but nothing parks a task in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: task %O{thread} waits for %A{primitive}, but nothing parks a task in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
 
     /// The primitives of `condition`, the wake condition of `task`, which hold of
     /// `system`: empty exactly when the syscall that parked on it would get no
@@ -468,7 +468,7 @@ module WakeCondition =
     /// answers that primitive alone: the call holds nothing any more, and the
     /// descriptions its other primitives name may have gone with the close.
     let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (condition : WakeCondition)
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive>
@@ -481,7 +481,7 @@ module WakeCondition =
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =
             match condition with
             | WakeCondition.Primitive primitive ->
-                if holds task primitive system then
+                if holds thread primitive system then
                     Set.singleton primitive
                 else
                     Set.empty
@@ -489,12 +489,12 @@ module WakeCondition =
                 (live first, rest)
                 ||> List.fold (fun acc condition -> Set.union acc (live condition))
 
-        if endedByClose task system then
+        if endedByClose thread system then
             if List.contains WakePrimitive.EndedByClose (primitives condition) then
                 Set.singleton WakePrimitive.EndedByClose
             else
                 failwith
-                    $"WakeCondition.satisfied: a close has ended the call task %O{task} is asleep in, and it was asked about %A{condition}, which does not wait for that, so is not the wake condition of the call (this is a bug in the caller)."
+                    $"WakeCondition.satisfied: a close has ended the call task %O{thread} is asleep in, and it was asked about %A{condition}, which does not wait for that, so is not the wake condition of the call (this is a bug in the caller)."
         else
             live condition
 

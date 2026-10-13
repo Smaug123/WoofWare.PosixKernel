@@ -86,7 +86,7 @@ module TestCpuRange =
             match spawned, inRange count cpu with
             | Ok (Ok (SpawnAnswer.Spawned _, after)), true ->
                 cover Side.Inside
-                (UnixThreadTable.get 1 after.Tasks).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 1 after.Threads).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants after |> shouldEqual []
             | Error message, false ->
                 cover Side.Outside
@@ -105,7 +105,7 @@ module TestCpuRange =
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
                 cover Side.Inside
-                (UnixThreadTable.get 0 system.Tasks).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 0 system.Threads).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
@@ -126,7 +126,7 @@ module TestCpuRange =
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixThreadTable.get 0 (Machines.viewOf pid after).Tasks).Cpu
+                (UnixThreadTable.get 0 (Machines.viewOf pid after).Threads).Cpu
                 |> shouldEqual (CpuId cpu)
 
                 SimulatedMachine.checkInvariants after |> shouldEqual []
@@ -142,13 +142,13 @@ module TestCpuRange =
 
     /// `system` with task `task`'s processor overwritten with `cpu`, as no
     /// public route can do.
-    let private forgeCpu (task : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
-            Tasks =
-                system.Tasks
+            Threads =
+                system.Threads
                 |> Map.add
-                    task
-                    { UnixThreadTable.get task system.Tasks with
+                    thread
+                    { UnixThreadTable.get thread system.Threads with
                         Cpu = CpuId cpu
                     }
         }

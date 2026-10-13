@@ -1206,7 +1206,7 @@ module TestFcntlMeasured =
                 }
         }
 
-    let private signalled (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -1214,7 +1214,7 @@ module TestFcntlMeasured =
                         SignalState.enqueue
                             {
                                 Signal = Signal.SIGUSR1
-                                Target = ValueSome task
+                                Target = ValueSome thread
                             }
                             system.Process.Signals
                 }

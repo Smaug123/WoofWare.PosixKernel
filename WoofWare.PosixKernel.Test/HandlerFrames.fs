@@ -23,8 +23,8 @@ module HandlerFrames =
         (carrier : Signal)
         (handler : 'Handler)
         (leader : 'Thread)
-        (tasks : Set<'Thread>)
-        (task : 'Thread)
+        (threads : Set<'Thread>)
+        (thread : 'Thread)
         (mask : Set<Signal>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler> option
@@ -43,10 +43,10 @@ module HandlerFrames =
             |> SignalState.enqueue
                 {
                     Signal = carrier
-                    Target = ValueSome task
+                    Target = ValueSome thread
                 }
 
-        match SignalState.onReturnToUser CoreDumps.Suppressed leader tasks task sent with
+        match SignalState.onReturnToUser CoreDumps.Suppressed leader threads thread sent with
         | Ok (Some (SignalDelivery.RunHandlers [ frame ]), state) when frame.Entry.Signal = carrier ->
             Some (SignalState.setDisposition carrier before state)
         | _ -> None
@@ -55,13 +55,13 @@ module HandlerFrames =
     let tryEnter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (handler : 'Handler)
         (leader : 'Thread)
-        (tasks : Set<'Thread>)
-        (task : 'Thread)
+        (threads : Set<'Thread>)
+        (thread : 'Thread)
         (mask : Set<Signal>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler> option
         =
-        tryEnterVia carrier handler leader tasks task mask state
+        tryEnterVia carrier handler leader threads thread mask state
 
     /// `tryEnterVia`, failing the test if anything but the carrier would be
     /// delivered: set up the frames before the signals the test is about are
@@ -70,51 +70,51 @@ module HandlerFrames =
         (carrier : Signal)
         (handler : 'Handler)
         (leader : 'Thread)
-        (tasks : Set<'Thread>)
-        (task : 'Thread)
+        (threads : Set<'Thread>)
+        (thread : 'Thread)
         (mask : Set<Signal>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        match tryEnterVia carrier handler leader tasks task mask state with
+        match tryEnterVia carrier handler leader threads thread mask state with
         | Some state -> state
-        | None -> failwith $"expected the carrier %O{carrier} alone to be delivered to %O{task}"
+        | None -> failwith $"expected the carrier %O{carrier} alone to be delivered to %O{thread}"
 
     /// `enterVia` with the usual `carrier`.
     let enter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (handler : 'Handler)
         (leader : 'Thread)
-        (tasks : Set<'Thread>)
-        (task : 'Thread)
+        (threads : Set<'Thread>)
+        (thread : 'Thread)
         (mask : Set<Signal>)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        enterVia carrier handler leader tasks task mask state
+        enterVia carrier handler leader threads thread mask state
 
     /// `task` returns from its innermost handler.
     let leave<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        match SignalState.framesOf task state with
-        | innermost :: _ -> SignalState.sigreturn task innermost.Id state
-        | [] -> failwith $"%O{task} is in no handler"
+        match SignalState.framesOf thread state with
+        | innermost :: _ -> SignalState.sigreturn thread innermost.Id state
+        | [] -> failwith $"%O{thread} is in no handler"
 
     /// `enter` for a task of `system`, whose leader and tasks it takes.
     let enterIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (handler : 'Handler)
-        (task : 'Thread)
+        (thread : 'Thread)
         (mask : Set<Signal>)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let tasks = system.Tasks |> Map.keys |> Set.ofSeq
+        let threads = system.Threads |> Map.keys |> Set.ofSeq
 
         { system with
             Process =
                 { system.Process with
-                    Signals = enter handler system.Leader tasks task mask system.Process.Signals
+                    Signals = enter handler system.Leader threads thread mask system.Process.Signals
                 }
         }

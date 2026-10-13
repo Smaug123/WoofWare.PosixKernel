@@ -609,7 +609,7 @@ module TestDarwinPoll =
     let private finishAnswer (system : UnixSystem<int, string>) : int16 list * int =
         match finish system with
         | Ok (PollOutcome.Answered (revents, count), after) ->
-            UnixThreadTable.parkedFor poller after.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor poller after.Threads |> shouldEqual None
             revents, count
         | other -> failwith $"the finish did not answer: %A{other}"
 
@@ -755,7 +755,7 @@ module TestDarwinPoll =
         let closed = KeventWorld.close listener parked
         sound closed
 
-        match UnixThreadTable.parkedFor poller closed.Tasks with
+        match UnixThreadTable.parkedFor poller closed.Threads with
         | Some (ParkedSyscall.KqueuePoll poll) ->
             (UnixMachineState.pollQueue poll.Queue closed.Machine).Registrations
             |> shouldEqual Map.empty
@@ -821,7 +821,7 @@ module TestDarwinPoll =
         // again.
         match finish early with
         | Ok (PollOutcome.WouldBlock _, again) ->
-            UnixThreadTable.parkedFor poller again.Tasks
+            UnixThreadTable.parkedFor poller again.Threads
             |> Option.isSome
             |> shouldEqual true
         | other -> failwith $"expected a re-park, got %A{other}"
@@ -923,7 +923,7 @@ module TestDarwinPoll =
         sound parked
 
         let queueId, queue =
-            match UnixThreadTable.parkedFor poller parked.Tasks with
+            match UnixThreadTable.parkedFor poller parked.Threads with
             | Some (ParkedSyscall.KqueuePoll poll) -> poll.Queue, UnixMachineState.pollQueue poll.Queue parked.Machine
             | other -> failwith $"expected a Darwin poll, got %A{other}"
 

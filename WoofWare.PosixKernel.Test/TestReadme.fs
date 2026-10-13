@@ -296,15 +296,22 @@ module TestReadme =
     [<Test>]
     let ``every call the README shows has the arguments it shows`` () : unit =
         // Controls: a right shape, a wrong order, and a wrong type.
-        matchCall "UnixReadWrite.read" [ "task", None ; "fd", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "thread", None ; "fd", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual true
 
-        matchCall "UnixReadWrite.read" [ "fd", None ; "task", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "fd", None ; "thread", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual false
 
-        matchCall "UnixReadWrite.read" [ "task", Some "'Thread" ; "fd", Some "int64" ; "buffer", None ; "count", None ]
+        matchCall
+            "UnixReadWrite.read"
+            [
+                "thread", Some "'Thread"
+                "fd", Some "int64"
+                "buffer", None
+                "count", None
+            ]
         |> Result.isOk
         |> shouldEqual false
 

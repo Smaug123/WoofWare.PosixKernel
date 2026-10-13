@@ -1645,7 +1645,7 @@ module TestConnectedTransfer =
         let asleep =
             asleep
             |> List.groupBy fst
-            |> List.map (fun (pid, tasks) -> pid, tasks |> List.map snd |> Set.ofList)
+            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
         SimulatedMachine.wakes asleep machine |> List.map fst
@@ -1654,7 +1654,7 @@ module TestConnectedTransfer =
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
     let private sleepOn
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (fd : int)
         (what : char)
         (machine : SimulatedMachine<int, string>)
@@ -1678,7 +1678,7 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixPoll.tryEpollWait task epoll 2 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait thread epoll 2 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 | SimulatedUnixFlavour.Darwin ->
@@ -1695,7 +1695,7 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixKqueue.tryKevent task kq 0 [] 2 UserBuffer.Mapped KeventTimeout.Null view with
+                    match UnixKqueue.tryKevent thread kq 0 [] 2 UserBuffer.Mapped KeventTimeout.Null view with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
             )

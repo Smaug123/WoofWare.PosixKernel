@@ -205,10 +205,10 @@ module TestTotalQueries =
                 | other -> failwith $"spawning task %d{child}: %A{other}"
 
             match Map.tryFind child (UnixSystem.threads system) with
-            | Some task ->
-                UnixThreadState.cpu task |> shouldEqual (CpuId cpu.Get)
-                UnixThreadState.osThreadId task |> shouldEqual tid
-                UnixThreadState.parkedIn task |> shouldEqual None
+            | Some thread ->
+                UnixThreadState.cpu thread |> shouldEqual (CpuId cpu.Get)
+                UnixThreadState.osThreadId thread |> shouldEqual tid
+                UnixThreadState.parkedIn thread |> shouldEqual None
             | None -> failwith $"task %d{child} was spawned, but the process holds no task by that name"
 
             let system =

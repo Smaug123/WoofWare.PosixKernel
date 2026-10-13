@@ -95,7 +95,7 @@ module TestSignalWaitPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
     let ``a task parked in a signal wait is a ReservedPark defect, whose deadline the wait machinery reads`` () : unit =
@@ -113,20 +113,22 @@ module TestSignalWaitPark =
                         Destination = Some UserBuffer.Mapped
                     }
 
-            let awake = boot flavour |> Threads.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual [ deadline ]
+            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
 
             // Which pending signals a wait may take is not modelled, so asking
             // fails loudly rather than guessing.
             let error =
-                Assert.Throws<Exception> (fun () -> UnixWait.satisfied task asleep |> ignore<Set<WakePrimitive> option>)
+                Assert.Throws<Exception> (fun () ->
+                    UnixWait.satisfied thread asleep |> ignore<Set<WakePrimitive> option>
+                )
 
             error.Message |> shouldContainText "SignalWait"

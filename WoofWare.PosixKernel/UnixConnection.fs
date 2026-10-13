@@ -362,7 +362,7 @@ type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
     private
         {
             /// The task that made the call, which the rest of it is made by.
-            Task : 'Thread
+            Thread : 'Thread
             Fd : int
             Address : UserBuffer
             DeclaredLength : uint32
@@ -1672,7 +1672,7 @@ module UnixConnection =
     /// `SyscallOutcome.Answered`. The task is what a connect that sleeps will
     /// park.
     let private finishConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
@@ -1680,14 +1680,14 @@ module UnixConnection =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
-        ignore<'Thread> task
+        ignore<'Thread> thread
 
         tryConnectBytes fd address declaredLength copied system
         |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
 
     /// `connect`, with a refusal answered as the `Error` rather than raised.
     let internal tryConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
@@ -1700,24 +1700,24 @@ module UnixConnection =
         // Loudly partial in an unregistered or parked task, before anything is
         // answered, as every call that can sleep is. The paused call holds the
         // system it was made in, so the task is still unparked when it resumes.
-        match UnixThreadTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixConnection.connect: task %O{task} is parked in %A{parked}, and is issuing a connect. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
+                $"UnixConnection.connect: task %O{thread} is parked in %A{parked}, and is issuing a connect. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
         | None ->
 
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd address declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
         | Ok (SockaddrCopyAdmission.Answered _) ->
-            finishConnect task fd address declaredLength ImmutableArray.Empty system
+            finishConnect thread fd address declaredLength ImmutableArray.Empty system
             |> Result.map CallProgress.Answered
         // A copy of nothing reads nothing, so there is nothing to stop for.
         | Ok (SockaddrCopyAdmission.Transfer 0) ->
-            finishConnect task fd address declaredLength ImmutableArray.Empty system
+            finishConnect thread fd address declaredLength ImmutableArray.Empty system
             |> Result.map CallProgress.Answered
         | Ok (SockaddrCopyAdmission.Transfer length) ->
             {
-                Task = task
+                Thread = thread
                 Fd = fd
                 Address = address
                 DeclaredLength = declaredLength
@@ -1759,14 +1759,14 @@ module UnixConnection =
     /// that the table does not hold, fails loudly.
     /// </remarks>
     let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>
         =
-        tryConnect task fd address declaredLength system
+        tryConnect thread fd address declaredLength system
         |> Refusal.orRaise "UnixConnection.connect" ConnectRefusal.kind ConnectRefusal.describe
 
     /// `connectWithAddress`, with a refusal answered as the `Error` rather than raised.
@@ -1776,7 +1776,7 @@ module UnixConnection =
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         CopyRange.require "UnixConnection.connectWithAddress" paused.Range copied
-        finishConnect paused.Task paused.Fd paused.Address paused.DeclaredLength copied paused.System
+        finishConnect paused.Thread paused.Fd paused.Address paused.DeclaredLength copied paused.System
 
     /// <summary>
     /// The rest of the `connect` `paused` stopped: `copied`, exactly the bytes
@@ -2088,17 +2088,17 @@ module UnixConnection =
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
-        match UnixThreadTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixConnection.accept: task %O{task} is parked in %A{parked}, and is issuing an accept. A task blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
+                $"UnixConnection.accept: task %O{thread} is parked in %A{parked}, and is issuing an accept. A task blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
         | None ->
 
         // The descriptor is classified before the destination is looked at, and
@@ -2192,7 +2192,7 @@ module UnixConnection =
                             DeclaredLength = declaredLength
                         }
 
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked system)
+                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
     /// `accept(2)`, made by `task`: take the oldest completed connection off
@@ -2239,30 +2239,30 @@ module UnixConnection =
     ///
     /// `task` must not already be parked.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryAccept task fd destination declaredLength system
+        tryAccept thread fd destination declaredLength system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let parked =
-            match UnixThreadTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some (ParkedSyscall.Accept parked) -> parked
             | Some other ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{task} is parked in %A{other}, not in an accept, so there is no accept to finish (this is a bug in the client)."
+                    $"UnixConnection.finishAccept: task %O{thread} is parked in %A{other}, not in an accept, so there is no accept to finish (this is a bug in the client)."
             | None ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{task} is not parked, so there is no accept to finish. Only a task `accept` answered `WouldBlock` finishes here (this is a bug in the client)."
+                    $"UnixConnection.finishAccept: task %O{thread} is not parked, so there is no accept to finish. Only a task `accept` answered `WouldBlock` finishes here (this is a bug in the client)."
 
         match parked.Listener with
         | SleepTarget.EndedByClose _ ->
@@ -2270,7 +2270,7 @@ module UnixConnection =
             // ECONNABORTED, whatever is queued and whatever signal is pending,
             // since a woken accept on a drained listener answers it whatever
             // woke it (section A7).
-            Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, (UnixParkState.unpark task system))
+            Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, (UnixParkState.unpark thread system))
         | SleepTarget.Waiting (listenerId, _) ->
 
         let description =
@@ -2278,7 +2278,7 @@ module UnixConnection =
             | Some description -> description
             | None ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{task}'s accept waits on open file description %O{listenerId}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"UnixConnection.finishAccept: task %O{thread}'s accept waits on open file description %O{listenerId}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
 
         let socketId =
             match description.Target with
@@ -2292,23 +2292,23 @@ module UnixConnection =
             | OpenFileTarget.Kqueue _
             | OpenFileTarget.Epoll _ ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{task}'s accept waits on open file description %O{listenerId}, which names %A{description.Target} rather than a socket. `accept` parks only on a listening socket (this is a bug in the caller that recorded the park)."
+                    $"UnixConnection.finishAccept: task %O{thread}'s accept waits on open file description %O{listenerId}, which names %A{description.Target} rather than a socket. `accept` parks only on a listening socket (this is a bug in the caller that recorded the park)."
 
-        let finished = (UnixParkState.unpark task system)
+        let finished = (UnixParkState.unpark thread system)
 
         match (UnixMachineState.socket socketId system.Machine).Phase with
         | SocketPhase.Listening {
                                     Drained = true
                                 } ->
             failwith
-                $"UnixConnection.finishAccept: task %O{task}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
+                $"UnixConnection.finishAccept: task %O{thread}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
         | SocketPhase.Listening {
                                     Queue = _ :: _
                                 } ->
             // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, section
             // D): a queued connection beats a pending signal. Darwin answers
             // whichever came first, which `beforeCompleting` refuses.
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
             | Ok () -> handOver socketId description.NonBlocking parked.Destination parked.DeclaredLength finished
         | SocketPhase.Listening {
@@ -2318,32 +2318,36 @@ module UnixConnection =
             // (`signal-interrupt-requeue.c`, section B): an accepter that a
             // signal ends, restarted or calling again on EINTR, returns after
             // every accepter that parked before it, so it has left the queue.
-            match SyscallInterruption.ofPark task system with
+            match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
             | Ok (Some SyscallInterruption.Eintr) -> Ok (AcceptOutcome.Failed UnixError.EINTR, finished)
             | Ok (Some SyscallInterruption.Restart) -> Ok (AcceptOutcome.Restarts, finished)
             | Ok None ->
                 let parkedAgain = ParkedSyscall.Accept parked
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+
+                Ok (
+                    AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                    UnixWait.park thread parkedAgain system
+                )
         | phase ->
             failwith
-                $"UnixConnection.finishAccept: task %O{task}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
+                $"UnixConnection.finishAccept: task %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
     /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let held =
-            match UnixThreadTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
         // The call's reference to the listener goes as it returns, and with it
         // the listener, if no descriptor names it any more
         // (`open-file-references.c` section A1).
-        match finishAcceptHolding task system with
+        match finishAcceptHolding thread system with
         | Error refusal -> Error refusal
         | Ok (outcome, after) ->
             Ok (outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after)
@@ -2380,11 +2384,11 @@ module UnixConnection =
     ///
     /// `task` must be parked in an accept.
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishAccept task system
+        tryFinishAccept thread system
         |> Refusal.orRaise "UnixConnection.finishAccept" AcceptRefusal.kind AcceptRefusal.describe
 
     /// `shutdown`, with a refusal answered as the `Error` rather than raised.

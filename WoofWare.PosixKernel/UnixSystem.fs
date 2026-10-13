@@ -325,7 +325,7 @@ type UnixSystemDefect<'Thread> =
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
     /// without the park being consulted.
-    | ParkedOnAbsentDescription of task : 'Thread * description : OpenFileDescriptionId
+    | ParkedOnAbsentDescription of thread : 'Thread * description : OpenFileDescriptionId
     /// An open file description survives that no descriptor names and no
     /// syscall in flight holds (`ParkedSyscall.descriptions`). A real kernel
     /// frees a file when its last reference goes, so this is a leak: a close,
@@ -347,24 +347,24 @@ type UnixSystemDefect<'Thread> =
     | LingeringSocketHeldOnlyByCalls of description : OpenFileDescriptionId * socket : SocketId
     /// A task is parked in an `epoll_wait` on a description that is not an
     /// epoll instance, which no wait could have produced.
-    | ParkedEpollWaitOnNonEpoll of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedEpollWaitOnNonEpoll of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// A task is parked in a `kevent` on a description that is not a kqueue,
     /// which no wait could have produced and on which `UnixWait.wakes`
     /// crashes.
-    | ParkedKeventOnNonKqueue of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedKeventOnNonKqueue of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// A task is parked in a `kevent` on a kqueue that has not been drained,
     /// and the descriptor the call was made through no longer names that
     /// kqueue (`current` is what it names now). Closing that descriptor drains
     /// the kqueue, so this is a park recorded without `kevent` or a descriptor
     /// closed around it.
     | ParkedKeventDescriptorRebound of
-        task : 'Thread *
+        thread : 'Thread *
         fd : int *
         kqueue : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// A task is parked in a `kevent` for `maxEvents` events, which is not
     /// positive: such a call returns at once.
-    | ParkedKeventCountNotPositive of task : 'Thread * maxEvents : int
+    | ParkedKeventCountNotPositive of thread : 'Thread * maxEvents : int
     /// The process's descriptor `fd` names, or a `kevent` wait of one of its
     /// tasks made through `fd` sleeps on, the kqueue `kqueue`, which the
     /// process `owner` owns (`KqueueState.Owner`). A kqueue's registrations
@@ -401,13 +401,13 @@ type UnixSystemDefect<'Thread> =
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A task is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
-    | ParkedPollOnEventQueue of task : 'Thread * description : OpenFileDescriptionId
+    | ParkedPollOnEventQueue of thread : 'Thread * description : OpenFileDescriptionId
     /// A task's parked `poll` watches `fd` on the description it named when
     /// the call went to sleep, and `fd` now names `current` instead. `close`
     /// refuses to close a descriptor a parked poll watches, so this is a park
     /// recorded without `poll` or a descriptor closed around it.
     | ParkedPollDescriptorRebound of
-        task : 'Thread *
+        thread : 'Thread *
         fd : int *
         watched : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
@@ -416,18 +416,18 @@ type UnixSystemDefect<'Thread> =
     /// whose filters are modelled or a pipe. Closing a descriptor removes its
     /// registrations, a poll registers on nothing else, and a regular file's
     /// filters are always ready, so they report before the call can sleep.
-    | ParkedKqueuePollRegistrationTarget of task : 'Thread * fd : int * target : OpenFileTarget option
+    | ParkedKqueuePollRegistrationTarget of thread : 'Thread * fd : int * target : OpenFileTarget option
     /// A task's parked Darwin `poll` attributes the registration `key` to
     /// entry `entry`, which the call does not have.
-    | ParkedKqueuePollEntryOutOfRange of task : 'Thread * key : (int * KqueueFilter) * entry : int
+    | ParkedKqueuePollEntryOutOfRange of thread : 'Thread * key : (int * KqueueFilter) * entry : int
     /// A task's parked Darwin `poll` lists `key` as activated where the list
     /// may not hold it: `key` is not registered, is listed twice, or is not a
     /// socket's filter (see `PollQueue.Active`).
-    | ParkedKqueuePollActiveMalformed of task : 'Thread * key : (int * KqueueFilter)
+    | ParkedKqueuePollActiveMalformed of thread : 'Thread * key : (int * KqueueFilter)
     /// A task's parked Darwin `poll` registers the socket filter `key`, which is
     /// ready, and does not list it as activated: whatever made it ready did not
     /// activate it, so the call would sleep through what a real one wakes for.
-    | ParkedKqueuePollActivationMissed of task : 'Thread * key : (int * KqueueFilter)
+    | ParkedKqueuePollActivationMissed of thread : 'Thread * key : (int * KqueueFilter)
     /// A task's parked Darwin `poll` registers the filter `key` as attached to
     /// the socket `attached` (`None`: to none), through a descriptor naming the
     /// socket `named` (`None`: something other than a socket). A poll attaches
@@ -435,16 +435,16 @@ type UnixSystemDefect<'Thread> =
     /// names, and closing the descriptor removes the filter, so the two agree
     /// for as long as it lasts.
     | ParkedKqueuePollAttachedElsewhere of
-        task : 'Thread *
+        thread : 'Thread *
         key : (int * KqueueFilter) *
         attached : SocketId option *
         named : SocketId option
     /// A task is parked in a Darwin `poll` whose kqueue (`ParkedKqueuePoll.Queue`)
     /// is not on the machine. The park holds it until the park ends.
-    | ParkedOnAbsentPollQueue of task : 'Thread * queue : PollQueueId
+    | ParkedOnAbsentPollQueue of thread : 'Thread * queue : PollQueueId
     /// A task is parked in a Darwin `poll` whose kqueue another process,
     /// `owner`, made. A poll's kqueue is its own call's.
-    | PollQueueOfAnotherProcess of task : 'Thread * queue : PollQueueId * owner : ProcessId
+    | PollQueueOfAnotherProcess of thread : 'Thread * queue : PollQueueId * owner : ProcessId
     /// The machine holds a sleeping Darwin poll's kqueue that `parks` parks
     /// name, rather than exactly one: it is made as its call sleeps, and
     /// destroyed as the park naming it ends.
@@ -455,11 +455,11 @@ type UnixSystemDefect<'Thread> =
     /// A task is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedAcceptOnNonListener of task : 'Thread * description : OpenFileDescriptionId
+    | ParkedAcceptOnNonListener of thread : 'Thread * description : OpenFileDescriptionId
     /// A task is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
     /// accept asleep on it, and `accept` refuses to sleep on one.
-    | ParkedAcceptOnDrainedListener of task : 'Thread * description : OpenFileDescriptionId
+    | ParkedAcceptOnDrainedListener of thread : 'Thread * description : OpenFileDescriptionId
     /// Under Darwin, a task is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
@@ -467,41 +467,44 @@ type UnixSystemDefect<'Thread> =
     /// so this is a park recorded without the syscall or a descriptor closed
     /// around it.
     | ParkedCallDescriptorRebound of
-        task : 'Thread *
+        thread : 'Thread *
         fd : int *
         description : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// Under Linux, a task's `accept`, or pipe or connection transfer, records
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
-    | ParkedCallEndedByCloseUnderLinux of task : 'Thread
+    | ParkedCallEndedByCloseUnderLinux of thread : 'Thread
     /// Under Linux, a listener records that a close has drained it
     /// (`ListenState.Drained`), which only Darwin's close does.
     | ListenerDrainedUnderLinux of socket : SocketId
     /// A task is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wakes` crashes.
-    | ParkedPipeTransferOnWrongTarget of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedPipeTransferOnWrongTarget of
+        thread : 'Thread *
+        description : OpenFileDescriptionId *
+        target : OpenFileTarget
     /// A task is asleep in a pipe transfer whose progress no call could have
     /// made: a read of nothing, or a write of `count` bytes with `written` of
     /// them in, where a sleeping write has put in at least none and fewer than
     /// all.
-    | ParkedPipeTransferProgress of task : 'Thread * count : int * written : int
+    | ParkedPipeTransferProgress of thread : 'Thread * count : int * written : int
     /// A task is asleep in a `read`, `recv`, `write` or `send` of a connected
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedConnectionTransferOnNonConnection of task : 'Thread * description : OpenFileDescriptionId
+    | ParkedConnectionTransferOnNonConnection of thread : 'Thread * description : OpenFileDescriptionId
     /// A task is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`
     /// bytes with `written` of them taken, where a sleeping write has taken at
     /// least none and fewer than all.
-    | ParkedConnectionTransferProgress of task : 'Thread * count : int * written : int
+    | ParkedConnectionTransferProgress of thread : 'Thread * count : int * written : int
     /// A task's park records an ordinal at or above the next one to mint, so
     /// some future park would repeat it, and the two waiters' order would be
     /// unspecified.
-    | ParkOrdinalNotFresh of next : ParkOrdinal * task : 'Thread * ordinal : ParkOrdinal
+    | ParkOrdinalNotFresh of next : ParkOrdinal * thread : 'Thread * ordinal : ParkOrdinal
     /// Two tasks' parks record the same ordinal. Ordinals are minted from one
     /// monotonic counter, so a duplicate means two parks were stamped with one
     /// mint.
@@ -532,23 +535,23 @@ type UnixSystemDefect<'Thread> =
     /// is what a later `bind` or `connect` completes.
     | BoundToPortZero of socket : SocketId
     /// A task the table does not hold has handler frames.
-    | HandlerFramesWithoutThread of task : 'Thread
+    | HandlerFramesWithoutThread of thread : 'Thread
     /// A task the table does not hold has a signal mask.
-    | MaskWithoutThread of task : 'Thread
+    | MaskWithoutThread of thread : 'Thread
     /// A task the table does not hold has a mask for a `sigsuspend(2)` to
     /// restore.
-    | MaskToRestoreWithoutThread of task : 'Thread
+    | MaskToRestoreWithoutThread of thread : 'Thread
     /// A task asleep in a syscall other than `sigsuspend(2)` has a mask for a
     /// `sigsuspend` to restore. A task has one only while it is in that call or
     /// returning from it, and a task returns to user mode before it makes
     /// another call.
-    | MaskToRestoreOutsideSigsuspend of task : 'Thread * parked : ParkedSyscall
+    | MaskToRestoreOutsideSigsuspend of thread : 'Thread * parked : ParkedSyscall
     /// A task asleep in `sigsuspend(2)` has no mask to restore, so its return
     /// would leave it with the call's temporary mask.
-    | SigsuspendWithoutMaskToRestore of task : 'Thread
+    | SigsuspendWithoutMaskToRestore of thread : 'Thread
     /// A pending signal is directed at a task the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
-    | PendingSignalTargetWithoutThread of task : 'Thread * signal : Signal
+    | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
     /// The process's signal state reads signals under a numbering other than
     /// its machine's platform assigns, so a signal in the signal tables may
     /// have a different number, or none, under the kernel's numbering.
@@ -575,14 +578,14 @@ type UnixSystemDefect<'Thread> =
     | LeaderWithoutThread of leader : 'Thread
     /// Two live tasks report the same thread ID, so a lock that records its owner
     /// by thread ID would take either for the other.
-    | DuplicateOsThreadId of id : OsThreadId * tasks : 'Thread list
+    | DuplicateOsThreadId of id : OsThreadId * threads : 'Thread list
     /// On Linux, the leader's thread ID is not the process ID, which it always is.
     | LeaderThreadIdNotProcessId of leader : 'Thread * id : OsThreadId * pid : ProcessId
     /// A task's thread ID is one the machine's counter could not have handed out:
     /// at or above the greatest `pid_max` Linux takes
     /// (`ThreadIdAllocator.linuxPidMaxCeiling`), or not yet reached on Darwin,
     /// where a later thread could be given the same ID.
-    | OsThreadIdNotMintable of task : 'Thread * id : OsThreadId * allocator : ThreadIdAllocator
+    | OsThreadIdNotMintable of thread : 'Thread * id : OsThreadId * allocator : ThreadIdAllocator
     /// The machine's thread ID counter is not its flavour's: a Linux counter on a
     /// Darwin machine, or the other way about.
     | ThreadIdAllocatorNotOfFlavour of flavour : SimulatedUnixFlavour * allocator : ThreadIdAllocator
@@ -657,7 +660,7 @@ type UnixSystemDefect<'Thread> =
     /// The task `task` is on the logical processor `cpu`, which is not one of
     /// the machine's `processorCount`, numbered from 0. See
     /// `UnixThreadState.cpu`.
-    | CpuBeyondMachine of task : 'Thread * cpu : CpuId * processorCount : int
+    | CpuBeyondMachine of thread : 'Thread * cpu : CpuId * processorCount : int
     /// The machine records the task with thread ID `occupant` as running on
     /// the logical processor `cpu`, which is not one of its `processorCount`,
     /// numbered from 0. See `UnixScheduling`.
@@ -669,17 +672,17 @@ type UnixSystemDefect<'Thread> =
     /// The machine records `task` as running on the logical processor
     /// `occupied`, and the task's own processor is `cpu`: a running task's
     /// processor is the one it runs on (`UnixThreadState.cpu`).
-    | OccupantOnAnotherCpu of task : 'Thread * occupied : CpuId * cpu : CpuId
+    | OccupantOnAnotherCpu of thread : 'Thread * occupied : CpuId * cpu : CpuId
     /// A task is parked in a syscall that nothing in this version parks a task
     /// in, such as `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`,
     /// `ParkedSyscall.Select` or `ParkedSyscall.SignalWait`: a case reserved
     /// for behaviour not yet modelled, which no call produces and no finishing
     /// call answers.
-    | ReservedPark of task : 'Thread * parked : ParkedSyscall
+    | ReservedPark of thread : 'Thread * parked : ParkedSyscall
     /// A task is parked in a read of an inotify instance through the open file
     /// description `description`, which names `target` rather than an
     /// inotify instance.
-    | ParkedInotifyReadOnNonInotify of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedInotifyReadOnNonInotify of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// The machine's inotify limits are ones `UnixBootImage.withInotifyLimits`
     /// refuses: not all positive, or a queue too long for `ioctl(FIONREAD)` to
     /// count.
@@ -884,7 +887,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        system.Tasks
+        system.Threads
 
     /// Every write that has reached a client draining one of the machine's
     /// pipes, oldest first: the bytes the outside world has received from the
@@ -1169,7 +1172,7 @@ module UnixSystem =
 
     /// `step`, with a refusal answered as the `Error` rather than raised.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (call : Syscall)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, SyscallRefusal<'Thread>>
@@ -1227,7 +1230,7 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.LSeek
         | Syscall.FLock (fd, operation) ->
-            UnixDescriptor.tryFlock task fd operation system
+            UnixDescriptor.tryFlock thread fd operation system
             |> Result.mapError SyscallRefusal.FLock
         | Syscall.FTruncate (fd, length) ->
             UnixDescriptor.tryFtruncate fd length system
@@ -1342,12 +1345,12 @@ module UnixSystem =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (call : Syscall)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryStep task call system
+        tryStep thread call system
         |> Refusal.orRaise "UnixSystem.step" SyscallRefusal.kind SyscallRefusal.describe
 
     /// Every way the machine's tables disagree with each other or with the
@@ -1382,7 +1385,7 @@ module UnixSystem =
             if complete then defects () else []
 
         let allThreads : ('Thread * UnixThreadState) list =
-            processes |> List.collect (fun (_, tasks) -> Map.toList tasks)
+            processes |> List.collect (fun (_, threads) -> Map.toList threads)
 
 
         let named =
@@ -1998,13 +2001,13 @@ module UnixSystem =
 
         let parkOrdinals =
             allThreads
-            |> List.choose (fun (task, state) -> state.Parked |> Option.map (fun park -> task, park.Ordinal))
+            |> List.choose (fun (thread, state) -> state.Parked |> Option.map (fun park -> thread, park.Ordinal))
 
         let parkOrdinalFreshness =
             parkOrdinals
             |> List.filter (fun (_, ordinal) -> ordinal >= machine.NextParkOrdinal)
-            |> List.map (fun (task, ordinal) ->
-                UnixSystemDefect.ParkOrdinalNotFresh (machine.NextParkOrdinal, task, ordinal)
+            |> List.map (fun (thread, ordinal) ->
+                UnixSystemDefect.ParkOrdinalNotFresh (machine.NextParkOrdinal, thread, ordinal)
             )
 
         let parkOrdinalDuplicates =
@@ -2200,8 +2203,8 @@ module UnixSystem =
             let unmintable =
                 allThreads
                 |> List.filter (fun (_, state) -> not (ThreadIdAllocator.couldHaveMinted state.OsThreadId allocator))
-                |> List.map (fun (task, state) ->
-                    UnixSystemDefect.OsThreadIdNotMintable (task, state.OsThreadId, allocator)
+                |> List.map (fun (thread, state) ->
+                    UnixSystemDefect.OsThreadIdNotMintable (thread, state.OsThreadId, allocator)
                 )
 
             let live =
@@ -2231,7 +2234,7 @@ module UnixSystem =
         let occupants =
             let byThreadId =
                 allThreads
-                |> List.map (fun (task, state) -> state.OsThreadId, (task, state))
+                |> List.map (fun (thread, state) -> state.OsThreadId, (thread, state))
                 |> Map.ofList
 
             scheduling.Occupants
@@ -2245,13 +2248,13 @@ module UnixSystem =
                             UnixSystemDefect.OccupiedCpuBeyondMachine (cpu, occupant, machine.ProcessorCount)
                         ]
 
-                let task =
+                let thread =
                     match Map.tryFind occupant byThreadId with
-                    | Some (task, state) ->
+                    | Some (thread, state) ->
                         if state.Cpu = cpu then
                             []
                         else
-                            [ UnixSystemDefect.OccupantOnAnotherCpu (task, cpu, state.Cpu) ]
+                            [ UnixSystemDefect.OccupantOnAnotherCpu (thread, cpu, state.Cpu) ]
                     | None ->
                         if
                             complete
@@ -2261,7 +2264,7 @@ module UnixSystem =
                         else
                             []
 
-                beyond @ task
+                beyond @ thread
             )
 
         // The process table against the processes: the counter is the
@@ -2587,29 +2590,29 @@ module UnixSystem =
             // or connection transfer, was made through ends the call, so while it sleeps the
             // descriptor still names what it sleeps on. Under Linux the close
             // leaves it asleep, and the number is not consulted.
-            let enteredThrough (task : 'Thread) (fd : int) (description : OpenFileDescriptionId) =
+            let enteredThrough (thread : 'Thread) (fd : int) (description : OpenFileDescriptionId) =
                 match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
                 | Some current when current = description -> []
                 | _ when not darwin -> []
                 | current ->
                     [
-                        UnixSystemDefect.ParkedCallDescriptorRebound (task, fd, description, current)
+                        UnixSystemDefect.ParkedCallDescriptorRebound (thread, fd, description, current)
                     ]
 
-            let endedByClose (task : 'Thread) =
+            let endedByClose (thread : 'Thread) =
                 if darwin then
                     []
                 else
-                    [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux task ]
+                    [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux thread ]
 
             // What is wrong with what a connection transfer sleeps on.
-            let connectionTarget (task : 'Thread) (target : SleepTarget<SocketId>) =
+            let connectionTarget (thread : 'Thread) (target : SleepTarget<SocketId>) =
                 match target with
-                | SleepTarget.EndedByClose _ -> endedByClose task
+                | SleepTarget.EndedByClose _ -> endedByClose thread
                 | SleepTarget.Waiting (description, fd) ->
 
                 match Map.tryFind description descriptions with
-                | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, description) ]
+                | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, description) ]
                 | Some found ->
                     let connected =
                         match found.Target with
@@ -2627,13 +2630,15 @@ module UnixSystem =
                         | OpenFileTarget.Epoll _ -> false
 
                     if connected then
-                        enteredThrough task fd description
+                        enteredThrough thread fd description
                     else
-                        [ UnixSystemDefect.ParkedConnectionTransferOnNonConnection (task, description) ]
+                        [
+                            UnixSystemDefect.ParkedConnectionTransferOnNonConnection (thread, description)
+                        ]
 
-            system.Tasks
+            system.Threads
             |> Map.toList
-            |> List.collect (fun (task, state) ->
+            |> List.collect (fun (thread, state) ->
                 match state.Parked |> Option.map (fun park -> park.Syscall) with
                 | None -> []
                 // Names no description.
@@ -2644,10 +2649,10 @@ module UnixSystem =
                 | Some (ParkedSyscall.SignalWait _ as parked)
                 | Some (ParkedSyscall.DatagramReceive _ as parked)
                 | Some (ParkedSyscall.DatagramSend _ as parked)
-                | Some (ParkedSyscall.Connect _ as parked) -> [ UnixSystemDefect.ReservedPark (task, parked) ]
+                | Some (ParkedSyscall.Connect _ as parked) -> [ UnixSystemDefect.ReservedPark (thread, parked) ]
                 | Some (ParkedSyscall.InotifyRead read) ->
                     match Map.tryFind read.Instance descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, read.Instance) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, read.Instance) ]
                     | Some description ->
                         match description.Target with
                         | OpenFileTarget.Inotify _ -> []
@@ -2661,7 +2666,7 @@ module UnixSystem =
                         | OpenFileTarget.Pipe _ ->
                             [
                                 UnixSystemDefect.ParkedInotifyReadOnNonInotify (
-                                    task,
+                                    thread,
                                     read.Instance,
                                     description.Target
                                 )
@@ -2670,10 +2675,10 @@ module UnixSystem =
                     if Map.containsKey parked.Requester descriptions then
                         []
                     else
-                        [ UnixSystemDefect.ParkedOnAbsentDescription (task, parked.Requester) ]
+                        [ UnixSystemDefect.ParkedOnAbsentDescription (thread, parked.Requester) ]
                 | Some (ParkedSyscall.EpollWait wait) ->
                     match Map.tryFind wait.Epoll descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, wait.Epoll) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, wait.Epoll) ]
                     | Some description ->
                         match description.Target with
                         | OpenFileTarget.Epoll _ -> []
@@ -2686,18 +2691,18 @@ module UnixSystem =
                         | OpenFileTarget.Inotify _
                         | OpenFileTarget.Pipe _ ->
                             [
-                                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (task, wait.Epoll, description.Target)
+                                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (thread, wait.Epoll, description.Target)
                             ]
                 | Some (ParkedSyscall.Kevent wait) ->
                     let count =
                         if wait.MaxEvents > 0 then
                             []
                         else
-                            [ UnixSystemDefect.ParkedKeventCountNotPositive (task, wait.MaxEvents) ]
+                            [ UnixSystemDefect.ParkedKeventCountNotPositive (thread, wait.MaxEvents) ]
 
                     let target =
                         match Map.tryFind wait.Kqueue descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, wait.Kqueue) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, wait.Kqueue) ]
                         | Some description ->
                             match description.Target with
                             | OpenFileTarget.Kqueue state ->
@@ -2709,7 +2714,7 @@ module UnixSystem =
                                 | current ->
                                     [
                                         UnixSystemDefect.ParkedKeventDescriptorRebound (
-                                            task,
+                                            thread,
                                             wait.Fd,
                                             wait.Kqueue,
                                             current
@@ -2724,7 +2729,7 @@ module UnixSystem =
                             | OpenFileTarget.Inotify _
                             | OpenFileTarget.Pipe _ ->
                                 [
-                                    UnixSystemDefect.ParkedKeventOnNonKqueue (task, wait.Kqueue, description.Target)
+                                    UnixSystemDefect.ParkedKeventOnNonKqueue (thread, wait.Kqueue, description.Target)
                                 ]
 
                     count @ target
@@ -2735,13 +2740,13 @@ module UnixSystem =
                         | ParkedPollEntry.Ignored _ -> []
                         | ParkedPollEntry.Watched (fd, watched, _) ->
                             match Map.tryFind watched descriptions with
-                            | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, watched) ]
+                            | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, watched) ]
                             | Some description ->
                                 let target =
                                     match description.Target with
                                     | OpenFileTarget.Kqueue _
                                     | OpenFileTarget.Epoll _ ->
-                                        [ UnixSystemDefect.ParkedPollOnEventQueue (task, watched) ]
+                                        [ UnixSystemDefect.ParkedPollOnEventQueue (thread, watched) ]
                                     | OpenFileTarget.File _
                                     | OpenFileTarget.Directory _
                                     | OpenFileTarget.Socket _
@@ -2756,15 +2761,22 @@ module UnixSystem =
                                     with
                                     | Some current when current = watched -> []
                                     | current ->
-                                        [ UnixSystemDefect.ParkedPollDescriptorRebound (task, fd, watched, current) ]
+                                        [
+                                            UnixSystemDefect.ParkedPollDescriptorRebound (
+                                                thread,
+                                                fd,
+                                                watched,
+                                                current
+                                            )
+                                        ]
 
                                 target @ rebound
                     )
                 | Some (ParkedSyscall.KqueuePoll poll) ->
                     match Map.tryFind poll.Queue system.Machine.PollQueues with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (task, poll.Queue) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (thread, poll.Queue) ]
                     | Some queue when queue.Owner <> system.Process.ProcessId ->
-                        [ UnixSystemDefect.PollQueueOfAnotherProcess (task, poll.Queue, queue.Owner) ]
+                        [ UnixSystemDefect.PollQueueOfAnotherProcess (thread, poll.Queue, queue.Owner) ]
                     | Some queue ->
 
                     let entries = List.length poll.Entries
@@ -2791,7 +2803,7 @@ module UnixSystem =
                             else
                                 Some (
                                     UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
-                                        task,
+                                        thread,
                                         key,
                                         registration.Socket,
                                         named
@@ -2814,14 +2826,15 @@ module UnixSystem =
                                             not (List.contains key queue.Active)
                                             && Option.isSome (DarwinReadiness.ofSocket filter socketId system.Machine)
                                         then
-                                            [ UnixSystemDefect.ParkedKqueuePollActivationMissed (task, key) ]
+                                            [ UnixSystemDefect.ParkedKqueuePollActivationMissed (thread, key) ]
                                         else
                                             []
                                     | Some _
                                     | None ->
-                                        [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (task, fd, target) ]
+                                        [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (thread, fd, target) ]
                                 | Some (OpenFileTarget.Pipe _) -> []
-                                | target -> [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (task, fd, target) ]
+                                | target ->
+                                    [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (thread, fd, target) ]
 
                             let entry =
                                 if registration.Entry >= 0 && registration.Entry < entries then
@@ -2829,7 +2842,7 @@ module UnixSystem =
                                 else
                                     [
                                         UnixSystemDefect.ParkedKqueuePollEntryOutOfRange (
-                                            task,
+                                            thread,
                                             key,
                                             registration.Entry
                                         )
@@ -2849,7 +2862,7 @@ module UnixSystem =
                                 || not (Map.containsKey key queue.Registrations)
                                 || Option.isNone (socketOf fd)
                             then
-                                Some (UnixSystemDefect.ParkedKqueuePollActiveMalformed (task, key))
+                                Some (UnixSystemDefect.ParkedKqueuePollActiveMalformed (thread, key))
                             else
                                 None
                         )
@@ -2857,11 +2870,11 @@ module UnixSystem =
                     attachments @ registrations @ active
                 | Some (ParkedSyscall.Accept accept) ->
                     match accept.Listener with
-                    | SleepTarget.EndedByClose _ -> endedByClose task
+                    | SleepTarget.EndedByClose _ -> endedByClose thread
                     | SleepTarget.Waiting (listener, fd) ->
 
                     match Map.tryFind listener descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, listener) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, listener) ]
                     | Some description ->
                         let listening =
                             match description.Target with
@@ -2882,27 +2895,27 @@ module UnixSystem =
                             | OpenFileTarget.Epoll _ -> None
 
                         match listening with
-                        | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (task, listener) ]
-                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (task, listener) ]
-                        | Some false -> enteredThrough task fd listener
+                        | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (thread, listener) ]
+                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (thread, listener) ]
+                        | Some false -> enteredThrough thread fd listener
                 | Some (ParkedSyscall.PipeRead read) ->
                     let progress =
                         if read.Count > 0 then
                             []
                         else
-                            [ UnixSystemDefect.ParkedPipeTransferProgress (task, read.Count, 0) ]
+                            [ UnixSystemDefect.ParkedPipeTransferProgress (thread, read.Count, 0) ]
 
                     let target =
                         match read.Reader with
-                        | SleepTarget.EndedByClose _ -> endedByClose task
+                        | SleepTarget.EndedByClose _ -> endedByClose thread
                         | SleepTarget.Waiting (reader, fd) ->
 
                         match Map.tryFind reader descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, reader) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, reader) ]
                         | Some description ->
                             match description.Target with
-                            | OpenFileTarget.Pipe (_, PipeEnd.Read) -> enteredThrough task fd reader
-                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (task, reader, target) ]
+                            | OpenFileTarget.Pipe (_, PipeEnd.Read) -> enteredThrough thread fd reader
+                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (thread, reader, target) ]
 
                     progress @ target
                 | Some (ParkedSyscall.PipeWrite write) ->
@@ -2911,20 +2924,20 @@ module UnixSystem =
                             []
                         else
                             [
-                                UnixSystemDefect.ParkedPipeTransferProgress (task, write.Count, write.Written)
+                                UnixSystemDefect.ParkedPipeTransferProgress (thread, write.Count, write.Written)
                             ]
 
                     let target =
                         match write.Writer with
-                        | SleepTarget.EndedByClose _ -> endedByClose task
+                        | SleepTarget.EndedByClose _ -> endedByClose thread
                         | SleepTarget.Waiting (writer, fd) ->
 
                         match Map.tryFind writer descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (task, writer) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, writer) ]
                         | Some description ->
                             match description.Target with
-                            | OpenFileTarget.Pipe (_, PipeEnd.Write) -> enteredThrough task fd writer
-                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (task, writer, target) ]
+                            | OpenFileTarget.Pipe (_, PipeEnd.Write) -> enteredThrough thread fd writer
+                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (thread, writer, target) ]
 
                     progress @ target
                 | Some (ParkedSyscall.ConnectionRead read) ->
@@ -2940,19 +2953,19 @@ module UnixSystem =
                         if read.Count > 0 || (read.Count = 0 && mayAskNothing) then
                             []
                         else
-                            [ UnixSystemDefect.ParkedConnectionTransferProgress (task, read.Count, 0) ]
+                            [ UnixSystemDefect.ParkedConnectionTransferProgress (thread, read.Count, 0) ]
 
-                    progress @ connectionTarget task read.Socket
+                    progress @ connectionTarget thread read.Socket
                 | Some (ParkedSyscall.ConnectionWrite write) ->
                     let progress =
                         if write.Written >= 0 && write.Written < write.Count then
                             []
                         else
                             [
-                                UnixSystemDefect.ParkedConnectionTransferProgress (task, write.Count, write.Written)
+                                UnixSystemDefect.ParkedConnectionTransferProgress (thread, write.Count, write.Written)
                             ]
 
-                    progress @ connectionTarget task write.Socket
+                    progress @ connectionTarget thread write.Socket
             )
 
 
@@ -2977,7 +2990,7 @@ module UnixSystem =
                 )
 
             let waited =
-                system.Tasks
+                system.Threads
                 |> Map.toList
                 |> List.choose (fun (_, state) ->
                     match state.Parked with
@@ -3017,13 +3030,13 @@ module UnixSystem =
             let frames =
                 SignalState.threadsWithFrames signals
                 |> Set.toList
-                |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
+                |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
                 |> List.map UnixSystemDefect.HandlerFramesWithoutThread
 
             let masks =
                 SignalState.threadsWithMasks signals
                 |> Set.toList
-                |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
+                |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
                 |> List.map UnixSystemDefect.MaskWithoutThread
 
             // A mask to restore exists from a `sigsuspend` until its task
@@ -3037,23 +3050,23 @@ module UnixSystem =
                 let orphaned =
                     restoring
                     |> Set.toList
-                    |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
+                    |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
                     |> List.map UnixSystemDefect.MaskToRestoreWithoutThread
 
                 let parked =
-                    system.Tasks
+                    system.Threads
                     |> Map.toList
-                    |> List.choose (fun (task, state) ->
+                    |> List.choose (fun (thread, state) ->
                         match UnixThreadState.park state with
                         | Some {
                                    Syscall = ParkedSyscall.SigSuspend
-                               } when not (Set.contains task restoring) ->
-                            Some (UnixSystemDefect.SigsuspendWithoutMaskToRestore task)
+                               } when not (Set.contains thread restoring) ->
+                            Some (UnixSystemDefect.SigsuspendWithoutMaskToRestore thread)
                         | Some {
                                    Syscall = ParkedSyscall.SigSuspend
                                } -> None
-                        | Some park when Set.contains task restoring ->
-                            Some (UnixSystemDefect.MaskToRestoreOutsideSigsuspend (task, park.Syscall))
+                        | Some park when Set.contains thread restoring ->
+                            Some (UnixSystemDefect.MaskToRestoreOutsideSigsuspend (thread, park.Syscall))
                         | Some _
                         | None -> None
                     )
@@ -3064,8 +3077,8 @@ module UnixSystem =
                 SignalState.pending signals
                 |> List.choose (fun entry ->
                     match entry.Target with
-                    | ValueSome task when not (Map.containsKey task system.Tasks) ->
-                        Some (UnixSystemDefect.PendingSignalTargetWithoutThread (task, entry.Signal))
+                    | ValueSome thread when not (Map.containsKey thread system.Threads) ->
+                        Some (UnixSystemDefect.PendingSignalTargetWithoutThread (thread, entry.Signal))
                     | ValueSome _
                     | ValueNone -> None
                 )
@@ -3095,7 +3108,7 @@ module UnixSystem =
         // The process's leader against its tasks: it is one, and on Linux its
         // thread ID is the process ID.
         let leader =
-            match Map.tryFind system.Leader system.Tasks with
+            match Map.tryFind system.Leader system.Threads with
             | None -> [ UnixSystemDefect.LeaderWithoutThread system.Leader ]
             | Some state ->
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -3114,11 +3127,11 @@ module UnixSystem =
                 | SimulatedUnixFlavour.Darwin -> []
 
         let cpus =
-            system.Tasks
+            system.Threads
             |> Map.toList
             |> List.filter (fun (_, state) -> not (UnixMachineState.hasProcessor state.Cpu system.Machine))
-            |> List.map (fun (task, state) ->
-                UnixSystemDefect.CpuBeyondMachine (task, state.Cpu, system.Machine.ProcessorCount)
+            |> List.map (fun (thread, state) ->
+                UnixSystemDefect.CpuBeyondMachine (thread, state.Cpu, system.Machine.ProcessorCount)
             )
 
         currentDirectory
@@ -3160,7 +3173,7 @@ module UnixSystem =
         let others =
             Set.remove system.Process.ProcessId (ProcessIdTable.live system.Machine.ProcessIds)
 
-        machineDefects (Set.isEmpty others) [ system.Process, system.Tasks ] system.Scheduling system.Machine
+        machineDefects (Set.isEmpty others) [ system.Process, system.Threads ] system.Scheduling system.Machine
         @ checkViewInvariants system
 
     /// Logical-processor count a freshly-minted simulated process reports.

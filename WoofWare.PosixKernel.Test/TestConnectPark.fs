@@ -57,12 +57,12 @@ module TestConnectPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
     let ``a task parked in a connect is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Threads.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =
@@ -76,15 +76,15 @@ module TestConnectPark =
                         ParkedConnect.Socket = socket
                     }
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
             OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-            UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual []
-            UnixWait.satisfied task asleep |> shouldEqual (Some Set.empty)
+            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
+            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
 
     [<Test>]
     let ``no park's condition waits for room in an accept queue yet`` () : unit =
@@ -110,12 +110,12 @@ module TestConnectPark =
 
         // And asking whether it holds fails loudly, naming it, rather than
         // guessing: a task waits for it only if its park was recorded by hand.
-        let awake = boot SimulatedUnixFlavour.Linux |> Threads.ensure task
+        let awake = boot SimulatedUnixFlavour.Linux |> Threads.ensure thread
 
         let error =
             Assert.Throws<Exception> (fun () ->
                 WakeCondition.satisfied
-                    task
+                    thread
                     (WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom (SocketId 1L)))
                     awake
                 |> ignore<Set<WakePrimitive>>

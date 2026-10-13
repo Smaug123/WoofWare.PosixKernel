@@ -9,7 +9,7 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
             /// The process's tasks. A task is named by the client, separately in
             /// each process: two processes may each have a task the client calls
             /// by the same name.
-            Tasks : Map<'Thread, UnixThreadState>
+            Threads : Map<'Thread, UnixThreadState>
             /// See `UnixSystem.Leader`.
             Leader : 'Thread
         }
@@ -121,7 +121,7 @@ module WakeSweepMemo =
                        // process is launched, and every launch makes a new
                        // process state, so the same state means the same leader.
                        LanguagePrimitives.PhysicalEquality before.Process slot.Process
-                       && LanguagePrimitives.PhysicalEquality before.Tasks slot.Tasks
+                       && LanguagePrimitives.PhysicalEquality before.Threads slot.Threads
                    | false, _ -> false
                )
 
@@ -275,9 +275,9 @@ module SimulatedMachine =
             Machine = machine.Machine
             Scheduling = machine.Scheduling
             Process = slot.Process
-            Tasks = slot.Tasks
+            Threads = slot.Threads
             Leader = slot.Leader
-            Origin = FocusOrigin.FocusedFrom (machine.Machine, machine.Scheduling, slot.Process, slot.Tasks)
+            Origin = FocusOrigin.FocusedFrom (machine.Machine, machine.Scheduling, slot.Process, slot.Threads)
         }
 
     /// The machine `system` runs on, holding `system`'s process as its only
@@ -307,7 +307,7 @@ module SimulatedMachine =
                     system.Process.ProcessId
                     {
                         Process = system.Process
-                        Tasks = system.Tasks
+                        Threads = system.Threads
                         Leader = system.Leader
                     }
         }
@@ -369,7 +369,7 @@ module SimulatedMachine =
 
         match ProcessLaunch.launchOnto launch pid leaderThreadId allocatedMachine with
         | Error refusal -> Error (ProcessCreationRefusal.Launch refusal)
-        | Ok (launched, proc, tasks) ->
+        | Ok (launched, proc, threads) ->
             Ok (
                 pid,
                 {
@@ -380,7 +380,7 @@ module SimulatedMachine =
                             pid
                             {
                                 Process = proc
-                                Tasks = tasks
+                                Threads = threads
                                 Leader = ProcessLaunch.leader launch
                             }
                             machine.Processes
@@ -447,7 +447,7 @@ module SimulatedMachine =
         | None -> false
         | Some slot ->
             obj.ReferenceEquals (slot.Process, view.Process)
-            && obj.ReferenceEquals (slot.Tasks, view.Tasks)
+            && obj.ReferenceEquals (slot.Threads, view.Threads)
 
     /// Fail loudly, naming `operation`, unless `view` is a view of `machine`
     /// as it stands; see `unfocus`.
@@ -469,18 +469,18 @@ module SimulatedMachine =
             (machineState : UnixMachineState)
             (scheduling : UnixSchedulingState)
             (proc : UnixProcessState<'Thread, 'Handler>)
-            (tasks : Map<'Thread, UnixThreadState>)
+            (threads : Map<'Thread, UnixThreadState>)
             : bool
             =
             obj.ReferenceEquals (machineState, machine.Machine)
             && obj.ReferenceEquals (scheduling, machine.Scheduling)
             && obj.ReferenceEquals (proc, slot.Process)
-            && obj.ReferenceEquals (tasks, slot.Tasks)
+            && obj.ReferenceEquals (threads, slot.Threads)
 
         // A view the machine already holds exactly, wherever it was focused
         // from, writes nothing back; as the machine `ofSystem` made of a
         // system holds that system.
-        let unchanged = holds view.Machine view.Scheduling view.Process view.Tasks
+        let unchanged = holds view.Machine view.Scheduling view.Process view.Threads
 
         let current =
             match view.Origin with
@@ -525,7 +525,7 @@ module SimulatedMachine =
                     processId
                     {
                         Process = view.Process
-                        Tasks = view.Tasks
+                        Threads = view.Threads
                         Leader = view.Leader
                     }
                     machine.Processes
@@ -550,14 +550,14 @@ module SimulatedMachine =
     /// refused call changes nothing, and answers `machine` itself.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (task : 'Thread)
+        (thread : 'Thread)
         (call : Syscall)
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (Result<SyscallOutcome, SyscallRefusal<'Thread>> * SimulatedMachine<'Thread, 'Handler>) option
         =
         focus processId machine
         |> Option.map (fun view ->
-            match UnixSystem.tryStep task call view with
+            match UnixSystem.tryStep thread call view with
             | Ok (outcome, view) -> Ok outcome, unfocus view machine
             | Error refusal -> Error refusal, machine
         )
@@ -570,12 +570,12 @@ module SimulatedMachine =
     /// <exception cref="T:System.PlatformNotSupportedException">The machine's flavour has no such call, as `UnixSystem.step` says.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (task : 'Thread)
+        (thread : 'Thread)
         (call : Syscall)
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (SyscallOutcome * SimulatedMachine<'Thread, 'Handler>) option
         =
-        tryStep processId task call machine
+        tryStep processId thread call machine
         |> Option.map (fun (result, machine) ->
             result
             |> Refusal.orRaise "SimulatedMachine.step" SyscallRefusal.kind SyscallRefusal.describe,
@@ -600,7 +600,7 @@ module SimulatedMachine =
                 Machine = ended.Machine
                 Scheduling = ended.Scheduling
                 Process = ended.FinalProcess
-                Tasks = Map.empty
+                Threads = Map.empty
                 Origin = FocusOrigin.NotFocused
             }
 
@@ -807,7 +807,7 @@ module SimulatedMachine =
             )
 
         UnixWait.wakesAmong views machine.Machine
-        |> List.map (fun (processId, task, fired) -> (processId, task), fired)
+        |> List.map (fun (processId, thread, fired) -> (processId, thread), fired)
 
     /// `wakes`, which a client asks of every state it reaches, made cheap for
     /// the states in which nothing it reads has changed: the tasks it wakes,
@@ -864,12 +864,12 @@ module SimulatedMachine =
             // `wakes` has failed loudly already for a task asleep in no park.
             let deadlines =
                 asleep
-                |> Seq.collect (fun (KeyValue (processId, tasks)) ->
+                |> Seq.collect (fun (KeyValue (processId, threads)) ->
                     let slot = machine.Processes.[processId]
 
-                    tasks
-                    |> Seq.collect (fun task ->
-                        match UnixThreadTable.parkOf task slot.Tasks with
+                    threads
+                    |> Seq.collect (fun thread ->
+                        match UnixThreadTable.parkOf thread slot.Threads with
                         | Some park -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
                         | None -> []
                     )
@@ -916,7 +916,7 @@ module SimulatedMachine =
         let machineDefects =
             UnixSystem.machineDefects
                 true
-                (slots |> List.map (fun (_, slot) -> slot.Process, slot.Tasks))
+                (slots |> List.map (fun (_, slot) -> slot.Process, slot.Threads))
                 machine.Scheduling
                 machine.Machine
             |> List.map SimulatedMachineDefect.Machine

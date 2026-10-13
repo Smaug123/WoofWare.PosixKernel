@@ -200,7 +200,7 @@ module TestCrossProcess =
     /// `task` of `pid` polls `entries` with no timeout, and sleeps.
     let private sleepInPoll
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (entries : PollEntry list)
         (machine : SimulatedMachine<int, string>)
         : SimulatedMachine<int, string>
@@ -208,7 +208,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixPoll.tryPoll task entries -1 view with
+                match UnixPoll.tryPoll thread entries -1 view with
                 | Ok (PollOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"poll: expected to sleep, got %A{other}"
             )
@@ -217,14 +217,14 @@ module TestCrossProcess =
     /// The `poll` `task` of `pid` sleeps in, finished.
     let private finishPoll
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (machine : SimulatedMachine<int, string>)
         : PollOutcome * SimulatedMachine<int, string>
         =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixPoll.tryFinishPoll task view with
+                match UnixPoll.tryFinishPoll thread view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishPoll: %A{refusal}"
             )
@@ -302,7 +302,7 @@ module TestCrossProcess =
         let asleep =
             asleep
             |> List.groupBy fst
-            |> List.map (fun (pid, tasks) -> pid, tasks |> List.map snd |> Set.ofList)
+            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
         SimulatedMachine.wakes asleep machine
@@ -311,7 +311,7 @@ module TestCrossProcess =
     /// nothing, and sleeps.
     let private sleepInAccept
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (listener : int)
         (machine : SimulatedMachine<int, string>)
         : SimulatedMachine<int, string>
@@ -319,7 +319,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept task listener UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept thread listener UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -327,14 +327,14 @@ module TestCrossProcess =
 
     let private finishAccept
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (machine : SimulatedMachine<int, string>)
         : AcceptOutcome * SimulatedMachine<int, string>
         =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixConnection.tryFinishAccept task view with
+                match UnixConnection.tryFinishAccept thread view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
             )
@@ -577,8 +577,8 @@ module TestCrossProcess =
                 | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
                 | other -> failwith $"open: %A{other}"
 
-            let flock (task : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
-                match UnixDescriptor.tryFlock task fd operation view with
+            let flock (thread : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
+                match UnixDescriptor.tryFlock thread fd operation view with
                 | Ok answered -> answered
                 | Error refusal -> failwith $"flock: %A{refusal}"
 
@@ -1101,7 +1101,7 @@ module TestCrossProcess =
                 | other -> failwith $"unexpected wake %A{other}"
 
             woken [ b, 1 ; b, 2 ] machine
-            |> List.map (fun (task, fired) -> task, fired |> Set.map kind)
+            |> List.map (fun (thread, fired) -> thread, fired |> Set.map kind)
             |> shouldEqual [ (b, 1), Set.singleton "a read" ; (b, 2), Set.singleton "a poll" ]
 
             let read, machine =
@@ -1497,9 +1497,9 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a = pids.[0]
 
-        let write (task : int) (fd : int) (count : int) (view : UnixSystem<int, string>) =
+        let write (thread : int) (fd : int) (count : int) (view : UnixSystem<int, string>) =
             WriteOutcomes.admitThenWrite
-                task
+                thread
                 fd
                 UserBuffer.Mapped
                 (ImmutableArray.Create<byte> (Array.zeroCreate<byte> count))

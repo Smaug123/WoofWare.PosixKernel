@@ -30,8 +30,8 @@ module TestThreadIds =
 
     let private pid (value : int32) : ProcessId = ProcessId.parseOrFail "test" value
 
-    let private idOf (task : int) (system : UnixSystem<int, string>) : uint64 =
-        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get task system.Tasks))
+    let private idOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread system.Threads))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
         match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
@@ -39,10 +39,10 @@ module TestThreadIds =
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
 
-    let private exitOrFail (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.tryExitThread task 0 system with
+    let private exitOrFail (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixThreadLifecycle.tryExitThread thread 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
-        | other -> failwith $"expected task %d{task}'s exit to leave the process running, got %A{other}"
+        | other -> failwith $"expected task %d{thread}'s exit to leave the process running, got %A{other}"
 
     /// Spawn `child` and exit it at once, as `pthread_create` then `pthread_join`
     /// would: the id it had.
@@ -54,12 +54,12 @@ module TestThreadIds =
     let ``a fresh process's leader has the process ID as its thread ID, on both flavours`` () : unit =
         for system in [ linux ; darwin ] do
             system.Leader |> shouldEqual 0
-            system.Tasks |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
+            system.Threads |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
 
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
 
-            UnixThreadState.cpu (UnixThreadTable.get 0 system.Tasks)
+            UnixThreadState.cpu (UnixThreadTable.get 0 system.Threads)
             |> shouldEqual (CpuId 0)
 
             UnixSystem.checkInvariants system |> shouldEqual []
@@ -74,7 +74,7 @@ module TestThreadIds =
 
         system.Leader |> shouldEqual "main"
 
-        UnixThreadState.cpu (UnixThreadTable.get "main" system.Tasks)
+        UnixThreadState.cpu (UnixThreadTable.get "main" system.Threads)
         |> shouldEqual (CpuId 3)
 
     [<Test>]
@@ -94,7 +94,7 @@ module TestThreadIds =
         concurrent |> shouldEqual [ 9UL .. 16UL ]
 
         let system =
-            (system, [ 1..8 ]) ||> List.fold (fun system task -> exitOrFail task system)
+            (system, [ 1..8 ]) ||> List.fold (fun system thread -> exitOrFail thread system)
 
         let sequential, system =
             (system, [ 11..18 ])
@@ -125,7 +125,7 @@ module TestThreadIds =
         concurrent |> shouldEqual [ 2897491UL .. 2897498UL ]
 
         let system =
-            (system, [ 1..8 ]) ||> List.fold (fun system task -> exitOrFail task system)
+            (system, [ 1..8 ]) ||> List.fold (fun system thread -> exitOrFail thread system)
 
         let sequential, system =
             (system, [ 11..18 ])
@@ -577,10 +577,10 @@ module TestThreadIds =
         /// Spawn a new task from the `parent`th live task (modulo how many there are).
         | Spawn of parent : int
         /// Exit the `task`th live task other than the leader (modulo how many).
-        | Exit of task : int
+        | Exit of thread : int
         /// `exit_group` from the `task`th live task (modulo how many), which ends the
         /// process; the run goes on from the state before, as if it had not been made.
-        | ExitGroup of task : int
+        | ExitGroup of thread : int
         /// The administrator writes Linux's `pid_max`, whatever the live ids are.
         | WritePidMax of pidMax : int32
 
@@ -719,15 +719,15 @@ module TestThreadIds =
         | Setup.Darwin first -> idOf 0 system |> shouldEqual first
 
         let liveIds (system : UnixSystem<int, string>) : Set<uint64> =
-            system.Tasks
+            system.Threads
             |> Map.toSeq
-            |> Seq.map (fun (task, _) -> idOf task system)
+            |> Seq.map (fun (thread, _) -> idOf thread system)
             |> Set.ofSeq
 
         let check (system : UnixSystem<int, string>) : unit =
             UnixSystem.checkInvariants system |> shouldEqual []
             // Unique among live tasks.
-            (liveIds system).Count |> shouldEqual system.Tasks.Count
+            (liveIds system).Count |> shouldEqual system.Threads.Count
 
             // The machine's allocator records exactly the live tasks' IDs, which
             // is what it skips.
@@ -743,7 +743,7 @@ module TestThreadIds =
             ((system, model, nextName, minted, last) : UnixSystem<int, string> * Model * int * Set<uint64> * uint64)
             (op : Op)
             =
-            let live = system.Tasks |> Map.keys |> List.ofSeq
+            let live = system.Threads |> Map.keys |> List.ofSeq
 
             match op with
             | Op.Spawn index ->
@@ -792,17 +792,17 @@ module TestThreadIds =
                     after, model, nextName + 1, minted, id
                 | expected, actual -> failwith $"the model says %A{expected}, and the library %A{actual}"
             | Op.Exit index ->
-                match live |> List.filter (fun task -> task <> system.Leader) with
+                match live |> List.filter (fun thread -> thread <> system.Leader) with
                 | [] -> system, model, nextName, minted, last
                 | others ->
-                    let task = others.[index % others.Length]
-                    let after = exitOrFail task system
+                    let thread = others.[index % others.Length]
+                    let after = exitOrFail thread system
                     cover ThreadIdLabel.Exits
                     check after
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
-                let task = live.[index % live.Length]
-                let ended = UnixThreadLifecycle.exitGroup task 0 system
+                let thread = live.[index % live.Length]
+                let ended = UnixThreadLifecycle.exitGroup thread 0 system
 
                 // Every task's ID is freed with it, the process leaves the
                 // machine, and nothing else on the machine moves.

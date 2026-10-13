@@ -68,12 +68,12 @@ Besides the syscalls, a client calls these between them (the system argument is 
 | Operation | Function | Answers |
 | --- | --- | --- |
 | a task, by the client's name for it | `UnixSystem.threads` | `Map<'Thread, UnixThreadState>` |
-| which syscall a task sleeps in | `UnixThreadState.parkedIn (task : UnixThreadState)` | `ParkedSyscall option` |
+| which syscall a task sleeps in | `UnixThreadState.parkedIn (thread : UnixThreadState)` | `ParkedSyscall option` |
 | the platform, and its flavour | `UnixSystem.platform` | `SimulatedUnixPlatform` |
 | the time since boot | `UnixSystem.nanosecondsSinceBoot` | `int64` |
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
 | which sleeping tasks wake | `UnixWait.wakes (asleep : Set<'Thread>)` | `('Thread * Set<WakePrimitive>) list` |
-| whether one sleeping task could go on | `UnixWait.satisfied (task : 'Thread)` | `Set<WakePrimitive> option` |
+| whether one sleeping task could go on | `UnixWait.satisfied (thread : 'Thread)` | `Set<WakePrimitive> option` |
 | when sleeping calls time out | `UnixWait.deadlines (asleep : Set<'Thread>)` | `int64 list` |
 | every way the tables disagree | `UnixSystem.checkInvariants` | `UnixSystemDefect list` |
 
@@ -327,7 +327,7 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the task as
 | `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
 | `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (fd : int)` | `bool option` |
 | `lseek(2)` | `UnixDescriptor.lseek (fd : int) (offset : int64) (whence : int)` | `SyscallAnswer * UnixSystem` |
-| `flock(2)` | `UnixDescriptor.flock (task : 'Thread) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
+| `flock(2)` | `UnixDescriptor.flock (thread : 'Thread) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
 | `ftruncate(2)` | `UnixDescriptor.ftruncate (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
 | `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
 | `close(2)` | `UnixDescriptor.close (fd : int)` | `SyscallAnswer * UnixSystem` |
@@ -372,8 +372,8 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (task : 'Thread) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `openat(2)` | `UnixNamespace.openat (task : 'Thread) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `open(2)` | `UnixNamespace.openPath (thread : 'Thread) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `openat(2)` | `UnixNamespace.openat (thread : 'Thread) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
 | `readlink(2)` | `UnixNamespace.readlink (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | `readlinkat(2)` | `UnixNamespace.readlinkat (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
@@ -408,15 +408,15 @@ The cases exist so that a client's matches already handle them when pathname soc
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `read(2)` | `UnixReadWrite.read (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
-| `recv(2)` | `UnixReadWrite.recv (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
-| `pread(2)` | `UnixReadWrite.pread (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
-| `write(2)` | `UnixReadWrite.write (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
-| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (task : 'Thread)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `read(2)` | `UnixReadWrite.read (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
+| `recv(2)` | `UnixReadWrite.recv (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
+| `pread(2)` | `UnixReadWrite.pread (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
+| `write(2)` | `UnixReadWrite.write (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (thread : 'Thread)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome>` |
-| `send(2)` | `UnixReadWrite.send (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
+| `send(2)` | `UnixReadWrite.send (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `send(2)`, given the bytes | `UnixReadWrite.sendWithBytes (bytes : ImmutableArray<byte>) (paused : PausedSend)` | `ProcessFate<WriteOutcome>` |
-| `pwrite(2)` | `UnixReadWrite.pwrite (task : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
+| `pwrite(2)` | `UnixReadWrite.pwrite (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
 | `pwrite(2)`, given the bytes | `UnixReadWrite.pwriteWithBytes (bytes : ImmutableArray<byte>) (paused : PausedPWrite)` | `WriteAnswer * UnixSystem` |
 | `copy_file_range(2)` | `UnixReadWrite.copyFileRange (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
 | `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
@@ -428,10 +428,10 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `socket(2)` | `UnixSocket.socket (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
 | `bind(2)` | `UnixSocket.bind (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
 | `bind(2)`, given the bytes | `UnixSocket.bindWithAddress (copied : ImmutableArray<byte>) (paused : PausedBind)` | `BindAnswer * UnixSystem` |
-| `connect(2)` | `UnixConnection.connect (task : 'Thread) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
+| `connect(2)` | `UnixConnection.connect (thread : 'Thread) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
 | `connect(2)`, given the bytes | `UnixConnection.connectWithAddress (copied : ImmutableArray<byte>) (paused : PausedConnect)` | `SyscallOutcome * UnixSystem` |
 | `listen(2)` | `UnixSocket.listen (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
-| `accept(2)` | `UnixConnection.accept (task : 'Thread) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
+| `accept(2)` | `UnixConnection.accept (thread : 'Thread) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
 | `shutdown(2)` | `UnixConnection.shutdown (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
 | `getsockname(2)` | `UnixSocket.getsockname (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
 | `getpeername(2)` | `UnixSocket.getpeername (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
@@ -461,12 +461,12 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `poll(2)` | `UnixPoll.poll (task : 'Thread) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
+| `poll(2)` | `UnixPoll.poll (thread : 'Thread) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
 | `epoll_create1(2)` | `UnixPoll.epollCreate1 (flags : int)` | `Result<int * UnixSystem, UnixError>` |
 | `epoll_ctl(2)` | `UnixPoll.epollCtl (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
-| `epoll_wait(2)` | `UnixPoll.epollWait (task : 'Thread) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
+| `epoll_wait(2)` | `UnixPoll.epollWait (thread : 'Thread) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
 | Darwin's `kqueue(2)` | `UnixKqueue.kqueue` | `int * UnixSystem` |
-| Darwin's `kevent(2)` | `UnixKqueue.kevent (task : 'Thread) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
+| Darwin's `kevent(2)` | `UnixKqueue.kevent (thread : 'Thread) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
 
@@ -508,15 +508,15 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 | `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (target : 'Thread) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
 | `sigaction(3)` | `UnixSignal.sigaction (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
 | `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (task : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (task : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (task : 'Thread) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigpending(2)` | `UnixSignal.sigpending (task : 'Thread)` | `SignalMask` |
-| `sigsuspend(2)` | `UnixSignal.sigsuspend (task : 'Thread) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
-| Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (task : 'Thread) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
-| `pause(2)` | `UnixSignal.pause (task : 'Thread)` | `SigsuspendOutcome * UnixSystem` |
-| the return to user mode | `UnixSignal.onReturnToUser (task : 'Thread)` | `ProcessFate<ReturnToUserOutcome>` |
-| `sigreturn(2)` | `UnixSignal.sigreturn (task : 'Thread) (frame : HandlerFrameId)` | `UnixSystem` |
+| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (thread : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (thread : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (thread : 'Thread) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `sigpending(2)` | `UnixSignal.sigpending (thread : 'Thread)` | `SignalMask` |
+| `sigsuspend(2)` | `UnixSignal.sigsuspend (thread : 'Thread) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
+| Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (thread : 'Thread) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
+| `pause(2)` | `UnixSignal.pause (thread : 'Thread)` | `SigsuspendOutcome * UnixSystem` |
+| the return to user mode | `UnixSignal.onReturnToUser (thread : 'Thread)` | `ProcessFate<ReturnToUserOutcome>` |
+| `sigreturn(2)` | `UnixSignal.sigreturn (thread : 'Thread) (frame : HandlerFrameId)` | `UnixSystem` |
 
 A signal mask crosses the API as a `SignalMask`, the bits of a `sigset_t` under one numbering (`SignalMask.ofWord`, `SignalMask.toWord`, `SignalMask.ofSignals`), because Darwin keeps a bit that names no signal.
 A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnder` and `Signal.ofRawSignoUnder` convert, with the numbering from `SimulatedUnixPlatform.signalNumbering`.
@@ -528,7 +528,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | --- | --- | --- |
 | `clock_gettime(2)` | `UnixClock.clockGettime (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
 | `gettimeofday(2)` | `UnixClock.gettimeofday` | `UnixTimestamp` |
-| Linux's `getrandom(2)` | `UnixEntropy.getRandom (task : 'Thread) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
+| Linux's `getrandom(2)` | `UnixEntropy.getRandom (thread : 'Thread) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
 | Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
 | `getpid(2)` | `UnixSystem.processId` | `ProcessId` |
 | `umask(2)` | `UnixSystem.umask (mask : int)` | `PermissionBits * UnixSystem` |
@@ -538,11 +538,11 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | `setresgid(2)` | `UnixCredentials.setresgid (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
 | `setgroups(2)` | `UnixCredentials.setgroups (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
 | `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (parent : 'Thread) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
-| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (task : 'Thread) (status : int)` | `ProcessFate<unit>` |
-| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (task : 'Thread) (status : int)` | `EndedProcess` |
-| the client's report that a task runs on a processor | `UnixScheduling.dispatch (task : 'Thread) (cpu : CpuId)` | `UnixSystem` |
-| where a task is running | `UnixScheduling.runningOn (task : 'Thread)` | `CpuId option` |
-| Linux's `getcpu(2)` | `UnixScheduling.getcpu (task : 'Thread)` | `GetCpuAnswer` |
+| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (thread : 'Thread) (status : int)` | `ProcessFate<unit>` |
+| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (thread : 'Thread) (status : int)` | `EndedProcess` |
+| the client's report that a task runs on a processor | `UnixScheduling.dispatch (thread : 'Thread) (cpu : CpuId)` | `UnixSystem` |
+| where a task is running | `UnixScheduling.runningOn (thread : 'Thread)` | `CpuId option` |
+| Linux's `getcpu(2)` | `UnixScheduling.getcpu (thread : 'Thread)` | `GetCpuAnswer` |
 
 `UnixEntropy.getRandomMaxTransfer` is the most one `getrandom` moves.
 `gettid(2)` is `UnixThreadState.osThreadId` of the task, and `getuid(2)` and `getgid(2)` are fields of `UnixSystem.credentials` (`Credentials.RealUser`, `Credentials.RealGroup`).
@@ -568,7 +568,7 @@ A client that holds every argument already, such as a replayer, makes the call t
 
 #### One entry point
 
-`UnixSystem.step (task : 'Thread) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
+`UnixSystem.step (thread : 'Thread) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
 Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
 Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
 
@@ -627,14 +627,14 @@ A woken task finishes its call through its family's finishing function, which ma
 
 | The task is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
-| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (task : 'Thread)` |
-| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (task : 'Thread)` |
-| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (task : 'Thread)` |
-| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (task : 'Thread)` |
-| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (task : 'Thread)` |
-| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (task : 'Thread)` |
-| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (task : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
-| `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (task : 'Thread)` |
+| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (thread : 'Thread)` |
+| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (thread : 'Thread)` |
+| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (thread : 'Thread)` |
+| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (thread : 'Thread)` |
+| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (thread : 'Thread)` |
+| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (thread : 'Thread)` |
+| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (thread : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
+| `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (thread : 'Thread)` |
 
 Each answers what the call that parked answered, as in the tables above.
 
@@ -665,8 +665,8 @@ let booted : UnixSystem<int, unit> =
 
 // Every call ends with the calling task's return to user mode, where it takes
 // its signals. This client installs no handler, so it expects none to run.
-let resume (task : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
-    match UnixSignal.onReturnToUser task system with
+let resume (thread : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
+    match UnixSignal.onReturnToUser thread system with
     | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
@@ -747,7 +747,7 @@ Under Linux, `kill` of such a signal that the leader blocks while another task d
 
 ### The return to user mode
 
-A signal is taken as a task returns to user mode, so after each call a task makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser task`.
+A signal is taken as a task returns to user mode, so after each call a task makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser thread`.
 It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate.ProcessEnded ended`), because a signal whose default action terminates the process killed it (see below), or it carries on (`ProcessFate.Continues (outcome, system)`) with one of these outcomes:
 
 * `ReturnToUserOutcome.Resumes`: the task took nothing the client acts on, and runs its own code next.
@@ -823,9 +823,9 @@ match pending |> mask 1 |> returnToUser with
 ## Threads, and the end of the process
 
 `UnixThreadLifecycle.spawn parent child cpu` starts a task the client names `child`, on processor `cpu`, with a copy of `parent`'s signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
-`UnixThreadLifecycle.exitThread task status` ends one task, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
+`UnixThreadLifecycle.exitThread thread status` ends one task, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
 It throws `InvalidOperationException` for a task parked in a syscall, and refuses the process's leader while any other task lives and, on Darwin, the process's last task: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
-`UnixThreadLifecycle.exitGroup task status` ends every task at once, parked ones included.
+`UnixThreadLifecycle.exitGroup thread status` ends every task at once, parked ones included.
 
 A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last task, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
@@ -916,7 +916,7 @@ Choosing is policy, and a client that explores schedules, or a harness that stee
 **Where they meet.** `UnixSystem.threads` lists the process's tasks, and `UnixThreadState.parkedIn` says which are parked in a syscall.
 The client keeps the set of tasks it holds asleep and passes it to `UnixWait.wakes`, which says which may wake now; it decides when a woken task finishes its call.
 Which processor a task belongs on is the client's policy too.
-The client reports each task it runs with `UnixScheduling.dispatch task cpu`: "task T is now running on processor c".
+The client reports each task it runs with `UnixScheduling.dispatch thread cpu`: "task T is now running on processor c".
 The kernel keeps what Linux keeps.
 Each task has a processor, the one it last ran on, or before it first runs, the one its creator named (`ProcessLaunch.create`, `UnixThreadLifecycle.spawn`); `UnixThreadState.cpu` reports it, for a task found in `UnixSystem.threads`.
 Each processor runs at most one task, so a dispatch displaces whichever task the processor ran before, whatever process it belongs to; that task keeps the processor as its own, as a preempted task does.

@@ -81,7 +81,7 @@ module TestSleepPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
     let ``a task parked in a sleep is a ReservedPark defect, whose deadline the wait machinery reads`` () : unit =
@@ -95,17 +95,17 @@ module TestSleepPark =
                         Remainder = SleepRemainder.Reported (deadline, UserBuffer.Mapped)
                     }
 
-            let awake = boot flavour |> Threads.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual [ deadline ]
-            UnixWait.satisfied task asleep |> shouldEqual (Some Set.empty)
+            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
+            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
 
             let elapsed =
                 { asleep with
@@ -115,5 +115,5 @@ module TestSleepPark =
                             asleep.Scheduling
                 }
 
-            UnixWait.satisfied task elapsed
+            UnixWait.satisfied thread elapsed
             |> shouldEqual (Some (Set.singleton (WakePrimitive.DeadlinePassed deadline)))

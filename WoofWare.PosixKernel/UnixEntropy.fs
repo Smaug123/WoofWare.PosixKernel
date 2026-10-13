@@ -196,7 +196,7 @@ module UnixEntropy =
 
     /// `getRandom`, with a refusal answered as the `Error` rather than raised.
     let internal tryGetRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
@@ -224,12 +224,12 @@ module UnixEntropy =
         // the clamped count succeeds rather than faulting.
         let length = int (min count (getRandomMaxTransfer system.Machine.UnixPlatform))
 
-        if not (Map.containsKey task system.Tasks) then
+        if not (Map.containsKey thread system.Threads) then
             failwith
-                $"UnixEntropy.getRandom: task %O{task} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
+                $"UnixEntropy.getRandom: task %O{thread} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
 
         let stopsShort (moved : int) =
-            SyscallInterruption.stopsAtPageBoundary task moved system
+            SyscallInterruption.stopsAtPageBoundary thread moved system
 
         match transfer stopsShort buffer length system with
         | Error (TransferRefusal.Buffer refusal) -> Error (GetRandomRefusal.Buffer refusal)
@@ -254,14 +254,14 @@ module UnixEntropy =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getrandom` system call.</exception>
     let getRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetRandomAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryGetRandom task buffer count flags system
+        tryGetRandom thread buffer count flags system
         |> Refusal.orRaise "UnixEntropy.getRandom" GetRandomRefusal.kind GetRandomRefusal.describe
 
     /// `getEntropy`, with a refusal answered as the `Error` rather than raised.

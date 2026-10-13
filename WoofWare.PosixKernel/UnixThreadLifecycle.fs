@@ -85,14 +85,14 @@ type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Hand
 [<RequireQualifiedAccess>]
 type internal ThreadExitRefusal<'Thread> =
     /// The task is blocked in a syscall, so it cannot be making another one.
-    | Parked of task : 'Thread * park : ThreadPark
+    | Parked of thread : 'Thread * park : ThreadPark
     /// The task is the process's leader, and other tasks live. On both flavours
     /// the process carries on, with a leader that has gone (a zombie task on
     /// Linux); this library keeps the leader until the process ends.
-    | LeaderBeforeOthers of task : 'Thread
+    | LeaderBeforeOthers of thread : 'Thread
     /// The task is the last one on Darwin, where what its thread exit does has not
     /// been measured.
-    | LastThreadOnDarwin of task : 'Thread
+    | LastThreadOnDarwin of thread : 'Thread
 
 [<RequireQualifiedAccess>]
 module internal ThreadExitRefusal =
@@ -100,12 +100,12 @@ module internal ThreadExitRefusal =
     /// A human-readable account of why the exit was refused.
     let describe<'Thread> (refusal : ThreadExitRefusal<'Thread>) : string =
         match refusal with
-        | ThreadExitRefusal.Parked (task, park) ->
-            $"task %O{task} is parked in %A{park.Syscall}, so it cannot be making the thread-exit syscall; whatever ended the thread skipped finishing or abandoning its park"
-        | ThreadExitRefusal.LeaderBeforeOthers task ->
-            $"task %O{task} is the process's leader, and other tasks are still running; this library does not model a process whose leader has exited before them"
-        | ThreadExitRefusal.LastThreadOnDarwin task ->
-            $"task %O{task} is the process's last task, and what Darwin does when the last task makes the thread-exit syscall has not been measured"
+        | ThreadExitRefusal.Parked (thread, park) ->
+            $"task %O{thread} is parked in %A{park.Syscall}, so it cannot be making the thread-exit syscall; whatever ended the thread skipped finishing or abandoning its park"
+        | ThreadExitRefusal.LeaderBeforeOthers thread ->
+            $"task %O{thread} is the process's leader, and other tasks are still running; this library does not model a process whose leader has exited before them"
+        | ThreadExitRefusal.LastThreadOnDarwin thread ->
+            $"task %O{thread} is the process's last task, and what Darwin does when the last task makes the thread-exit syscall has not been measured"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ThreadExitRefusal<'Thread>) : RefusalKind =
@@ -164,19 +164,19 @@ module UnixThreadLifecycle =
         : EndedProcess<'Thread, 'Handler>
         =
         let signals =
-            (system.Process.Signals, Map.keys system.Tasks)
-            ||> Seq.fold (fun signals task -> SignalState.forgetThread task signals)
+            (system.Process.Signals, Map.keys system.Threads)
+            ||> Seq.fold (fun signals thread -> SignalState.forgetThread thread signals)
 
         let unparked =
-            (system, Map.keys system.Tasks)
-            ||> Seq.fold (fun system task -> UnixParkState.unpark task system)
+            (system, Map.keys system.Threads)
+            ||> Seq.fold (fun system thread -> UnixParkState.unpark thread system)
 
         let threadIds =
-            (unparked.Machine.ThreadIds, unparked.Tasks)
+            (unparked.Machine.ThreadIds, unparked.Threads)
             ||> Map.fold (fun threadIds _ state -> ThreadIdAllocator.release state.OsThreadId threadIds)
 
         let vacated =
-            (unparked.Scheduling, unparked.Tasks)
+            (unparked.Scheduling, unparked.Threads)
             ||> Map.fold (fun scheduling _ state -> UnixSchedulingState.vacate state.Cpu state.OsThreadId scheduling)
 
         let cwd = system.Process.CurrentDirectoryInode
@@ -208,24 +208,24 @@ module UnixThreadLifecycle =
 
     /// `exitThread`, with a refusal answered as the `Error` rather than raised.
     let internal tryExitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
-        let state = UnixThreadTable.get task system.Tasks
+        let state = UnixThreadTable.get thread system.Threads
 
         match state.Parked with
-        | Some park -> Error (ThreadExitRefusal.Parked (task, park))
+        | Some park -> Error (ThreadExitRefusal.Parked (thread, park))
         | None ->
 
         // Measured on Linux 6.18.5 and Darwin 27.0.0 by
         // `docs/plans/2026-08-23-posix-kernel-extraction/leader-exits-first.c`: the
         // process carries on without its leader, which Linux keeps as a zombie
         // task. Nothing here models a process in that state.
-        if task = system.Leader && system.Tasks.Count > 1 then
-            Error (ThreadExitRefusal.LeaderBeforeOthers task)
-        elif system.Tasks.Count = 1 then
+        if thread = system.Leader && system.Threads.Count > 1 then
+            Error (ThreadExitRefusal.LeaderBeforeOthers thread)
+        elif system.Threads.Count = 1 then
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
                 // The last task's own status is the process's, whatever an earlier
@@ -237,7 +237,7 @@ module UnixThreadLifecycle =
                     ProcessTermination.Exited (ExitStatus.ofExitArgument SimulatedUnixFlavour.Linux status)
 
                 Ok (ProcessFate.ProcessEnded (endProcess termination system))
-            | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastThreadOnDarwin task)
+            | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastThreadOnDarwin thread)
         else
 
         Ok (
@@ -251,9 +251,9 @@ module UnixThreadLifecycle =
                     Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
                     Process =
                         { system.Process with
-                            Signals = SignalState.forgetThread task system.Process.Signals
+                            Signals = SignalState.forgetThread thread system.Process.Signals
                         }
-                    Tasks = Map.remove task system.Tasks
+                    Threads = Map.remove thread system.Threads
                 }
             )
         )
@@ -278,12 +278,12 @@ module UnixThreadLifecycle =
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">The task is blocked in a syscall, so it cannot be making another one.</exception>
     let exitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessFate<unit, 'Thread, 'Handler>
         =
-        tryExitThread task status system
+        tryExitThread thread status system
         |> Refusal.orRaise "UnixThreadLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
 
     /// `spawn`, with a refusal answered as the `Error` rather than raised.
@@ -294,13 +294,13 @@ module UnixThreadLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
-        match (UnixThreadTable.get parent system.Tasks).Parked with
+        match (UnixThreadTable.get parent system.Threads).Parked with
         | Some park ->
             failwith
                 $"UnixThreadLifecycle.spawn: task %O{parent} is parked in %A{park.Syscall}, so it cannot be making the clone syscall"
         | None ->
 
-        if Map.containsKey child system.Tasks then
+        if Map.containsKey child system.Threads then
             failwith
                 $"UnixThreadLifecycle.spawn: %O{child} already names a task. A task is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
@@ -329,7 +329,7 @@ module UnixThreadLifecycle =
                     { system.Process with
                         Signals = SignalState.inheritMask parent child system.Process.Signals
                     }
-                Tasks = UnixThreadTable.add child cpu id system.Tasks
+                Threads = UnixThreadTable.add child cpu id system.Threads
             }
         )
 
@@ -366,15 +366,15 @@ module UnixThreadLifecycle =
     /// Fails loudly if `task` names no task, or is parked in a syscall: a task
     /// blocked in one is not making another, so either is a bug in the client.
     let exitGroup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
-        match (UnixThreadTable.get task system.Tasks).Parked with
+        match (UnixThreadTable.get thread system.Threads).Parked with
         | Some park ->
             failwith
-                $"UnixThreadLifecycle.exitGroup: task %O{task} is parked in %A{park.Syscall}, so it cannot be making the exit_group syscall"
+                $"UnixThreadLifecycle.exitGroup: task %O{thread} is parked in %A{park.Syscall}, so it cannot be making the exit_group syscall"
         | None ->
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform

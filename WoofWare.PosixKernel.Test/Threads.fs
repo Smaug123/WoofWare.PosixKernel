@@ -25,7 +25,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if Map.containsKey name system.Tasks then
+        if Map.containsKey name system.Threads then
             system
         else
             spawn name system

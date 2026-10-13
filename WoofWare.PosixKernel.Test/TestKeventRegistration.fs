@@ -819,15 +819,15 @@ module TestKeventRegistration =
     // ------------------------------------------------------------------
 
     let private parkIn
-        (task : int)
+        (thread : int)
         (kq : int)
         (timeout : KeventTimeout)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixKqueue.tryKevent task kq 0 [] 4 UserBuffer.Mapped timeout system with
+        match UnixKqueue.tryKevent thread kq 0 [] 4 UserBuffer.Mapped timeout system with
         | Ok (KeventOutcome.WouldBlock _, parked) -> parked
-        | other -> failwith $"expected task %d{task} to park, got %A{other}"
+        | other -> failwith $"expected task %d{thread} to park, got %A{other}"
 
     [<Test>]
     let ``an event wakes every sleeper, the first to finish takes it, and the rest sleep again`` () : unit =
@@ -877,7 +877,7 @@ module TestKeventRegistration =
                 match UnixKqueue.tryFinishKevent 2 system with
                 | Ok (KeventOutcome.Answered [ event ], finished) ->
                     event |> shouldEqual expected
-                    UnixThreadTable.parkedFor 2 finished.Tasks |> shouldEqual None
+                    UnixThreadTable.parkedFor 2 finished.Threads |> shouldEqual None
                     finished
                 | other -> failwith $"expected task 2 to take the event, got %A{other}"
 

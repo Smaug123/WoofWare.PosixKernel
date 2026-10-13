@@ -61,12 +61,12 @@ module TestStreamReaderGone =
         |> Threads.spawn 1
         |> withSigPipe disposition
 
-    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (task : int) : PendingSignal<int> =
+    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (thread : int) : PendingSignal<int> =
         {
             Signal = Signal.SIGPIPE
             Target =
                 match flavour with
-                | SimulatedUnixFlavour.Linux -> ValueSome task
+                | SimulatedUnixFlavour.Linux -> ValueSome thread
                 | SimulatedUnixFlavour.Darwin -> ValueNone
         }
 
@@ -99,20 +99,20 @@ module TestStreamReaderGone =
             let mutable pending : Set<PendingSignal<int>> = Set.empty
             let mutable ended = false
 
-            for i, (task, fd, count) in List.indexed ops |> Seq.takeWhile (fun _ -> not ended) do
+            for i, (thread, fd, count) in List.indexed ops |> Seq.takeWhile (fun _ -> not ended) do
                 let where =
-                    $"%O{platform}, gone %A{gone}, %A{disposition}, call %d{i}: task %d{task} writes %d{count} to fd %d{fd}"
+                    $"%O{platform}, gone %A{gone}, %A{disposition}, call %d{i}: task %d{thread} writes %d{count} to fd %d{fd}"
 
                 let bytes = payload i count
 
-                let actual = WriteOutcomes.admitThenWrite task fd UserBuffer.Mapped bytes system
+                let actual = WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes system
 
                 // `write` without the admission, as a caller holding the bytes
                 // may make it, answers the same.
-                UnixReadWrite.tryWriteBytes task fd bytes system |> shouldEqual actual
+                UnixReadWrite.tryWriteBytes thread fd bytes system |> shouldEqual actual
 
                 if Set.contains fd gone && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
-                    let raised = sigPipeFrom flavour task
+                    let raised = sigPipeFrom flavour thread
 
                     match disposition, actual with
                     | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
@@ -196,7 +196,7 @@ module TestStreamReaderGone =
             let system =
                 systemOn platform (Set.singleton 1) (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
 
-            let tasks = system.Tasks |> Map.keys |> Set.ofSeq
+            let threads = system.Threads |> Map.keys |> Set.ofSeq
 
             let system =
                 { system with
@@ -206,7 +206,7 @@ module TestStreamReaderGone =
                                 HandlerFrames.enter
                                     "carrier"
                                     system.Leader
-                                    tasks
+                                    threads
                                     system.Leader
                                     (Set.singleton Signal.SIGPIPE)
                                     system.Process.Signals

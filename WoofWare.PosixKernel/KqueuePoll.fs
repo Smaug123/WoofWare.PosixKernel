@@ -263,11 +263,11 @@ module internal KqueuePoll =
     ///
     /// Loudly partial: `task` must be asleep in a Darwin `poll`.
     let reportable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
-        match UnixThreadTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some (ParkedSyscall.KqueuePoll poll) ->
             let zero = poll.Entries |> List.map (fun _ -> 0s)
             let queue = UnixMachineState.pollQueue poll.Queue system.Machine
@@ -275,7 +275,7 @@ module internal KqueuePoll =
             revents |> List.exists (fun revents -> revents <> 0s)
         | other ->
             failwith
-                $"KqueuePoll.reportable: task %O{task} is parked in %A{other}, not in a Darwin poll (this is a bug in the caller that recorded the park)."
+                $"KqueuePoll.reportable: task %O{thread} is parked in %A{other}, not in a Darwin poll (this is a bug in the caller that recorded the park)."
 
     /// What the process `owner` closing its descriptor `fd` does to the kqueue
     /// of every Darwin `poll` of its own asleep on `machine`: each filter

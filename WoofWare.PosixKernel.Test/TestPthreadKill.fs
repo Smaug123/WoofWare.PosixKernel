@@ -159,13 +159,13 @@ module TestPthreadKill =
 
                 match framed with
                 | None -> system
-                | Some task ->
+                | Some thread ->
                     let mask =
                         blocked
                         |> List.choose (fun signo -> Signal.ofRawSignoUnder numbering signo |> ValueOption.toOption)
                         |> Set.ofList
 
-                    HandlerFrames.enterIn "h" task mask system
+                    HandlerFrames.enterIn "h" thread mask system
 
             match UnixSignal.tryPthreadKill target signo system, sendable flavour signo with
             | Ok (Error errno), false -> errno |> shouldEqual UnixError.EINVAL
@@ -229,16 +229,16 @@ module TestPthreadKill =
     /// is given nothing more. Fails on any delivery but a handler frame.
     let private drain
         (signal : Signal)
-        (task : int)
+        (thread : int)
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
         let rec go (count : int) (rounds : int) (system : UnixSystem<int, string>) =
             if rounds > 100 then
-                failwith $"%O{task} was still being given signals after 100 returns"
+                failwith $"%O{thread} was still being given signals after 100 returns"
 
-            match UnixSignal.tryOnReturnToUser task system with
-            | Error refusal -> failwith $"onReturnToUser %O{task} refused: %O{refusal}"
+            match UnixSignal.tryOnReturnToUser thread system with
+            | Error refusal -> failwith $"onReturnToUser %O{thread} refused: %O{refusal}"
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> count, system
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
                 let ofSignal =
@@ -246,12 +246,12 @@ module TestPthreadKill =
 
                 let system =
                     (system, frames)
-                    ||> List.fold (fun system frame -> UnixSignal.sigreturn task frame.Id system)
+                    ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
 
                 go (count + ofSignal) (rounds + 1) system
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other)
-            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"onReturnToUser %O{task} answered %A{other}"
+            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"onReturnToUser %O{thread} answered %A{other}"
 
         go 0 0 system
 
@@ -269,14 +269,14 @@ module TestPthreadKill =
 
     /// `task` inside a handler that blocks `signal`, entered through a carrier
     /// other than `signal`.
-    let private blocking (signal : Signal) (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private blocking (signal : Signal) (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let carrier =
             if signal = HandlerFrames.carrier then
                 Signal.SIGWINCH
             else
                 HandlerFrames.carrier
 
-        let tasks = system.Tasks |> Map.keys |> Set.ofSeq
+        let threads = system.Threads |> Map.keys |> Set.ofSeq
 
         { system with
             Process =
@@ -286,18 +286,18 @@ module TestPthreadKill =
                             carrier
                             "carrier"
                             system.Leader
-                            tasks
-                            task
+                            threads
+                            thread
                             (Set.singleton signal)
                             system.Process.Signals
                 }
         }
 
-    let private leave (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private leave (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
-                    Signals = HandlerFrames.leave task system.Process.Signals
+                    Signals = HandlerFrames.leave thread system.Process.Signals
                 }
         }
 
@@ -380,7 +380,7 @@ module TestPthreadKill =
     type private PairShape =
         {
             Name : string
-            Tasks : int list
+            Threads : int list
             /// `kill(2)`, or `pthread_kill` of the task named.
             Sends : int option list
             Linux : (int * int) option
@@ -396,28 +396,28 @@ module TestPthreadKill =
         [
             {
                 Name = "one thread: kill, raise"
-                Tasks = [ leader ]
+                Threads = [ leader ]
                 Sends = [ None ; Some leader ]
                 Linux = Some (2, 0)
                 Darwin = None
             }
             {
                 Name = "one thread: raise, kill"
-                Tasks = [ leader ]
+                Threads = [ leader ]
                 Sends = [ Some leader ; None ]
                 Linux = Some (2, 0)
                 Darwin = None
             }
             {
                 Name = "two threads: kill, raise on main"
-                Tasks = [ leader ; worker ]
+                Threads = [ leader ; worker ]
                 Sends = [ None ; Some leader ]
                 Linux = Some (2, 0)
                 Darwin = None
             }
             {
                 Name = "two threads: kill, pthread_kill of the worker"
-                Tasks = [ leader ; worker ]
+                Threads = [ leader ; worker ]
                 Sends = [ None ; Some worker ]
                 Linux = Some (1, 1)
                 Darwin = Some (1, 1)
@@ -437,13 +437,13 @@ module TestPthreadKill =
                         let system = systemOn flavour
 
                         let system =
-                            if List.contains worker shape.Tasks then
+                            if List.contains worker shape.Threads then
                                 withWorker system
                             else
                                 system
 
-                        (catchIn signal system, shape.Tasks)
-                        ||> List.fold (fun system task -> blocking signal task system)
+                        (catchIn signal system, shape.Threads)
+                        ||> List.fold (fun system thread -> blocking signal thread system)
 
                     let send (system : UnixSystem<int, string>) (target : int option) =
                         match target with
@@ -452,8 +452,8 @@ module TestPthreadKill =
                             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> Ok system
                             | Error (KillRefusal.Receiver refusal) -> Error refusal
                             | other -> failwith $"kill: %O{other}"
-                        | Some task ->
-                            match UnixSignal.tryPthreadKill task signo system with
+                        | Some thread ->
+                            match UnixSignal.tryPthreadKill thread signo system with
                             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> Ok system
                             | Error (ThreadKillRefusal.Receiver refusal) -> Error refusal
                             | other -> failwith $"pthread_kill: %O{other}"
@@ -472,7 +472,7 @@ module TestPthreadKill =
                         let atMain, sent = sent |> leave leader |> drain signal leader
 
                         let atWorker =
-                            if List.contains worker shape.Tasks then
+                            if List.contains worker shape.Threads then
                                 sent |> leave worker |> drain signal worker |> fst
                             else
                                 0

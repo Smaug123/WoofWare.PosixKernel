@@ -321,7 +321,7 @@ module TestUnixSystemInvariants =
     // Tasks against the descriptor table
     // ------------------------------------------------------------------
 
-    let private task : int = 1
+    let private thread : int = 1
 
     /// `system` with one registered task, parked as `parked` says.
     let private withThread
@@ -329,16 +329,16 @@ module TestUnixSystemInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let registered = Threads.ensure task system
+        let registered = Threads.ensure thread system
 
         match parked with
         | None -> registered
-        | Some parked -> UnixWait.park task parked registered
+        | Some parked -> UnixWait.park thread parked registered
 
     /// `system` with one registered task, parked as `parked` says on a
     /// description the open file table may not hold, which no syscall parks on.
     let private withForgedThread (parked : ParkedSyscall) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Threads.ensure task system |> ForgedPark.onAbsent task parked
+        Threads.ensure thread system |> ForgedPark.onAbsent thread parked
 
     /// A description id nothing in `system` holds.
     let private absentDescription : OpenFileDescriptionId = OpenFileDescriptionId 999L
@@ -399,7 +399,7 @@ module TestUnixSystemInvariants =
                 }
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (task, absentDescription) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, absentDescription) ]
 
     [<Test>]
     let ``a task parked in an epoll_wait on an absent description is a defect`` () : unit =
@@ -414,7 +414,7 @@ module TestUnixSystemInvariants =
                 }
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (task, absentDescription) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, absentDescription) ]
 
     [<Test>]
     let ``a task parked in an epoll_wait on a description that is not an epoll instance is a defect`` () : unit =
@@ -437,7 +437,10 @@ module TestUnixSystemInvariants =
             )
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedEpollWaitOnNonEpoll (task, stdoutDescription, target) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (thread, stdoutDescription, target)
+            ]
 
     /// `system` with tasks 1 and 2 parked on stdout's description, in that order.
     let private twoParked : UnixSystem<int, string> =
@@ -462,16 +465,16 @@ module TestUnixSystemInvariants =
     /// `system` with task `name`'s park stamped `ordinal`, as only a record copy past
     /// `UnixWait.park` could.
     let private forgeOrdinal (name : int) (ordinal : ParkOrdinal) (system : UnixSystem<int, string>) =
-        let task = UnixThreadTable.get name system.Tasks
+        let thread = UnixThreadTable.get name system.Threads
 
         { system with
-            Tasks =
-                system.Tasks
+            Threads =
+                system.Threads
                 |> Map.add
                     name
-                    { task with
+                    { thread with
                         Parked =
-                            task.Parked
+                            thread.Parked
                             |> Option.map (fun park ->
                                 { park with
                                     Ordinal = ordinal
@@ -486,7 +489,7 @@ module TestUnixSystemInvariants =
 
     [<Test>]
     let ``two parks stamped with one ordinal are a defect`` () : unit =
-        let first = (UnixThreadTable.parkOf 1 twoParked.Tasks |> Option.get).Ordinal
+        let first = (UnixThreadTable.parkOf 1 twoParked.Threads |> Option.get).Ordinal
 
         forgeOrdinal 2 first twoParked
         |> UnixSystem.checkInvariants
@@ -793,18 +796,18 @@ module TestUnixSystemInvariants =
 
         system
         |> withThread None
-        |> withSignals (inHandler task)
+        |> withSignals (inHandler thread)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
     [<Test>]
     let ``a mask for a task the table does not hold is a defect`` () : unit =
-        let blocking (task : int) : SignalState<int, string> =
+        let blocking (thread : int) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
             |> SignalState.changeMask
                 SignalMaskChange.Block
                 (SignalMask.ofSignals SignalNumbering.Linux (Set.singleton Signal.SIGINT))
-                task
+                thread
 
         system
         |> withThread None
@@ -814,7 +817,7 @@ module TestUnixSystemInvariants =
 
         system
         |> withThread None
-        |> withSignals (blocking task)
+        |> withSignals (blocking thread)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -837,7 +840,7 @@ module TestUnixSystemInvariants =
         // Directed at a live task, or at the process: sound.
         system
         |> withThread None
-        |> withSignals (directedAt (ValueSome task))
+        |> withSignals (directedAt (ValueSome thread))
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -931,16 +934,16 @@ module TestUnixSystemInvariants =
     let ``two tasks with one thread ID are a defect`` () : unit =
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
             let system = spawned platform
-            let leader = UnixThreadTable.get 0 system.Tasks
+            let leader = UnixThreadTable.get 0 system.Threads
 
             { system with
-                Tasks =
+                Threads =
                     Map.add
                         1
-                        { UnixThreadTable.get 1 system.Tasks with
+                        { UnixThreadTable.get 1 system.Threads with
                             OsThreadId = leader.OsThreadId
                         }
-                        system.Tasks
+                        system.Threads
             }
             |> UnixSystem.checkInvariants
             |> shouldEqual
@@ -949,7 +952,7 @@ module TestUnixSystemInvariants =
                     // Task 1's own ID, which the allocator still records, is
                     // held by no task now.
                     UnixSystemDefect.LiveThreadIdsMismatch (
-                        Set.singleton (UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Tasks)),
+                        Set.singleton (UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Threads)),
                         Set.empty
                     )
                 ]
@@ -972,7 +975,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.LeaderThreadIdNotProcessId (
                     0,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 0 linux.Tasks),
+                    UnixThreadState.osThreadId (UnixThreadTable.get 0 linux.Threads),
                     ProcessId.parseOrFail "test" 17
                 )
             ]
@@ -998,11 +1001,11 @@ module TestUnixSystemInvariants =
                 (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
                  |> Launched.leaderThreadId id
                  |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                    .Tasks
+                    .Threads
                 |> UnixThreadTable.get 0
                 |> UnixThreadState.osThreadId
 
-            let replaced = UnixThreadState.osThreadId (UnixThreadTable.get 1 linux.Tasks)
+            let replaced = UnixThreadState.osThreadId (UnixThreadTable.get 1 linux.Threads)
 
             foreign,
             { linux with
@@ -1016,13 +1019,13 @@ module TestUnixSystemInvariants =
                                 Live = linux.Machine.ThreadIds.Live |> Set.remove replaced |> Set.add foreign
                             }
                     }
-                Tasks =
+                Threads =
                     Map.add
                         1
-                        { UnixThreadTable.get 1 linux.Tasks with
+                        { UnixThreadTable.get 1 linux.Threads with
                             OsThreadId = foreign
                         }
-                        linux.Tasks
+                        linux.Threads
             }
 
         let _, below = withDarwinId 4194303UL
@@ -1057,7 +1060,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.OsThreadIdNotMintable (
                     1,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 1 darwin.Tasks),
+                    UnixThreadState.osThreadId (UnixThreadTable.get 1 darwin.Threads),
                     behind
                 )
             ]

@@ -98,19 +98,19 @@ module TestBlockingAccept =
         UnixDescriptor.setNonBlocking fd value system |> snd
 
     /// `task` parks in an accept through `fd`, whose queue must be empty.
-    let private parkIn (task : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryAccept task fd UserBuffer.Mapped 16u system with
+    let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
-        | other -> failwith $"expected task %d{task} to park, got %A{other}"
+        | other -> failwith $"expected task %d{thread} to park, got %A{other}"
 
     /// `task` finishes its accept, which must hand a connection over.
-    let private finishWithConnection (task : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryFinishAccept task system with
+    let private finishWithConnection (thread : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixConnection.tryFinishAccept thread system with
         | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
-        | other -> failwith $"expected task %d{task}'s accept to finish with a connection, got %A{other}"
+        | other -> failwith $"expected task %d{thread}'s accept to finish with a connection, got %A{other}"
 
-    let private awake (tasks : int list) (system : UnixSystem<int, string>) : int list =
-        UnixWait.wakes (Set.ofList tasks) system |> List.map fst
+    let private awake (threads : int list) (system : UnixSystem<int, string>) : int list =
+        UnixWait.wakes (Set.ofList threads) system |> List.map fst
 
     let private userBuffers : Gen<UserBuffer> =
         Gen.oneof
@@ -139,8 +139,8 @@ module TestBlockingAccept =
                 let! destination = userBuffers
                 let! declaredLength = Gen.choose (0, 64) |> Gen.map uint32
                 let! throughDup = ArbMap.defaults |> ArbMap.generate<bool>
-                let! task = Gen.choose (1, 6)
-                return platform, destination, declaredLength, throughDup, task
+                let! thread = Gen.choose (1, 6)
+                return platform, destination, declaredLength, throughDup, thread
             }
 
         let property
@@ -149,7 +149,7 @@ module TestBlockingAccept =
                 destination : UserBuffer,
                 declaredLength : uint32,
                 throughDup : bool,
-                task : int
+                thread : int
             )
             : unit
             =
@@ -159,14 +159,14 @@ module TestBlockingAccept =
 
             let listener = idOf fd system
 
-            match UnixConnection.tryAccept task fd destination declaredLength system with
+            match UnixConnection.tryAccept thread fd destination declaredLength system with
             | Ok (AcceptOutcome.WouldBlock condition, parked) ->
                 condition
                 |> shouldEqual (
                     Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                 )
 
-                UnixThreadTable.parkOf task parked.Tasks
+                UnixThreadTable.parkOf thread parked.Threads
                 |> shouldEqual (
                     Some
                         {
@@ -187,7 +187,7 @@ module TestBlockingAccept =
                 |> shouldEqual (Some 1)
 
                 { parked with
-                    Tasks = system.Tasks
+                    Threads = system.Threads
                     Machine =
                         { parked.Machine with
                             NextParkOrdinal = system.Machine.NextParkOrdinal
@@ -288,7 +288,7 @@ module TestBlockingAccept =
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
-            let parkedRecord = UnixThreadTable.parkedFor 1 system.Tasks
+            let parkedRecord = UnixThreadTable.parkedFor 1 system.Threads
 
             let system =
                 (system, actions)
@@ -315,7 +315,7 @@ module TestBlockingAccept =
                         Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                     )
 
-                    UnixThreadTable.parkOf 1 parkedAgain.Tasks
+                    UnixThreadTable.parkOf 1 parkedAgain.Threads
                     |> shouldEqual (
                         parkedRecord
                         |> Option.map (fun syscall ->
@@ -532,7 +532,7 @@ module TestBlockingAccept =
                 )
 
             let parkedThreads =
-                system.Tasks
+                system.Threads
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
                     match state.Parked with
@@ -727,7 +727,7 @@ module TestBlockingAccept =
             finishWithConnection 1 system |> ignore<_>
 
     /// `system` with a caught `SIGUSR1` pending for `task`.
-    let private signalled (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -739,7 +739,7 @@ module TestBlockingAccept =
                         |> SignalState.enqueue
                             {
                                 Signal = Signal.SIGUSR1
-                                Target = ValueSome task
+                                Target = ValueSome thread
                             }
                 }
         }
@@ -749,10 +749,10 @@ module TestBlockingAccept =
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 
-    let private finishAborted (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryFinishAccept task system with
+    let private finishAborted (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixConnection.tryFinishAccept thread system with
         | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, system) -> system
-        | other -> failwith $"expected task %d{task}'s accept to answer ECONNABORTED, got %A{other}"
+        | other -> failwith $"expected task %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
         UnixConnection.tryAccept 6 fd UserBuffer.Mapped 16u system
@@ -784,7 +784,8 @@ module TestBlockingAccept =
             |> shouldEqual keepDup
 
             let system =
-                (system, parked) ||> List.fold (fun system task -> finishAborted task system)
+                (system, parked)
+                ||> List.fold (fun system thread -> finishAborted thread system)
 
             UnixSystem.checkInvariants system |> shouldEqual []
 
@@ -998,13 +999,13 @@ module TestBlockingAccept =
     /// for an accept; those in one, for a signal; those woken, for a finish.
     [<RequireQualifiedAccess>]
     type private AcceptOp =
-        | Accept of task : int * fd : int
+        | Accept of thread : int * fd : int
         | Connect
         | Close of fd : int
         | Dup of fd : int
-        | Signal of task : int
+        | Signal of thread : int
         | Wake
-        | Finish of task : int
+        | Finish of thread : int
         | SetOption of fd : int * change : OptionChange
 
     type private AcceptPark =
@@ -1116,14 +1117,14 @@ module TestBlockingAccept =
 
     let private acceptThreads : int list = [ 1 ; 2 ; 3 ; 4 ]
 
-    let rec private returnToUser (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser task system with
+    let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixSignal.tryOnReturnToUser thread system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn task frame.Id system)
-            |> returnToUser task
-        | other -> failwith $"returning task %d{task} to user mode: %A{other}"
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            |> returnToUser thread
+        | other -> failwith $"returning task %d{thread} to user mode: %A{other}"
 
     let private optionChangeGen : Gen<OptionChange> =
         let flag = ArbMap.defaults |> ArbMap.generate<bool>
@@ -1140,18 +1141,18 @@ module TestBlockingAccept =
     /// from 3 to `highestFd`.
     let private acceptOpGenWeighted (highestFd : int) (weights : int * int * int * int * int * int * int * int) =
         let accepts, connects, closes, dups, signals, wakes, finishes, sets = weights
-        let task = Gen.elements acceptThreads
+        let thread = Gen.elements acceptThreads
         let fd = Gen.choose (3, highestFd)
 
         Gen.frequency
             [
-                accepts, Gen.map2 (fun t fd -> AcceptOp.Accept (t, fd)) task fd
+                accepts, Gen.map2 (fun t fd -> AcceptOp.Accept (t, fd)) thread fd
                 connects, Gen.constant AcceptOp.Connect
                 closes, Gen.map AcceptOp.Close fd
                 dups, Gen.map AcceptOp.Dup fd
-                signals, Gen.map AcceptOp.Signal task
+                signals, Gen.map AcceptOp.Signal thread
                 wakes, Gen.constant AcceptOp.Wake
-                finishes, Gen.map AcceptOp.Finish task
+                finishes, Gen.map AcceptOp.Finish thread
                 sets, Gen.map2 (fun fd change -> AcceptOp.SetOption (fd, change)) fd optionChangeGen
             ]
 
@@ -1220,10 +1221,10 @@ module TestBlockingAccept =
                     Alive = true
                 }
 
-            let answered (task : int) (r : AcceptReference) =
+            let answered (thread : int) (r : AcceptReference) =
                 { r with
-                    Parks = Map.remove task r.Parks
-                    Signalled = Set.remove task r.Signalled
+                    Parks = Map.remove thread r.Parks
+                    Signalled = Set.remove thread r.Signalled
                 }
 
             let setOption
@@ -1344,8 +1345,8 @@ module TestBlockingAccept =
                 let where = $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
 
                 match op with
-                | AcceptOp.Accept (task, fd) ->
-                    let answer = UnixConnection.tryAccept task fd UserBuffer.Mapped 16u system
+                | AcceptOp.Accept (thread, fd) ->
+                    let answer = UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u system
 
                     match Map.tryFind fd reference.Fds, answer with
                     | None, Ok (AcceptOutcome.Failed UnixError.EBADF, _) -> cover $"%s{flavourName} accept: EBADF"
@@ -1367,7 +1368,7 @@ module TestBlockingAccept =
                             { reference with
                                 Parks =
                                     Map.add
-                                        task
+                                        thread
                                         {
                                             Through = Some fd
                                             Ordinal = reference.NextOrdinal
@@ -1485,7 +1486,7 @@ module TestBlockingAccept =
                             }
 
                     system <- after
-                | AcceptOp.Signal task ->
+                | AcceptOp.Signal thread ->
                     system <-
                         { system with
                             Process =
@@ -1494,7 +1495,7 @@ module TestBlockingAccept =
                                         SignalState.enqueue
                                             {
                                                 Signal = Signal.SIGUSR1
-                                                Target = ValueSome task
+                                                Target = ValueSome thread
                                             }
                                             system.Process.Signals
                                 }
@@ -1502,7 +1503,7 @@ module TestBlockingAccept =
 
                     reference <-
                         { reference with
-                            Signalled = Set.add task reference.Signalled
+                            Signalled = Set.add thread reference.Signalled
                         }
                 | AcceptOp.Wake ->
                     let asleep =
@@ -1523,10 +1524,10 @@ module TestBlockingAccept =
 
                     let expected =
                         asleep
-                        |> List.filter (fun (task, park) ->
+                        |> List.filter (fun (thread, park) ->
                             park.Through.IsNone
-                            || Set.contains task reference.Signalled
-                            || first = Some task
+                            || Set.contains thread reference.Signalled
+                            || first = Some thread
                         )
                         |> List.sortBy (fun (_, park) -> park.Ordinal)
                         |> List.map fst
@@ -1541,27 +1542,27 @@ module TestBlockingAccept =
                         { reference with
                             Parks =
                                 (reference.Parks, woken)
-                                ||> List.fold (fun parks task ->
+                                ||> List.fold (fun parks thread ->
                                     Map.add
-                                        task
-                                        { parks.[task] with
+                                        thread
+                                        { parks.[thread] with
                                             Woken = true
                                         }
                                         parks
                                 )
                         }
-                | AcceptOp.Finish task ->
-                    let park = reference.Parks.[task]
-                    let signalled = Set.contains task reference.Signalled
-                    let answer = UnixConnection.tryFinishAccept task system
+                | AcceptOp.Finish thread ->
+                    let park = reference.Parks.[thread]
+                    let signalled = Set.contains thread reference.Signalled
+                    let answer = UnixConnection.tryFinishAccept thread system
 
                     let settle (r : AcceptReference) (after : UnixSystem<int, string>) =
-                        let r = answered task r
+                        let r = answered thread r
 
                         if r.Alive && not (listenerHeld r) && not r.Queue.IsEmpty then
                             cover $"%s{flavourName} finish: resets the clients left queued"
 
-                        system <- returnToUser task after
+                        system <- returnToUser thread after
                         reference <- releasedIfUnheld r
 
                     match park.Through, answer with
@@ -1596,7 +1597,7 @@ module TestBlockingAccept =
                             { reference with
                                 Parks =
                                     Map.add
-                                        task
+                                        thread
                                         { park with
                                             Woken = false
                                             Ordinal = reference.NextOrdinal
@@ -1624,12 +1625,12 @@ module TestBlockingAccept =
                 | defects -> failwith $"%s{where}: %A{defects}"
 
                 // Every park agrees with the reference's.
-                for task in acceptThreads do
+                for thread in acceptThreads do
                     let expected =
-                        Map.tryFind task reference.Parks |> Option.map (fun park -> park.Through)
+                        Map.tryFind thread reference.Parks |> Option.map (fun park -> park.Through)
 
                     let actual =
-                        UnixThreadTable.parkedFor task system.Tasks
+                        UnixThreadTable.parkedFor thread system.Threads
                         |> Option.map (fun parked ->
                             match parked with
                             | ParkedSyscall.Accept {
@@ -1638,11 +1639,11 @@ module TestBlockingAccept =
                             | ParkedSyscall.Accept {
                                                        Listener = SleepTarget.EndedByClose _
                                                    } -> None
-                            | other -> failwith $"%s{where}: task %d{task} parked in %A{other}"
+                            | other -> failwith $"%s{where}: task %d{thread} parked in %A{other}"
                         )
 
                     if expected <> actual then
-                        failwith $"%s{where}: task %d{task} parked as %A{actual}, expected %A{expected}"
+                        failwith $"%s{where}: task %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
                     system.Machine.Sockets
@@ -1786,24 +1787,24 @@ module TestBlockingAccept =
 
     /// `system` with the park of `task` passed through `rewrite`.
     let private reparked
-        (task : int)
+        (thread : int)
         (rewrite : ParkedAccept -> ParkedAccept)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let state = UnixThreadTable.get task system.Tasks
+        let state = UnixThreadTable.get thread system.Threads
 
         match state.Parked with
         | Some ({
                     Syscall = ParkedSyscall.Accept accept
                 } as park) ->
             UnixParkState.setPark
-                task
+                thread
                 { park with
                     Syscall = ParkedSyscall.Accept (rewrite accept)
                 }
                 system
-        | other -> failwith $"task %d{task} is parked in %A{other}"
+        | other -> failwith $"task %d{thread} is parked in %A{other}"
 
     /// `system` with the listener `fd` names marked drained, as only a Darwin
     /// close marks one.

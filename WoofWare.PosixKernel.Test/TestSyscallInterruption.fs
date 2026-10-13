@@ -199,7 +199,7 @@ module TestSyscallInterruption =
     let private darwinWorld : World = worldOn SimulatedUnixPlatform.macOsArm64
 
     /// `world` with `task` asleep in `sleep`.
-    let private asleep (world : World) (task : int) (sleep : Sleep) : UnixSystem<int, string> =
+    let private asleep (world : World) (thread : int) (sleep : Sleep) : UnixSystem<int, string> =
         let parked
             (what : string)
             (result : Result<'outcome * UnixSystem<int, string>, 'refusal>)
@@ -213,7 +213,7 @@ module TestSyscallInterruption =
         | Sleep.Flock ->
             parked
                 "the flock"
-                (UnixDescriptor.tryFlock task world.WaitingThrough 2 world.System)
+                (UnixDescriptor.tryFlock thread world.WaitingThrough 2 world.System)
                 (function
                 | SyscallOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -221,7 +221,7 @@ module TestSyscallInterruption =
         | Sleep.Accept ->
             parked
                 "the accept"
-                (UnixConnection.tryAccept task world.Listener UserBuffer.Mapped 16u world.System)
+                (UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -230,7 +230,7 @@ module TestSyscallInterruption =
             parked
                 "the poll"
                 (UnixPoll.tryPoll
-                    task
+                    thread
                     [
                         {
                             Fd = world.Listener
@@ -247,7 +247,7 @@ module TestSyscallInterruption =
             parked
                 "the poll of nothing"
                 (UnixPoll.tryPoll
-                    task
+                    thread
                     [
                         {
                             Fd = -1
@@ -263,7 +263,7 @@ module TestSyscallInterruption =
         | Sleep.EpollWait milliseconds ->
             parked
                 "the epoll_wait"
-                (UnixPoll.tryEpollWait task world.Epoll 8 UserBuffer.Mapped milliseconds world.System)
+                (UnixPoll.tryEpollWait thread world.Epoll 8 UserBuffer.Mapped milliseconds world.System)
                 (function
                 | EpollWaitOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -300,7 +300,7 @@ module TestSyscallInterruption =
 
     /// `task`'s sleeping call, finished.
     let private finish
-        (task : int)
+        (thread : int)
         (sleep : Sleep)
         (system : UnixSystem<int, string>)
         : Ending * UnixSystem<int, string>
@@ -310,7 +310,7 @@ module TestSyscallInterruption =
 
         match sleep with
         | Sleep.Flock ->
-            match UnixDescriptor.tryFlockAcquire task system with
+            match UnixDescriptor.tryFlockAcquire thread system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> Ending.Completed, system
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), system) -> Ending.Eintr, system
             | Ok (SyscallOutcome.Restarts, system) -> Ending.Restart, system
@@ -318,7 +318,7 @@ module TestSyscallInterruption =
             | Error (FLockRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.Accept ->
-            match UnixConnection.tryFinishAccept task system with
+            match UnixConnection.tryFinishAccept thread system with
             | Ok (AcceptOutcome.Accepted _, system) -> Ending.Completed, system
             | Ok (AcceptOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
             | Ok (AcceptOutcome.Restarts, system) -> Ending.Restart, system
@@ -327,7 +327,7 @@ module TestSyscallInterruption =
             | other -> unexpected other
         | Sleep.Poll _
         | Sleep.PollOfNothing ->
-            match UnixPoll.tryFinishPoll task system with
+            match UnixPoll.tryFinishPoll thread system with
             | Ok (PollOutcome.Answered (_, count), system) when count > 0 -> Ending.Completed, system
             | Ok (PollOutcome.Answered (_, 0), system) -> Ending.TimedOut, system
             | Ok (PollOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
@@ -335,7 +335,7 @@ module TestSyscallInterruption =
             | Error (PollRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.EpollWait _ ->
-            match UnixPoll.tryFinishEpollWait task system with
+            match UnixPoll.tryFinishEpollWait thread system with
             | Ok (EpollWaitOutcome.Answered (_ :: _), system) -> Ending.Completed, system
             | Ok (EpollWaitOutcome.Answered [], system) -> Ending.TimedOut, system
             | Ok (EpollWaitOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
@@ -358,7 +358,7 @@ module TestSyscallInterruption =
 
     /// `sent`, installed and then generated for `task` alone: the system's
     /// signals, and how many of them are now pending.
-    let private send (task : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let signals =
             (system.Process.Signals, sent)
             ||> List.fold (fun signals sent ->
@@ -376,7 +376,7 @@ module TestSyscallInterruption =
                 |> SignalState.enqueue
                     {
                         Signal = signalOf sent
-                        Target = ValueSome task
+                        Target = ValueSome thread
                     }
             )
 
@@ -514,22 +514,29 @@ module TestSyscallInterruption =
                     for sleep in sleepsOn flavour do
                         // The leader as well as other tasks: a thread-directed
                         // signal reaches either.
-                        for task in 0..2 do
+                        for thread in 0..2 do
                             for sent in everySent do
                                 for ready in readies sleep do
                                     for pastDeadline in pastDeadlines sleep do
                                         for readyFirst in [ false ; true ] do
                                             for closedUnder in closedUnders flavour sleep do
-                                                flavour, sleep, task, sent, ready, pastDeadline, readyFirst, closedUnder
+                                                flavour,
+                                                sleep,
+                                                thread,
+                                                sent,
+                                                ready,
+                                                pastDeadline,
+                                                readyFirst,
+                                                closedUnder
             ]
 
-        let property (flavour, sleep, task, sent, ready, pastDeadline, readyFirst, closedUnder) =
+        let property (flavour, sleep, thread, sent, ready, pastDeadline, readyFirst, closedUnder) =
             let world =
                 match flavour with
                 | SimulatedUnixFlavour.Linux -> linuxWorld
                 | SimulatedUnixFlavour.Darwin -> darwinWorld
 
-            let system = asleep world task sleep
+            let system = asleep world thread sleep
 
             let held =
                 enteredThrough world sleep
@@ -547,7 +554,7 @@ module TestSyscallInterruption =
                 else
                     system
 
-            let signalled = send task sent
+            let signalled = send thread sent
             let readied = if ready then makeReady world sleep else id
 
             let system =
@@ -569,10 +576,10 @@ module TestSyscallInterruption =
 
             // A sleeper wakes exactly when its finishing call has something to
             // say other than "sleep again".
-            let woken = UnixWait.wakes (Set.singleton task) system |> List.map fst
-            woken |> shouldEqual (if expected = Ending.Reparked then [] else [ task ])
+            let woken = UnixWait.wakes (Set.singleton thread) system |> List.map fst
+            woken |> shouldEqual (if expected = Ending.Reparked then [] else [ thread ])
 
-            let ending, after = finish task sleep system
+            let ending, after = finish thread sleep system
             ending |> shouldEqual expected
 
             seen <- Set.add $"%A{ending}" seen
@@ -601,7 +608,7 @@ module TestSyscallInterruption =
             | Ending.TimedOut
             | Ending.Eintr
             | Ending.Restart ->
-                UnixThreadTable.parkedFor task after.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor thread after.Threads |> shouldEqual None
 
                 // The signals are still pending, for the return to user mode
                 // that follows: every caught one gets a frame there.
@@ -614,7 +621,7 @@ module TestSyscallInterruption =
                     )
                     |> Set.ofList
 
-                match UnixSignal.tryOnReturnToUser task after with
+                match UnixSignal.tryOnReturnToUser thread after with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> caught |> shouldEqual Set.empty
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) ->
                     frames
@@ -653,7 +660,7 @@ module TestSyscallInterruption =
     [<Test>]
     let ``the rule each sleeping call follows is the measured one`` () : unit =
         let parked (sleep : Sleep) : ParkedSyscall =
-            match UnixThreadTable.parkedFor 1 (asleep linuxWorld 1 sleep).Tasks with
+            match UnixThreadTable.parkedFor 1 (asleep linuxWorld 1 sleep).Threads with
             | Some parked -> parked
             | None -> failwith $"%O{sleep} did not park"
 
@@ -860,19 +867,19 @@ module TestSyscallInterruption =
 
             case.Name
 
-        let tasks = (worldOn SimulatedUnixPlatform.linuxX64).System.Tasks
+        let threads = (worldOn SimulatedUnixPlatform.linuxX64).System.Threads
 
-        let park (parked : ParkedSyscall) (tasks : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
+        let park (parked : ParkedSyscall) (threads : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
             UnixThreadTable.withPark
                 1
                 {
                     Syscall = parked
                     Ordinal = ParkOrdinal 0L
                 }
-                tasks
+                threads
 
         for first in oneParkOfEach do
-            let parkedOnce = park first tasks
+            let parkedOnce = park first threads
 
             for second in oneParkOfEach do
                 let accepted =

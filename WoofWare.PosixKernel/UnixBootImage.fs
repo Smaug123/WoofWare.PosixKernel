@@ -460,12 +460,12 @@ module UnixBootImage =
                     $"UnixBootImage.boot: the boot image's thread ID allocator records %A{ids} as live, where it holds the first process's leader's alone (this is a bug in this library)."
 
         ProcessLaunch.launchOnto launch image.ProcessId leaderThreadId image.Machine
-        |> Result.map (fun (machine, proc, tasks) ->
+        |> Result.map (fun (machine, proc, threads) ->
             {
                 Machine = machine
                 Scheduling = UnixSchedulingState.initial
                 Process = proc
-                Tasks = tasks
+                Threads = threads
                 Leader = ProcessLaunch.leader launch
                 Origin = FocusOrigin.NotFocused
             }

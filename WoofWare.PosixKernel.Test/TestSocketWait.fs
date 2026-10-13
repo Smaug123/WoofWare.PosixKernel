@@ -57,7 +57,7 @@ module TestSocketWait =
         linuxEpollRows
         |> List.map (fun (platform, size, cap, limit) -> TestCaseData (platform, size, cap, limit))
 
-    let private task : int = 1
+    let private thread : int = 1
 
     /// A system with the flavour's event queue open -- an epoll instance or a
     /// kqueue -- and the descriptor onto it.
@@ -111,17 +111,17 @@ module TestSocketWait =
     /// The flavour's wait for socket events, for ever: `epoll_wait` with a
     /// timeout of -1, or `kevent` with no changes and a null timeout.
     let private wait (fd : int) (maxEvents : int) (buffer : UserBuffer) (system : UnixSystem<int, string>) : Waited =
-        let system = Threads.ensure task system
+        let system = Threads.ensure thread system
 
         let parkedOn (system : UnixSystem<int, string>) : Waited =
-            match UnixThreadTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some (ParkedSyscall.EpollWait wait) -> Waited.Parked (wait.Epoll, wait.MaxEvents)
             | Some (ParkedSyscall.Kevent wait) -> Waited.Parked (wait.Kqueue, wait.MaxEvents)
             | other -> failwith $"expected a wait's park, got %A{other}"
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux ->
-            match UnixPoll.tryEpollWait task fd maxEvents buffer -1 system with
+            match UnixPoll.tryEpollWait thread fd maxEvents buffer -1 system with
             | Ok (EpollWaitOutcome.Failed error, after) ->
                 after |> shouldEqual system
                 Waited.Failed error
@@ -129,7 +129,7 @@ module TestSocketWait =
             | Ok (EpollWaitOutcome.WouldBlock _, parked) -> parkedOn parked
             | other -> failwith $"unexpected epoll_wait answer %A{other}"
         | SimulatedUnixFlavour.Darwin ->
-            match UnixKqueue.tryKevent task fd 0 [] maxEvents buffer KeventTimeout.Null system with
+            match UnixKqueue.tryKevent thread fd 0 [] maxEvents buffer KeventTimeout.Null system with
             | Ok (KeventOutcome.Failed error, after) ->
                 after |> shouldEqual system
                 Waited.Failed error
@@ -343,7 +343,7 @@ module TestSocketWait =
     let ``an addressless buffer is refused only where the flavour screens`` () : unit =
         let linuxFd, linux = withEventQueue (systemOn SimulatedUnixPlatform.linuxX64)
 
-        UnixPoll.tryEpollWait task linuxFd 8 UserBuffer.Addressless -1 (Threads.ensure task linux)
+        UnixPoll.tryEpollWait thread linuxFd 8 UserBuffer.Addressless -1 (Threads.ensure thread linux)
         |> shouldEqual (Error (EpollWaitRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
         let darwinFd, darwin = withEventQueue (systemOn SimulatedUnixPlatform.macOsArm64)

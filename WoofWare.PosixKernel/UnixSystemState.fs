@@ -17,18 +17,18 @@ type internal FocusOrigin<'Thread, 'Handler when 'Thread : comparison and 'Handl
         machine : UnixMachineState *
         scheduling : UnixSchedulingState *
         proc : UnixProcessState<'Thread, 'Handler> *
-        tasks : Map<'Thread, UnixThreadState>
+        threads : Map<'Thread, UnixThreadState>
 
     override this.Equals (other : obj) : bool =
         match other with
         | :? FocusOrigin<'Thread, 'Handler> as other ->
             match this, other with
             | NotFocused, NotFocused -> true
-            | FocusedFrom (machine, scheduling, proc, tasks), FocusedFrom (machine', scheduling', proc', tasks') ->
+            | FocusedFrom (machine, scheduling, proc, threads), FocusedFrom (machine', scheduling', proc', threads') ->
                 obj.ReferenceEquals (machine, machine')
                 && obj.ReferenceEquals (scheduling, scheduling')
                 && obj.ReferenceEquals (proc, proc')
-                && obj.ReferenceEquals (tasks, tasks')
+                && obj.ReferenceEquals (threads, threads')
             | NotFocused, FocusedFrom _
             | FocusedFrom _, NotFocused -> false
         | _ -> false
@@ -60,7 +60,7 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
             Process : UnixProcessState<'Thread, 'Handler>
-            Tasks : Map<'Thread, UnixThreadState>
+            Threads : Map<'Thread, UnixThreadState>
             /// The process's first task, which it started with: its thread-group
             /// leader.
             ///
@@ -189,12 +189,12 @@ module internal UnixParkState =
     /// `UnixThreadTable.withPark` does. Writes `park` as it stands, ordinal and
     /// all: `UnixWait.park` is what mints a fresh ordinal.
     let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (park : ThreadPark)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let previous = UnixThreadTable.parkOf task system.Tasks
+        let previous = UnixThreadTable.parkOf thread system.Threads
 
         { system with
             Machine =
@@ -202,7 +202,7 @@ module internal UnixParkState =
                     OpenFiles = moveHolds previous (Some park) system.Machine.OpenFiles
                     PollQueues = moveQueue previous (Some park) system.Machine.PollQueues
                 }
-            Tasks = UnixThreadTable.withPark task park system.Tasks
+            Threads = UnixThreadTable.withPark thread park system.Threads
         }
 
     /// `system` with `task` no longer parked, its call having returned or been
@@ -211,11 +211,11 @@ module internal UnixParkState =
     /// `ObjectLifetime.releaseUnreferenced` is asked about it. A Darwin poll's
     /// kqueue, which nothing but its park reaches, goes with the park.
     let unpark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let previous = UnixThreadTable.parkOf task system.Tasks
+        let previous = UnixThreadTable.parkOf thread system.Threads
 
         { system with
             Machine =
@@ -223,7 +223,7 @@ module internal UnixParkState =
                     OpenFiles = moveHolds previous None system.Machine.OpenFiles
                     PollQueues = moveQueue previous None system.Machine.PollQueues
                 }
-            Tasks = UnixThreadTable.unpark task system.Tasks
+            Threads = UnixThreadTable.unpark thread system.Threads
         }
 
 /// A simulated machine before it has booted, with the ID its first process

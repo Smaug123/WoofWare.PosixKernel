@@ -24,7 +24,7 @@ module TestSigcontGeneration =
     /// The probe's second thread: "s" in its rows.
     let private second : int = 1
 
-    let private threadName (task : int) : string = if task = main then "m" else "s"
+    let private threadName (thread : int) : string = if thread = main then "m" else "s"
 
     /// The probe's names for the signals its rows name.
     let private probeName (signal : Signal) : string =
@@ -115,56 +115,56 @@ module TestSigcontGeneration =
     /// `task` returns to user mode: it runs every handler the kernel pushes,
     /// each logged as the probe's handler logs itself, and the return goes on
     /// past a SIGCONT the kernel discards.
-    let rec private returns (task : int) : Step =
+    let rec private returns (thread : int) : Step =
         fun r ->
-            match UnixSignal.tryOnReturnToUser task r.System with
+            match UnixSignal.tryOnReturnToUser thread r.System with
             | Error refusal -> Error (Stop.Receiver refusal)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
-                returns task (withSystem system r)
+                returns thread (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
-                runFrames task frames (withSystem system r)
-            | Ok other -> failwith $"task %d{task}'s return to user mode: %A{other}"
+                runFrames thread frames (withSystem system r)
+            | Ok other -> failwith $"task %d{thread}'s return to user mode: %A{other}"
 
     /// Each of `frames`' handlers runs, innermost first; each `sigreturn` is a
     /// return to user mode of its own.
-    and private runFrames (task : int) (frames : HandlerFrame<int, string> list) : Step =
+    and private runFrames (thread : int) (frames : HandlerFrame<int, string> list) : Step =
         fun r ->
             match frames with
             | [] -> Ok r
             | frame :: outer ->
                 let r =
                     { r with
-                        Runs = (frame.Entry.Signal, task, r.Phase) :: r.Runs
-                        System = UnixSignal.sigreturn task frame.Id r.System
+                        Runs = (frame.Entry.Signal, thread, r.Phase) :: r.Runs
+                        System = UnixSignal.sigreturn thread frame.Id r.System
                     }
 
-                (returns task >=> runFrames task outer) r
+                (returns thread >=> runFrames thread outer) r
 
     /// A call `task` makes that answers at once, then its return to user mode.
-    let private call (task : int) (syscall : UnixSystem<int, string> -> UnixSystem<int, string>) : Step =
-        fun r -> returns task (withSystem (syscall r.System) r)
+    let private call (thread : int) (syscall : UnixSystem<int, string> -> UnixSystem<int, string>) : Step =
+        fun r -> returns thread (withSystem (syscall r.System) r)
 
     let private signals (list : Signal list) (r : Replay) : SignalMask =
         SignalMask.ofSignals (numbering r) (Set.ofList list)
 
     /// `pthread_sigmask(SIG_SETMASK)` by `task`, to block exactly `blocked`.
-    let private setMask (task : int) (blocked : Signal list) : Step =
+    let private setMask (thread : int) (blocked : Signal list) : Step =
         fun r ->
             let setmask =
                 match r.Flavour with
                 | SimulatedUnixFlavour.Linux -> 2
                 | SimulatedUnixFlavour.Darwin -> 3
 
-            match UnixSignal.pthreadSigmask task setmask (Some (signals blocked r)) r.System with
-            | Ok (_, system) -> returns task (withSystem system r)
-            | Error errno -> failwith $"pthread_sigmask by %d{task} failed with %O{errno}"
+            match UnixSignal.pthreadSigmask thread setmask (Some (signals blocked r)) r.System with
+            | Ok (_, system) -> returns thread (withSystem system r)
+            | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
 
     /// `sigaction` by `task`.
-    let private install (task : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
+    let private install (thread : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
         fun r ->
             match UnixSignal.sigaction (signo r signal) (Some disposition) r.System with
-            | Ok (_, system) -> returns task (withSystem system r)
+            | Ok (_, system) -> returns thread (withSystem system r)
             | Error errno -> failwith $"sigaction of %O{signal} failed with %O{errno}"
 
     let private spawnSecond : Step =
@@ -177,12 +177,12 @@ module TestSigcontGeneration =
     [<RequireQualifiedAccess>]
     type private Route =
         | Process
-        | Task of int
+        | Thread of int
 
     let private routeName (route : Route) : string =
         match route with
         | Route.Process -> "proc"
-        | Route.Task task -> threadName task
+        | Route.Thread thread -> threadName thread
 
     /// `kill(getpid())` or `pthread_kill` by `sender`.
     let private send (sender : int) (route : Route) (signal : Signal) : Step =
@@ -196,7 +196,7 @@ module TestSigcontGeneration =
                     | Error (KillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"kill: %A{other}")
                     | Ok outcome -> Ok outcome
-                | Route.Task target ->
+                | Route.Thread target ->
                     match UnixSignal.tryPthreadKill target (signo r signal) r.System with
                     | Error (ThreadKillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"pthread_kill: %A{other}")
@@ -208,10 +208,10 @@ module TestSigcontGeneration =
             | Ok other -> failwith $"sending %O{signal}: %A{other}"
 
     /// `sigpending` by `task`, printed as the probe prints it.
-    let private pending (label : string) (task : int) : Step =
+    let private pending (label : string) (thread : int) : Step =
         fun r ->
-            let word = SignalMask.toWord (UnixSignal.sigpending task r.System)
-            (print $" %s{label}=%x{word}" >=> returns task) r
+            let word = SignalMask.toWord (UnixSignal.sigpending thread r.System)
+            (print $" %s{label}=%x{word}" >=> returns thread) r
 
     /// The probe's `out_runs`.
     let private printRuns : Step =
@@ -221,7 +221,7 @@ module TestSigcontGeneration =
                 | [] -> "-"
                 | runs ->
                     runs
-                    |> List.map (fun (signal, task, phase) -> $"%s{probeName signal}:%s{threadName task}@%d{phase}")
+                    |> List.map (fun (signal, thread, phase) -> $"%s{probeName signal}:%s{threadName thread}@%d{phase}")
                     |> String.concat ","
 
             print $" runs=%s{runs}" r
@@ -231,12 +231,14 @@ module TestSigcontGeneration =
     let private advance (actor : int) : Step =
         fun r ->
             let others =
-                r.System.Tasks
+                r.System.Threads
                 |> Map.keys
-                |> Seq.filter (fun task -> task <> actor)
+                |> Seq.filter (fun thread -> thread <> actor)
                 |> List.ofSeq
 
-            let step = (nothing, others) ||> List.fold (fun step task -> step >=> returns task)
+            let step =
+                (nothing, others) ||> List.fold (fun step thread -> step >=> returns thread)
+
             step r
 
     // --------------------------------------------------------------- gen -- //
@@ -309,7 +311,7 @@ module TestSigcontGeneration =
 
         [
             for disposition in [ Disposition.DFL ; Disposition.IGN ; Disposition.H ] do
-                yield! shapes Signal.SIGCONT disposition [ Route.Process ; Route.Task main ; Route.Task second ]
+                yield! shapes Signal.SIGCONT disposition [ Route.Process ; Route.Thread main ; Route.Thread second ]
             yield! shapes Signal.SIGUSR1 Disposition.IGN [ Route.Process ]
             yield! shapes Signal.SIGURG Disposition.DFL [ Route.Process ]
         ]
@@ -336,7 +338,7 @@ module TestSigcontGeneration =
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
-            match UnixThreadTable.parkedFor row.Sleeper r.System.Tasks with
+            match UnixThreadTable.parkedFor row.Sleeper r.System.Threads with
             | None -> Ok r
             | Some _ ->
 
@@ -395,7 +397,7 @@ module TestSigcontGeneration =
             if row.ToProcess then
                 Route.Process
             else
-                Route.Task row.Sleeper
+                Route.Thread row.Sleeper
 
         let wake = wakeIfDue row
 
@@ -407,7 +409,7 @@ module TestSigcontGeneration =
         let ending : Step =
             fun r ->
                 if row.InSigsuspend && r.Returned.IsNone then
-                    (send sender (Route.Task row.Sleeper) Signal.SIGUSR1 >=> wake) r
+                    (send sender (Route.Thread row.Sleeper) Signal.SIGUSR1 >=> wake) r
                 else
                     Ok r
 
@@ -464,7 +466,7 @@ module TestSigcontGeneration =
     let private unblock (disposition : Disposition) (toProcess : bool) : Step =
         install main Signal.SIGCONT (toDisposition disposition)
         >=> setMask main [ Signal.SIGCONT ]
-        >=> send main (if toProcess then Route.Process else Route.Task main) Signal.SIGCONT
+        >=> send main (if toProcess then Route.Process else Route.Thread main) Signal.SIGCONT
         >=> pending "A" main
         >=> phase 1
         >=> setMask main []

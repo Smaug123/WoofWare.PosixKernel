@@ -424,7 +424,7 @@ module TestSocketAddressLength =
                 match UnixConnection.tryFinishAccept 1 system, isLinux platform && int word < 0 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
                     queueOf listenerFd after |> shouldEqual []
-                    UnixThreadTable.parkedFor 1 after.Tasks |> shouldEqual None
+                    UnixThreadTable.parkedFor 1 after.Threads |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
                 | Ok (AcceptOutcome.Accepted _, _), false -> ()
                 | other, _ -> failwith $"%O{platform} 0x%08x{word}: got %A{other}"

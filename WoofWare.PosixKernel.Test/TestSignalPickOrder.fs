@@ -25,7 +25,7 @@ module TestSignalPickOrder =
 
     let private leader : int = 0
 
-    let private tasks : Set<int> = Set.singleton leader
+    let private threads : Set<int> = Set.singleton leader
 
     let private handler : string = "h"
 
@@ -127,7 +127,7 @@ module TestSignalPickOrder =
             (state : SignalState<int, string>)
             : HandlerFrame<int, string> list * SignalState<int, string>
             =
-            match SignalState.onReturnToUser CoreDumps.Suppressed leader tasks leader state with
+            match SignalState.onReturnToUser CoreDumps.Suppressed leader threads leader state with
             | Ok (None, state) -> [], state
             | Ok (Some (SignalDelivery.RunHandlers frames), state) -> frames, state
             | other -> failwith $"expected handlers to run, got %A{other}"

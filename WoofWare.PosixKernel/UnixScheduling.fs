@@ -77,16 +77,16 @@ module UnixScheduling =
     /// machine's processors (`UnixSystem.processorCount`): each is a bug in
     /// the client.
     let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let state = UnixThreadTable.get task system.Tasks
+        let state = UnixThreadTable.get thread system.Threads
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
             failwith
-                $"UnixScheduling.dispatch: %O{task} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+                $"UnixScheduling.dispatch: %O{thread} was dispatched to %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
 
         if
             state.Cpu = cpu
@@ -103,20 +103,20 @@ module UnixScheduling =
                 Occupants = Map.add cpu state.OsThreadId vacated.Occupants
             }
 
-        let tasks =
+        let threads =
             if state.Cpu = cpu then
-                system.Tasks
+                system.Threads
             else
                 Map.add
-                    task
+                    thread
                     { state with
                         Cpu = cpu
                     }
-                    system.Tasks
+                    system.Threads
 
         { system with
             Scheduling = scheduling
-            Tasks = tasks
+            Threads = threads
         }
 
     /// The logical processor `task` is running on: `None` if it is not
@@ -124,18 +124,18 @@ module UnixScheduling =
     /// or since it last parked, or has dispatched another task to its
     /// processor since, and `None` if `task` names no task.
     let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : CpuId option
         =
-        match Map.tryFind task system.Tasks with
+        match Map.tryFind thread system.Threads with
         | Some state when UnixSchedulingState.runs state.Cpu state.OsThreadId system.Scheduling -> Some state.Cpu
         | Some _
         | None -> None
 
     /// `getcpu`, with a refusal answered as the `Error` rather than raised.
     let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetCpuAnswer, GetCpuRefusal>
         =
@@ -143,12 +143,12 @@ module UnixScheduling =
         | SimulatedUnixFlavour.Darwin -> Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
-        let state = UnixThreadTable.get task system.Tasks
+        let state = UnixThreadTable.get thread system.Threads
 
         match state.Parked with
         | Some park ->
             failwith
-                $"UnixScheduling.getcpu: task %O{task} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
+                $"UnixScheduling.getcpu: task %O{thread} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
         | None ->
 
         match Map.tryFind state.Cpu system.Scheduling.Occupants with
@@ -165,7 +165,7 @@ module UnixScheduling =
                 | None -> $"%O{state.Cpu} is idle"
 
             failwith
-                $"UnixScheduling.getcpu: task %O{task} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each task the client runs with UnixScheduling.dispatch (this is a bug in the client)."
+                $"UnixScheduling.getcpu: task %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each task the client runs with UnixScheduling.dispatch (this is a bug in the client)."
 
     /// <summary>
     /// `getcpu(2)`, made by `task`: the processor it is running on, and that
@@ -180,9 +180,9 @@ module UnixScheduling =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let getcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetCpuAnswer
         =
-        tryGetcpu task system
+        tryGetcpu thread system
         |> Refusal.orRaise "UnixScheduling.getcpu" GetCpuRefusal.kind GetCpuRefusal.describe

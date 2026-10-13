@@ -13,13 +13,13 @@ module ForgedPark =
     /// table does not hold, which is exactly the park a test of
     /// `ParkedOnAbsentDescription` needs.
     let onAbsent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (task : 'Thread)
+        (thread : 'Thread)
         (parked : ParkedSyscall)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if (UnixThreadTable.parkOf task system.Tasks).IsSome then
-            failwith $"ForgedPark.onAbsent: task %O{task} is parked already"
+        if (UnixThreadTable.parkOf thread system.Threads).IsSome then
+            failwith $"ForgedPark.onAbsent: task %O{thread} is parked already"
 
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
 
@@ -34,12 +34,12 @@ module ForgedPark =
                     OpenFiles = openFiles
                     NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
                 }
-            Tasks =
+            Threads =
                 UnixThreadTable.withPark
-                    task
+                    thread
                     {
                         Syscall = parked
                         Ordinal = system.Machine.NextParkOrdinal
                     }
-                    system.Tasks
+                    system.Threads
         }
