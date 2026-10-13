@@ -162,6 +162,27 @@ module TestDirectoryDescription =
     let private nameGen : Gen<string> =
         Gen.elements [ "a" ; "b" ; "c" ; "A" ; "Z" ; "aa" ; "ab" ; "é" ; "中" ]
 
+    let private beyondAscii (name : string) : bool =
+        name |> Seq.exists (fun c -> int c >= 0x80)
+
+    /// Whether a directory of `platform`'s holding `names` can bind `name` as
+    /// well. Darwin refuses a second name beyond ASCII in one directory, since
+    /// "é" and "中" might be two spellings of one name as far as the library can
+    /// tell (`TestNameEquivalence`), so a Darwin directory here holds at most
+    /// one of them.
+    let private admits (platform : SimulatedUnixPlatform) (names : string seq) (name : string) : bool =
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> true
+        | SimulatedUnixFlavour.Darwin ->
+            not (beyondAscii name)
+            || names |> Seq.forall (fun other -> other = name || not (beyondAscii other))
+
+    /// `names` without each name a directory of `platform`'s holding those
+    /// before it would refuse.
+    let private holdable (platform : SimulatedUnixPlatform) (names : string list) : string list =
+        (([] : string list), names)
+        ||> List.fold (fun held name -> if admits platform held name then held @ [ name ] else held)
+
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 200
 
     // ------------------------------------------------------------ a whole scan
@@ -169,7 +190,7 @@ module TestDirectoryDescription =
     [<Test>]
     let ``a scan yields every name once, then dot-dot and dot, each with the inode stat reports`` () : unit =
         let property (platform : SimulatedUnixPlatform) (names : string list) : unit =
-            let names = List.distinct names
+            let names = List.distinct names |> holdable platform
             let fd, system = withDirectory platform names
             let records, system = drain fd system
 
@@ -285,7 +306,7 @@ module TestDirectoryDescription =
         // `lseek(0)` rewinds it. Mutations are interleaved because the
         // position is a name, and a name can be deleted from under it.
         let property (platform : SimulatedUnixPlatform) (initial : string list) (steps : DirectoryScriptStep list) =
-            let initial = List.distinct initial
+            let initial = List.distinct initial |> holdable platform
             let a, system = withDirectory platform initial
             let aDup, system = dup a system
             let b, system = openAt directoryReading "d" system
@@ -324,7 +345,7 @@ module TestDirectoryDescription =
                     names, positionA, positionB, system
                 | DirectoryScriptStep.RewindA -> names, OraclePosition.Start, positionB, rewind aDup system
                 | DirectoryScriptStep.RewindB -> names, positionA, OraclePosition.Start, rewind b system
-                | DirectoryScriptStep.Create name when not (Set.contains name names) ->
+                | DirectoryScriptStep.Create name when not (Set.contains name names) && admits platform names name ->
                     Set.add name names, positionA, positionB, createFile $"d/%s{name}" system
                 | DirectoryScriptStep.Unlink name when Set.contains name names ->
                     Set.remove name names, positionA, positionB, unlink $"d/%s{name}" system
@@ -477,7 +498,7 @@ module TestDirectoryDescription =
         // Measured one call at a time on a fresh description, after a partial
         // read and after a full one (directory-descriptors.c, `REMOVED` rows).
         let property (platform : SimulatedUnixPlatform) (names : string list) (readFirst : int) : unit =
-            let names = List.distinct names
+            let names = List.distinct names |> holdable platform
             let fd, system = withDirectory platform names
 
             let system =

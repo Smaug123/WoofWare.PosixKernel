@@ -293,7 +293,9 @@ module TestResolutionSplit =
     /// growing and over-long, and names that are over-long in bytes, in code
     /// units, or in neither.
     let private corpus : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let d, vfs = makeDirectory root "d" 0o700 vfs |> orFail
@@ -649,7 +651,7 @@ module TestResolutionSplit =
                 steps
                 |> List.fold
                     (fun vfs step -> applyStep step vfs)
-                    (VirtualFileSystem.empty buildTime Owners.linuxDefault)
+                    (VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault)
 
             // Every inode, not only the directories: a start that is a file or a
             // symlink is ENOTDIR, and one past the end is ENOENT, and both are

@@ -130,6 +130,13 @@ type internal PathRefusal =
     /// it answers EACCES or ELOOP according to the state of its dentry cache,
     /// which this kernel does not model.
     | ProtectedSymlinkCacheDependent of directory : InodeNumber * link : InodeNumber * traversal : int * limit : int
+    /// The walk looked `name` up in `directory`, which binds no entry under
+    /// exactly those bytes but binds `bound`. The filesystem takes a name as
+    /// reaching the entry bound under any canonically equivalent Unicode
+    /// spelling of it, as APFS does, and this kernel cannot decide whether
+    /// `name` and `bound` are canonically equivalent, so whether `name` reaches
+    /// `bound`'s entry or names nothing is unknown.
+    | UndecidedNameEquivalence of directory : InodeNumber * name : DirectoryEntryName * bound : DirectoryEntryName
 
 [<RequireQualifiedAccess>]
 module internal PathRefusal =
@@ -145,6 +152,8 @@ module internal PathRefusal =
             $"the path is empty and the call asks about what fd %d{fd} names, which is a pipe, a socket or an event queue rather than a filesystem object. What a kernel answers about such an object through an empty path has not been measured."
         | PathRefusal.ProtectedSymlinkCacheDependent (directory, link, traversal, limit) ->
             $"fs.protected_symlinks forbids following the symbolic link at inode %O{link}, in the sticky world-writable directory at inode %O{directory}, and that link is traversal %d{traversal} of the %d{limit} the walk may make. That far down a chain of links, Linux answers EACCES or ELOOP according to the state of its dentry cache, which this kernel does not model."
+        | PathRefusal.UndecidedNameEquivalence (directory, name, bound) ->
+            $"the path looks up \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which binds no entry under exactly those bytes but binds \"%s{DirectoryEntryName.toEscaped bound}\". This filesystem takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it, as APFS does, and this kernel holds no Unicode tables to decide whether the two are equivalent, so whether the lookup reaches that entry is unknown."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PathRefusal) : RefusalKind =
@@ -153,6 +162,7 @@ module internal PathRefusal =
         | PathRefusal.UnmodelledDeviceName _ -> RefusalKind.Unmodelled
         | PathRefusal.UnmodelledStartingObject _ -> RefusalKind.Unmodelled
         | PathRefusal.ProtectedSymlinkCacheDependent _ -> RefusalKind.Unmodelled
+        | PathRefusal.UndecidedNameEquivalence _ -> RefusalKind.Unmodelled
 
 /// How a path resolution failed: with the errno a real kernel answers, or with
 /// a refusal of this one's.
@@ -528,12 +538,14 @@ module PathWalk =
             Error (PathFailure.Errno UnixError.ENAMETOOLONG)
         else
 
-        match Map.tryFind name directoryContent.Entries with
-        | None ->
+        match EntryNameMatching.lookUp (VirtualFileSystem.nameMatching vfs) name directoryContent.Entries with
+        | EntryLookup.Undecided bound ->
+            Error (PathFailure.Refused (PathRefusal.UndecidedNameEquivalence (directory, name, bound)))
+        | EntryLookup.Free ->
             match absentNameRefusal vfs directory name with
             | Some refusal -> Error (PathFailure.Refused refusal)
             | None -> Error (PathFailure.Errno UnixError.ENOENT)
-        | Some target ->
+        | EntryLookup.Bound target ->
 
         match unmodelledMountRefusal vfs target with
         | Some refusal -> Error (PathFailure.Refused refusal)
@@ -782,8 +794,13 @@ module PathWalk =
             Error (PathFailure.Errno UnixError.ENAMETOOLONG)
         else
 
-        match Map.tryFind name directoryContent.Entries with
-        | None ->
+        match EntryNameMatching.lookUp (VirtualFileSystem.nameMatching vfs) name directoryContent.Entries with
+        // Every caller is refused here, whether it would have read the entry
+        // or bound the name: on APFS the name either reaches `bound`'s entry
+        // or is free, and the two answers differ for every syscall.
+        | EntryLookup.Undecided bound ->
+            Error (PathFailure.Refused (PathRefusal.UndecidedNameEquivalence (directory, name, bound)))
+        | EntryLookup.Free ->
             // Not an error: the caller decides whether a free name is
             // ENOENT (`stat`) or the point of the call (`mkdir`). A
             // trailing separator does not change that — `mkdir("nx/")`
@@ -791,7 +808,7 @@ module PathWalk =
             match absentNameRefusal vfs directory name with
             | Some refusal -> Error (PathFailure.Refused refusal)
             | None -> finish (ResolvedTarget.Entry (directory, name, None))
-        | Some target ->
+        | EntryLookup.Bound target ->
 
         match unmodelledMountRefusal vfs target with
         | Some refusal -> Error (PathFailure.Refused refusal)

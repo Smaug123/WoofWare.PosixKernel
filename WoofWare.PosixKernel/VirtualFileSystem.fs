@@ -161,6 +161,9 @@ type VirtualFileSystem =
             /// inode that is not on the root filesystem, mounted roots
             /// included.
             MountMembers : Map<InodeNumber, InodeNumber>
+            /// Which entry a name looked up in one of this filesystem's
+            /// directories reaches. Fixed when the filesystem is made.
+            NameMatching : EntryNameMatching
         }
 
 /// A way in which a `VirtualFileSystem` fails to describe a filesystem any
@@ -248,6 +251,12 @@ type VirtualFileSystemDefect =
     /// such as `InodeContent.Socket` or `InodeContent.Fifo`, or the node of a
     /// device that `CharacterDevice.all` does not list.
     | ReservedContent of inode : InodeNumber
+    /// `directory`, on a filesystem that matches names by canonical
+    /// equivalence, binds both `first` and `second`, which might be two
+    /// spellings of one name. Such a filesystem never holds two spellings of a
+    /// name in one directory, and this library cannot tell whether these are
+    /// two.
+    | PossiblyEquivalentNames of directory : InodeNumber * first : DirectoryEntryName * second : DirectoryEntryName
 
 [<RequireQualifiedAccess>]
 module VirtualFileSystemDefect =
@@ -527,11 +536,17 @@ module VirtualFileSystem =
     let deviceId : int64 = 0x1000001L
 
     /// A filesystem containing nothing but an empty root directory owned by
-    /// `rootOwner`, created at `now`.
+    /// `rootOwner`, created at `now`, whose directories match names as
+    /// `nameMatching` says.
     ///
     /// Takes the time rather than reading a clock: a filesystem that read the
     /// host's clock would make a replay depend on when it was recorded.
-    let internal empty (now : UnixTimestamp) (rootOwner : InodeOwner) : VirtualFileSystem =
+    let internal empty
+        (nameMatching : EntryNameMatching)
+        (now : UnixTimestamp)
+        (rootOwner : InodeOwner)
+        : VirtualFileSystem
+        =
         {
             Inodes =
                 Map.ofList
@@ -556,9 +571,14 @@ module VirtualFileSystem =
             SubdirectoryCounts = Map.empty
             Mounts = Map.empty
             MountMembers = Map.empty
+            NameMatching = nameMatching
         }
 
     let root (vfs : VirtualFileSystem) : InodeNumber = vfs.Root
+
+    /// Which entry a name looked up in one of this filesystem's directories
+    /// reaches.
+    let internal nameMatching (vfs : VirtualFileSystem) : EntryNameMatching = vfs.NameMatching
 
     /// The mount whose root is `inode`, or `None` if `inode` is not the root of
     /// a mounted filesystem.
@@ -1003,6 +1023,13 @@ module VirtualFileSystem =
         | Some (InodeContent.CharacterDevice _)
         | Some (InodeContent.Symlink _) -> Error UnixError.ENOTDIR
         | Some (InodeContent.Directory content) ->
+            // Byte for byte, whatever `NameMatching` says. On a filesystem
+            // matching names by canonical equivalence, a walk refuses a lookup
+            // it cannot decide (`EntryLookup.Undecided`), and
+            // `UnixBootImage.withFileSystem` a seed directory holding two names
+            // that might be equivalent, so a name reaching here reaches no
+            // other entry; `checkInvariants` reports a directory where that
+            // fails.
             if
                 Map.containsKey
                     (DirectoryEntryName.assertValid "VirtualFileSystem: directory entry name" name)
@@ -2795,6 +2822,26 @@ module VirtualFileSystem =
                 rootDefect @ membership @ covered
             )
 
+        let equivalentNames =
+            match vfs.NameMatching with
+            | EntryNameMatching.Bytes -> []
+            | EntryNameMatching.CanonicalEquivalence ->
+                vfs.Inodes
+                |> Map.toList
+                |> List.choose (fun (inode, entry) ->
+                    match entry.Content with
+                    | InodeContent.Directory directory ->
+                        EntryNameMatching.firstPossiblyEquivalentPair (Map.keys directory.Entries)
+                        |> Option.map (fun (first, second) ->
+                            VirtualFileSystemDefect.PossiblyEquivalentNames (inode, first, second)
+                        )
+                    | InodeContent.RegularFile _
+                    | InodeContent.Socket _
+                    | InodeContent.Fifo _
+                    | InodeContent.CharacterDevice _
+                    | InodeContent.Symlink _ -> None
+                )
+
         rootDefects
         @ rootLinks
         @ danglingEntries
@@ -2806,6 +2853,7 @@ module VirtualFileSystem =
         @ sortedNames
         @ subdirectoryCounts
         @ mountDefects
+        @ equivalentNames
 
     /// Fail loudly if `vfs` is not sound, naming `context`. For the operations
     /// that build a filesystem from host configuration, where a defect is a
@@ -2838,6 +2886,7 @@ module VirtualFileSystem =
     /// `symlinkPermissions` are every seeded symbolic link's bits, which a seed
     /// does not state: see `SeedEntry.Symlink`.
     let internal ofFileSystemSeed
+        (nameMatching : EntryNameMatching)
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
         (symlinkPermissions : PermissionBits)
@@ -2885,7 +2934,7 @@ module VirtualFileSystem =
                 )
                 vfs
 
-        let vfs = empty createdAt defaultOwner
+        let vfs = empty nameMatching createdAt defaultOwner
 
         install (root vfs) entries vfs
         |> assertInvariants "VirtualFileSystem.ofFileSystemSeed"
@@ -2904,6 +2953,7 @@ module VirtualFileSystem =
         /// also exhibit `BindingCountMismatch`, `SortedNamesMismatch` or
         /// `SubdirectoryCountMismatch`.
         let ofParts
+            (nameMatching : EntryNameMatching)
             (inodes : Map<InodeNumber, Inode>)
             (root : InodeNumber)
             (nextInode : InodeNumber)
@@ -2919,6 +2969,7 @@ module VirtualFileSystem =
                     SubdirectoryCounts = Map.empty
                     Mounts = Map.empty
                     MountMembers = Map.empty
+                    NameMatching = nameMatching
                 }
 
             let bindings = allBindings vfs

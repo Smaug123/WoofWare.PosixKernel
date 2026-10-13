@@ -347,7 +347,7 @@ module TestModeChange =
     /// `/t` holding a 0600 file and a 0700 directory owned by `by`, as the probe
     /// prepared each row.
     let private tree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
         |> directory "/t" (owner 0u 0u) 0o755
         |> file "/t/f" by 0o600
         |> directory "/t/d" by 0o700
@@ -440,7 +440,7 @@ module TestModeChange =
     /// `/p` holding a file, a directory, links to each, a dangling link, a link
     /// to itself, and an unsearchable directory holding a file.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/p" by 0o755
         |> file "/p/f" by 0o600
         |> directory "/p/d" by 0o700
@@ -584,7 +584,7 @@ module TestModeChange =
     [<Test>]
     let ``fchmod of someone else's file is EPERM, however it was opened`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> file "/rootfile" (owner 0u 0u) 0o644
 
         for platform, credentials in

@@ -141,6 +141,7 @@ A machine boots with an empty filesystem, apart from the device filesystem the k
 A `SeedEntry` is a file, a directory or a symbolic link, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
 `SeedEntry.file` and `SeedEntry.directory` give the modes a `umask 022` process would have created; the `SeedEntry.File` and `SeedEntry.Directory` cases take a mode and an owner of their own.
 It throws `ArgumentException` for a name the flavour could never have created, and for anything at `/dev` but an empty directory.
+On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
 
 The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size` and where `lseek(2)` with `SEEK_END` lands on one.
 It is tmpfs on Linux and APFS on Darwin unless `UnixBootImage.withMount` says otherwise: `Some (EmulatedMount.defaultOf EmulatedFileSystemType.Nfs)`, for example, or `EmulatedMount.Tmpfs` and `EmulatedMount.Apfs` with their fields set.
@@ -399,6 +400,12 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 `UnixNamespace.openPath` and `UnixNamespace.openat` take the thread because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
 Nothing makes a FIFO yet, so both always answer `SyscallOutcome.Answered`.
+
+A Linux directory compares names byte for byte.
+Darwin's APFS takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it: `é` as U+00E9 and as `e` followed by U+0301, or `K` and U+212A KELVIN SIGN.
+It keeps the spelling a name was bound under, which `UnixNamespace.readDirectoryEntry` reports, and holds one spelling of a name in a directory.
+This library holds no Unicode tables, so on Darwin a call throws `UnmodelledException` when its path looks up a name that a directory does not bind byte for byte while binding another name that might be an equivalent spelling of it.
+Two names might be equivalent when each holds a character whose decomposition is not ASCII, or when the two decompose to the same ASCII; so a Darwin directory holds at most one name of the first kind.
 
 An inode may be a socket file (`InodeContent.Socket`), which a directory entry reports as `DirectoryEntryKind.Socket`, or a FIFO (`InodeContent.Fifo`), which a directory entry reports as `DirectoryEntryKind.Fifo`.
 Nothing produces either yet: `mknod` of `S_IFSOCK` or `S_IFIFO`, and a Unix-domain `bind`, are refused.

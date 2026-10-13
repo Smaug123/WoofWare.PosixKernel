@@ -74,7 +74,7 @@ module TestCopyFileSyscalls =
                     | Ok (_, vfs) -> vfs
                     | Error error -> failwith $"creating %s{fileName}: %O{error}"
             )
-            (VirtualFileSystem.empty epoch (owner 0u 0u))
+            (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u))
 
     let private systemOnWith
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)

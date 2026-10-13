@@ -52,7 +52,7 @@ module TestVirtualFileSystem =
         UnixTimestamp.createOrFail "test" 1_700_000_000L 123_456_789
 
     let private emptyFs : VirtualFileSystem =
-        VirtualFileSystem.empty buildTime Owners.linuxDefault
+        VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
 
     /// Build a filesystem from a script of operations, failing loudly if any
     /// step is rejected. Keeps the tests below readable.
@@ -1089,17 +1089,17 @@ module TestVirtualFileSystem =
 
     [<Test>]
     let ``RootMissing`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts Map.empty one two
+        VirtualFileSystem.Unchecked.ofParts EntryNameMatching.Bytes Map.empty one two
         |> shouldHaveDefects [ VirtualFileSystemDefect.RootMissing one ]
 
     [<Test>]
     let ``RootIsNotDirectory`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, regularFileInode ]) one two
+        VirtualFileSystem.Unchecked.ofParts EntryNameMatching.Bytes (Map.ofList [ one, regularFileInode ]) one two
         |> shouldHaveDefects [ VirtualFileSystemDefect.RootIsNotDirectory one ]
 
     [<Test>]
     let ``RootParentIsNotSelf`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, dir two [] ]) one two
+        VirtualFileSystem.Unchecked.ofParts EntryNameMatching.Bytes (Map.ofList [ one, dir two [] ]) one two
         |> shouldHaveDefects [ VirtualFileSystemDefect.RootParentIsNotSelf (one, two) ]
 
     [<Test>]
@@ -1107,17 +1107,26 @@ module TestVirtualFileSystem =
         // The gap a bare "multiply linked" check misses: a single entry
         // pointing at the root is not multiply-linked, but it makes the graph
         // cyclic while every individual link count stays plausible.
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, dir one [ "loop", one ] ]) one two
+        VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
+            (Map.ofList [ one, dir one [ "loop", one ] ])
+            one
+            two
         |> shouldHaveDefects [ VirtualFileSystemDefect.RootHasIncomingLink [ one, name "loop" ] ]
 
     [<Test>]
     let ``DanglingEntry`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, dir one [ "gone", two ] ]) one three
+        VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
+            (Map.ofList [ one, dir one [ "gone", two ] ])
+            one
+            three
         |> shouldHaveDefects [ VirtualFileSystemDefect.DanglingEntry (one, name "gone", two) ]
 
     [<Test>]
     let ``DanglingParent`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList [ one, dir one [ "d", two ] ; two, dir three [] ])
             one
             (InodeNumber 4L)
@@ -1130,6 +1139,7 @@ module TestVirtualFileSystem =
     [<Test>]
     let ``ParentIsNotDirectory`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList
                 [
                     one, dir one [ "f", two ; "d", three ]
@@ -1147,6 +1157,7 @@ module TestVirtualFileSystem =
     [<Test>]
     let ``ReservedContent: a socket inode, which nothing in this version makes`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList
                 [
                     one, dir one [ "s", two ]
@@ -1159,6 +1170,7 @@ module TestVirtualFileSystem =
     [<Test>]
     let ``ReservedContent: a FIFO inode, which nothing in this version makes`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList
                 [
                     one, dir one [ "f", two ]
@@ -1195,6 +1207,7 @@ module TestVirtualFileSystem =
                     []
 
             VirtualFileSystem.Unchecked.ofParts
+                EntryNameMatching.Bytes
                 (Map.ofList
                     [
                         one, dir one [ "d", two ]
@@ -1207,6 +1220,7 @@ module TestVirtualFileSystem =
     [<Test>]
     let ``ParentMismatch`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList [ one, dir one [ "a", two ; "b", three ] ; two, dir one [] ; three, dir two [] ])
             one
             (InodeNumber 4L)
@@ -1215,6 +1229,7 @@ module TestVirtualFileSystem =
     [<Test>]
     let ``DirectoryMultiplyLinked`` () : unit =
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList [ one, dir one [ "a", two ; "b", two ] ; two, dir one [] ])
             one
             three
@@ -1225,7 +1240,11 @@ module TestVirtualFileSystem =
 
     [<Test>]
     let ``UnreachableFromRoot`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, dir one [] ; two, regularFileInode ]) one three
+        VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
+            (Map.ofList [ one, dir one [] ; two, regularFileInode ])
+            one
+            three
         |> shouldHaveDefects [ VirtualFileSystemDefect.UnreachableFromRoot two ]
 
     [<Test>]
@@ -1235,6 +1254,7 @@ module TestVirtualFileSystem =
         // is the cycle that the link-count rules alone cannot see, and the
         // reason reachability is computed through entries rather than parents.
         VirtualFileSystem.Unchecked.ofParts
+            EntryNameMatching.Bytes
             (Map.ofList
                 [
                     one, dir one []
@@ -1251,12 +1271,13 @@ module TestVirtualFileSystem =
 
     [<Test>]
     let ``NextInodeNotFresh`` () : unit =
-        VirtualFileSystem.Unchecked.ofParts (Map.ofList [ one, dir one [] ]) one one
+        VirtualFileSystem.Unchecked.ofParts EntryNameMatching.Bytes (Map.ofList [ one, dir one [] ]) one one
         |> shouldHaveDefects [ VirtualFileSystemDefect.NextInodeNotFresh (one, one) ]
 
     [<Test>]
     let ``assertInvariants names the context and the defect`` () : unit =
-        let broken = VirtualFileSystem.Unchecked.ofParts Map.empty one two
+        let broken =
+            VirtualFileSystem.Unchecked.ofParts EntryNameMatching.Bytes Map.empty one two
 
         let exn =
             Assert.Throws<Exception> (fun () ->
@@ -2754,6 +2775,7 @@ module TestVirtualFileSystem =
         // *unreachability* rule takes the set.
         let vfs =
             VirtualFileSystem.Unchecked.ofParts
+                EntryNameMatching.Bytes
                 (Map.ofList [ one, dir one [ "a", two ] ; two, dir one [] ; three, regularFileInode ])
                 one
                 (InodeNumber 4L)
@@ -4499,7 +4521,9 @@ module TestCreatingOpenRules =
     /// A root holding a directory `d`, a file `f`, and a directory `locked`
     /// whose permission bits are given.
     let private treeWith (lockedBits : PermissionBits) : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let apply (result : Result<InodeNumber * VirtualFileSystem, UnixError>) : VirtualFileSystem =
@@ -4811,7 +4835,9 @@ module TestMkDirRules =
     /// `dang -> nx` and `cyc -> cyc`, plus a directory `locked` whose permission
     /// bits are given.
     let private treeWith (lockedBits : PermissionBits) : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let apply (result : Result<InodeNumber * VirtualFileSystem, UnixError>) : VirtualFileSystem =
@@ -5216,7 +5242,9 @@ module TestWalkSearchPermission =
     /// and a cyclic symlink — plus, outside it, a link *into* `p` and a link to
     /// `p` itself.
     let private treeWith (bits : PermissionBits) : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let dir (parent : InodeNumber) (n : string) (bits : PermissionBits) (vfs : VirtualFileSystem) =

@@ -134,6 +134,7 @@
     <Compile Include="TestUnixByteString.fs" />
     <Compile Include="TestUnixPath.fs" />
     <Compile Include="TestUnixPathBytes.fs" />
+    <Compile Include="TestNameEquivalence.fs" />
     <Compile Include="TestAbsoluteUnixPath.fs" />
     <Compile Include="TestFileSystemSeed.fs" />
     <Compile Include="TestFileDescriptorRegistry.fs" />
@@ -340,6 +341,12 @@
          `TestConnectDestinationMeasured` replay every row. -->
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
+    <!-- What a lookup, a creation and a rename answer when they spell a bound
+         name another way, measured by docs/probes/name-equivalence/name-equivalence.c
+         on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.
+         `TestNameEquivalence` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\name-equivalence\measured-darwin-27.0-apfs-case-sensitive.txt" LogicalName="WoofWare.PosixKernel.Test.name-equivalence.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\name-equivalence\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.name-equivalence.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-decoding.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-decoding.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-decoding.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-decoding.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-connect-ladder.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-connect-ladder.linux.txt" />

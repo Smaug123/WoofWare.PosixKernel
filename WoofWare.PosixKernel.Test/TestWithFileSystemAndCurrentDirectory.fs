@@ -421,6 +421,16 @@ module TestWithFileSystemAndCurrentDirectory =
                     SimulatedUnixPlatform.macOsArm64
                     (Map.ofList [ nameOfBytes [ 0xFFuy ], SeedEntry.file noBytes ])
                     "/"
+                // A seed directory holding two spellings of "é", which no
+                // Darwin filesystem holds at once.
+                startAt
+                    SimulatedUnixPlatform.macOsArm64
+                    (Map.ofList
+                        [
+                            nameOfBytes [ 0xC3uy ; 0xA9uy ], SeedEntry.file noBytes
+                            nameOfBytes [ 0x65uy ; 0xCCuy ; 0x81uy ], SeedEntry.file noBytes
+                        ])
+                    "/"
                 // A seed whose `dev` the device filesystem would hide.
                 startAt
                     SimulatedUnixPlatform.linuxX64

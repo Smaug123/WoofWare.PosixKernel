@@ -58,7 +58,9 @@ module TestUnlinkRules =
     /// order the write check and the is-a-directory check the opposite way
     /// round.
     let private tree : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let dir (parent : InodeNumber) (n : string) (bits : PermissionBits) (vfs : VirtualFileSystem) =

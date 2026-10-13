@@ -70,7 +70,9 @@ module TestRenameRules =
     /// displacing a directory consults the *displaced* directory's write bit
     /// there, and its parent's on Linux.
     let private tree : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let dir (parent : InodeNumber) (n : string) (bits : PermissionBits) (vfs : VirtualFileSystem) =

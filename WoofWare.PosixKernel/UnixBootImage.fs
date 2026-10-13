@@ -610,29 +610,42 @@ module UnixBootImage =
 
         let limits = SimulatedUnixPlatform.pathLimits platform
         let bindable = SimulatedUnixPlatform.bindableEntryNames platform
+        let nameMatching = SimulatedUnixPlatform.entryNameMatching platform
         let flavour = SimulatedUnixPlatform.flavour platform
 
         // The first offender in `Map` order, which is the order the seed is
-        // realised in.
+        // realised in; a directory's names are each checked, and its
+        // subdirectories with them, before the directory itself is checked
+        // for two spellings of one name.
         let rec firstImpossibleName (entries : Map<DirectoryEntryName, SeedEntry>) : FileSystemSeedFault option =
-            entries
-            |> Map.toSeq
-            |> Seq.tryPick (fun (name, entry) ->
-                // A forged name is refused with the seed's context, as
-                // `ofFileSystemSeed` would refuse it, rather than reaching the
-                // measurement as a null.
-                let name = DirectoryEntryName.assertValid "UnixBootImage.withFileSystem seed" name
+            let ofEachName =
+                entries
+                |> Map.toSeq
+                |> Seq.tryPick (fun (name, entry) ->
+                    // A forged name is refused with the seed's context, as
+                    // `ofFileSystemSeed` would refuse it, rather than reaching the
+                    // measurement as a null.
+                    let name = DirectoryEntryName.assertValid "UnixBootImage.withFileSystem seed" name
 
-                if not (PathLimits.nameWithinLimit limits name) then
-                    Some (FileSystemSeedFault.SeedNameTooLong (name, flavour))
-                elif not (BindableEntryNames.admits bindable name) then
-                    Some (FileSystemSeedFault.SeedNameNotBindable (name, flavour))
-                else
-                    match entry with
-                    | SeedEntry.Directory (children, _, _) -> firstImpossibleName children
-                    | SeedEntry.File _
-                    | SeedEntry.Symlink _ -> None
-            )
+                    if not (PathLimits.nameWithinLimit limits name) then
+                        Some (FileSystemSeedFault.SeedNameTooLong (name, flavour))
+                    elif not (BindableEntryNames.admits bindable name) then
+                        Some (FileSystemSeedFault.SeedNameNotBindable (name, flavour))
+                    else
+                        match entry with
+                        | SeedEntry.Directory (children, _, _) -> firstImpossibleName children
+                        | SeedEntry.File _
+                        | SeedEntry.Symlink _ -> None
+                )
+
+            match ofEachName, nameMatching with
+            | Some fault, _ -> Some fault
+            | None, EntryNameMatching.Bytes -> None
+            | None, EntryNameMatching.CanonicalEquivalence ->
+                EntryNameMatching.firstPossiblyEquivalentPair (Map.keys entries)
+                |> Option.map (fun (first, second) ->
+                    FileSystemSeedFault.SeedNamesPossiblyEquivalent (first, second, flavour)
+                )
 
         match firstImpossibleName seed with
         | Some fault -> Error fault
@@ -640,6 +653,7 @@ module UnixBootImage =
 
         match
             VirtualFileSystem.ofFileSystemSeed
+                nameMatching
                 createdAt
                 defaultOwner
                 (SimulatedUnixPlatform.symlinkCreationPermissions platform SeedEntry.symlinkCreatorsUmask)
@@ -671,6 +685,11 @@ module UnixBootImage =
     /// filesystem can hold. Also refuses a seed whose `dev` at the root is
     /// anything but an empty directory, since the device filesystem is mounted
     /// there.
+    ///
+    /// On Darwin, whose filesystem holds at most one canonically equivalent
+    /// spelling of a name in a directory, also refuses a seed with a directory
+    /// holding two names that might be two such spellings: this library holds
+    /// no Unicode tables to tell, and raises `UnmodelledException`.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
     let withFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
