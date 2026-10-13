@@ -267,6 +267,17 @@ module TransferCountLimit =
         | TransferCountLimit.Shortened maxTransfer
         | TransferCountLimit.Refused maxTransfer -> maxTransfer
 
+/// The call whose search for an ephemeral port found every port of the range
+/// taken.
+[<RequireQualifiedAccess>]
+type internal EphemeralSearchCall =
+    /// `bind(2)` of port 0.
+    | Bind
+    /// `listen(2)` on a socket holding no port.
+    | Listen
+    /// `connect(2)` on a socket holding no port.
+    | Connect
+
 [<RequireQualifiedAccess>]
 module SimulatedUnixPlatform =
     /// Loosest ceiling any Unix we model imposes on `utsname.release`:
@@ -1457,6 +1468,26 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> true
         | SimulatedUnixFlavour.Darwin -> false
+
+    /// What `call` on a TCP socket answers when its search for an ephemeral
+    /// port finds every port of the range taken, or `None` where this library
+    /// does not answer. Linux answers `EADDRINUSE` to `bind(2)` and `listen(2)`
+    /// (`inet_csk_get_port`) and `EADDRNOTAVAIL` to `connect(2)`
+    /// (`__inet_hash_connect`), leaving the socket unbound. Darwin answers
+    /// `EADDRNOTAVAIL` to all three, but this library's search can pass over a
+    /// port Darwin's would take, one an established socket holds for a search
+    /// carrying `SO_REUSEADDR` being unmeasured, so it is not answered. Both
+    /// measured (`docs/probes/ephemeral-search`).
+    let internal ephemeralPortsExhausted
+        (platform : SimulatedUnixPlatform)
+        (call : EphemeralSearchCall)
+        : UnixError option
+        =
+        match flavour platform, call with
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Bind
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Listen -> Some UnixError.EADDRINUSE
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Connect -> Some UnixError.EADDRNOTAVAIL
+        | SimulatedUnixFlavour.Darwin, _ -> None
 
     /// Where this platform keeps a socket address's family, and how wide it is.
     /// See `SockaddrFamilyField`, which is also where the reason every other

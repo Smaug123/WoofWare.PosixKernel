@@ -590,7 +590,7 @@ module TestUnixSystemInvariants =
                 Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback port
                 LockedAddress = None
                 LockedPort = false
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
     let private listening : SocketPhase =
@@ -648,7 +648,7 @@ module TestUnixSystemInvariants =
                 }
             LockedAddress = Some Ipv6Address.loopback
             LockedPort = true
-            HoldsPort = true
+            PortHold = PortHold.Reserved
         }
 
     let private socketName : UnixSocketName =
@@ -764,7 +764,7 @@ module TestUnixSystemInvariants =
                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                     LockedAddress = Some Ipv4Address.any
                     LockedPort = lockedPort
-                    HoldsPort = false
+                    PortHold = PortHold.GivenBack
                 }
 
         let faulty =

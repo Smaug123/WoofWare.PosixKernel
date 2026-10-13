@@ -5091,7 +5091,7 @@ module TestUnixSystemStep =
                                 Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback 8080us
                                 LockedAddress = Some Ipv4Address.loopback
                                 LockedPort = true
-                                HoldsPort = true
+                                PortHold = PortHold.Reserved
                             })
                         socketDescription.Addressing
             }

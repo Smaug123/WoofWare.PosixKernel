@@ -745,7 +745,7 @@ type UnixSystemDefect<'Thread> =
     /// such as `SocketPhase.Connecting`: a case reserved for behaviour not yet
     /// modelled.
     | ReservedSocketPhase of socket : SocketId * phase : SocketPhase
-    /// A socket's binding no longer holds its port (`InetBinding.HoldsPort`),
+    /// A socket's binding no longer holds its port (`PortHold.GivenBack`),
     /// and the socket is not one a refused TCP connect, the only thing that
     /// gives a port back, leaves so: a stream socket in `SocketPhase.Refused`,
     /// or under Linux an idle one, whose port, under Linux, `bind(2)` did not
@@ -2141,7 +2141,7 @@ module UnixSystem =
 
                 let portGivenBack =
                     match socket.Ipv4Binding with
-                    | Some binding when not binding.HoldsPort ->
+                    | Some binding when not (PortHold.isHeld binding.PortHold) ->
                         let refusalLeftIt =
                             socket.Kind = SocketKind.Stream
                             && SimulatedUnixPlatform.refusalReleasesPort machine.UnixPlatform binding.LockedPort

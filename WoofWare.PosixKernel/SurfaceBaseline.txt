@@ -1547,16 +1547,16 @@ WoofWare.PosixKernel.HardlinkProtection.NonOwnersNeedReadAndWrite [static proper
 WoofWare.PosixKernel.HardlinkProtection.Off [static property]: [read-only] WoofWare.PosixKernel.HardlinkProtection
 WoofWare.PosixKernel.HardlinkProtection.Tag [property]: [read-only] int
 WoofWare.PosixKernel.InetBinding`2 inherit obj, implements WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address> System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address> System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.InetBinding`2..ctor [constructor]: ('Endpoint, 'Address option, bool, bool)
+WoofWare.PosixKernel.InetBinding`2..ctor [constructor]: ('Endpoint, 'Address option, bool, WoofWare.PosixKernel.PortHold)
 WoofWare.PosixKernel.InetBinding`2.Endpoint [property]: [read-only] 'Endpoint
 WoofWare.PosixKernel.InetBinding`2.Equals [method]: (WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address>, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.InetBinding`2.get_Endpoint [method]: unit -> 'Endpoint
-WoofWare.PosixKernel.InetBinding`2.get_HoldsPort [method]: unit -> bool
 WoofWare.PosixKernel.InetBinding`2.get_LockedAddress [method]: unit -> 'Address option
 WoofWare.PosixKernel.InetBinding`2.get_LockedPort [method]: unit -> bool
-WoofWare.PosixKernel.InetBinding`2.HoldsPort [property]: [read-only] bool
+WoofWare.PosixKernel.InetBinding`2.get_PortHold [method]: unit -> WoofWare.PosixKernel.PortHold
 WoofWare.PosixKernel.InetBinding`2.LockedAddress [property]: [read-only] 'Address option
 WoofWare.PosixKernel.InetBinding`2.LockedPort [property]: [read-only] bool
+WoofWare.PosixKernel.InetBinding`2.PortHold [property]: [read-only] WoofWare.PosixKernel.PortHold
 WoofWare.PosixKernel.Inode inherit obj, implements WoofWare.PosixKernel.Inode System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.Inode System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.Inode..ctor [constructor]: (WoofWare.PosixKernel.InodeContent, WoofWare.PosixKernel.InodeTimes, WoofWare.PosixKernel.InodeOwner)
 WoofWare.PosixKernel.Inode.Content [property]: [read-only] WoofWare.PosixKernel.InodeContent
@@ -3203,6 +3203,26 @@ WoofWare.PosixKernel.PollQueueModule inherit obj
 WoofWare.PosixKernel.PollQueueModule.activated [static method]: WoofWare.PosixKernel.PollQueue -> (int * WoofWare.PosixKernel.KqueueFilter) list
 WoofWare.PosixKernel.PollQueueModule.entry [static method]: int -> WoofWare.PosixKernel.KqueueFilter -> WoofWare.PosixKernel.PollQueue -> int option
 WoofWare.PosixKernel.PollQueueModule.registered [static method]: WoofWare.PosixKernel.PollQueue -> (int * WoofWare.PosixKernel.KqueueFilter) list
+WoofWare.PosixKernel.PortHold inherit obj, implements WoofWare.PosixKernel.PortHold System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PortHold System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.PortHold+Tags inherit obj
+WoofWare.PosixKernel.PortHold+Tags.Connected [static field]: int = 1
+WoofWare.PosixKernel.PortHold+Tags.GivenBack [static field]: int = 2
+WoofWare.PosixKernel.PortHold+Tags.Reserved [static field]: int = 0
+WoofWare.PosixKernel.PortHold.Connected [static property]: [read-only] WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.Equals [method]: (WoofWare.PosixKernel.PortHold, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.PortHold.get_Connected [static method]: unit -> WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.get_GivenBack [static method]: unit -> WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.get_IsConnected [method]: unit -> bool
+WoofWare.PosixKernel.PortHold.get_IsGivenBack [method]: unit -> bool
+WoofWare.PosixKernel.PortHold.get_IsReserved [method]: unit -> bool
+WoofWare.PosixKernel.PortHold.get_Reserved [static method]: unit -> WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.PortHold.GivenBack [static property]: [read-only] WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.IsConnected [property]: [read-only] bool
+WoofWare.PosixKernel.PortHold.IsGivenBack [property]: [read-only] bool
+WoofWare.PosixKernel.PortHold.IsReserved [property]: [read-only] bool
+WoofWare.PosixKernel.PortHold.Reserved [static property]: [read-only] WoofWare.PosixKernel.PortHold
+WoofWare.PosixKernel.PortHold.Tag [property]: [read-only] int
 WoofWare.PosixKernel.PrivilegedExecution inherit obj, implements WoofWare.PosixKernel.PrivilegedExecution System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PrivilegedExecution System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.PrivilegedExecution+Tags inherit obj
 WoofWare.PosixKernel.PrivilegedExecution+Tags.NeedsAnExecuteBit [static field]: int = 0
