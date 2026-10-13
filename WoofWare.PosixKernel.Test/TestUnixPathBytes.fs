@@ -94,7 +94,7 @@ module TestUnixPathBytes =
 
         records
         |> List.map (fun record ->
-            DirectoryStreamName.toByteString record.Name
+            PathComponent.toByteString record.Name
             |> UnixByteString.toBytes
             |> List.ofSeq
         )

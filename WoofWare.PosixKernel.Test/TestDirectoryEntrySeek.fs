@@ -71,7 +71,7 @@ module TestDirectoryEntrySeek =
         (directory : InodeNumber)
         (cursor : DirectoryCursor)
         (vfs : VirtualFileSystem)
-        : (DirectoryStreamName * InodeNumber * DirectoryCursor) option
+        : (PathComponent * InodeNumber * DirectoryCursor) option
         =
         let content =
             match VirtualFileSystem.tryGetContent directory vfs with
@@ -94,13 +94,13 @@ module TestDirectoryEntrySeek =
 
         let fromEntries (lower : DirectoryEntryName option) =
             match leastAbove lower with
-            | Some (name, inode) -> Some (DirectoryStreamName.Entry name, inode, DirectoryCursor.After name)
-            | None -> Some (DirectoryStreamName.DotDot, content.Parent, DirectoryCursor.ReturnedDotDot)
+            | Some (name, inode) -> Some (PathComponent.Name name, inode, DirectoryCursor.After name)
+            | None -> Some (PathComponent.Parent, content.Parent, DirectoryCursor.ReturnedDotDot)
 
         match cursor with
         | DirectoryCursor.Start -> fromEntries None
         | DirectoryCursor.After name -> fromEntries (Some name)
-        | DirectoryCursor.ReturnedDotDot -> Some (DirectoryStreamName.Dot, directory, DirectoryCursor.ReturnedDot)
+        | DirectoryCursor.ReturnedDotDot -> Some (PathComponent.Current, directory, DirectoryCursor.ReturnedDot)
         | DirectoryCursor.ReturnedDot -> None
 
     let private directoriesOf (vfs : VirtualFileSystem) : (InodeNumber * DirectoryContent) list =
@@ -472,7 +472,7 @@ module TestDirectoryEntrySeek =
                         stream
                     | Some (entry, _, next) ->
                         match entry with
-                        | DirectoryStreamName.Entry _ when current <> stream.LastSeen ->
+                        | PathComponent.Name _ when current <> stream.LastSeen ->
                             record Reached.AdvancePastMutation
                         | _ -> ()
 
@@ -651,7 +651,7 @@ module TestDirectoryEntrySeek =
         let thrown =
             Assert.Throws<exn> (fun () ->
                 VirtualFileSystem.nextDirectoryEntry root (DirectoryCursor.After (name "a")) forged
-                |> ignore<(DirectoryStreamName * InodeNumber * DirectoryCursor) option>
+                |> ignore<(PathComponent * InodeNumber * DirectoryCursor) option>
             )
 
         thrown.Message |> shouldContainText "checkInvariants"

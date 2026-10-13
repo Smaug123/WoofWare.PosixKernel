@@ -302,7 +302,7 @@ module TestDeviceFileSystem =
 
             let dev =
                 records
-                |> List.filter (fun record -> record.Name = DirectoryStreamName.Entry (name "dev"))
+                |> List.filter (fun record -> record.Name = PathComponent.Name (name "dev"))
                 |> List.exactlyOne
 
             dev.Kind |> shouldEqual DirectoryEntryKind.Directory

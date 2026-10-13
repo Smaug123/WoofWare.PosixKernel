@@ -433,45 +433,6 @@ type internal SeekFault =
     /// values the caller does not jointly control.
     | Overflow
 
-/// A name a directory stream can hand back. Neither "." nor ".." is a
-/// `FileName` — `FileNameError.Reserved` rejects both, because a directory
-/// binds neither and this library derives both from the graph — so a stream that
-/// must produce all three needs a type that can say which it produced.
-[<RequireQualifiedAccess>]
-type DirectoryStreamName =
-    /// The directory being enumerated.
-    | Dot
-    /// `DirectoryContent.Parent`, which is the *physical* parent and so is
-    /// still right after a walk crossed a symlink to get here.
-    | DotDot
-    /// A name the directory actually binds.
-    | Entry of name : DirectoryEntryName
-
-    /// The name rendered for a diagnostic; `DirectoryStreamName.toByteString`
-    /// is what `readdir(3)` puts in `d_name`.
-    override this.ToString () : string =
-        match this with
-        | DirectoryStreamName.Dot -> "."
-        | DirectoryStreamName.DotDot -> ".."
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toEscaped name
-
-[<RequireQualifiedAccess>]
-module DirectoryStreamName =
-    let private ofLiteral (name : string) : UnixByteString =
-        match UnixByteString.ofString name with
-        | Ok bytes -> bytes
-        | Error defect -> failwith $"DirectoryStreamName: %s{UnixPathText.describe defect}"
-
-    let private dot : UnixByteString = ofLiteral "."
-    let private dotDot : UnixByteString = ofLiteral ".."
-
-    /// The bytes `readdir(3)` would put in `d_name`.
-    let toByteString (name : DirectoryStreamName) : UnixByteString =
-        match name with
-        | DirectoryStreamName.Dot -> dot
-        | DirectoryStreamName.DotDot -> dotDot
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toByteString name
-
 /// How far through a directory an open stream has read.
 ///
 /// A *name*, not a position. Measured on both kernels at 3000 entries, one
@@ -1935,7 +1896,7 @@ module VirtualFileSystem =
         (directory : InodeNumber)
         (cursor : DirectoryCursor)
         (vfs : VirtualFileSystem)
-        : (DirectoryStreamName * InodeNumber * DirectoryCursor) option
+        : (PathComponent * InodeNumber * DirectoryCursor) option
         =
         let content =
             match Map.tryFind directory vfs.Inodes with
@@ -1974,13 +1935,13 @@ module VirtualFileSystem =
         /// where this model puts the dots.
         let fromEntries (lower : DirectoryEntryName option) =
             match leastAbove lower with
-            | Some (name, inode) -> Some (DirectoryStreamName.Entry name, inode, DirectoryCursor.After name)
-            | None -> Some (DirectoryStreamName.DotDot, content.Parent, DirectoryCursor.ReturnedDotDot)
+            | Some (name, inode) -> Some (PathComponent.Name name, inode, DirectoryCursor.After name)
+            | None -> Some (PathComponent.Parent, content.Parent, DirectoryCursor.ReturnedDotDot)
 
         match cursor with
         | DirectoryCursor.Start -> fromEntries None
         | DirectoryCursor.After name -> fromEntries (Some name)
-        | DirectoryCursor.ReturnedDotDot -> Some (DirectoryStreamName.Dot, directory, DirectoryCursor.ReturnedDot)
+        | DirectoryCursor.ReturnedDotDot -> Some (PathComponent.Current, directory, DirectoryCursor.ReturnedDot)
         | DirectoryCursor.ReturnedDot -> None
 
     /// Remove an inode from the graph, which is what a kernel does when the last

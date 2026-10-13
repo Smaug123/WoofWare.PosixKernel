@@ -222,7 +222,7 @@ type DirectoryRecord =
         /// itself and for `..` its parent, as `stat` would report them.
         Inode : InodeNumber
         /// `d_name`.
-        Name : DirectoryStreamName
+        Name : PathComponent
         /// `d_type`. Never unknown: measured on tmpfs and APFS, every entry,
         /// the dots included, reports its kind.
         Kind : DirectoryEntryKind
@@ -1644,7 +1644,7 @@ module UnixNamespace =
         // on Linux (`mountpoint.c`).
         let reported =
             match name, VirtualFileSystem.mountOf target system.Machine.FileSystem with
-            | DirectoryStreamName.Entry _, Some mount -> mount.Covered
+            | PathComponent.Name _, Some mount -> mount.Covered
             | _, _ -> target
 
         let record : DirectoryRecord =
