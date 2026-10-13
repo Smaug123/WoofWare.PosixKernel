@@ -450,6 +450,22 @@ module TestDeviceFileSystem =
         |> Result.map failed
         |> shouldEqual (Ok (Some UnixError.EEXIST))
 
+    /// Measured by `docs/probes/rename/mountpoint-self-rename.c` on Linux
+    /// 6.18.5 aarch64, in a container whose `/dev` is a devtmpfs mount: renaming
+    /// the mount point onto itself, under either spelling, answers 0 and moves
+    /// nothing, as root and as uid 1000, where renaming it to another name is
+    /// EBUSY and EACCES.
+    [<Test>]
+    let ``renaming the mount point onto itself succeeds and changes nothing`` () : unit =
+        for system in [ booted linux ; bootedAsRoot linux ] do
+            for destination in [ "/dev" ; "//dev" ] do
+                match UnixNamespace.tryRenameEager (PathArg.ofText "/dev") (PathArg.ofText destination) system with
+                | Ok (answer, after) ->
+                    answer |> shouldEqual (SyscallAnswer.Completed 0L)
+                    after |> shouldEqual system
+                | Error refusal ->
+                    failwith $"rename /dev -> %s{destination} was refused: %s{RenameRefusal.describe refusal}"
+
     [<Test>]
     let ``a path ending in a dot component is on the filesystem it was taken from`` () : unit =
         // Linux's parent walk stops before the last component, so "/dev/.." and

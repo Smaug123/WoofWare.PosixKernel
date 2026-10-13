@@ -328,7 +328,7 @@ module internal RenameRefusal =
         | RenameRefusal.Sticky refusal -> StickyRefusal.describe refusal
         | RenameRefusal.Path refusal -> PathRefusal.describe refusal
         | RenameRefusal.MountPoint mountRoot ->
-            $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
+            $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it onto itself is 0, and to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
         | RenameRefusal.DeviceFileSystem (directory, name) ->
             $"the call would move \"%s{DirectoryEntryName.toEscaped name}\" out of inode %O{directory}, on the device filesystem, which holds only the nodes of the devices this kernel has drivers for; it removes none of them, because it could not then say what a real one answers for the name."
 
@@ -2425,17 +2425,25 @@ module UnixNamespace =
 
         // A mount point's own rows. Linux checks the permissions first and the
         // mount after (`rename("/dev", "/devx")` is EACCES at uid 1000 and EBUSY
-        // at uid 0), and that pair, a mount point renamed within its own
-        // directory, is all that has been measured. It is also all that can be
-        // answered: the mount point's own inode is the covered directory, whose
-        // owner a sticky parent consults and whose write bit a move to another
-        // directory consults, and this kernel holds only the mounted root.
+        // at uid 0), and a rename onto itself before either (`vfs_rename`
+        // answers 0 when source and target are one inode: measured by
+        // `mountpoint-self-rename.c`, as root and as uid 1000). Those, a mount
+        // point renamed within its own directory, are all that has been
+        // measured. They are also all that can be answered: the mount point's
+        // own inode is the covered directory, whose owner a sticky parent
+        // consults and whose write bit a move to another directory consults,
+        // and this kernel holds only the mounted root.
         let sticky (resolution : Resolution) : bool =
             RemovalChecks.inStickyDirectory resolution vfs
 
         let verdict =
             match mountRootNamed sourceResolution, mountRootNamed destinationResolution, verdict with
             | None, None, verdict -> Ok verdict
+            | Some source, Some destination, Ok RenameVerdict.NoOp when
+                source = destination
+                && SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
+                ->
+                Ok (Ok RenameVerdict.NoOp)
             | Some mountRoot, None, verdict when not (sticky sourceResolution) && not (sticky destinationResolution) ->
                 match sourceResolution.Target, destinationResolution.Target, verdict with
                 | ResolvedTarget.Entry (sourceDirectory, _, _),
