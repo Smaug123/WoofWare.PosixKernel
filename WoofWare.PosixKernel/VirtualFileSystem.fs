@@ -50,18 +50,6 @@ module internal SortedEntryNames =
             BeyondAscii = ImmutableSortedSet.Create<DirectoryEntryName> order
         }
 
-    let ofSeq (names : DirectoryEntryName seq) : SortedEntryNames =
-        let names = ImmutableSortedSet.CreateRange<DirectoryEntryName> (order, names)
-
-        {
-            Names = names
-            BeyondAscii =
-                ImmutableSortedSet.CreateRange<DirectoryEntryName> (
-                    order,
-                    names |> Seq.filter (EntryNameMatching.isAsciiName >> not)
-                )
-        }
-
     let isEmpty (names : SortedEntryNames) : bool = names.Names.IsEmpty
 
     /// How many names there are, in constant time.
@@ -89,6 +77,11 @@ module internal SortedEntryNames =
             Names = names.Names.Remove name
             BeyondAscii = names.BeyondAscii.Remove name
         }
+
+    // By `add`, so that one function decides what the index of names beyond
+    // ASCII holds.
+    let ofSeq (names : DirectoryEntryName seq) : SortedEntryNames =
+        Seq.fold (fun sorted name -> add name sorted) empty names
 
     /// The least name strictly greater than `lower`, or the least of all when
     /// there is no lower bound; `lower` need not be one of the names.
