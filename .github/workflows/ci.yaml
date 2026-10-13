@@ -1,0 +1,306 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/SchemaStore/schemastore/master/src/schemas/json/github-workflow.json
+name: .NET
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  NUGET_XMLDOC_MODE: ''
+  DOTNET_MULTILEVEL_LOOKUP: 0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0 # so that NerdBank.GitVersioning has access to history
+    - name: Install Nix
+      uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+      with:
+        extra_nix_config: |
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+    - name: Restore dependencies
+      run: nix develop --command dotnet restore
+    - name: Build
+      run: nix develop --command dotnet build --no-restore --configuration Release
+    # The TRX files carry each test's duration, so that a slow test shows up on CI's own
+    # hardware rather than only on a developer's.
+    - name: Test
+      run: nix develop --command dotnet test --no-build --configuration Release --logger "trx;LogFilePrefix=default" --results-directory TestResults
+    # The `LargeMemory` fixtures are `[<Explicit>]`, so the step above skips them: they need
+    # buffers longer than one Linux call moves and peak at about 6.5 GB resident. Beside
+    # another test host they exhaust the runner, which then dies without a test failure
+    # ("The operation was canceled"). So they get a step of their own, after the suite has
+    # finished, in which no other test host is running.
+    - name: Test (large-memory fixtures)
+      run: nix develop --command dotnet test --no-build --configuration Release --filter "TestCategory=LargeMemory" --logger "trx;LogFilePrefix=large" --results-directory TestResults
+    - name: Upload test results
+      if: ${{ always() }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: test-results
+        path: TestResults/*.trx
+
+  build-nix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        run: nix build --print-build-logs
+
+  check-dotnet-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Run Fantomas
+        run: nix run .#fantomas -- --check .
+
+  check-nix-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Run Alejandra
+        run: nix develop --command alejandra --check .
+
+  # Pull requests only. A push to main is the squash of a pull request this
+  # check already ran on, against GitHub's merge of that branch into main, so
+  # rerunning it can only disagree through the squash's commit message, which is
+  # edited by hand at merge time and may no longer carry the trailer below. The
+  # steps are skipped rather than the job, because all-required-checks-complete
+  # counts a skipped job as a failure.
+  check-docstring-attachment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0 # the check compares against the commit this change starts from
+      - name: Check every docstring still documents what it did
+        if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          # A pull_request checkout is GitHub's merge of the branch into main:
+          # its first parent is that main, and its second the branch's head.
+          git rev-parse --verify --quiet HEAD^2 > /dev/null || { echo "expected a merge commit at HEAD for a pull_request event" >&2; exit 2; }
+          base="$(git rev-parse HEAD^1)"
+          range="HEAD^1..HEAD^2"
+          set +e
+          scripts/check-docstring-attachment-branch.sh "$base"
+          status=$?
+          set -e
+          # The check reports every change of subject it cannot explain, and a
+          # change that repairs a detachment, or renames onto a name used
+          # elsewhere, is one of those. A commit in the change that carries this
+          # trailer says a person read the report and found nothing detached.
+          if [ "$status" -eq 1 ] && git log --format=%B "$range" | grep -qx 'Docstring-attachment: reviewed'; then
+            echo "::warning::docstring-attachment reported changes of subject, and a commit in this change says they were reviewed"
+            exit 0
+          fi
+          exit "$status"
+
+  flake-check:
+    name: Check flake
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Flake check
+        run: nix flake check
+
+  nuget-pack:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      with:
+        fetch-depth: 0 # so that NerdBank.GitVersioning has access to history
+    - name: Install Nix
+      uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+      with:
+        extra_nix_config: |
+          access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+    - name: Restore dependencies
+      run: nix develop --command dotnet restore
+    - name: Build
+      run: nix develop --command dotnet build --no-restore --configuration Release
+    - name: Pack
+      run: nix develop --command dotnet pack --configuration Release
+    - name: Upload NuGet artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: nuget-package
+        path: WoofWare.PosixKernel/bin/Release/WoofWare.PosixKernel.*.nupkg
+
+  expected-pack:
+    needs: [nuget-pack]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: packed
+      - name: Check NuGet contents
+        # Verify that there is exactly one nupkg in the artifact that would be NuGet published
+        run: if [[ $(find packed -maxdepth 1 -name 'WoofWare.PosixKernel.*.nupkg' -printf c | wc -c) -ne "1" ]]; then exit 1; fi
+
+  github-release-dry-run:
+    runs-on: ubuntu-latest
+    needs: [nuget-pack]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+      - name: Compute package path
+        id: compute-path
+        run: |
+          find . -maxdepth 1 -type f -name 'WoofWare.PosixKernel.*.nupkg' -exec sh -c 'echo "output=$(basename "$1")" >> $GITHUB_OUTPUT' shell {} \;
+      - name: Compute tag name
+        id: compute-tag
+        env:
+          NUPKG_PATH: ${{ steps.compute-path.outputs.output }}
+        run: echo "output=$(basename "$NUPKG_PATH" .nupkg)" >> "$GITHUB_OUTPUT"
+      - name: Tag and release
+        uses: G-Research/common-actions/github-release@19d7281a0f9f83e13c78f99a610dbc80fc59ba3b
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          target-commitish: ${{ github.sha }}
+          tag: ${{ steps.compute-tag.outputs.output }}
+          binary-contents: ${{ steps.compute-path.outputs.output }}
+          dry-run: true
+
+  all-required-checks-complete:
+    if: ${{ always() }}
+    needs: [check-dotnet-format, check-nix-format, check-docstring-attachment, build, build-nix, flake-check, nuget-pack, expected-pack, github-release-dry-run]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: G-Research/common-actions/check-required-lite@2b7dc49cb14f3344fbe6019c14a31165e258c059
+        with:
+          needs-context: ${{ toJSON(needs) }}
+
+  # Everything below runs on a push to main only, and publishes the package that push
+  # built. Nerdbank.GitVersioning gives a new version to each commit on main that touches
+  # a path in WoofWare.PosixKernel/version.json's pathFilters; any other commit packs the
+  # version already on nuget.org, which publish-nuget then skips.
+
+  attestation:
+    runs-on: ubuntu-latest
+    needs: [all-required-checks-complete]
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: packed
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: "packed/WoofWare.PosixKernel.*.nupkg"
+
+  # Publishes through nuget.org's trusted publishing: NuGet/login trades this job's GitHub
+  # OIDC token for a short-lived API key, which nuget.org issues only if a trusted publishing
+  # policy names this repository, this workflow file (ci.yaml) and the main-deploy
+  # environment. NUGET_USER is the nuget.org profile name that owns that policy.
+  nuget-publish:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    needs: [attestation]
+    environment: main-deploy
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          extra_nix_config: |
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+          path: packed
+      - name: Identify `dotnet`
+        id: dotnet-identify
+        run: echo "dotnet=$(nix develop --command which dotnet)" >> "$GITHUB_OUTPUT"
+      - name: Obtain NuGet key
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: login
+        with:
+            user: ${{ secrets.NUGET_USER }}
+      - name: Publish to NuGet
+        id: publish-success
+        uses: G-Research/common-actions/publish-nuget@2b7dc49cb14f3344fbe6019c14a31165e258c059
+        with:
+          package-name: WoofWare.PosixKernel
+          nuget-key: ${{ steps.login.outputs.NUGET_API_KEY }}
+          nupkg-dir: packed/
+          dotnet: ${{ steps.dotnet-identify.outputs.dotnet }}
+
+  github-release:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    needs: [all-required-checks-complete]
+    environment: main-deploy
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Download NuGet artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nuget-package
+      - name: Compute package path
+        id: compute-path
+        run: |
+          find . -maxdepth 1 -type f -name 'WoofWare.PosixKernel.*.nupkg' -exec sh -c 'echo "output=$(basename "$1")" >> $GITHUB_OUTPUT' shell {} \;
+      - name: Compute tag name
+        id: compute-tag
+        env:
+          NUPKG_PATH: ${{ steps.compute-path.outputs.output }}
+        run: echo "output=$(basename "$NUPKG_PATH" .nupkg)" >> "$GITHUB_OUTPUT"
+      - name: Tag and release
+        uses: G-Research/common-actions/github-release@19d7281a0f9f83e13c78f99a610dbc80fc59ba3b
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          target-commitish: ${{ github.sha }}
+          tag: ${{ steps.compute-tag.outputs.output }}
+          binary-contents: ${{ steps.compute-path.outputs.output }}

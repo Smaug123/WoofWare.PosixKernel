@@ -1,0 +1,116 @@
+# WoofWare.PosixKernel
+
+WoofWare.PosixKernel is a deterministic, purely functional simulation of a POSIX process, written in F# and published as a NuGet package.
+The simulated kernel is a state machine: each syscall is a pure function from one state to an answer and the next state.
+It performs no I/O and makes no host reads, so two runs from the same starting state see the same world on any machine.
+
+Its first client is [WoofWare.PawPrint](https://github.com/Smaug123/WoofWare.PawPrint), a deterministic .NET runtime, whose repository it was developed in until it moved here with its history.
+The library must not depend on that client, or on any other; see "Speaking POSIX, not a client's language" below.
+
+`WoofWare.PosixKernel/README.md` is the client-facing account of the library (and the package's README on nuget.org).
+Read it before changing the public API, and change it with the API: `TestReadme` holds it to the code.
+
+## Layout
+
+- `WoofWare.PosixKernel/`: the library. Targets `net8.0` deliberately, for compatibility with consumers. `SurfaceBaseline.txt` is its recorded public API, `version.json` its Nerdbank.GitVersioning configuration, and `AGENTS.md` beside them states how its docstrings are written.
+- `WoofWare.PosixKernel.Test/`: its tests (NUnit, FsUnit, FsCheck), targeting `net10.0` because the devshell carries only the .NET 10 runtime.
+- `docs/probes/` and `docs/plans/`: the C and Python probes that measured each Linux/Darwin fact the library models, their recorded outputs (many of which the tests embed and replay), and the design plans. `docs/README.md` says what a path in them that does not exist here refers to.
+- `scripts/`: the prose and docstring checks described below, each with its executable contract.
+
+The library owns the filesystem (`VirtualFileSystem.fs` for the inode graph, whose every mutator reports the `FsChange`s it made (`FsChange.fs`) beside the graph it made; `FileSystemCommit.fs`, whose `CommittedFileSystem` has a representation private to that file, so that after boot a changed graph reaches the machine only through `CommittedFileSystem.commit`, which every syscall reaches as `UnixMachineState.commitFileSystem`, saying how it reached what it changed (`ChangeNotice`, with `Dentry.fs` for the name a path reached an inode through), and which queues the inotify records the changes raise (`InotifyDelivery.fs`); `PathWalk.fs` for resolving a path against it), the descriptor table and socket vocabulary (`FileDescriptorRegistry.fs`), paths and errno (`UnixPath.fs`, `UnixError.fs`; a path and every name in it is a NUL-free byte string, `UnixByteString.fs`, never a .NET `string`, so nothing decodes it), signals (`Signal.fs` for a signal and its numbering, `SignalState.fs` for dispositions, masks, pending signals and handler frames), how a process ended and what its parent reads of that (`ProcessTermination.fs`), and the Unix platform profile with its measured Linux/Darwin divergences (`SimulatedUnixPlatform.fs`, whose accessors are where a divergence is looked up; the per-syscall rules those accessors hand out live beside it in `StartingPointRules.fs` (where a `*at` call's relative path starts, which every path walk shares), `CreatingOpenRules.fs`, `MkDirRules.fs`, `MkNodRules.fs`, `RemovalRules.fs`, `RenameRules.fs`, `AccessRules.fs`, `StatRules.fs`, `AttributeChangeRules.fs`, `TimestampChangeRules.fs`, `OwnerChangeRules.fs` and `ProtectedFiles.fs`; the `<fcntl.h>` numbers several syscalls share are in `OpenFlagNumbering.fs`).
+
+The syscalls themselves are one module per family, each in its own file: `UnixSocket.fs`, `UnixConnection.fs`, `UnixPoll.fs` (poll and epoll), `UnixKqueue.fs` (Darwin's kqueue), `UnixInotify.fs` (Linux's inotify; an instance's watches and queue are `Inotify.fs`), `UnixDescriptor.fs`, `UnixPathResolution.fs`, `UnixReadWrite.fs`, `UnixNamespace.fs`, `UnixPipe.fs` (making a pipe; its buffer is `PipeBuffer.fs` and its table entry `PipeState.fs`), `UnixSignal.fs` (`kill`, `pthread_kill`, `sigaction`, `sigprocmask`, `pthread_sigmask`, `sigpending`, `sigsuspend`, `pause`, `sigreturn`, and delivery on return to user mode), `UnixClock.fs`, `UnixEntropy.fs` (its pool is `EntropyPool.fs`), `UnixCredentials.fs` (`setresuid`, `setresgid` and `setgroups`, and reading the IDs back), `UnixTaskLifecycle.fs` (a task joining or leaving, and the process ending; the thread IDs a task gets are minted by the machine's counter in `OsThreadId.fs`).
+`UnixSystem.fs` holds the whole-system operations (`Syscall`/`step`, `checkInvariants`, `initial`, the defaults) and `UnixSystemState.fs` the state record they all take (and the opaque `UnixBootImage` that `initial` makes; `UnixBootImage.fs` holds the boot-time setters, which take an image and so cannot be applied once `UnixBootImage.boot` has made the system a syscall takes), whose parts are `UnixMachine.fs` (the machine), `UnixProcess.fs` (the process) and `UnixTask.fs` (its tasks, and what each is parked in).
+A syscall that would block parks its task and answers a `WakeCondition` (`WakeCondition.fs`); `UnixWait.fs` records parks and says which parked tasks a state wakes, and each family's finishing function completes a woken call.
+
+## Commands
+
+The Nix devshell provides the pinned .NET SDK and everything the tests and checks start (a C compiler, `python3`, `alejandra`). Run `dotnet` as `nix develop -c dotnet ...`, never bare.
+
+- Build: `nix develop -c dotnet build`
+- Test: `nix develop -c dotnet test WoofWare.PosixKernel.Test/WoofWare.PosixKernel.Test.fsproj`
+- One fixture: `... --filter "FullyQualifiedName~TestPipe"`. A filter value containing spaces, such as `Name~Update API surface`, fails to parse in the NUnit adapter.
+- The `LargeMemory` fixtures: `... --filter "TestCategory=LargeMemory"`, on their own (see below).
+- Format: `nix develop -c dotnet fantomas .` for F#, `nix develop -c alejandra .` for Nix. CI checks both.
+- Flake checks (the prose and docstring checks below): `nix flake check`
+- Pack: `nix develop -c dotnet pack --configuration Release`, which writes `WoofWare.PosixKernel/bin/Release/WoofWare.PosixKernel.<version>.nupkg`.
+
+The solution file is `WoofWare.PosixKernel.slnx`. The build treats warnings as errors and is deterministic.
+
+### Tests worth knowing about
+
+- **`LargeMemory` fixtures are `[<Explicit>]`**, so a bare `dotnet test` skips them: they need buffers longer than one Linux call moves (0x7FFFF000 bytes) and peak at about 6.5 GB resident. Run them with `--filter "TestCategory=LargeMemory"`, and never beside another test host: beside another test host they exhausted a 16 GB CI runner, which died with only "The operation was canceled". CI gives them a step of their own, after the rest of the suite.
+- **The test host's GC heap is capped at 8 GiB** (`System.GC.HeapHardLimit` in the test `.fsproj`, asserted by `TestGcHeapHardLimit`). An `OutOfMemoryException` from a test means that test outgrew 8 GiB; don't raise the cap to make it pass. "Test host process crashed" with no stderr usually means the OS reaped the process for memory, not that the diff under test is wrong.
+- **Host-equality tests** (`*AgainstHost`) compare the library with the real kernel running the test, so macOS locally and Linux in CI each check one flavour's column. Some start `python3` or a C compiler, which the devshell provides; `TestSignalFuzz` builds its harness with `cc`, and fails rather than skips when `POSIXKERNEL_REQUIRE_C_COMPILER=1` (set by the devshell) says a compiler was promised.
+- **The differential fuzzers** (`TestSocketFuzz`, `TestSignalFuzz`) replay committed corpora by default. `TestSocketFuzz`'s live mode (`POSIXKERNEL_SOCKET_FUZZ=1`) runs the harness in a Linux container through Apple's `container` CLI; read the fixture before using it.
+- **The public API is recorded** in `WoofWare.PosixKernel/SurfaceBaseline.txt`, which the library embeds, and `TestSurface` (G-Research's ApiSurface) fails whenever the compiled API differs from it. After an intended API change, regenerate the file with `nix develop -c dotnet test WoofWare.PosixKernel.Test/WoofWare.PosixKernel.Test.fsproj --filter "FullyQualifiedName~TestSurface&Name~Update"` and commit it with the change; Debug and Release builds give the same file, because the library compiles with `--always-inline+` (an unoptimised F# build otherwise exposes a public `<f>__debug@N` copy of each `inline` function it calls). The regenerating test is deliberately not ApiSurface's `writeAssemblyBaseline`, which would also bump `version.json` and so move the package to 1.0 on the first removal. A conflict in `SurfaceBaseline.txt` after a rebase is resolved by regenerating the file once the code has merged, never by hand. The baseline also records each union case's tag (the `Tags` class's literal values), and `TestSurface`'s second test, through `UnionCaseOrder`, fails if a union lost or reordered cases, or gained a case anywhere but at its end, relative to it, since code built against the baseline would then misread the cases it already knew (an appended case changes no existing case's tag, though from 1.0 it is a major version too, per the README's "Unions that gain cases"). Before 1.0 such a change is made deliberately by regenerating the baseline with the same command. A third test (`RecordLabels`) fails if a public record new since the baseline, or a field added to a record the baseline has, reuses a field label that another baseline record has: F# resolves a shared label to the most recently declared record, so the reuse can change what client code means. Rename the field; regenerating the baseline grandfathers the collision, which is a deliberate choice.
+- `dotnet test --no-build` runs whatever binary is already in `bin/`. Reverting a temporary source edit (a probe, a mutation) does not take effect until the next build. When a suite fails on precisely the test you were just poking, suspect the stale binary before suspecting the diff.
+- Never run the suite as `dotnet test ... | grep ... | head -N`: `head` closes the pipe early, so the exit code is `head`'s and the `Total tests:` summary is lost. Capture the output to a file and grep the file for `Total tests:|Test Run (Successful|Failed)`.
+
+## Speaking POSIX, not a client's language
+
+The library is meant to be usable by a client that has never heard of .NET or of PawPrint.
+
+- **It must not reference a client.** `TestNoPawPrintReference` asserts mechanically that it references no WoofWare.PawPrint assembly. Its *prose* must not name one either: `scripts/check-client-references.py`, the `client-references` flake check, fails if any library `.fs` line (code, docstring, comment or string) names `PawPrint`, `KernelConfig`, `EmulatedKernel`, `IlMachineState`, `NativeSystemNative` or a few other PawPrint symbols; names CoreCLR at all (CoreCLR, CoreLib, the shim, `SystemNative_*`, the BCL, the PAL); or calls the process a "guest". Name the library's own function, or "a client", "the caller" or "the process", instead; if a fact is about a client, it belongs in that client. The one exemption is a permalink into PawPrint's `docs/` pinned to a full commit hash (`https://github.com/Smaug123/WoofWare.PawPrint/blob/<sha>/docs/...`), which cites a measurement written up there before the library had a repository of its own. `scripts/test-client-references.sh` is the checker's contract, and the flake check runs it first.
+- **It states POSIX values and no client's encoding of them**: a raw `<errno.h>` number in each flavour's own numbering, epoll's own readiness conditions, the sockets it will create, a signo, an `open(2)` flag word. Converting those to and from a client's encoding is the client's business, in the client's repository. Read the prose when you add or move something: a POSIX-named declaration documented in a client's terms is how such an encoding comes back, and no check can see that.
+- **A fact the process could learn about its platform is data in the simulated kernel, never a host read.** The library must not call `System.Environment`, `DateTime.Now`, `Guid.NewGuid`, the filesystem, or anything else whose answer depends on the machine running it: a replay would then depend on the machine that produced it. `SimulatedUnixPlatform` holds what is true of a kernel's source (the same on every machine running it); boot-time and per-process configuration holds what a different administrator could change. The `emulated-posix-kernel` skill says how to tell them apart.
+- **What the kernel leaves to the client** (user memory and `mmap`, blocks inside the process, choosing which task runs, when time passes, running a signal handler, `sigaltstack`, process creation) is a section of the README. Change that section when you move the line.
+
+## Docstrings
+
+`WoofWare.PosixKernel/AGENTS.md` says how the library's docstrings are written; read it before writing one.
+
+An F# `///` block binds to the declaration that *follows* it, so moving a definition without its docstring silently re-binds the prose to whatever now follows, invisibly to the compiler, the tests and the diff. `scripts/check-docstring-attachment.py` catches that, and the other way prose comes adrift, which is *inserting* a declaration between a docstring and its subject. CI runs it on every pull request, over every `.fs` file the change touches, against the commit the change starts from; run the same thing locally with `scripts/check-docstring-attachment-branch.sh`, which defaults to the merge base with `origin/main`. Renames, splits whose wrapper's new docstring refers to the new declaration in backticks or a `cref`, and shared one-liners are not reported; the script's header lists what else it cannot tell apart. When a report is not a detachment (a repair of one, or a rename onto a name used elsewhere), read it, then add a `Docstring-attachment: reviewed` trailer to a commit in the change, and CI accepts it with a warning. `scripts/test-docstring-attachment.sh` is the check's own executable contract: thirty-six shapes, eighteen of which must report and eighteen of which must stay silent. The `docstring-attachment` flake check runs it and the branch wrapper's contract.
+
+`scripts/check-move-is-rename-only.sh <base-ref> [old:new]...` is its companion for a change that moves definitions between files: it verifies that the moves changed nothing but their namespace and `open` lines, and its header lists what it cannot see.
+
+## Code style
+
+* Functions should be fully type-annotated, to give the most helpful error messages on type mismatches.
+* Generally, prefer to fully-qualify discriminated union cases in `match` statements.
+* ALWAYS fully-qualify enum cases when constructing them and matching on them.
+* A call the model does not cover refuses with a typed value rather than inventing an answer: an internal `tryX` answers `Result<_, XRefusal>`, and only the public entry point throws (`UnmodelledException` where the model does not cover the call, a BCL argument or operation exception for a call no client following the documentation could make). The `emulated-posix-kernel` skill has the details.
+* When writing a "TODO" `failwith`, specify in the error message the condition that triggers the failure, so that a failing run can easily be traced back to its cause.
+* In F#, compilation order matters: new functions must go after their dependencies, and later files can only depend on earlier ones in the `.fsproj`.
+* Prefer specific descriptions to the words "load-bearing" and "seam".
+* Put only what a *caller* needs on a docstring; anything else is an inline comment.
+* No backward-looking or one-time review-focused narrative comments. Don't describe what the code used to look like (that's why Git exists!), and don't discuss alternative counterfactual implementations.
+
+## Architecture guidelines
+
+* When a lookup fails because a value is not represented in that index, do not broaden the lookup to return a related value. Keep lookup helpers honest: they return exactly what the index contains, or `None`/an error.
+* If callers use a classifier, guard, predicate, or DU case to justify a later operation, keep that classifier's contract truthful and reliable for its callers.
+* Establish a kernel fact by measuring it on both flavours with a probe, not by reading kernel source; commit the probe and its output under `docs/`, and have a test hold the library to the output. Use source only to learn a rule's shape.
+
+When you find yourself making an architectural decision, come up with at least two genuinely different options and choose explicitly between them, considering blast radius if the choice turns out wrong, reversibility, and how much information each option preserves for downstream consumers. For non-trivial choices, write the option set down and confirm with Patrick before touching code. If you are unsure, stop and ask rather than guess.
+
+Keep changes small and reviewable; implement one feature per pull request.
+
+## Skills
+
+The repository's accumulated guidance lives in `.claude/skills/<name>/SKILL.md`. Claude Code loads one when the task matches its `description`; **any other agent should read the file directly**, because nothing will surface it automatically.
+
+| skill | read it when |
+| --- | --- |
+| `emulated-posix-kernel` | deciding how the kernel should answer a syscall, and before re-measuring a Linux/Darwin fact (the measured divergences are indexed there) |
+| `mutation-testing` | before claiming a test covers the failure mode it names |
+| `probe-methodology` | before writing any claim that a probe or measurement establishes |
+
+## Releases
+
+The package is published to nuget.org from this repository's CI on every push to `main` that changes its version. Nerdbank.GitVersioning computes the version from `WoofWare.PosixKernel/version.json` and the git height over that file's `pathFilters`, so CI needs full history (`fetch-depth: 0`). From 1.0, a new case in any union whose cases are public is a major version (README, "Unions that gain cases"); before 1.0, breaking changes are made deliberately, by regenerating `SurfaceBaseline.txt`.
+
+## Development workflow
+
+Once you think a change is finished, commit it on a branch (not `main`), then get a review from another agent and address the findings you think are right; repeat while you make changes.
+
+- From Claude Code, invoke OpenAI Codex: `~/.local/bin/codex -C <worktree> -p nix-review review --base main`, with output redirected to a file (it takes many minutes and produces a lot of text). The `-C <worktree>` must be the absolute path of the worktree you are working in; check that the log's `workdir:` line names it before trusting a verdict. Codex needs exclusive access to the working directory, so never run two reviews concurrently in one worktree, and do not edit or switch branches while one is running.
+- From Codex, invoke Claude: `claude --effort max --print "Please review this branch against main. The branch intends to..."`. It must be run with network permissions, and can take more than ten minutes. Don't adjust the prompt in ways that make a passing review more likely.
+
+Err on the side of addressing review feedback: latent bugs, poor architecture and incorrect comments are all worth fixing. When reviewing, only say "none of these are blockers" if the findings really are trivial.
+
+Before pushing review fixes to an open pull request, check it has not been merged in the meantime (`gh pr view <n> --json state`); if it has, branch fresh from `origin/main` and open a follow-up.
+
+## Common gotchas
+
+* BSD-style `sed -i '' 's/…/…/' file` fails in some agent shells (the empty backup-suffix argument gets dropped). For mechanical multi-file rewrites use `rg -l <pat> . | xargs perl -pi -e 's/.../.../g'` or a Python script with plain `str.replace`, and verify with `rg -c <old-token> .` afterwards. Perl interpolates `$` in the replacement, which corrupts F# interpolated strings.

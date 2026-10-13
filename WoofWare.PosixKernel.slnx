@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="WoofWare.PosixKernel/WoofWare.PosixKernel.fsproj" />
+  <Project Path="WoofWare.PosixKernel.Test/WoofWare.PosixKernel.Test.fsproj" />
+</Solution>
