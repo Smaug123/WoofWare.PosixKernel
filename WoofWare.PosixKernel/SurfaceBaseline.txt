@@ -1547,12 +1547,14 @@ WoofWare.PosixKernel.HardlinkProtection.NonOwnersNeedReadAndWrite [static proper
 WoofWare.PosixKernel.HardlinkProtection.Off [static property]: [read-only] WoofWare.PosixKernel.HardlinkProtection
 WoofWare.PosixKernel.HardlinkProtection.Tag [property]: [read-only] int
 WoofWare.PosixKernel.InetBinding`2 inherit obj, implements WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address> System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address> System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.InetBinding`2..ctor [constructor]: ('Endpoint, 'Address option, bool)
+WoofWare.PosixKernel.InetBinding`2..ctor [constructor]: ('Endpoint, 'Address option, bool, bool)
 WoofWare.PosixKernel.InetBinding`2.Endpoint [property]: [read-only] 'Endpoint
 WoofWare.PosixKernel.InetBinding`2.Equals [method]: (WoofWare.PosixKernel.InetBinding<'Endpoint, 'Address>, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.InetBinding`2.get_Endpoint [method]: unit -> 'Endpoint
+WoofWare.PosixKernel.InetBinding`2.get_HoldsPort [method]: unit -> bool
 WoofWare.PosixKernel.InetBinding`2.get_LockedAddress [method]: unit -> 'Address option
 WoofWare.PosixKernel.InetBinding`2.get_LockedPort [method]: unit -> bool
+WoofWare.PosixKernel.InetBinding`2.HoldsPort [property]: [read-only] bool
 WoofWare.PosixKernel.InetBinding`2.LockedAddress [property]: [read-only] 'Address option
 WoofWare.PosixKernel.InetBinding`2.LockedPort [property]: [read-only] bool
 WoofWare.PosixKernel.Inode inherit obj, implements WoofWare.PosixKernel.Inode System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.Inode System.IComparable, System.IComparable, System.Collections.IStructuralComparable

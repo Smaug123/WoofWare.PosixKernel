@@ -80,6 +80,7 @@ module TestListen =
                 Endpoint = endpoint
                 LockedAddress = Some endpoint.Address
                 LockedPort = true
+                HoldsPort = true
             }
 
     let private listenOrFail (fd : int) (backlog : int) (system : UnixSystem<int, string>) =
@@ -143,6 +144,7 @@ module TestListen =
                     Endpoint = where
                     LockedAddress = None
                     LockedPort = false
+                    HoldsPort = true
                 }
         )
 
@@ -355,9 +357,9 @@ module TestListen =
             UnixSocket.tryListen fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
-    /// Only `Idle` and `Listening` have measured answers; the rest are refused
-    /// rather than guessed at, EISCONN for a connected socket being only
-    /// plausible.
+    /// Only `Idle`, `Listening` and `Refused` have measured answers; the rest
+    /// are refused rather than guessed at, EISCONN for a connected socket being
+    /// only plausible.
     [<TestCaseSource(nameof platforms)>]
     let ``a stream socket in an unmeasured phase is refused`` (platform : SimulatedUnixPlatform) : unit =
         let phases =
@@ -365,8 +367,6 @@ module TestListen =
                 SocketPhase.EstablishedPendingReport (ConnectionId 7L)
                 SocketPhase.Established (ConnectionId 7L, ConnectionEnd.Client)
                 SocketPhase.Established (ConnectionId 7L, ConnectionEnd.Server)
-                SocketPhase.Refused RefusalError.Pending
-                SocketPhase.Refused RefusalError.Reported
                 SocketPhase.DatagramPeer (SocketAddress.Inet (loopback 9000us))
             ]
 
@@ -379,6 +379,24 @@ module TestListen =
 
             UnixSocket.tryListen fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredPhase (SocketId 0L, phase)))
+
+    /// A socket whose connect was refused answers EINVAL, whether or not the
+    /// refusal has been reported, on both flavours (measured,
+    /// `docs/probes/refused-connect-port`, the rows ending in 3).
+    [<TestCaseSource(nameof platforms)>]
+    let ``a refused socket's listen is EINVAL`` (platform : SimulatedUnixPlatform) : unit =
+        for error in [ RefusalError.Pending ; RefusalError.Reported ] do
+            let fd, system =
+                withSocket
+                    (SocketId 0L)
+                    (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false (SocketPhase.Refused error))
+                    (systemOn platform)
+
+            match UnixSocket.tryListen fd 8 system with
+            | Ok (answer, after) ->
+                answer |> shouldEqual (ListenAnswer.Failed UnixError.EINVAL)
+                after |> shouldEqual system
+            | Error refusal -> failwith $"%A{error}: refused %A{refusal}"
 
     /// The kind screen precedes the phase screen: a *datagram* socket in one of
     /// those phases is answered EOPNOTSUPP rather than refused, which is what
@@ -427,6 +445,7 @@ module TestListen =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
                             LockedAddress = None
                             LockedPort = false
+                            HoldsPort = true
                         })
                     false
                     SocketPhase.Idle)

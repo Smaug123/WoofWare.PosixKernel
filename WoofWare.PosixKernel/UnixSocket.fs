@@ -186,7 +186,7 @@ type internal ListenRefusal =
     /// The descriptor is a stream socket in a phase whose `listen(2)` answer is
     /// unmeasured -- plausibly `EISCONN` for a connected one.
     | UnmeasuredPhase of socket : SocketId * phase : SocketPhase
-    /// The socket had no address, so this call binds it, and every port in the
+    /// The socket held no port, so this call binds one, and every port in the
     /// ephemeral range is taken.
     | EphemeralPortsExhausted of range : uint16 * uint16
     /// An IPv6 socket. Measured, a listener with `IPV6_V6ONLY` off accepts
@@ -208,7 +208,7 @@ module internal ListenRefusal =
         | ListenRefusal.UnmeasuredPhase (socket, phase) ->
             $"the descriptor is socket %O{socket}, a stream socket in %A{phase}, and what `listen(2)` answers for one is unmeasured -- plausibly EISCONN for a connected socket. Measure it rather than guessing."
         | ListenRefusal.EphemeralPortsExhausted (low, high) ->
-            $"this socket has no address, so `listen(2)` binds it, and every port in the ephemeral range %d{low}-%d{high} is taken. Widen the range, or measure what a real kernel says here."
+            $"this socket holds no port, so `listen(2)` binds one, and every port in the ephemeral range %d{low}-%d{high} is taken. Widen the range, or measure what a real kernel says here."
         | ListenRefusal.Ipv6Listener socket ->
             $"socket %O{socket} is an IPv6 socket, and this kernel models no IPv6 listener. A dual-mode listener's accepted sockets and the v4-mapped peers accept reports for them are measured but not modelled, and an unbound one would bind to ::, which takes IPv6 addresses this kernel has no transport for."
 
@@ -1269,6 +1269,19 @@ module UnixSocket =
             failwith
                 $"UnixSocket.%s{call}: socket %O{socketId} is bound, and yet getsockname would not report its address: %s{GetSockNameRefusal.describe refusal} %s{call} refuses every such socket before binding it, so this is a bug in this library."
 
+    /// Whether `bind(2)` finds `socket` already bound. Linux's `inet_bind`
+    /// judges `inet_num`, the port the socket holds, not its address: a
+    /// datagram socket whose dissolve left it half-bound (`127.0.0.1:0`)
+    /// rebinds, measured on both addresses and both kinds of port, and so does
+    /// a stream socket whose refused connect gave its port back. Darwin judges
+    /// the port the socket reports (`SimulatedUnixPlatform.bindJudgesHeldPort`).
+    let private alreadyBound (platform : SimulatedUnixPlatform) (socket : SocketDescription) : bool =
+        socket.Ipv4Binding
+        |> Option.exists (fun binding ->
+            binding.Endpoint.Port <> 0us
+            && (binding.HoldsPort || not (SimulatedUnixPlatform.bindJudgesHeldPort platform))
+        )
+
     /// `bind(2)` once every fault has been ruled out: give `socketId` the IPv4
     /// `binding`, choosing a port for it if it asks for port 0.
     let private bindAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1418,6 +1431,7 @@ module UnixSocket =
                     // exactly this.
                     LockedAddress = Some endpoint.Address
                     LockedPort = endpoint.Port <> 0us
+                    HoldsPort = true
                 }
             )
 
@@ -1459,13 +1473,7 @@ module UnixSocket =
                 BindFault.Family, familyFault
                 BindFault.AddressNotLocal, addressNotLocalFault
                 BindFault.PrivilegedPort, privilegedPortFault
-                // Linux's `inet_bind` refuses on `inet_num`, the port, not on
-                // the address: a datagram socket whose dissolve left it
-                // half-bound (`127.0.0.1:0`) rebinds -- measured, on both
-                // addresses and both kinds of port.
-                BindFault.AlreadyBound,
-                (socket.Ipv4Binding
-                 |> Option.exists (fun binding -> binding.Endpoint.Port <> 0us))
+                BindFault.AlreadyBound, alreadyBound platform socket
                 BindFault.AddressInUse, addressInUseFault
             ]
             |> List.choose (fun (fault, holds) -> if holds then Some fault else None)
@@ -1552,9 +1560,7 @@ module UnixSocket =
             | SocketAddressing.Inet6DualMode _
             | SocketAddressing.Unix _ -> false
 
-        let alreadyBoundFault =
-            socket.Ipv4Binding
-            |> Option.exists (fun binding -> binding.Endpoint.Port <> 0us)
+        let alreadyBoundFault = alreadyBound platform socket
 
         let addressNotLocalFault =
             match mapped with
@@ -1574,6 +1580,7 @@ module UnixSocket =
                     Endpoint = endpoint
                     LockedAddress = Some endpoint.Address
                     LockedPort = endpoint.Port <> 0us
+                    HoldsPort = true
                 }
             )
 
@@ -1718,6 +1725,13 @@ module UnixSocket =
         // Split out rather than matched in place: a refusal in a `failwith`
         // types as anything, but a refusal that is a value has to be produced
         // before the rest of the function continues.
+        match socket.Phase with
+        // Measured on both, whatever bound the socket, and whether or not
+        // anything has reported the refusal (`docs/probes/refused-connect-port`,
+        // the rows ending in 3).
+        | SocketPhase.Refused _ -> Ok (ListenAnswer.Failed UnixError.EINVAL, system)
+        | _ ->
+
         let unmeasuredPhase =
             match socket.Phase with
             | SocketPhase.Idle
@@ -1738,7 +1752,8 @@ module UnixSocket =
         // docs/plans/2026-10-08-tcp-shutdown-linger).
         match binding with
         | Some binding when
-            SimulatedUnixPlatform.listenRescreensBinding system.Machine.UnixPlatform
+            binding.HoldsPort
+            && SimulatedUnixPlatform.listenRescreensBinding system.Machine.UnixPlatform
             && not (SocketPhase.isListening socket.Phase)
             && UnixMachineState.bindingConflicts socketId socket binding system.Machine
             ->
@@ -1747,7 +1762,27 @@ module UnixSocket =
 
         match
             (match binding with
-             | Some binding -> Some (binding, system.Machine)
+             | Some binding when binding.HoldsPort -> Some (binding, system.Machine)
+             | Some released ->
+                 // A Linux refused connect gave the port back: listen binds a
+                 // new one at the binding's address, as for a socket with no
+                 // port (measured, `docs/probes/refused-connect-port`, the rows
+                 // ending in 3). Darwin's refused socket never listens.
+                 let candidate (port : uint16) : Ipv4Binding =
+                     { released with
+                         Endpoint =
+                             { released.Endpoint with
+                                 Port = port
+                             }
+                         HoldsPort = true
+                     }
+
+                 UnixMachineState.allocateEphemeralPort
+                     EphemeralPortUse.Reserve
+                     socketId
+                     socket
+                     candidate
+                     system.Machine
              | None ->
                  // `listen(2)` on an unbound socket binds it to the wildcard and
                  // an ephemeral port. Measured on both.
@@ -1758,6 +1793,7 @@ module UnixSocket =
                          // locked.
                          LockedAddress = None
                          LockedPort = false
+                         HoldsPort = true
                      }
 
                  UnixMachineState.allocateEphemeralPort

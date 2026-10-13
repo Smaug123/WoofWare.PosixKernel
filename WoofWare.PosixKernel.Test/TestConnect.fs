@@ -87,6 +87,7 @@ module TestConnect =
                 Endpoint = endpoint
                 LockedAddress = Some endpoint.Address
                 LockedPort = true
+                HoldsPort = true
             }
 
     /// A client socket bound to loopback, and the descriptor it is open on.
@@ -625,6 +626,7 @@ module TestConnect =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
                             LockedAddress = None
                             LockedPort = false
+                            HoldsPort = true
                         }
 
                 if socket.Ipv4Binding <> Some expected then
@@ -741,6 +743,57 @@ module TestConnect =
 
         refusedBy fd other system
         |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, true))
+
+    /// Under Linux a refused connect gives back a port no `bind(2)` chose, and
+    /// the socket's next connect chooses a port as an unbound socket's does
+    /// (measured, `docs/probes/refused-connect-port`, rows Ib4 and Ib5). So a
+    /// connect to the port it gave back is no simultaneous open unless it
+    /// chooses that port again, which here it does not: the range's other port
+    /// is next.
+    [<Test>]
+    let ``a Linux connect to the port its refusal gave back is no simultaneous open`` () : unit =
+        let platform = SimulatedUnixPlatform.linuxX64
+
+        let system =
+            systemOnWith
+                (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                 >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                platform
+
+        let fd, system =
+            withSocket (SocketId 0L) (streamSocket None SocketPhase.Idle) system
+
+        let answer, system = connectTo fd 16u (loopback 1us) system
+        answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
+        let given = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+
+        given
+        |> Option.map (fun binding -> binding.Endpoint.Port, binding.HoldsPort)
+        |> shouldEqual (Some (40000us, false))
+
+        let answer, system = connectTo fd 16u (loopback 40000us) system
+        answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
+
+        (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+        |> Option.map (fun binding -> binding.Endpoint)
+        |> shouldEqual (Some (Ipv4Endpoint.ofParts Ipv4Address.any 40001us))
+
+    /// Where the only port the socket's next connect can choose is the one its
+    /// refusal gave back, the connect is from that port to itself, a
+    /// simultaneous open, and refused as one.
+    [<Test>]
+    let ``a Linux connect that chooses again the port its refusal gave back is a simultaneous open`` () : unit =
+        let fd, system =
+            withSocket
+                (SocketId 0L)
+                (streamSocket None SocketPhase.Idle)
+                (systemWithOnePort SimulatedUnixPlatform.linuxX64 40000us)
+
+        let answer, system = connectTo fd 16u (loopback 1us) system
+        answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
+
+        refusedBy fd (loopback 40000us) system
+        |> shouldEqual (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet (loopback 40000us)))
 
     /// The sockaddr copy's refusals come through `connect` under `Copy`, so a
     /// client matching on one type sees both kinds of refusal.

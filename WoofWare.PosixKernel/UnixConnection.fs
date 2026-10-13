@@ -552,6 +552,16 @@ module UnixConnection =
                         }
                 }
 
+        // What the refusal itself does to the binding, as it arrives and
+        // whether or not anything has reported it yet: it gives the port back
+        // by the platform's rule, and getsockname goes on reporting it.
+        let bindingOnRefusal (binding : Ipv4Binding) : Ipv4Binding =
+            { binding with
+                HoldsPort =
+                    binding.HoldsPort
+                    && not (SimulatedUnixPlatform.refusalReleasesPort system.Machine.UnixPlatform binding.LockedPort)
+            }
+
         // connect(2)'s implicit bind, when the socket has no local address
         // yet: loopback source, ephemeral port, the same conflict rule as
         // bind(2)'s own port-0 path. The source address for a non-loopback
@@ -566,6 +576,47 @@ module UnixConnection =
             : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             match current with
+            | Some binding when not binding.HoldsPort ->
+                // A Linux refused connect gave the port back, and the socket
+                // connects as one with no port: a new port, at the binding's
+                // address, which a wildcard resolves to loopback (measured,
+                // `docs/probes/refused-connect-port`, the rows ending in 4).
+                // Darwin's refused socket never connects again.
+                let address =
+                    if binding.Endpoint.Address <> Ipv4Address.any then
+                        Some binding.Endpoint.Address
+                    elif dest.Address = Ipv4Address.loopback then
+                        Some Ipv4Address.loopback
+                    else
+                        None
+
+                match address with
+                | None ->
+                    Error (ConnectRefusal.SourceForNonLoopbackDestination (socketId, SocketAddress.Inet dest, true))
+                | Some address ->
+
+                let candidate (port : uint16) : Ipv4Binding =
+                    { binding with
+                        Endpoint = Ipv4Endpoint.ofParts address port
+                        HoldsPort = true
+                    }
+
+                match
+                    UnixMachineState.allocateEphemeralPort
+                        (EphemeralPortUse.ConnectTo dest)
+                        socketId
+                        sock
+                        candidate
+                        system.Machine
+                with
+                | Some (binding, machine) ->
+                    Ok (
+                        binding,
+                        { system with
+                            Machine = machine
+                        }
+                    )
+                | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
             | Some binding when binding.Endpoint.Port = 0us ->
                 // Half-bound: a datagram dissolve kept the locked address and
                 // dropped the port. Linux's `inet_autobind` gives it a port and
@@ -632,6 +683,7 @@ module UnixConnection =
                     // address all the way to the wildcard.
                     LockedAddress = None
                     LockedPort = false
+                    HoldsPort = true
                 }
 
             match
@@ -880,10 +932,13 @@ module UnixConnection =
 
                 // A wildcard binding's source is 127.0.0.1 towards 127.0.0.1;
                 // towards any other address it is unmeasured, and the implicit
-                // bind below refuses it.
+                // bind below refuses it. A port a refused connect gave back is
+                // not the socket's own: its connect chooses one, which is
+                // checked below.
                 match sock.Ipv4Binding with
                 | Some binding when
-                    binding.Endpoint.Port = dest.Port
+                    binding.HoldsPort
+                    && binding.Endpoint.Port = dest.Port
                     && (binding.Endpoint.Address = dest.Address
                         || binding.Endpoint.Address = Ipv4Address.any
                            && dest.Address = Ipv4Address.loopback)
@@ -926,10 +981,12 @@ module UnixConnection =
                 match ensureBound dest system with
                 | Error refusal -> Error refusal
                 | Ok (binding, system) when binding.Endpoint = dest ->
-                    // Only an unbound socket gets here, a bound one having been
-                    // answered above: its implicit bind took the destination's
-                    // own port. Darwin keeps what that bind made, the wildcard
-                    // at the port, from before the source resolved to loopback.
+                    // Only a socket with no port of its own gets here, one
+                    // holding a port having been answered above: unbound, or
+                    // under Linux one whose refused connect gave its port back.
+                    // Its implicit bind took the destination's own port. Darwin
+                    // keeps what that bind made, the wildcard at the port, from
+                    // before the source resolved to loopback.
                     let implicitBinding =
                         { binding with
                             Endpoint =
@@ -985,7 +1042,11 @@ module UnixConnection =
                                             { sock with
                                                 Addressing =
                                                     SocketAddressing.replaceBinding
-                                                        (Some (bindingAfterRefusalDelivery flavour binding))
+                                                        (Some (
+                                                            bindingAfterRefusalDelivery
+                                                                flavour
+                                                                (bindingOnRefusal binding)
+                                                        ))
                                                         sock.Addressing
                                                 Phase = phase
                                             }
@@ -1014,7 +1075,9 @@ module UnixConnection =
                                             socketId
                                             { sock with
                                                 Addressing =
-                                                    SocketAddressing.replaceBinding (Some binding) sock.Addressing
+                                                    SocketAddressing.replaceBinding
+                                                        (Some (bindingOnRefusal binding))
+                                                        sock.Addressing
                                                 Phase = SocketPhase.Refused RefusalError.Pending
                                             }
                                             system.Machine.Sockets
@@ -1235,6 +1298,7 @@ module UnixConnection =
                                 // No bind(2) ran.
                                 LockedAddress = None
                                 LockedPort = false
+                                HoldsPort = true
                             }
 
                         match
@@ -1450,6 +1514,7 @@ module UnixConnection =
                                     // No bind(2) ran.
                                     LockedAddress = None
                                     LockedPort = false
+                                    HoldsPort = true
                                 }
 
                         match
@@ -1923,6 +1988,7 @@ module UnixConnection =
                                     // refusal delivery can ever revert it.
                                     LockedAddress = None
                                     LockedPort = false
+                                    HoldsPort = true
                                 })
                             listener.Addressing
                     Kind = SocketKind.Stream

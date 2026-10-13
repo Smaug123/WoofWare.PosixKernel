@@ -1433,6 +1433,31 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> true
         | SimulatedUnixFlavour.Darwin -> false
 
+    /// Whether a refused TCP connect gives back the port of a socket whose
+    /// port `bind(2)` chose (`lockedPort`) or did not. A port given back
+    /// holds off no other socket's bind, though `getsockname` goes on
+    /// reporting it. Linux's reset (`tcp_set_state` to `TCP_CLOSE`) gives back
+    /// a port only if no `bind(2)` chose it; Darwin gives back every port.
+    /// Measured on both, for a port connect's implicit bind chose, one
+    /// `bind(2)` chose and one it allocated, refused blocking, non-blocking and
+    /// with `SO_ERROR` read (`docs/probes/refused-connect-port`, the rows ending
+    /// in 1).
+    let internal refusalReleasesPort (platform : SimulatedUnixPlatform) (lockedPort : bool) : bool =
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> not lockedPort
+        | SimulatedUnixFlavour.Darwin -> true
+
+    /// Whether `bind(2)` judges a socket already bound by the port it holds
+    /// (Linux's `inet_num`), rather than by the port `getsockname` reports
+    /// (Darwin's `inp_lport`). The two differ only for a socket whose refused
+    /// connect gave its port back (`refusalReleasesPort`), which binds again
+    /// on Linux and is EINVAL on Darwin (measured,
+    /// `docs/probes/refused-connect-port`, the rows ending in 2).
+    let internal bindJudgesHeldPort (platform : SimulatedUnixPlatform) : bool =
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> true
+        | SimulatedUnixFlavour.Darwin -> false
+
     /// Where this platform keeps a socket address's family, and how wide it is.
     /// See `SockaddrFamilyField`, which is also where the reason every other
     /// field's offset is flavour-free is written down.
