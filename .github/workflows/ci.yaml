@@ -239,7 +239,10 @@ jobs:
   # environment. NUGET_USER is the nuget.org profile name that owns that policy.
   nuget-publish:
     runs-on: ubuntu-latest
-    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0;
+    # no need to publish all those intermediate states
+    if: false
+    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
     needs: [attestation]
     environment: main-deploy
     permissions:
@@ -277,7 +280,10 @@ jobs:
 
   github-release:
     runs-on: ubuntu-latest
-    if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
+    # Still doing a whole load of refactors pre-1.0;
+    # no need to publish all those intermediate states
+    if: false
+    # if: ${{ !github.event.repository.fork && github.ref == 'refs/heads/main' }}
     needs: [all-required-checks-complete]
     environment: main-deploy
     permissions:
