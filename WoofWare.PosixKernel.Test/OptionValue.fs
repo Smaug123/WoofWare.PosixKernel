@@ -56,15 +56,15 @@ module internal SockOptCalls =
     /// A `setsockopt` of the value buffer `value`, declared `optionLength`
     /// bytes long, whose first `count` bytes are `contents count` wherever the
     /// kernel copies `count` of them.
-    let set<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let set<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
         (contents : int -> ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let expected =
             let supplied =
@@ -92,15 +92,15 @@ module internal SockOptCalls =
 
     /// A `getsockopt` into the value buffer `value` whose length cell, at
     /// `length`, holds `cell`.
-    let get<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let get<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
         (cell : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<GetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let expected =
             let read =

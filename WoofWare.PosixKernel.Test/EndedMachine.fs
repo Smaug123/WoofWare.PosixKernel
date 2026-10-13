@@ -12,9 +12,9 @@ module EndedMachine =
     /// on the machine and stands in no directory, and nothing else has moved.
     /// Its descriptors are not closed, so each description is still counted as
     /// named by as many as before.
-    let assertTasksGone<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (before : UnixSystem<'Task, 'Handler>)
-        (ended : EndedProcess<'Task, 'Handler>)
+    let assertThreadsGone<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (before : UnixSystem<'Thread, 'Handler>)
+        (ended : EndedProcess<'Thread, 'Handler>)
         : unit
         =
         ThreadIdAllocator.live ended.Machine.ThreadIds |> shouldEqual Set.empty

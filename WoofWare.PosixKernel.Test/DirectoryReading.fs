@@ -22,10 +22,10 @@ module internal DirectoryReading =
         }
 
     /// Open `path` as `opendir` does, answering the descriptor or the errno.
-    let openDirectory<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let openDirectory<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<int, UnixError> * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<int, UnixError> * UnixSystem<'Thread, 'Handler>
         =
         match Answered.openPath flags path 0 system with
         | SyscallAnswer.Completed fd, system -> Ok (int fd), system
@@ -33,12 +33,12 @@ module internal DirectoryReading =
 
     /// Every entry `fd` yields until end-of-directory. A failure or a refusal
     /// fails the fixture, as does a position that never reaches the end.
-    let drain<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : DirectoryRecord list * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : DirectoryRecord list * UnixSystem<'Thread, 'Handler>
         =
-        let rec go (fuel : int) (acc : DirectoryRecord list) (system : UnixSystem<'Task, 'Handler>) =
+        let rec go (fuel : int) (acc : DirectoryRecord list) (system : UnixSystem<'Thread, 'Handler>) =
             if fuel <= 0 then
                 failwith $"fd %d{fd} did not reach end-of-directory after %d{List.length acc} entries"
 

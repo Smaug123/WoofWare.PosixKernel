@@ -7,19 +7,19 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module ForgedPark =
 
-    /// `system` with the unparked task `task` parked in `parked`, at the next
+    /// `system` with the unparked thread `thread` parked in `parked`, at the next
     /// park ordinal, holding those of the descriptions it names that the open
     /// file table holds. `UnixWait.park` refuses a park on a description the
     /// table does not hold, which is exactly the park a test of
     /// `ParkedOnAbsentDescription` needs.
-    let onAbsent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let onAbsent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
-        if (UnixTaskTable.parkOf task system.Tasks).IsSome then
-            failwith $"ForgedPark.onAbsent: task %O{task} is parked already"
+        if (UnixThreadTable.parkOf thread system.Threads).IsSome then
+            failwith $"ForgedPark.onAbsent: thread %O{thread} is parked already"
 
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
 
@@ -34,12 +34,12 @@ module ForgedPark =
                     OpenFiles = openFiles
                     NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
                 }
-            Tasks =
-                UnixTaskTable.withPark
-                    task
+            Threads =
+                UnixThreadTable.withPark
+                    thread
                     {
                         Syscall = parked
                         Ordinal = system.Machine.NextParkOrdinal
                     }
-                    system.Tasks
+                    system.Threads
         }

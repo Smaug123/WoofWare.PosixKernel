@@ -166,21 +166,21 @@ module TestTotalQueries =
 
         Check.One (Config.QuickThrowOnFailure, Prop.forAll (Arb.fromGen gen) property)
 
-    /// A client names a task by its own identity, and the process holds a task
+    /// A client names a thread by its own identity, and the process holds a thread
     /// by that name only from its creation to its exit; so the library has no
-    /// public question about one task by its name, and a client looks the
-    /// name up in `UnixSystem.tasks` and reads the state it finds.
+    /// public question about one thread by its name, and a client looks the
+    /// name up in `UnixSystem.threads` and reads the state it finds.
     [<Test>]
-    let ``UnixTaskTable asks nothing about a single task by its name`` () : unit =
+    let ``UnixThreadTable asks nothing about a single thread by its name`` () : unit =
         let table =
-            typeof<VirtualFileSystem>.Assembly.GetType ("WoofWare.PosixKernel.UnixTaskTable", true)
+            typeof<VirtualFileSystem>.Assembly.GetType ("WoofWare.PosixKernel.UnixThreadTable", true)
 
         table.GetMethods (BindingFlags.Public ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
         |> Array.map (fun (f : MethodInfo) -> f.Name)
         |> shouldEqual [| "reconcile" |]
 
     [<Test>]
-    let ``a task is in UnixSystem.tasks from its creation to its exit, with the processor and ID it was given``
+    let ``a thread is in UnixSystem.threads from its creation to its exit, with the processor and ID it was given``
         ()
         : unit
         =
@@ -195,27 +195,27 @@ module TestTotalQueries =
             let child = 1
 
             if unknown <> 0 && unknown <> child then
-                Map.tryFind unknown (UnixSystem.tasks system) |> shouldEqual None
+                Map.tryFind unknown (UnixSystem.threads system) |> shouldEqual None
 
-            Map.tryFind child (UnixSystem.tasks system) |> shouldEqual None
+            Map.tryFind child (UnixSystem.threads system) |> shouldEqual None
 
             let tid, system =
-                match UnixTaskLifecycle.trySpawn 0 child (CpuId cpu.Get) system with
+                match UnixThreadLifecycle.trySpawn 0 child (CpuId cpu.Get) system with
                 | Ok (SpawnAnswer.Spawned tid, system) -> tid, system
-                | other -> failwith $"spawning task %d{child}: %A{other}"
+                | other -> failwith $"spawning thread %d{child}: %A{other}"
 
-            match Map.tryFind child (UnixSystem.tasks system) with
-            | Some task ->
-                UnixTaskState.cpu task |> shouldEqual (CpuId cpu.Get)
-                UnixTaskState.osThreadId task |> shouldEqual tid
-                UnixTaskState.parkedIn task |> shouldEqual None
-            | None -> failwith $"task %d{child} was spawned, but the process holds no task by that name"
+            match Map.tryFind child (UnixSystem.threads system) with
+            | Some thread ->
+                UnixThreadState.cpu thread |> shouldEqual (CpuId cpu.Get)
+                UnixThreadState.osThreadId thread |> shouldEqual tid
+                UnixThreadState.parkedIn thread |> shouldEqual None
+            | None -> failwith $"thread %d{child} was spawned, but the process holds no thread by that name"
 
             let system =
-                match UnixTaskLifecycle.tryExitThread child 0 system with
+                match UnixThreadLifecycle.tryExitThread child 0 system with
                 | Ok (ProcessFate.Continues ((), system)) -> system
-                | other -> failwith $"task %d{child}'s exit: %A{other}"
+                | other -> failwith $"thread %d{child}'s exit: %A{other}"
 
-            Map.tryFind child (UnixSystem.tasks system) |> shouldEqual None
+            Map.tryFind child (UnixSystem.threads system) |> shouldEqual None
 
         Check.One (Config.QuickThrowOnFailure, property)

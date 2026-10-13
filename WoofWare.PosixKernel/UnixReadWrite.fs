@@ -56,7 +56,7 @@ type internal ReadRefusal =
     /// A read asleep on a pipe or a connected socket has an answer, and the
     /// library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
-    /// A read of `count` bytes of `/dev/urandom`, more than a page, by a task
+    /// A read of `count` bytes of `/dev/urandom`, more than a page, by a thread
     /// with a signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -65,7 +65,7 @@ module internal ReadRefusal =
     /// Shared with `PReadRefusal`, whose case of the same name is the same
     /// fact.
     let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the read is of %d{count} bytes, more than a page, and a signal is pending that the reading task would take on its return to user mode. Linux's read stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short read of a device."
+        $"the descriptor is /dev/urandom, the read is of %d{count} bytes, more than a page, and a signal is pending that the reading thread would take on its return to user mode. Linux's read stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short read of a device."
 
     /// What this kernel knows about why it cannot answer. The client supplies
     /// its own half — which entry point, which descriptor, and which of its own
@@ -128,19 +128,19 @@ module internal PReadRefusal =
         | PReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
-/// "the calling task sleeps".
+/// "the calling thread sleeps".
 [<RequireQualifiedAccess>]
 type ReadOutcome =
     /// The entry point returned.
     | Answered of ReadAnswer
     /// The call did not return: it is a blocking read of a pipe that holds
     /// nothing while a write end is open, of a connected socket with nothing
-    /// to answer, or of an inotify instance holding no record. The calling task is parked, and
+    /// to answer, or of an inotify instance holding no record. The calling thread is parked, and
     /// sleeps until `UnixWait.wakes` wakes it; then `UnixReadWrite.finishRead`
     /// finishes the call.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The task is
+    /// restarts: it never returns. The thread is
     /// no longer parked. Once the handlers have run, the client issues the
     /// `read` again with the arguments it was first made with.
     ///
@@ -263,7 +263,7 @@ type internal WriteRefusal =
     /// the library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
     /// A write into a pipe with no reader, or a Linux stream socket with no
-    /// peer, which answers `EPIPE` and raises `SIGPIPE`, when which task would
+    /// peer, which answers `EPIPE` and raises `SIGPIPE`, when which thread would
     /// receive the signal is not modelled.
     | SignalReceiver of target : BrokenWriteTarget * refusal : SignalReceiverRefusal
     /// A write into a pipe with no reader, or a Linux stream socket with no
@@ -271,7 +271,7 @@ type internal WriteRefusal =
     /// from inside its own PID namespace, every signal it has not installed a
     /// handler for, and this library does not model that.
     | InitProcess of target : BrokenWriteTarget
-    /// A write of `count` bytes to `/dev/urandom`, more than a page, by a task
+    /// A write of `count` bytes to `/dev/urandom`, more than a page, by a thread
     /// with a signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -280,7 +280,7 @@ module internal WriteRefusal =
     /// Shared with `PWriteRefusal`, whose case of the same name is the same
     /// fact.
     let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the write is of %d{count} bytes, more than a page, and a signal is pending that the writing task would take on its return to user mode. Linux's write stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short write to a device."
+        $"the descriptor is /dev/urandom, the write is of %d{count} bytes, more than a page, and a signal is pending that the writing thread would take on its return to user mode. Linux's write stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short write to a device."
 
     // Its own function because `write` and `pwrite` reach the same limit from
     // different offsets and must say the same thing about it.
@@ -315,7 +315,7 @@ module internal WriteRefusal =
         | WriteRefusal.InitProcess target ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE; but the process is process ID 1, and what an init process does with a signal it has no handler for is not modelled."
         | WriteRefusal.SignalReceiver (target, refusal) ->
-            $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which task would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
+            $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which thread would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
         | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
         | WriteRefusal.SignalAtPageBoundary count -> describeSignalAtPageBoundary count
 
@@ -441,7 +441,7 @@ module internal SendRefusal =
 /// What a `write(2)` or `send(2)` did, if it did not end the process (see
 /// `ProcessFate`).
 [<RequireQualifiedAccess>]
-type WriteOutcome<'Task> =
+type WriteOutcome<'Thread> =
     /// The call answers `answer`, having raised no signal.
     | Returns of answer : WriteAnswer
     /// The call answers `answer`, having generated `signal`, which is pending
@@ -454,15 +454,15 @@ type WriteOutcome<'Task> =
     /// `MSG_NOSIGNAL` raises none. If the signal's default action ends the
     /// process, the call answers `ProcessFate.ProcessEnded` instead, and never
     /// returns.
-    | ReturnsRaising of answer : WriteAnswer * signal : PendingSignal<'Task>
+    | ReturnsRaising of answer : WriteAnswer * signal : PendingSignal<'Thread>
     /// The call did not return: it is a blocking write into a pipe, or to a
-    /// connected socket, with no room for the rest of it. The calling task is
+    /// connected socket, with no room for the rest of it. The calling thread is
     /// parked in the system that comes with this, and sleeps until
     /// `UnixWait.wakes` wakes it; then `UnixReadWrite.finishWrite` finishes
     /// the call.
     | WouldBlock of condition : WakeCondition
     /// The call was asleep with nothing written, a signal with a handler
-    /// interrupted it, and the call restarts: it never returns. The task is no
+    /// interrupted it, and the call restarts: it never returns. The thread is no
     /// longer parked. Once the handlers have run, the client issues the
     /// `write` or `send` again with the arguments it was first made with.
     ///
@@ -473,12 +473,12 @@ type WriteOutcome<'Task> =
 /// shape `WriteOutcome` has within a `ProcessFate`, with `'Answer` the step's
 /// own answer, a `WriteAdmission`, a `WriteResumption` or a `WriteAnswer`.
 [<RequireQualifiedAccess>]
-type internal WriteStep<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
-    | Returns of answer : 'Answer * system : UnixSystem<'Task, 'Handler>
-    | ReturnsRaising of answer : 'Answer * signal : PendingSignal<'Task> * system : UnixSystem<'Task, 'Handler>
-    | ProcessEnded of EndedProcess<'Task, 'Handler>
-    | WouldBlock of condition : WakeCondition * system : UnixSystem<'Task, 'Handler>
-    | Restarts of system : UnixSystem<'Task, 'Handler>
+type internal WriteStep<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    | Returns of answer : 'Answer * system : UnixSystem<'Thread, 'Handler>
+    | ReturnsRaising of answer : 'Answer * signal : PendingSignal<'Thread> * system : UnixSystem<'Thread, 'Handler>
+    | ProcessEnded of EndedProcess<'Thread, 'Handler>
+    | WouldBlock of condition : WakeCondition * system : UnixSystem<'Thread, 'Handler>
+    | Restarts of system : UnixSystem<'Thread, 'Handler>
 
 /// Whether a `pwrite` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitPWrite` answers it, as `WriteAdmission` is for
@@ -513,14 +513,14 @@ type internal PausedWriteCall =
 /// bytes to copy, and `UnixReadWrite.writeWithBytes` takes them and finishes
 /// the call.
 [<NoEquality ; NoComparison>]
-type PausedWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            Task : 'Task
+            Thread : 'Thread
             Call : PausedWriteCall
             Range : CopyRange
             /// The system as the call stood when it reached the copy.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -528,8 +528,8 @@ module PausedWrite =
     /// The bytes of the buffer the call was made with that the kernel copies
     /// next: what `UnixReadWrite.writeWithBytes` takes. Never more than one
     /// call's worth (see `TransferCountLimit`).
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedWrite<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedWrite<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -551,14 +551,14 @@ type internal PausedSendCall =
 /// A `send` that sleeps is woken as a `write` is, through
 /// `UnixReadWrite.finishWrite`.
 [<NoEquality ; NoComparison>]
-type PausedSend<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            Task : 'Task
+            Thread : 'Thread
             Call : PausedSendCall
             Range : CopyRange
             /// The system as the call stood when it reached the copy.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -566,8 +566,8 @@ module PausedSend =
     /// The bytes of the buffer the call was made with that the kernel copies:
     /// what `UnixReadWrite.sendWithBytes` takes. Always from the start of the
     /// buffer, and never more than one call's worth.
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedSend<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedSend<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -577,10 +577,10 @@ module PausedSend =
 /// to copy, and `UnixReadWrite.pwriteWithBytes` takes them and finishes the
 /// call.
 [<NoEquality ; NoComparison>]
-type PausedPWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            Task : 'Task
+            Thread : 'Thread
             Fd : int
             /// Where in the file the bytes go.
             FileOffset : int64
@@ -588,7 +588,7 @@ type PausedPWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equalit
             /// The system as the call stood when it reached the copy, which is
             /// the one it was made in: everything a `pwrite` does before the
             /// copy is a question.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -596,8 +596,8 @@ module PausedPWrite =
     /// The bytes of the buffer the call was made with that the kernel copies:
     /// what `UnixReadWrite.pwriteWithBytes` takes. Always from the start of
     /// the buffer, and never more than one call's worth.
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedPWrite<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedPWrite<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -955,10 +955,10 @@ module UnixReadWrite =
 
     /// Mark the description `id` as written through (`OpenFileStatus.Written`),
     /// under the flavour that records it, if it is still in the table.
-    let private markWritten<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private markWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let darwin =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -991,11 +991,11 @@ module UnixReadWrite =
     /// Darwin (`fcntl-dup.c`, WRITTEN rows): a write that returns having moved
     /// bytes marks the description, whatever it answers, and one asleep part
     /// way does not yet.
-    let private markedAfterWrite<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private markedAfterWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : OpenFileDescriptionId)
         (moved : 'Answer -> bool)
-        (outcome : WriteStep<'Answer, 'Task, 'Handler>)
-        : WriteStep<'Answer, 'Task, 'Handler>
+        (outcome : WriteStep<'Answer, 'Thread, 'Handler>)
+        : WriteStep<'Answer, 'Thread, 'Handler>
         =
         match outcome with
         | WriteStep.Returns (answer, system) when moved answer -> WriteStep.Returns (answer, markWritten id system)
@@ -1008,11 +1008,11 @@ module UnixReadWrite =
         | WriteStep.Restarts _ -> outcome
 
     /// `system` with `pipeId`'s table entry replaced by `pipe`.
-    let private withPipe<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private withPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (pipe : PipeState)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -1023,10 +1023,10 @@ module UnixReadWrite =
 
     /// What a read reaching `pipeId`'s read operation does to its timestamps:
     /// on Darwin, moves the read end's `st_atime` to now; on Linux, nothing.
-    let private touchedByRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private touchedByRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine = UnixMachineState.touchedByPipeRead pipeId system.Scheduling system.Machine
@@ -1035,10 +1035,10 @@ module UnixReadWrite =
     /// What a write reaching `pipeId`'s write operation does to its timestamps:
     /// on Darwin, moves `st_mtime` and `st_ctime` of both ends to now; on
     /// Linux, nothing.
-    let private touchedByWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private touchedByWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine = UnixMachineState.touchedByPipeWrite pipeId system.Scheduling system.Machine
@@ -1046,11 +1046,11 @@ module UnixReadWrite =
 
     /// `system` with `pipeId`'s buffer as a write of `count` bytes that took none
     /// of them leaves it.
-    let private leftUntaken<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private leftUntaken<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
@@ -1103,12 +1103,12 @@ module UnixReadWrite =
     /// Changes nothing: `touchedByWrite` is the caller's to apply, to every
     /// outcome but a refusal and `Broken`, `leftUntaken` to `TakesNothing` and
     /// `Sleeps`, and `broken` to `Broken`.
-    let private pipeWriteStep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private pipeWriteStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (nonBlocking : bool)
         (count : int)
         (buffer : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PipeWriteStep
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -1181,15 +1181,15 @@ module UnixReadWrite =
             // `PipeBuffer.write` is the measured rule.
             PipeWriteStep.Takes taken
 
-    /// A write by `task` into `target`, which has no reader or no peer: it
+    /// A write by `thread` into `target`, which has no reader or no peer: it
     /// answers `answer`, `EPIPE`, and raises `SIGPIPE` before it returns, which
     /// the process's disposition for the signal then decides the fate of.
-    let private broken<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private broken<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (answer : 'Answer)
-        (task : 'Task)
+        (thread : 'Thread)
         (target : BrokenWriteTarget)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<'Answer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         // Measured (pipe-sigpipe.c), a worker thread's write into a pipe:
         // Linux's handler ran on the writing thread, before its write
@@ -1204,7 +1204,7 @@ module UnixReadWrite =
 
         let receiver =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Linux -> ValueSome task
+            | SimulatedUnixFlavour.Linux -> ValueSome thread
             | SimulatedUnixFlavour.Darwin -> ValueNone
 
         let entry =
@@ -1217,7 +1217,7 @@ module UnixReadWrite =
             SignalState.generate
                 system.Process.CoreDumps
                 system.Leader
-                (system.Tasks |> Map.keys |> Set.ofSeq)
+                (system.Threads |> Map.keys |> Set.ofSeq)
                 entry
                 system.Process.Signals
 
@@ -1237,7 +1237,7 @@ module UnixReadWrite =
                 )
             )
         | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-            UnixTaskLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
+            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
             |> WriteStep.ProcessEnded
             |> Ok
         | Ok (SignalGeneration.ProcessStopped (signal, _)) ->
@@ -1249,30 +1249,30 @@ module UnixReadWrite =
     /// (`tcp-recv-send.c` section N): a `send` asleep when its connection is
     /// reset answers `EPIPE` with `SIGPIPE`, or without it under
     /// `MSG_NOSIGNAL`, as 2.3's `send` that does not sleep does.
-    let private brokenFor<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private brokenFor<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (call : TcpSendCall)
         (answer : 'Answer)
-        (task : 'Task)
+        (thread : 'Thread)
         (target : BrokenWriteTarget)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<'Answer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         match call with
         | TcpSendCall.Send true -> Ok (WriteStep.Returns (answer, system))
         | TcpSendCall.Send false
-        | TcpSendCall.Write -> broken answer task target system
+        | TcpSendCall.Write -> broken answer thread target system
 
-    /// A write by `task` of `count` bytes to `socketId`, a socket that is not an
+    /// A write by `thread` of `count` bytes to `socketId`, a socket that is not an
     /// end of a connection, past the buffer screen: the socket's own answer, as
     /// `wrap` makes it the caller's. It never reads the buffer, because no such
     /// socket this kernel answers for takes bytes.
-    let private socketWrite<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private socketWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (wrap : WriteAnswer -> 'Answer)
-        (task : 'Task)
+        (thread : 'Thread)
         (socketId : SocketId)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<'Answer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -1289,7 +1289,7 @@ module UnixReadWrite =
             // implicit bind does. Measured on Linux, socket-unconnected-autobind.c:
             // `127.0.0.1:0` reads back `127.0.0.1:<ephemeral>` after the
             // failed write.
-            let bound : Result<UnixSystem<'Task, 'Handler>, WriteRefusal> =
+            let bound : Result<UnixSystem<'Thread, 'Handler>, WriteRefusal> =
                 match socket.Ipv4Binding with
                 | Some binding when binding.Endpoint.Port <> 0us -> Ok system
                 | _ when not (UnconnectedSocketRules.writeBindsFirst flavour socket.Domain socket.Kind) -> Ok system
@@ -1353,7 +1353,7 @@ module UnixReadWrite =
             match answer with
             | UnconnectedSocketWrite.Fails error -> Ok (WriteStep.Returns (wrap (WriteAnswer.Failed error), system))
             | UnconnectedSocketWrite.Breaks ->
-                broken (wrap (WriteAnswer.Failed UnixError.EPIPE)) task (BrokenWriteTarget.Socket socketId) system
+                broken (wrap (WriteAnswer.Failed UnixError.EPIPE)) thread (BrokenWriteTarget.Socket socketId) system
             | UnconnectedSocketWrite.DependsOnSendBuffer -> Error (WriteRefusal.SendBuffer socketId)
         | SocketPhase.EstablishedPendingReport _
         | SocketPhase.Established _ ->
@@ -1401,24 +1401,24 @@ module UnixReadWrite =
             else
                 ConnectionWriteStep.Takes (taken, after)
 
-    /// Fails loudly unless `task` is one of `system`'s tasks and is not
-    /// already asleep in a syscall: a task makes one call at a time, and a
+    /// Fails loudly unless `thread` is one of `system`'s threads and is not
+    /// already asleep in a syscall: a thread makes one call at a time, and a
     /// call that sleeps is finished, not issued again.
-    let private checkIssuer<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private checkIssuer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : unit
         =
-        match Map.tryFind task system.Tasks with
+        match Map.tryFind thread system.Threads with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
         | Some {
                    Parked = Some park
                } ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} is asleep in %A{park.Syscall}, and is issuing a %s{syscall}. A task blocks in one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is asleep in %A{park.Syscall}, and is issuing a %s{syscall}. A thread blocks in one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
         | Some _ -> ()
 
     /// Why a transfer to or from a connected socket has no answer at its copy.
@@ -1429,15 +1429,15 @@ module UnixReadWrite =
         | Fault of socket : SocketId
         | Buffer of BufferRefusal
 
-    /// `call`, made by `task` through the descriptor `fd` and the description
+    /// `call`, made by `thread` through the descriptor `fd` and the description
     /// `descriptionId`, reading up to `count` bytes (one call's worth) from
     /// `connectionEnd` of `connectionId`, which `socketId` is: the bytes, end of
     /// file, a reset's error, or, with nothing to answer, `EAGAIN` if
     /// `nonBlocking` and a park otherwise. `TcpTransfer.read` states the rules;
     /// every answer is measured on both flavours (`tcp-transfer.c` section S,
     /// and `tcp-blocking.c` section R for the sleep).
-    let private readConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private readConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (descriptionId : OpenFileDescriptionId)
         (buffer : UserBuffer)
@@ -1447,14 +1447,14 @@ module UnixReadWrite =
         (socketId : SocketId)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ConnectionCopyRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ConnectionCopyRefusal>
         =
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
         let answer, wakes, after = TcpTransfer.read connectionEnd call count transfer
 
-        let committed () : UnixSystem<'Task, 'Handler> =
+        let committed () : UnixSystem<'Thread, 'Handler> =
             { system with
                 Machine = UnixMachineState.withTransfer connectionId after system.Machine
             }
@@ -1481,7 +1481,7 @@ module UnixReadWrite =
                             Call = call
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked (committed ()))
+                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked (committed ()))
         | TcpReadAnswer.EndOfFile -> answered (ReadAnswer.Completed ImmutableArray.Empty)
         | TcpReadAnswer.Failed error -> answered (ReadAnswer.Failed (TcpError.toUnixError error))
         | TcpReadAnswer.Bytes bytes when bytes.IsEmpty -> answered (ReadAnswer.Completed bytes)
@@ -1494,11 +1494,11 @@ module UnixReadWrite =
 
     /// A read of up to `count` bytes taking them from `pipeId`, which holds
     /// some: the bytes, and the system after the read and whatever it set off.
-    let private takeFromPipe<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private takeFromPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ImmutableArray<byte> * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ImmutableArray<byte> * UnixSystem<'Thread, 'Handler>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
@@ -1553,14 +1553,14 @@ module UnixReadWrite =
     ///
     /// The buffer screen has already had its say by here, so this is reached
     /// only with an address the flavour accepted.
-    let private readFileAt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private readFileAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
         (fd : int)
         (inode : InodeNumber)
         (offset : int64)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
         =
         let entry =
@@ -1615,17 +1615,17 @@ module UnixReadWrite =
         // gigabytes.
         Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)))
 
-    /// What a device's own write of `count` bytes by `task`, at most one call's
+    /// What a device's own write of `count` bytes by `thread`, at most one call's
     /// worth, answers without the bytes, once everything ahead of the driver
     /// has passed; `None` where it copies them, which it then takes all of.
     /// Neither device in `CharacterDevice.all` changes anything a later call
     /// could see, so a write moves no timestamp, position or pool.
-    let private deviceWriteWithoutBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private deviceWriteWithoutBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAnswer option, DeviceRefusal>
         =
         match device with
@@ -1654,7 +1654,7 @@ module UnixReadWrite =
         | UserBuffer.Opaque -> Error (DeviceRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (DeviceRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
         | UserBuffer.Mapped ->
-            if SyscallInterruption.stopsAtPageBoundary task count system then
+            if SyscallInterruption.stopsAtPageBoundary thread count system then
                 Error (DeviceRefusal.SignalAtPageBoundary count)
             else
                 Ok None
@@ -1663,13 +1663,13 @@ module UnixReadWrite =
     /// everything ahead of the driver has passed. Neither device in
     /// `CharacterDevice.all` keeps a position, so neither the description nor
     /// any timestamp moves.
-    let private readDevice<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private readDevice<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Task, 'Handler>, DeviceRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, DeviceRefusal>
         =
         match device with
         | CharacterDevice.Null ->
@@ -1702,7 +1702,7 @@ module UnixReadWrite =
 
         // Measured (`bigread.c`): a read of 4097 bytes interrupted by a signal
         // answered 4096, and no read was ever EINTR.
-        if SyscallInterruption.stopsAtPageBoundary task count system then
+        if SyscallInterruption.stopsAtPageBoundary thread count system then
             Error (DeviceRefusal.SignalAtPageBoundary count)
         else
 
@@ -1734,17 +1734,17 @@ module UnixReadWrite =
     /// null buffer is `EFAULT`, and the next read finds nothing. Linux copies
     /// a record out after it has taken it off the queue, and destroys it
     /// whether or not the copy faulted.
-    let private takeInotifyRecords<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private takeInotifyRecords<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (instance : OpenFileDescriptionId)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         let state =
             OpenFileTable.inotifyState "UnixReadWrite.read" instance system.Machine.OpenFiles
 
-        let withQueue (queue : InotifyQueue) (system : UnixSystem<'Task, 'Handler>) =
+        let withQueue (queue : InotifyQueue) (system : UnixSystem<'Thread, 'Handler>) =
             UnixSystemState.mapOpenFiles
                 (OpenFileTable.setInotifyState
                     "UnixReadWrite.read"
@@ -1779,18 +1779,18 @@ module UnixReadWrite =
         Ok (ReadAnswer.Completed bytes, withQueue rest system)
 
     /// `read`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        checkIssuer "read" task system
+        checkIssuer "read" thread system
         let platform = system.Machine.UnixPlatform
 
-        let answered (answer : ReadAnswer) (system : UnixSystem<'Task, 'Handler>) =
+        let answered (answer : ReadAnswer) (system : UnixSystem<'Thread, 'Handler>) =
             Ok (ReadOutcome.Answered answer, system)
 
         if countRefused platform count then
@@ -1876,7 +1876,7 @@ module UnixReadWrite =
             // count that passed the screen can carry past `INT64_MAX`.
             // `O_NONBLOCK` changes nothing either, neither device ever having
             // anything to wait for.
-            match readDevice task device buffer (oneCallsWorth platform count) system with
+            match readDevice thread device buffer (oneCallsWorth platform count) system with
             | Error (DeviceRefusal.Buffer refusal) -> Error (ReadRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (ReadRefusal.SignalAtPageBoundary count)
             | Ok (answer, system) -> answered answer system
@@ -1944,7 +1944,7 @@ module UnixReadWrite =
             // holds, as for a socket with no connection above:
             // `TcpTransfer.read` answers it so.
             readConnection
-                task
+                thread
                 fd
                 descriptionId
                 buffer
@@ -2024,7 +2024,7 @@ module UnixReadWrite =
                                 Count = count
                             }
 
-                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked asleep)
+                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked asleep)
             else
 
             match buffer with
@@ -2064,7 +2064,7 @@ module UnixReadWrite =
                             Count = count
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked system)
+                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
         | ReadTarget.File (inode, offset) ->
 
         match readAnsweredByPosition (positionCheck platform offset count) with
@@ -2119,12 +2119,12 @@ module UnixReadWrite =
     /// with a datagram peer, or with a refused connection's error, is refused,
     /// except for Linux's zero-length read, which is 0 in every phase.
     ///
-    /// A read by `task` of a pipe that holds nothing while a write end is open,
+    /// A read by `thread` of a pipe that holds nothing while a write end is open,
     /// through a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
     /// without looking at the buffer, and `finishRead` finishes it. Setting
     /// `O_NONBLOCK` on the description while it sleeps does not wake it.
     ///
-    /// A read of `/dev/urandom` longer than a page, by a task with a signal
+    /// A read of `/dev/urandom` longer than a page, by a thread with a signal
     /// pending, is refused.
     ///
     /// A read of an inotify instance takes as many whole queued records as fit
@@ -2135,39 +2135,39 @@ module UnixReadWrite =
     /// count, and otherwise the read sleeps (`ReadOutcome.WouldBlock`) without
     /// looking at the buffer, and `finishRead` finishes it.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
-    let read<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let read<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ReadOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ReadOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryRead task fd buffer count system
+        tryRead thread fd buffer count system
         |> Refusal.orRaise "UnixReadWrite.read" ReadRefusal.kind ReadRefusal.describe
 
-    /// The pipe the open file description `description`, which a task parked in
+    /// The pipe the open file description `description`, which a thread parked in
     /// `syscall` holds, names `pipeEnd` of.
-    let private parkedPipe<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private parkedPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
-        (task : 'Task)
+        (thread : 'Thread)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PipeId
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             match found.Target with
             | OpenFileTarget.Pipe (pipeId, named) when named = pipeEnd -> pipeId
             | target ->
                 failwith
-                    $"UnixReadWrite.%s{syscall}: task %O{task} sleeps on open file description %O{description}, which names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
+                    $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
 
     /// Whether a transfer asleep on the open file description `description`,
     /// woken and finding nothing to take, gives up rather than sleeping again:
@@ -2179,9 +2179,9 @@ module UnixReadWrite =
     /// Linux re-checks its condition before it leaves its sleep, so a sleeper
     /// that finds nothing sleeps on whatever the flag says. Setting the flag
     /// wakes neither (section I).
-    let private givesUpWhenBeaten<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private givesUpWhenBeaten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -2189,20 +2189,20 @@ module UnixReadWrite =
         | SimulatedUnixFlavour.Darwin ->
             (OpenFileTable.get "UnixReadWrite" description system.Machine.OpenFiles).NonBlocking
 
-    /// The socket the open file description `description`, which a task
+    /// The socket the open file description `description`, which a thread
     /// parked in `syscall` holds, names, the connection it is an end of, and
     /// which end.
-    let private parkedConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private parkedConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
-        (task : 'Task)
+        (thread : 'Thread)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : SocketId * ConnectionId * ConnectionEnd
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             match found.Target with
             | OpenFileTarget.Socket socketId ->
@@ -2212,38 +2212,38 @@ module UnixReadWrite =
                 | Some (connectionId, connectionEnd) -> socketId, connectionId, connectionEnd
                 | None ->
                     failwith
-                        $"UnixReadWrite.%s{syscall}: task %O{task} sleeps on socket %O{socketId}, which is in %A{phase} rather than an end of a connection. Nothing takes a socket out of a connection while a call holds it (this is a bug in the caller that recorded the park)."
+                        $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on socket %O{socketId}, which is in %A{phase} rather than an end of a connection. Nothing takes a socket out of a connection while a call holds it (this is a bug in the caller that recorded the park)."
             | target ->
                 failwith
-                    $"UnixReadWrite.%s{syscall}: task %O{task} sleeps on open file description %O{description}, which names %A{target} rather than a connected socket (this is a bug in the caller that recorded the park)."
+                    $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than a connected socket (this is a bug in the caller that recorded the park)."
 
     /// Whether the open file description `description` carries `O_NONBLOCK`.
-    let private nonBlockingNow<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private nonBlockingNow<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         (OpenFileTable.get "UnixReadWrite" description system.Machine.OpenFiles).NonBlocking
 
-    let private finishConnectionRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishConnectionRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedConnectionRead)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         match parked.Socket with
         | SleepTarget.EndedByClose _ ->
             // Measured on Darwin 27.0.0 (`tcp-blocking.c`, section R-close):
             // closing the descriptor the read was made through ends it with
             // EBADF, unlike a pipe read's end of file.
-            Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), UnixParkState.unpark task system)
+            Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), UnixParkState.unpark thread system)
         | SleepTarget.Waiting (reader, _) ->
 
         let socketId, connectionId, connectionEnd =
-            parkedConnection "finishRead" task reader system
+            parkedConnection "finishRead" thread reader system
 
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
-        let finished = UnixParkState.unpark task system
+        let finished = UnixParkState.unpark thread system
 
         if TcpTransfer.readAnswers connectionEnd transfer then
             // Measured on Linux 6.18.5 (`tcp-blocking.c`, section D-read): a
@@ -2252,14 +2252,14 @@ module UnixReadWrite =
             // came first, as `tcp_recvmsg` looks at the queue before it looks
             // for a signal. Darwin's sleeper takes whichever reached it first,
             // which `beforeCompleting` refuses.
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
             | Ok () ->
 
             let answer, wakes, after =
                 TcpTransfer.read connectionEnd parked.Call parked.Count transfer
 
-            let committed () : UnixSystem<'Task, 'Handler> =
+            let committed () : UnixSystem<'Thread, 'Handler> =
                 { finished with
                     Machine = UnixMachineState.withTransfer connectionId after finished.Machine
                 }
@@ -2290,20 +2290,20 @@ module UnixReadWrite =
 
         // Measured on both (`tcp-blocking.c`, sections R-eintr and
         // R-restart): EINTR without SA_RESTART, and on sleeping with it.
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
         | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
         | Ok None when nonBlockingNow reader system -> Error (ReadRefusal.ConnectionBecameNonBlocking socketId)
         | Ok None ->
             let parkedAgain = ParkedSyscall.ConnectionRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
 
-    let private finishPipeRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedPipeRead)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         match parked.Reader with
         | SleepTarget.EndedByClose _ ->
@@ -2311,16 +2311,16 @@ module UnixReadWrite =
             // and P6): end of file. The close moved the read end's atime as it
             // ended the call (section P8), and whatever has happened since
             // happened after the call returned.
-            Ok (ReadOutcome.Answered (ReadAnswer.Completed ImmutableArray.Empty), (UnixParkState.unpark task system))
+            Ok (ReadOutcome.Answered (ReadAnswer.Completed ImmutableArray.Empty), (UnixParkState.unpark thread system))
         | SleepTarget.Waiting (reader, _) ->
 
-        let pipeId = parkedPipe "finishRead" task reader PipeEnd.Read system
+        let pipeId = parkedPipe "finishRead" thread reader PipeEnd.Read system
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
         // Measured on Darwin (pipe-blocking.c section L): the read end's atime
         // moves when the sleeping call ends, however it ends (bytes, end of
         // file, EINTR, or a restart), and not while it sleeps.
-        let finished = (UnixParkState.unpark task system) |> touchedByRead pipeId
+        let finished = (UnixParkState.unpark thread system) |> touchedByRead pipeId
 
         let held = PipeBuffer.held pipe.Buffer
 
@@ -2332,7 +2332,7 @@ module UnixReadWrite =
             // with a byte to read and a signal pending answered the byte,
             // whichever came first. Darwin answered whichever reached the
             // sleeper first (section J), which `beforeCompleting` refuses.
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
             | Ok () ->
 
@@ -2353,7 +2353,7 @@ module UnixReadWrite =
             Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), finished)
         else
 
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
         | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
@@ -2363,15 +2363,15 @@ module UnixReadWrite =
             // Measured on both (pipe-blocking.c section A3): a reader that
             // finds the pipe empty again sleeps at the back of the queue.
             let parkedAgain = ParkedSyscall.PipeRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
 
-    let private finishInotifyRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishInotifyRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedInotifyRead)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        let finished = UnixParkState.unpark task system
+        let finished = UnixParkState.unpark thread system
 
         let state =
             OpenFileTable.inotifyState "UnixReadWrite.finishRead" parked.Instance system.Machine.OpenFiles
@@ -2379,7 +2379,7 @@ module UnixReadWrite =
         if not (InotifyQueue.isEmpty state.Queue) then
             // `inotify_read` looks for a record before it looks for a signal,
             // so a record beats a signal pending as it wakes.
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
             | Ok () ->
                 takeInotifyRecords parked.Instance parked.Buffer parked.Count finished
@@ -2393,57 +2393,57 @@ module UnixReadWrite =
             Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), finished)
         else
 
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
         | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
         | Ok None ->
             let parkedAgain = ParkedSyscall.InotifyRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
 
-    let private finishReadHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+    let private finishReadHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
-        | Some (ParkedSyscall.PipeRead parked) -> finishPipeRead task parked system
-        | Some (ParkedSyscall.ConnectionRead parked) -> finishConnectionRead task parked system
-        | Some (ParkedSyscall.InotifyRead parked) -> finishInotifyRead task parked system
+        match UnixThreadTable.parkedFor thread system.Threads with
+        | Some (ParkedSyscall.PipeRead parked) -> finishPipeRead thread parked system
+        | Some (ParkedSyscall.ConnectionRead parked) -> finishConnectionRead thread parked system
+        | Some (ParkedSyscall.InotifyRead parked) -> finishInotifyRead thread parked system
         | Some other ->
             failwith
-                $"UnixReadWrite.finishRead: task %O{task} is parked in %A{other}, not in a read, so there is no read to finish (this is a bug in the client)."
+                $"UnixReadWrite.finishRead: thread %O{thread} is parked in %A{other}, not in a read, so there is no read to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixReadWrite.finishRead: task %O{task} is not parked, so there is no read to finish. Only a task `read` answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixReadWrite.finishRead: thread %O{thread} is not parked, so there is no read to finish. Only a thread `read` answered `WouldBlock` finishes here (this is a bug in the client)."
 
     /// `finishRead`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReadRefusal>
+    let internal tryFinishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
         // The call's reference to the read end goes as it returns, and with it
         // the read end, if no descriptor names it any more
         // (`open-file-references.c` section B1).
-        finishReadHolding task system
+        finishReadHolding thread system
         |> Result.map (fun (outcome, after) ->
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixReadWrite.finishRead" held after
         )
 
-    /// Finish the `read` or `recv` `task` is asleep in: look at the pipe, the
+    /// Finish the `read` or `recv` `thread` is asleep in: look at the pipe, the
     /// connection or the inotify instance again, as a woken real read does,
     /// and answer.
     ///
     /// Bytes in the pipe are read, up to the count the call was made with, into
     /// the buffer it was made with: a buffer naming no storage answers `EFAULT`
     /// and leaves them there. A pipe still empty with no write end open is end
-    /// of file. Under Linux either beats a signal pending for the task, whose
+    /// of file. Under Linux either beats a signal pending for the thread, whose
     /// handlers run as the call returns; under Darwin, a kernel answers
     /// whichever reached the sleeper first, which this library does not
     /// record, so both at once is refused.
@@ -2451,7 +2451,7 @@ module UnixReadWrite =
     /// A pipe still empty with a write end open, and a signal with a handler
     /// pending, ends the call: `Restarts` if every handler that runs was
     /// installed with `SA_RESTART`, and `Failed EINTR` if none was. With no such
-    /// signal, the task sleeps again, behind every other park; except that on
+    /// signal, the thread sleeps again, behind every other park; except that on
     /// Darwin, whose every sleeper wakes, one that finds nothing through a
     /// description that has since become non-blocking answers `EAGAIN`. An
     /// answer, `Restarts` included, clears the park.
@@ -2479,13 +2479,13 @@ module UnixReadWrite =
     /// `Restarts` or `Failed EINTR`, as for a pipe; and otherwise it sleeps
     /// again. No close ends it.
     ///
-    /// `task` must be asleep in a `read` or a `recv`.
-    let finishRead<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ReadOutcome * UnixSystem<'Task, 'Handler>
+    /// `thread` must be asleep in a `read` or a `recv`.
+    let finishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ReadOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishRead task system
+        tryFinishRead thread system
         |> Refusal.orRaise "UnixReadWrite.finishRead" ReadRefusal.kind ReadRefusal.describe
 
 
@@ -2494,9 +2494,9 @@ module UnixReadWrite =
     /// not open, and `ENOTSOCK` for one that names anything but a socket
     /// (measured on both, `tcp-recv-send.c` section O, for a regular file and
     /// each end of a pipe).
-    let private socketOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private socketOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<OpenFileDescriptionId * OpenFileDescription * SocketId, UnixError>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
@@ -2520,25 +2520,25 @@ module UnixReadWrite =
     /// and `ENOTSOCK`, at length 0 too, and a null buffer passes; Darwin
     /// screens nothing, which the platform's `UserBufferCheck.AtCopyTime`
     /// already says.
-    let private screenedFirst<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private screenedFirst<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<bool, BufferRefusal>
         =
         UserBufferCheck.faultsBeforeOperationFor (UnixMachineState.userBufferCheck system.Machine) buffer (uint64 count)
 
     /// `recv`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRecv<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryRecv<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Task, 'Handler>, ReceiveRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReceiveRefusal>
         =
-        checkIssuer "recv" task system
+        checkIssuer "recv" thread system
         let platform = system.Machine.UnixPlatform
 
         match ReceiveFlags.decode (SimulatedUnixPlatform.flavour platform) flags with
@@ -2576,7 +2576,7 @@ module UnixReadWrite =
                 TcpReceiveCall.Receive
 
         readConnection
-            task
+            thread
             fd
             descriptionId
             buffer
@@ -2617,31 +2617,31 @@ module UnixReadWrite =
     /// that is not an end of a connection.
     /// A call that sleeps is finished by `finishRead`, as a `read` is.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
-    let recv<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let recv<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ReadOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ReadOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryRecv task fd buffer count flags system
+        tryRecv thread fd buffer count flags system
         |> Refusal.orRaise "UnixReadWrite.recv" ReceiveRefusal.kind ReceiveRefusal.describe
 
     /// `pread`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPread<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryPread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Task, 'Handler>, PReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, PReadRefusal>
         =
-        checkIssuer "pread" task system
+        checkIssuer "pread" thread system
         let platform = system.Machine.UnixPlatform
 
         if countRefused platform count then
@@ -2803,7 +2803,7 @@ module UnixReadWrite =
 
         match target with
         | PReadTarget.CharacterDevice device ->
-            match readDevice task device buffer (oneCallsWorth platform count) system with
+            match readDevice thread device buffer (oneCallsWorth platform count) system with
             | Error (DeviceRefusal.Buffer refusal) -> Error (PReadRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (PReadRefusal.SignalAtPageBoundary count)
             | Ok answer -> Ok answer
@@ -2828,27 +2828,27 @@ module UnixReadWrite =
     /// system that comes back is the one that arrived unless the read drew from
     /// the entropy pool (`ReadAnswer.Drawn`).
     ///
-    /// `task` is the task making the call, which must be one of the process's
+    /// `thread` is the thread making the call, which must be one of the process's
     /// and not asleep in another; a read of `/dev/urandom` asks whether it has
     /// a signal pending, and refuses one longer than a page if it does.
-    let pread<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let pread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ReadAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ReadAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryPread task fd buffer count offset system
+        tryPread thread fd buffer count offset system
         |> Refusal.orRaise "UnixReadWrite.pread" PReadRefusal.kind PReadRefusal.describe
 
     /// What a `write` will operate on, once the descriptor's access mode has
     /// been checked: a file at its description's own offset, a socket, or a
     /// pipe's write end.
-    let private writeTarget<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private writeTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteTarget, UnixError>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
@@ -2906,17 +2906,17 @@ module UnixReadWrite =
             failwith
                 $"UnixReadWrite.write: fd %d{fd} names an inotify instance with an access mode that permits writing. `inotify_init1` opens one for reading only, so FileDescriptorRegistry.checkInvariants reports this as InotifyNotReadOnly (this is a bug in this library)."
 
-    /// `task` asleep in a write of `count` bytes through `writer`, made through
+    /// `thread` asleep in a write of `count` bytes through `writer`, made through
     /// the descriptor `fd`, the first `written` of them in already.
-    let private parkWrite<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private parkWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (writer : OpenFileDescriptionId)
         (fd : int)
         (buffer : UserBuffer)
         (count : int)
         (written : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : WriteStep<'Answer, 'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : WriteStep<'Answer, 'Thread, 'Handler>
         =
         let reads =
             match OpenFileTable.tryFind writer system.Machine.OpenFiles with
@@ -2937,21 +2937,21 @@ module UnixReadWrite =
                     ReadsSeen = reads
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park task parked system)
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
 
-    /// `task` asleep in `call`, writing `count` bytes to a connected socket
+    /// `thread` asleep in `call`, writing `count` bytes to a connected socket
     /// through `writer`, made through the descriptor `fd`, the first `written`
     /// of them taken already.
-    let private parkConnectionWrite<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private parkConnectionWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (call : TcpSendCall)
         (writer : OpenFileDescriptionId)
         (fd : int)
         (buffer : UserBuffer)
         (count : int)
         (written : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : WriteStep<'Answer, 'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : WriteStep<'Answer, 'Thread, 'Handler>
         =
         let parked =
             ParkedSyscall.ConnectionWrite
@@ -2963,17 +2963,17 @@ module UnixReadWrite =
                     Call = call
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park task parked system)
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
 
     /// `bytes`, which `writer` writes to `connectionId`, taken by the
     /// connection, and the wakes they raise signalled.
-    let private intoConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private intoConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (writer : ConnectionEnd)
         (bytes : ImmutableArray<byte>)
         (transfer : TcpTransfer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let wakes, transfer = TcpTransfer.write writer bytes transfer
 
@@ -2982,13 +2982,13 @@ module UnixReadWrite =
         }
         |> SocketWake.signalTransfer connectionId wakes
 
-    /// What `call` by `task`, through the descriptor `fd` and the description
+    /// What `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `count` bytes (one call's worth) to `connectionEnd`
     /// of `connectionId`, which `socketId` is, answers before it reads the
     /// caller's buffer, and otherwise how many bytes to extract: see
     /// `tryAdmitWrite`.
-    let private admitConnectionWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private admitConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (descriptionId : OpenFileDescriptionId)
         (buffer : UserBuffer)
@@ -2998,10 +2998,10 @@ module UnixReadWrite =
         (socketId : SocketId)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAdmission, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
-        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Task, 'Handler> =
+        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Thread, 'Handler> =
             { system with
                 Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
             }
@@ -3027,7 +3027,7 @@ module UnixReadWrite =
             brokenFor
                 call
                 (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EPIPE))
-                task
+                thread
                 (BrokenWriteTarget.Connection socketId)
                 (withTransfer transfer)
         | ConnectionWriteStep.Takes (taken, transfer) -> reading (WriteAdmission.Transfer taken) transfer
@@ -3037,14 +3037,14 @@ module UnixReadWrite =
         // looked at until there is room.
         | ConnectionWriteStep.Sleeps transfer ->
             withTransfer transfer
-            |> parkConnectionWrite task call descriptionId fd buffer count 0
+            |> parkConnectionWrite thread call descriptionId fd buffer count 0
             |> Ok
 
-    /// `call` by `task`, through the descriptor `fd` and the description
+    /// `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `bytes` to `connectionEnd` of `connectionId`, which
     /// `socketId` is: see `write`.
-    let private writeConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private writeConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (descriptionId : OpenFileDescriptionId)
         (bytes : ImmutableArray<byte>)
@@ -3053,15 +3053,15 @@ module UnixReadWrite =
         (socketId : SocketId)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Task, 'Handler> =
+        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Thread, 'Handler> =
             { system with
                 Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
             }
 
-        let returns (answer : WriteAnswer) (system : UnixSystem<'Task, 'Handler>) =
+        let returns (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (answer, system))
 
         let prefix (taken : int) =
@@ -3082,7 +3082,7 @@ module UnixReadWrite =
             brokenFor
                 call
                 (WriteAnswer.Failed UnixError.EPIPE)
-                task
+                thread
                 (BrokenWriteTarget.Connection socketId)
                 (withTransfer transfer)
         | ConnectionWriteStep.Takes (taken, transfer) ->
@@ -3092,20 +3092,20 @@ module UnixReadWrite =
         | ConnectionWriteStep.TakesThenSleeps (taken, transfer) ->
             system
             |> intoConnection connectionId connectionEnd (prefix taken) transfer
-            |> parkConnectionWrite task call descriptionId fd UserBuffer.Mapped bytes.Length taken
+            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped bytes.Length taken
             |> Ok
         | ConnectionWriteStep.Sleeps transfer ->
             withTransfer transfer
-            |> parkConnectionWrite task call descriptionId fd UserBuffer.Mapped bytes.Length 0
+            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped bytes.Length 0
             |> Ok
 
-    /// `call` by `task`, a blocking write of `total` bytes to `connectionEnd`
+    /// `call` by `thread`, a blocking write of `total` bytes to `connectionEnd`
     /// of `connectionId` through the descriptor `fd` and the description
     /// `descriptionId`, given the first of them, `bytes`: see
     /// `tryWriteBytesThenSleep`. `mismatch` fails loudly with the caller's account of
     /// the step it came to instead.
-    let private connectionWriteThenSleep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private connectionWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (descriptionId : OpenFileDescriptionId)
         (total : int)
@@ -3114,9 +3114,9 @@ module UnixReadWrite =
         (nonBlocking : bool)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (mismatch : string -> WriteStep<WriteAnswer, 'Task, 'Handler>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : WriteStep<WriteAnswer, 'Task, 'Handler>
+        (mismatch : string -> WriteStep<WriteAnswer, 'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
@@ -3124,23 +3124,23 @@ module UnixReadWrite =
         | ConnectionWriteStep.TakesThenSleeps (taken, transfer) when taken = bytes.Length ->
             system
             |> intoConnection connectionId connectionEnd bytes transfer
-            |> parkConnectionWrite task call descriptionId fd UserBuffer.Mapped total taken
+            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped total taken
         | step -> mismatch $"is not the blocking write that takes part of it and sleeps (%A{step})"
 
-    /// Every answer `write(2)` by `task` gives *without* reading the caller's
+    /// Every answer `write(2)` by `thread` gives *without* reading the caller's
     /// buffer, and otherwise how many bytes to extract: the step before the
     /// copy, which `write` answers as a `CallProgress`, and which describes
     /// each answer. The system that comes back is the one the copy, or the
     /// answer, is made against.
-    let internal tryAdmitWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryAdmitWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAdmission, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
-        checkIssuer "write" task system
+        checkIssuer "write" thread system
 
         let platform = system.Machine.UnixPlatform
 
@@ -3177,10 +3177,10 @@ module UnixReadWrite =
         // error rather than 0, and for a connected one a reset's error
         // (`tcp-transfer.c`, section S).
         match target with
-        | WriteTarget.Socket socketId -> socketWrite (WriteAdmission.Answered) task socketId count system
+        | WriteTarget.Socket socketId -> socketWrite (WriteAdmission.Answered) thread socketId count system
         | WriteTarget.Connection (socketId, connectionId, connectionEnd, descriptionId, nonBlocking) ->
             admitConnectionWrite
-                task
+                thread
                 fd
                 descriptionId
                 buffer
@@ -3196,7 +3196,7 @@ module UnixReadWrite =
             // 0.
             let count = oneCallsWorth platform count
 
-            match deviceWriteWithoutBytes task device buffer count system with
+            match deviceWriteWithoutBytes thread device buffer count system with
             | Error (DeviceRefusal.Buffer refusal) -> Error (WriteRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (WriteRefusal.SignalAtPageBoundary count)
             | Ok (Some answer) -> Ok (unchanged (WriteAdmission.Answered answer))
@@ -3211,7 +3211,7 @@ module UnixReadWrite =
             | PipeWriteStep.Broken ->
                 broken
                     (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EPIPE))
-                    task
+                    thread
                     (BrokenWriteTarget.Pipe pipeId)
                     system
             | PipeWriteStep.Answered answer ->
@@ -3227,7 +3227,7 @@ module UnixReadWrite =
             // Darwin (pipe-blocking.c section L).
             | PipeWriteStep.Sleeps ->
                 leftUntaken pipeId count system
-                |> parkWrite task descriptionId fd buffer count 0
+                |> parkWrite thread descriptionId fd buffer count 0
                 |> Ok
             // Only the bytes the pipe will take: a short write never reads the
             // rest of the caller's buffer, and `write` offered this prefix takes
@@ -3265,21 +3265,21 @@ module UnixReadWrite =
         | UserBuffer.Mapped -> Ok (unchanged (WriteAdmission.Transfer count))
 
     /// `tryWriteBytes`, without marking the description written.
-    let private writeUnmarked<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private writeUnmarked<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "writeWithBytes" task system
+        checkIssuer "writeWithBytes" thread system
         assertOneCallsWorth "write" system.Machine.UnixPlatform bytes
 
-        let returns (answer : WriteAnswer) (system : UnixSystem<'Task, 'Handler>) =
+        let returns (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (answer, system))
 
         match writeTarget fd system with
@@ -3288,10 +3288,10 @@ module UnixReadWrite =
             // There is no buffer here to screen, so the socket's own answer is
             // all there is, and it never takes the bytes. A `write` never
             // reaches this: `tryAdmitWrite` answered or refused first.
-            socketWrite id task socketId (uint64 bytes.Length) system
+            socketWrite id thread socketId (uint64 bytes.Length) system
         | Ok (WriteTarget.Connection (socketId, connectionId, connectionEnd, descriptionId, nonBlocking)) ->
             writeConnection
-                task
+                thread
                 fd
                 descriptionId
                 bytes
@@ -3303,7 +3303,7 @@ module UnixReadWrite =
                 system
         // Both devices take every byte they are given and keep none of it.
         | Ok (WriteTarget.CharacterDevice CharacterDevice.URandom) when
-            SyscallInterruption.stopsAtPageBoundary task bytes.Length system
+            SyscallInterruption.stopsAtPageBoundary thread bytes.Length system
             ->
             Error (WriteRefusal.SignalAtPageBoundary bytes.Length)
         | Ok (WriteTarget.CharacterDevice _) -> returns (WriteAnswer.Completed (int64 bytes.Length)) system
@@ -3311,13 +3311,13 @@ module UnixReadWrite =
             match pipeWriteStep pipeId nonBlocking bytes.Length UserBuffer.Mapped system with
             | PipeWriteStep.Refused refusal -> Error refusal
             | PipeWriteStep.Broken ->
-                broken (WriteAnswer.Failed UnixError.EPIPE) task (BrokenWriteTarget.Pipe pipeId) system
+                broken (WriteAnswer.Failed UnixError.EPIPE) thread (BrokenWriteTarget.Pipe pipeId) system
             | PipeWriteStep.Answered answer -> returns answer (touchedByWrite pipeId system)
             | PipeWriteStep.TakesNothing answer ->
                 returns answer (touchedByWrite pipeId (leftUntaken pipeId bytes.Length system))
             | PipeWriteStep.Sleeps ->
                 leftUntaken pipeId bytes.Length system
-                |> parkWrite task descriptionId fd UserBuffer.Mapped bytes.Length 0
+                |> parkWrite thread descriptionId fd UserBuffer.Mapped bytes.Length 0
                 |> Ok
             | PipeWriteStep.TakesThenSleeps taken ->
                 let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -3333,7 +3333,7 @@ module UnixReadWrite =
                         Buffer = buffer
                     }
                     system
-                |> parkWrite task descriptionId fd UserBuffer.Mapped bytes.Length written
+                |> parkWrite thread descriptionId fd UserBuffer.Mapped bytes.Length written
                 |> Ok
             | PipeWriteStep.Takes taken ->
                 let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -3469,18 +3469,18 @@ module UnixReadWrite =
                     (UnixSystemState.fileDescriptors committed))
                 committed)
 
-    /// A `write` by `task` through `fd`, given the bytes `tryAdmitWrite` said to
+    /// A `write` by `thread` through `fd`, given the bytes `tryAdmitWrite` said to
     /// extract: the step `writeWithBytes` takes for a `write`. It answers the
     /// descriptor questions itself, so it agrees with the admission on its
     /// own.
-    let internal tryWriteBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryWriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        let outcome = writeUnmarked task fd bytes system
+        let outcome = writeUnmarked thread fd bytes system
 
         match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
         | None -> outcome
@@ -3491,13 +3491,13 @@ module UnixReadWrite =
     /// reference goes as it returns, and with it the write end, if no
     /// descriptor names it any more (`open-file-references.c` section C1). A
     /// write that still sleeps, or is to be given more bytes, holds them yet.
-    let private releasedAfterWrite<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private releasedAfterWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (held : OpenFileDescriptionId list)
-        (outcome : WriteStep<'Answer, 'Task, 'Handler>)
-        : WriteStep<'Answer, 'Task, 'Handler>
+        (outcome : WriteStep<'Answer, 'Thread, 'Handler>)
+        : WriteStep<'Answer, 'Thread, 'Handler>
         =
-        let release (system : UnixSystem<'Task, 'Handler>) =
+        let release (system : UnixSystem<'Thread, 'Handler>) =
             ObjectLifetime.releaseUnreferencedUnrefusable caller held system
 
         match outcome with
@@ -3507,17 +3507,17 @@ module UnixReadWrite =
         | WriteStep.Restarts system -> WriteStep.Restarts (release system)
         | WriteStep.ProcessEnded ended -> WriteStep.ProcessEnded ended
 
-    /// The description the write `task` is asleep in was made through, and
+    /// The description the write `thread` is asleep in was made through, and
     /// how many bytes it has moved so far; `None` once a close has ended it,
     /// which marked the description then (`UnixDescriptor.close`), and for a
     /// `send`, which marks none (measured on Darwin, `tcp-recv-send.c`
     /// section W).
-    let private waitingWriter<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let private waitingWriter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : (OpenFileDescriptionId * int) option
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some (ParkedSyscall.PipeWrite {
                                             Writer = SleepTarget.Waiting (description, _)
                                             Written = written
@@ -3548,21 +3548,21 @@ module UnixReadWrite =
         | Some (ParkedSyscall.Connect _)
         | None -> None
 
-    /// The write `task` is asleep in.
-    let private parkedWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    /// The write `thread` is asleep in.
+    let private parkedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ParkedPipeWrite
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some (ParkedSyscall.PipeWrite parked) -> parked
         | Some other ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} is parked in %A{other}, not in a write, so there is no write to finish (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is parked in %A{other}, not in a write, so there is no write to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{task} is not parked, so there is no write to finish. Only a task a write answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not parked, so there is no write to finish. Only a thread a write answered `WouldBlock` finishes here (this is a bug in the client)."
 
     /// After a sleeping write has put bytes in, its count `parked.Count` not
     /// all in yet: whether it sleeps on, or ends with the count it has put in,
@@ -3572,33 +3572,33 @@ module UnixReadWrite =
     /// Measured on both (pipe-blocking.c sections D and H): a write asleep
     /// with bytes in returns their count when signalled, under SA_RESTART or
     /// not, so the handlers' flags are not asked.
-    let private afterPartWritten<'Task, 'Handler, 'Answer when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private afterPartWritten<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (pipeId : PipeId)
         (writer : OpenFileDescriptionId)
         (fd : int)
         (parked : ParkedPipeWrite)
         (givesUp : bool)
         (answered : WriteAnswer -> 'Answer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<'Answer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
-        match SyscallInterruption.interrupts task system with
+        match SyscallInterruption.interrupts thread system with
         | Error refusal -> Error (WriteRefusal.Interruption refusal)
         | Ok interrupted when interrupted || givesUp ->
-            let finished = (UnixParkState.unpark task system) |> touchedByWrite pipeId
+            let finished = (UnixParkState.unpark thread system) |> touchedByWrite pipeId
 
             Ok (WriteStep.Returns (answered (WriteAnswer.Completed (int64 parked.Written)), finished))
-        | Ok _ -> Ok (parkWrite task writer fd parked.Buffer parked.Count parked.Written system)
+        | Ok _ -> Ok (parkWrite thread writer fd parked.Buffer parked.Count parked.Written system)
 
     /// `tryAdmitFinishWrite` of a write asleep on a connected socket.
-    let private admitFinishConnectionWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private admitFinishConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedConnectionWrite)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteResumption, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
-        let answered (answer : WriteAnswer) (system : UnixSystem<'Task, 'Handler>) =
+        let answered (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteResumption.Answered answer, system))
 
         match parked.Socket with
@@ -3606,17 +3606,17 @@ module UnixReadWrite =
             // Measured on Darwin 27.0.0 (`tcp-blocking.c`, section W-close):
             // closing the descriptor the write was made through ends it with
             // EBADF, whatever it had taken, and raises no SIGPIPE.
-            answered (WriteAnswer.Failed UnixError.EBADF) (UnixParkState.unpark task system)
+            answered (WriteAnswer.Failed UnixError.EBADF) (UnixParkState.unpark thread system)
         | SleepTarget.Waiting (writer, fd) ->
 
         let socketId, connectionId, connectionEnd =
-            parkedConnection "finishWrite" task writer system
+            parkedConnection "finishWrite" thread writer system
 
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
-        let finished = UnixParkState.unpark task system
+        let finished = UnixParkState.unpark thread system
         let remaining = parked.Count - parked.Written
 
-        let withTransfer (transfer : TcpTransfer) (system : UnixSystem<'Task, 'Handler>) =
+        let withTransfer (transfer : TcpTransfer) (system : UnixSystem<'Thread, 'Handler>) =
             { system with
                 Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
             }
@@ -3629,14 +3629,14 @@ module UnixReadWrite =
             | TcpEndState.Open _ -> TcpTransfer.sendShut connectionEnd transfer
             | TcpEndState.Closed _ ->
                 failwith
-                    $"UnixReadWrite.finishWrite: task %O{task} sleeps on socket %O{socketId}, whose end of the connection is closed, but the call holds the socket (this is a bug in this library)."
+                    $"UnixReadWrite.finishWrite: thread %O{thread} sleeps on socket %O{socketId}, whose end of the connection is closed, but the call holds the socket (this is a bug in this library)."
 
         if cannotSend then
             // Linux's `sk_stream_wait_memory` looks for the error, and for
             // the send side being shut, before it looks for a signal; Darwin's
             // sleeper takes whichever reached it first, which
             // `beforeCompleting` refuses.
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
             | Ok () ->
 
@@ -3659,7 +3659,7 @@ module UnixReadWrite =
                 brokenFor
                     parked.Call
                     (WriteResumption.Answered (WriteAnswer.Failed UnixError.EPIPE))
-                    task
+                    thread
                     (BrokenWriteTarget.Connection socketId)
                     (withTransfer after finished)
             | ConnectionWriteStep.Answered (answer, after) -> answered answer (withTransfer after finished)
@@ -3680,7 +3680,7 @@ module UnixReadWrite =
                 failwith
                     $"UnixReadWrite.finishWrite: socket %O{socketId}'s end can still send, and a write there answers %A{step} (this is a bug in this library)."
 
-        match SyscallInterruption.interrupts task system with
+        match SyscallInterruption.interrupts thread system with
         | Error refusal -> Error (WriteRefusal.Interruption refusal)
         | Ok true ->
             // Measured on Linux 6.18.5 (`tcp-blocking.c`, section D-write): a
@@ -3702,13 +3702,13 @@ module UnixReadWrite =
             | _ when parked.Written > 0 -> answered (WriteAnswer.Completed (int64 parked.Written)) finished
             | _ ->
 
-            match SyscallInterruption.ofPark task system with
+            match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
             | Ok (Some SyscallInterruption.Eintr) -> answered (WriteAnswer.Failed UnixError.EINTR) finished
             | Ok (Some SyscallInterruption.Restart) -> Ok (WriteStep.Restarts finished)
             | Ok None ->
                 failwith
-                    $"UnixReadWrite.finishWrite: a signal interrupts task %O{task}'s write, and SyscallInterruption.ofPark says none does (this is a bug in this library)."
+                    $"UnixReadWrite.finishWrite: a signal interrupts thread %O{thread}'s write, and SyscallInterruption.ofPark says none does (this is a bug in this library)."
         | Ok false ->
 
         match room with
@@ -3731,7 +3731,7 @@ module UnixReadWrite =
             // no room having marked Linux's socket out of space.
             Ok (
                 parkConnectionWrite
-                    task
+                    thread
                     parked.Call
                     writer
                     fd
@@ -3742,22 +3742,22 @@ module UnixReadWrite =
             )
 
     /// `tryFinishWriteBytes` of a write asleep on a connected socket.
-    let private finishConnectionWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedConnectionWrite)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let writer, fd =
             match parked.Socket with
             | SleepTarget.Waiting (writer, fd) -> writer, fd
             | SleepTarget.EndedByClose socketId ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{task}'s write to socket %O{socketId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
 
         let socketId, connectionId, connectionEnd =
-            parkedConnection "writeWithBytes" task writer system
+            parkedConnection "writeWithBytes" thread writer system
 
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
@@ -3767,7 +3767,7 @@ module UnixReadWrite =
             | ConnectionWriteStep.TakesThenSleeps (taken, after) when taken = bytes.Length -> taken, after
             | step ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{task}'s write to socket %O{socketId} was given %d{bytes.Length} bytes, and a write there now comes to %A{step}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} was given %d{bytes.Length} bytes, and a write there now comes to %A{step}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
 
         let system = intoConnection connectionId connectionEnd bytes transfer system
         let written = parked.Written + taking
@@ -3776,22 +3776,22 @@ module UnixReadWrite =
         // signal is pending to end it: `tryAdmitFinishWrite` answers one before
         // it names any bytes.
         if written = parked.Count then
-            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 parked.Count), UnixParkState.unpark task system))
+            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 parked.Count), UnixParkState.unpark thread system))
         elif nonBlockingNow writer system then
             Error (WriteRefusal.ConnectionBecameNonBlocking socketId)
         else
-            Ok (parkConnectionWrite task parked.Call writer fd parked.Buffer parked.Count written system)
+            Ok (parkConnectionWrite thread parked.Call writer fd parked.Buffer parked.Count written system)
 
-    let private admitFinishWriteHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteResumption, 'Task, 'Handler>, WriteRefusal>
+    let private admitFinishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
-        | Some (ParkedSyscall.ConnectionWrite parked) -> admitFinishConnectionWrite task parked system
+        match UnixThreadTable.parkedFor thread system.Threads with
+        | Some (ParkedSyscall.ConnectionWrite parked) -> admitFinishConnectionWrite thread parked system
         | _ ->
 
-        let parked = parkedWrite "finishWrite" task system
+        let parked = parkedWrite "finishWrite" thread system
 
         match parked.Writer with
         | SleepTarget.EndedByClose pipeId ->
@@ -3808,12 +3808,12 @@ module UnixReadWrite =
                         Signal = Signal.SIGPIPE
                         Target = ValueNone
                     },
-                    (UnixParkState.unpark task system)
+                    (UnixParkState.unpark thread system)
                 )
             )
         | SleepTarget.Waiting (writer, fd) ->
 
-        let pipeId = parkedPipe "finishWrite" task writer PipeEnd.Write system
+        let pipeId = parkedPipe "finishWrite" thread writer PipeEnd.Write system
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
         // Measured on Darwin (pipe-blocking.c section L): a sleeping write
@@ -3821,9 +3821,9 @@ module UnixReadWrite =
         // (bytes in, EINTR, a count, EPIPE once the reader has gone, a
         // restart), and not while it sleeps. A write that answers EPIPE
         // without sleeping moves none (pipe-epipe-sweep.c).
-        let finished = (UnixParkState.unpark task system) |> touchedByWrite pipeId
+        let finished = (UnixParkState.unpark thread system) |> touchedByWrite pipeId
 
-        let answered (answer : WriteAnswer) (system : UnixSystem<'Task, 'Handler>) =
+        let answered (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteResumption.Answered answer, system))
 
         if not (UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read system.Machine) then
@@ -3834,7 +3834,7 @@ module UnixReadWrite =
             // in every case. Linux's `pipe_write` checks for a reader before it
             // checks for a signal; Darwin's sleeper takes whichever reached it
             // first (section J).
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
             | Ok () ->
 
@@ -3845,13 +3845,13 @@ module UnixReadWrite =
                 | SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin -> WriteResumption.Answered (WriteAnswer.Failed UnixError.EPIPE)
 
-            broken answer task (BrokenWriteTarget.Pipe pipeId) finished
+            broken answer thread (BrokenWriteTarget.Pipe pipeId) finished
         else
 
         let taking = PipeBuffer.resumeTakes parked.Count parked.Written pipe.Buffer
 
         if taking > 0 then
-            match SyscallInterruption.beforeCompleting task system with
+            match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
             | Ok () ->
 
@@ -3867,7 +3867,7 @@ module UnixReadWrite =
             | UserBuffer.Mapped -> Ok (WriteStep.Returns (WriteResumption.Transfer (parked.Written, taking), system))
         elif parked.Written > 0 then
             afterPartWritten
-                task
+                thread
                 pipeId
                 writer
                 fd
@@ -3879,7 +3879,7 @@ module UnixReadWrite =
 
         // Measured on both (pipe-blocking.c section D): a write asleep with
         // nothing in returned EINTR without SA_RESTART and slept on with it.
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (WriteRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> answered (WriteAnswer.Failed UnixError.EINTR) finished
         | Ok (Some SyscallInterruption.Restart) -> Ok (WriteStep.Restarts finished)
@@ -3887,19 +3887,19 @@ module UnixReadWrite =
         | Ok None ->
             // Measured on both (pipe-blocking.c section B): a writer that finds
             // no room again sleeps at the back of the queue.
-            Ok (parkWrite task writer fd parked.Buffer parked.Count parked.Written system)
+            Ok (parkWrite thread writer fd parked.Buffer parked.Count parked.Written system)
 
-    /// Every answer the `write` or `send` `task` is asleep in gives without
+    /// Every answer the `write` or `send` `thread` is asleep in gives without
     /// reading more of the caller's buffer, and otherwise which of its bytes to
     /// extract next: the step before the copy, which `finishWrite` answers as a
     /// `CallProgress`, and which describes each answer.
-    let internal tryAdmitFinishWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteResumption, 'Task, 'Handler>, WriteRefusal>
+    let internal tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
@@ -3909,9 +3909,9 @@ module UnixReadWrite =
             | WriteResumption.Answered answer -> returnsHavingMoved written answer
             | WriteResumption.Transfer _ -> false
 
-        let marking = waitingWriter task system
+        let marking = waitingWriter thread system
 
-        admitFinishWriteHolding task system
+        admitFinishWriteHolding thread system
         |> Result.map (fun outcome ->
             match marking with
             | Some (description, written) -> markedAfterWrite description (moved written) outcome
@@ -3919,36 +3919,36 @@ module UnixReadWrite =
         )
         |> Result.map (releasedAfterWrite "UnixReadWrite.finishWrite" held)
 
-    let private finishWriteHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        match UnixTaskTable.parkedFor task system.Tasks with
-        | Some (ParkedSyscall.ConnectionWrite parked) -> finishConnectionWrite task parked bytes system
+        match UnixThreadTable.parkedFor thread system.Threads with
+        | Some (ParkedSyscall.ConnectionWrite parked) -> finishConnectionWrite thread parked bytes system
         | _ ->
 
-        let parked = parkedWrite "writeWithBytes" task system
+        let parked = parkedWrite "writeWithBytes" thread system
 
         let writer, fd =
             match parked.Writer with
             | SleepTarget.Waiting (writer, fd) -> writer, fd
             | SleepTarget.EndedByClose pipeId ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{task}'s write into pipe %O{pipeId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
 
-        let pipeId = parkedPipe "writeWithBytes" task writer PipeEnd.Write system
+        let pipeId = parkedPipe "writeWithBytes" thread writer PipeEnd.Write system
         let pipe = UnixMachineState.pipe pipeId system.Machine
         let taking = PipeBuffer.resumeTakes parked.Count parked.Written pipe.Buffer
 
         if taking = 0 || bytes.Length <> taking then
             failwith
-                $"UnixReadWrite.writeWithBytes: task %O{task}'s write into pipe %O{pipeId} takes %d{taking} bytes now and was given %d{bytes.Length}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
+                $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} takes %d{taking} bytes now and was given %d{bytes.Length}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
 
         let system =
             withPipe
@@ -3964,7 +3964,7 @@ module UnixReadWrite =
             }
 
         if parked.Written = parked.Count then
-            let finished = (UnixParkState.unpark task system) |> touchedByWrite pipeId
+            let finished = (UnixParkState.unpark thread system) |> touchedByWrite pipeId
 
             Ok (WriteStep.Returns (WriteAnswer.Completed (int64 parked.Count), finished))
         else
@@ -3977,26 +3977,26 @@ module UnixReadWrite =
             let nonBlocking =
                 (OpenFileTable.get "UnixReadWrite" writer system.Machine.OpenFiles).NonBlocking
 
-            afterPartWritten task pipeId writer fd parked nonBlocking id system
+            afterPartWritten thread pipeId writer fd parked nonBlocking id system
 
-    /// The `write` or `send` `task` is asleep in, given the bytes
+    /// The `write` or `send` `thread` is asleep in, given the bytes
     /// `tryAdmitFinishWrite` said to extract: the step `writeWithBytes` takes
     /// for a woken call. `bytes` must be exactly those, against the system the
     /// admission answered with.
-    let internal tryFinishWriteBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryFinishWriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
-        let marking = waitingWriter task system
+        let marking = waitingWriter thread system
 
-        finishWriteHolding task bytes system
+        finishWriteHolding thread bytes system
         |> Result.map (fun outcome ->
             match marking with
             | Some (description, written) -> markedAfterWrite description (returnsHavingMoved written) outcome
@@ -4004,23 +4004,23 @@ module UnixReadWrite =
         )
         |> Result.map (releasedAfterWrite "UnixReadWrite.writeWithBytes" held)
 
-    /// A blocking `write` of `total` bytes by `task`, given the first of them,
+    /// A blocking `write` of `total` bytes by `thread`, given the first of them,
     /// which `WriteAdmission.TransferThenSleep` named: they go into the pipe or
     /// the connection, and the call sleeps for the rest. `bytes` must be
     /// exactly those, against the system the admission answered with.
-    let internal tryWriteBytesThenSleep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryWriteBytesThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (total : int)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "writeWithBytes" task system
+        checkIssuer "writeWithBytes" thread system
 
         let mismatch (what : string) : 'a =
             failwith
@@ -4038,12 +4038,12 @@ module UnixReadWrite =
                         Buffer = PipeBuffer.writeWith total bytes pipe.Buffer
                     }
                     system
-                |> parkWrite task descriptionId fd UserBuffer.Mapped total taken
+                |> parkWrite thread descriptionId fd UserBuffer.Mapped total taken
                 |> Ok
             | step -> mismatch $"is not the blocking write that puts in part of it and sleeps (%A{step})"
         | Ok (WriteTarget.Connection (_, connectionId, connectionEnd, descriptionId, nonBlocking)) ->
             connectionWriteThenSleep
-                task
+                thread
                 fd
                 descriptionId
                 total
@@ -4086,10 +4086,10 @@ module UnixReadWrite =
     /// on Darwin. Measured (`tcp-recv-send.c` section D): with no room, a
     /// Linux `send(MSG_DONTWAIT)` on a blocking socket answers `EAGAIN`, and
     /// Darwin's sleeps until its bytes are taken.
-    let private sendTarget<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private sendTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (flags : SendFlags)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<OpenFileDescriptionId * bool * SocketId * ConnectionId * ConnectionEnd, UnixError>, SendRefusal>
         =
         match socketOf fd system with
@@ -4109,20 +4109,20 @@ module UnixReadWrite =
 
         Ok (Ok (descriptionId, description.NonBlocking || dontWait, socketId, connectionId, connectionEnd))
 
-    /// Every answer `send(2)` by `task` gives without reading the caller's
+    /// Every answer `send(2)` by `thread` gives without reading the caller's
     /// buffer, and otherwise how many bytes to extract, as `tryAdmitWrite` is
     /// for `write`: the step before the copy, which `send` answers as a
     /// `CallProgress`.
-    let internal tryAdmitSend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryAdmitSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAdmission, 'Task, 'Handler>, SendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, SendRefusal>
         =
-        checkIssuer "send" task system
+        checkIssuer "send" thread system
         let platform = system.Machine.UnixPlatform
 
         match SendFlags.decode (SimulatedUnixPlatform.flavour platform) flags with
@@ -4149,7 +4149,7 @@ module UnixReadWrite =
         | Ok (Ok (descriptionId, nonBlocking, socketId, connectionId, connectionEnd)) ->
 
         admitConnectionWrite
-            task
+            thread
             fd
             descriptionId
             buffer
@@ -4162,22 +4162,22 @@ module UnixReadWrite =
             system
         |> Result.mapError sendRefusalOf
 
-    /// A `send` by `task` through `fd`, given the bytes `tryAdmitSend` said to
+    /// A `send` by `thread` through `fd`, given the bytes `tryAdmitSend` said to
     /// extract: the step `sendWithBytes` takes, as `tryWriteBytes` is for a
     /// `write`.
-    let internal trySendBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal trySendBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, SendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "sendWithBytes" task system
+        checkIssuer "sendWithBytes" thread system
         assertOneCallsWorth "send" system.Machine.UnixPlatform bytes
 
         match SendFlags.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) flags with
@@ -4190,7 +4190,7 @@ module UnixReadWrite =
         | Ok (Ok (descriptionId, nonBlocking, socketId, connectionId, connectionEnd)) ->
 
         writeConnection
-            task
+            thread
             fd
             descriptionId
             bytes
@@ -4202,7 +4202,7 @@ module UnixReadWrite =
             system
         |> Result.mapError sendRefusalOf
 
-    /// A blocking `send` of `total` bytes by `task`, given the first of them
+    /// A blocking `send` of `total` bytes by `thread`, given the first of them
     /// that `WriteAdmission.TransferThenSleep` named, as `tryWriteBytesThenSleep`
     /// is for `write`: they go to the connection, and the call sleeps for the
     /// rest.
@@ -4210,20 +4210,20 @@ module UnixReadWrite =
     /// `bytes` must be exactly the ones the admission named, and the system
     /// and `flags` the ones it came with: anything else is a bug in this
     /// library, and fails loudly.
-    let internal sendBytesThenSleep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal sendBytesThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (total : int)
         (bytes : ImmutableArray<byte>)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : WriteStep<WriteAnswer, 'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "sendWithBytes" task system
+        checkIssuer "sendWithBytes" thread system
 
         let mismatch (what : string) : 'a =
             failwith
@@ -4236,7 +4236,7 @@ module UnixReadWrite =
         match sendTarget fd decoded system with
         | Ok (Ok (descriptionId, nonBlocking, _, connectionId, connectionEnd)) ->
             connectionWriteThenSleep
-                task
+                thread
                 fd
                 descriptionId
                 total
@@ -4255,10 +4255,10 @@ module UnixReadWrite =
     /// Only a regular file or a device reaches it: `pwrite` needs a seekable
     /// object, and a directory can only ever be opened for reading, so `pwrite`
     /// to one is the access mode's EBADF rather than a kind's EISDIR.
-    let private pwriteTarget<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private pwriteTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<PWriteTarget, UnixError>
         =
         // **Ahead of the descriptor, on both flavours** — which is exactly where
@@ -4364,16 +4364,16 @@ module UnixReadWrite =
     /// Every answer `pwrite(2)` gives without reading the caller's buffer, and
     /// otherwise how many bytes to extract: the step before the copy, which
     /// `pwrite` answers as a `CallProgress`. Changes nothing.
-    let internal tryAdmitPWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<PWriteAdmission, PWriteRefusal>
         =
-        checkIssuer "pwrite" task system
+        checkIssuer "pwrite" thread system
         let platform = system.Machine.UnixPlatform
 
         if countRefused platform count then
@@ -4416,7 +4416,7 @@ module UnixReadWrite =
 
         match target with
         | PWriteTarget.CharacterDevice device ->
-            match deviceWriteWithoutBytes task device buffer count system with
+            match deviceWriteWithoutBytes thread device buffer count system with
             | Error (DeviceRefusal.Buffer refusal) -> Error (PWriteRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (PWriteRefusal.SignalAtPageBoundary count)
             | Ok (Some answer) -> Ok (PWriteAdmission.Answered answer)
@@ -4435,19 +4435,19 @@ module UnixReadWrite =
         | UserBuffer.Mapped -> Ok (PWriteAdmission.Transfer count)
 
     /// `tryPwriteBytes`, without marking the description written.
-    let private pwriteUnmarked<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private pwriteUnmarked<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Task, 'Handler>, PWriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
         if bytes.IsDefault then
             failwith
                 "UnixReadWrite.pwriteWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "pwriteWithBytes" task system
+        checkIssuer "pwriteWithBytes" thread system
 
         assertOneCallsWorth "pwrite" system.Machine.UnixPlatform bytes
 
@@ -4475,7 +4475,7 @@ module UnixReadWrite =
         match target with
         // Both devices take every byte they are given and keep none of it.
         | PWriteTarget.CharacterDevice CharacterDevice.URandom when
-            SyscallInterruption.stopsAtPageBoundary task bytes.Length system
+            SyscallInterruption.stopsAtPageBoundary thread bytes.Length system
             ->
             Error (PWriteRefusal.SignalAtPageBoundary bytes.Length)
         | PWriteTarget.CharacterDevice _ -> Ok (WriteAnswer.Completed (int64 bytes.Length), system)
@@ -4512,22 +4512,22 @@ module UnixReadWrite =
             }
         )
 
-    /// A `pwrite` by `task` through `fd` at `offset`, given the bytes
+    /// A `pwrite` by `thread` through `fd` at `offset`, given the bytes
     /// `tryAdmitPWrite` said to extract: the step `pwriteWithBytes` takes. It
     /// answers the descriptor questions itself, so it agrees with the
     /// admission on its own.
-    let internal tryPwriteBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryPwriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Task, 'Handler>, PWriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
         // Marked as a write is (`markedAfterWrite`): a pwrite that moved bytes
         // marks the description it was made through.
         match
-            pwriteUnmarked task fd bytes offset system,
+            pwriteUnmarked thread fd bytes offset system,
             FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
         with
         | Ok (WriteAnswer.Completed written, system), Some id when written > 0L ->
@@ -4535,9 +4535,9 @@ module UnixReadWrite =
         | result, _ -> result
 
     /// A write's or a send's last step, as the call answers it.
-    let private fateOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (step : WriteStep<WriteAnswer, 'Task, 'Handler>)
-        : ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>
+    let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (step : WriteStep<WriteAnswer, 'Thread, 'Handler>)
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
         =
         match step with
         | WriteStep.Returns (answer, system) -> ProcessFate.Continues (WriteOutcome.Returns answer, system)
@@ -4551,11 +4551,11 @@ module UnixReadWrite =
     /// answered, or stopped at the copy, as `decide` says of the step's own
     /// answer, with the paused call made against the system the step answered
     /// with.
-    let private progressOf<'Admission, 'Paused, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private progressOf<'Admission, 'Paused, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
-        (decide : 'Admission -> Choice<WriteAnswer, UnixSystem<'Task, 'Handler> -> 'Paused>)
-        (step : WriteStep<'Admission, 'Task, 'Handler>)
-        : CallProgress<'Paused, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>
+        (decide : 'Admission -> Choice<WriteAnswer, UnixSystem<'Thread, 'Handler> -> 'Paused>)
+        (step : WriteStep<'Admission, 'Thread, 'Handler>)
+        : CallProgress<'Paused, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
         =
         match step with
         | WriteStep.Returns (admission, system) ->
@@ -4575,25 +4575,25 @@ module UnixReadWrite =
         | WriteStep.Restarts system -> CallProgress.Answered (ProcessFate.Continues (WriteOutcome.Restarts, system))
 
     /// `write`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedWrite<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>,
+              CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               WriteRefusal
            >
         =
         let paused
             (call : PausedWriteCall)
             (count : int)
-            (system : UnixSystem<'Task, 'Handler>)
-            : PausedWrite<'Task, 'Handler>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : PausedWrite<'Thread, 'Handler>
             =
             {
-                Task = task
+                Thread = thread
                 Call = call
                 Range =
                     {
@@ -4603,7 +4603,7 @@ module UnixReadWrite =
                 System = system
             }
 
-        tryAdmitWrite task fd buffer count system
+        tryAdmitWrite thread fd buffer count system
         |> Result.map (
             progressOf
                 "UnixReadWrite.write"
@@ -4617,7 +4617,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `write(2)` by `task`: write `count` bytes of `buffer` to `fd`.
+    /// `write(2)` by `thread`: write `count` bytes of `buffer` to `fd`.
     /// </summary>
     /// <remarks>
     /// Every answer the call gives *without* reading the buffer comes first, as
@@ -4635,7 +4635,7 @@ module UnixReadWrite =
     /// A write into a pipe with no reader answers `EPIPE` without the buffer,
     /// ahead of `EAGAIN`, `EFAULT` and a short count, and raises `SIGPIPE`
     /// before it returns. That is a zero-length write too, except on Linux,
-    /// where one answers 0 and raises nothing. The signal is `task`'s own on
+    /// where one answers 0 and raises nothing. The signal is `thread`'s own on
     /// Linux and the process's on Darwin; what it does is then what any
     /// generated signal does (see `UnixSignal.kill`), and if its disposition
     /// is the default, it ends the process.
@@ -4661,30 +4661,30 @@ module UnixReadWrite =
     /// refused. A socket with a datagram peer, or with a refused connection's
     /// error, is refused.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     /// </remarks>
-    let write<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedWrite<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
         =
-        tryWrite task fd buffer count system
+        tryWrite thread fd buffer count system
         |> Refusal.orRaise "UnixReadWrite.write" WriteRefusal.kind WriteRefusal.describe
 
     /// `finishWrite`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal tryFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedWrite<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>,
+              CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               WriteRefusal
            >
         =
-        tryAdmitFinishWrite task system
+        tryAdmitFinishWrite thread system
         |> Result.map (
             progressOf
                 "UnixReadWrite.finishWrite"
@@ -4694,7 +4694,7 @@ module UnixReadWrite =
                     | WriteResumption.Transfer (offset, count) ->
                         Choice2Of2 (fun system ->
                             {
-                                Task = task
+                                Thread = thread
                                 Call = PausedWriteCall.Finish
                                 Range =
                                     {
@@ -4708,7 +4708,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// The `write` or `send` `task` is asleep in, woken: every answer it gives
+    /// The `write` or `send` `thread` is asleep in, woken: every answer it gives
     /// without reading more of the caller's buffer, as `CallProgress.Answered`,
     /// or the call stopped where it copies the next of its bytes, which
     /// `writeWithBytes` takes.
@@ -4724,11 +4724,11 @@ module UnixReadWrite =
     ///   `PausedWrite.copyRange` names the bytes, which start past those
     ///   already in the pipe. A buffer naming no storage answers `EFAULT`, the
     ///   write having put nothing in.
-    /// - **Neither**, and a signal with a handler is pending for the task: a
+    /// - **Neither**, and a signal with a handler is pending for the thread: a
     ///   write that had put bytes in returns their count, whatever the
     ///   handlers' flags; one that had not ends as `read` does,
     ///   `WriteOutcome.Restarts` or `Failed EINTR`.
-    /// - **Neither, and no signal**: the task sleeps again, behind every other
+    /// - **Neither, and no signal**: the thread sleeps again, behind every other
     ///   park; except that on Darwin, whose every sleeper wakes, one whose
     ///   description has since become non-blocking gives up, answering the
     ///   count it had put in, or `EAGAIN` if none.
@@ -4759,33 +4759,34 @@ module UnixReadWrite =
     ///   beats room; under Darwin, room beside it is refused.
     /// - **There is room**, as a write made now would take: the call stops at
     ///   the copy, as for a pipe. A buffer naming no storage is refused.
-    /// - **Neither**: the task sleeps again, refused instead if its
+    /// - **Neither**: the thread sleeps again, refused instead if its
     ///   description has become non-blocking.
     /// - **A close has ended it**, under Darwin: `EBADF`, whatever it had
     ///   taken.
     ///
-    /// `task` must be asleep in a `write` or a `send`.
+    /// `thread` must be asleep in a `write` or a `send`.
     /// </remarks>
-    let finishWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedWrite<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>
+    let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
         =
-        tryFinishWrite task system
+        tryFinishWrite thread system
         |> Refusal.orRaise "UnixReadWrite.finishWrite" WriteRefusal.kind WriteRefusal.describe
 
     /// `writeWithBytes`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWriteWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWriteWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedWrite<'Task, 'Handler>)
-        : Result<ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>, WriteRefusal>
+        (paused : PausedWrite<'Thread, 'Handler>)
+        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
         =
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
         match paused.Call with
-        | PausedWriteCall.Write fd -> tryWriteBytes paused.Task fd bytes paused.System
-        | PausedWriteCall.WriteThenSleep (fd, total) -> tryWriteBytesThenSleep paused.Task fd total bytes paused.System
-        | PausedWriteCall.Finish -> tryFinishWriteBytes paused.Task bytes paused.System
+        | PausedWriteCall.Write fd -> tryWriteBytes paused.Thread fd bytes paused.System
+        | PausedWriteCall.WriteThenSleep (fd, total) ->
+            tryWriteBytesThenSleep paused.Thread fd total bytes paused.System
+        | PausedWriteCall.Finish -> tryFinishWriteBytes paused.Thread bytes paused.System
         |> Result.map fateOf
 
     /// <summary>
@@ -4801,7 +4802,7 @@ module UnixReadWrite =
     ///
     /// A woken write or `send` (`finishWrite`) returns its whole count if
     /// that was the last of it. Otherwise a signal with a handler pending for
-    /// the task, or `O_NONBLOCK` set on the description while the call slept,
+    /// the thread, or `O_NONBLOCK` set on the description while the call slept,
     /// ends it with the count it has put in by now, and with neither, it
     /// sleeps again for the rest. A write to a connected socket sleeps again
     /// for the rest, or is refused if its description has become
@@ -4812,35 +4813,35 @@ module UnixReadWrite =
     /// system, which is what a value is.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`bytes` is not exactly `PausedWrite.copyRange`'s count long.</exception>
-    let writeWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let writeWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedWrite<'Task, 'Handler>)
-        : ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>
+        (paused : PausedWrite<'Thread, 'Handler>)
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
         =
         tryWriteWithBytes bytes paused
         |> Refusal.orRaise "UnixReadWrite.writeWithBytes" WriteRefusal.kind WriteRefusal.describe
 
     /// `send`, with a refusal answered as the `Error` rather than raised.
-    let internal trySend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal trySend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedSend<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>,
+              CallProgress<PausedSend<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               SendRefusal
            >
         =
         let paused
             (call : PausedSendCall)
             (count : int)
-            (system : UnixSystem<'Task, 'Handler>)
-            : PausedSend<'Task, 'Handler>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : PausedSend<'Thread, 'Handler>
             =
             {
-                Task = task
+                Thread = thread
                 Call = call
                 Range =
                     {
@@ -4850,7 +4851,7 @@ module UnixReadWrite =
                 System = system
             }
 
-        tryAdmitSend task fd buffer count flags system
+        tryAdmitSend thread fd buffer count flags system
         |> Result.map (
             progressOf
                 "UnixReadWrite.send"
@@ -4864,7 +4865,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `send(2)` by `task`: send `count` bytes of `buffer` through `fd`, with
+    /// `send(2)` by `thread`: send `count` bytes of `buffer` through `fd`, with
     /// the flag word `flags`, raw, in the flavour's numbering
     /// (`MessageFlag.number`).
     /// </summary>
@@ -4889,33 +4890,34 @@ module UnixReadWrite =
     /// that is not an end of a connection. A call that sleeps is woken by
     /// `finishWrite`, as a `write` is.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     /// </remarks>
-    let send<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let send<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedSend<'Task, 'Handler>, ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSend<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
         =
-        trySend task fd buffer count flags system
+        trySend thread fd buffer count flags system
         |> Refusal.orRaise "UnixReadWrite.send" SendRefusal.kind SendRefusal.describe
 
     /// `sendWithBytes`, with a refusal answered as the `Error` rather than raised.
-    let internal trySendWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySendWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedSend<'Task, 'Handler>)
-        : Result<ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>, SendRefusal>
+        (paused : PausedSend<'Thread, 'Handler>)
+        : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
         =
         CopyRange.require "UnixReadWrite.sendWithBytes" paused.Range bytes
 
         match paused.Call with
-        | PausedSendCall.Send (fd, flags) -> trySendBytes paused.Task fd bytes flags paused.System |> Result.map fateOf
+        | PausedSendCall.Send (fd, flags) ->
+            trySendBytes paused.Thread fd bytes flags paused.System |> Result.map fateOf
         | PausedSendCall.SendThenSleep (fd, total, flags) ->
-            sendBytesThenSleep paused.Task fd total bytes flags paused.System
+            sendBytesThenSleep paused.Thread fd total bytes flags paused.System
             |> fateOf
             |> Ok
 
@@ -4930,32 +4932,35 @@ module UnixReadWrite =
     /// `finishWrite`.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`bytes` is not exactly `PausedSend.copyRange`'s count long.</exception>
-    let sendWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let sendWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedSend<'Task, 'Handler>)
-        : ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>
+        (paused : PausedSend<'Thread, 'Handler>)
+        : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
         =
         trySendWithBytes bytes paused
         |> Refusal.orRaise "UnixReadWrite.sendWithBytes" SendRefusal.kind SendRefusal.describe
 
     /// `pwrite`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPwrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryPwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedPWrite<'Task, 'Handler>, WriteAnswer * UnixSystem<'Task, 'Handler>>, PWriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedPWrite<'Thread, 'Handler>, WriteAnswer * UnixSystem<'Thread, 'Handler>>,
+              PWriteRefusal
+           >
         =
-        tryAdmitPWrite task fd buffer count offset system
+        tryAdmitPWrite thread fd buffer count offset system
         |> Result.map (fun admission ->
             match admission with
             | PWriteAdmission.Answered answer -> CallProgress.Answered (answer, system)
             | PWriteAdmission.Transfer count ->
                 CallProgress.NeedsCopyIn
                     {
-                        Task = task
+                        Thread = thread
                         Fd = fd
                         FileOffset = offset
                         Range =
@@ -4968,7 +4973,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `pwrite(2)` by `task`: write `count` bytes of `buffer` at `offset` in
+    /// `pwrite(2)` by `thread`: write `count` bytes of `buffer` at `offset` in
     /// the file `fd` names, without consulting or moving the description's own
     /// file offset.
     /// </summary>
@@ -4987,33 +4992,33 @@ module UnixReadWrite =
     ///
     /// Never short and never `EINTR`: this kernel has nothing that could push
     /// back on a write, and its filesystem cannot run out of space. A write of
-    /// more than a page to `/dev/urandom` by a task with a signal pending,
+    /// more than a page to `/dev/urandom` by a thread with a signal pending,
     /// which a real kernel would cut short, is refused.
     ///
-    /// `task` is the task making the call, which must be one of the process's
+    /// `thread` is the thread making the call, which must be one of the process's
     /// and not asleep in another; a write to `/dev/urandom` asks whether it
     /// has a signal pending.
     /// </remarks>
-    let pwrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let pwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedPWrite<'Task, 'Handler>, WriteAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedPWrite<'Thread, 'Handler>, WriteAnswer * UnixSystem<'Thread, 'Handler>>
         =
-        tryPwrite task fd buffer count offset system
+        tryPwrite thread fd buffer count offset system
         |> Refusal.orRaise "UnixReadWrite.pwrite" PWriteRefusal.kind PWriteRefusal.describe
 
     /// `pwriteWithBytes`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPwriteWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryPwriteWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedPWrite<'Task, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Task, 'Handler>, PWriteRefusal>
+        (paused : PausedPWrite<'Thread, 'Handler>)
+        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
         CopyRange.require "UnixReadWrite.pwriteWithBytes" paused.Range bytes
-        tryPwriteBytes paused.Task paused.Fd bytes paused.FileOffset paused.System
+        tryPwriteBytes paused.Thread paused.Fd bytes paused.FileOffset paused.System
 
     /// <summary>
     /// The rest of the `pwrite` `paused` stopped: `bytes`, exactly the ones
@@ -5024,22 +5029,22 @@ module UnixReadWrite =
     /// move, but the file's contents and timestamps do.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`bytes` is not exactly `PausedPWrite.copyRange`'s count long.</exception>
-    let pwriteWithBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let pwriteWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
-        (paused : PausedPWrite<'Task, 'Handler>)
-        : WriteAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedPWrite<'Thread, 'Handler>)
+        : WriteAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryPwriteWithBytes bytes paused
         |> Refusal.orRaise "UnixReadWrite.pwriteWithBytes" PWriteRefusal.kind PWriteRefusal.describe
 
     /// `copyFileRange`, with a refusal answered as the `Error` rather than raised.
-    let internal tryCopyFileRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryCopyFileRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inFd : int)
         (outFd : int)
         (length : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, CopyFileRangeRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CopyFileRangeRefusal>
         =
         // Measured on Linux 6.18.5 (`copy-file-syscalls.c`, tmpfs and ext4
         // alike) over every pair of a file opened read-only, write-only and
@@ -5207,13 +5212,13 @@ module UnixReadWrite =
     /// stripped as a write strips them. A copy of nothing changes nothing.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `copy_file_range`.</exception>
-    let copyFileRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let copyFileRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inFd : int)
         (outFd : int)
         (length : uint64)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryCopyFileRange inFd outFd length flags system
         |> Refusal.orRaise "UnixReadWrite.copyFileRange" CopyFileRangeRefusal.kind CopyFileRangeRefusal.describe

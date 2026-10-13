@@ -50,8 +50,8 @@ module internal ForgedName =
             )
 
     /// `inVfs`, of `system`'s filesystem.
-    let ofInode<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let ofInode<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         (inode : InodeNumber)
         : ReachedThrough
         =

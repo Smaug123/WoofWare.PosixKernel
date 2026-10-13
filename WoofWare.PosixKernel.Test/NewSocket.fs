@@ -38,12 +38,12 @@ module NewSocket =
 
     /// Create a blocking socket of this shape, failing the test if the kernel
     /// does not.
-    let create<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let create<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : SocketDomain)
         (kind : SocketKind)
         (protocol : SocketProtocol)
-        (system : UnixSystem<'Task, 'Handler>)
-        : int * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int * UnixSystem<'Thread, 'Handler>
         =
         let rawDomain, rawKind, rawProtocol =
             arguments system.Machine.UnixPlatform domain kind protocol
@@ -69,12 +69,12 @@ module NewSocket =
 
     /// `socket(2)` for this shape, or `None` when the kernel answers an errno
     /// or refuses.
-    let tryCreate<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let tryCreate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : SocketDomain)
         (kind : SocketKind)
         (protocol : SocketProtocol)
-        (system : UnixSystem<'Task, 'Handler>)
-        : (int * UnixSystem<'Task, 'Handler>) option
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (int * UnixSystem<'Thread, 'Handler>) option
         =
         let rawDomain, rawKind, rawProtocol =
             arguments system.Machine.UnixPlatform domain kind protocol

@@ -819,15 +819,15 @@ module TestKeventRegistration =
     // ------------------------------------------------------------------
 
     let private parkIn
-        (task : int)
+        (thread : int)
         (kq : int)
         (timeout : KeventTimeout)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixKqueue.tryKevent task kq 0 [] 4 UserBuffer.Mapped timeout system with
+        match UnixKqueue.tryKevent thread kq 0 [] 4 UserBuffer.Mapped timeout system with
         | Ok (KeventOutcome.WouldBlock _, parked) -> parked
-        | other -> failwith $"expected task %d{task} to park, got %A{other}"
+        | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
     [<Test>]
     let ``an event wakes every sleeper, the first to finish takes it, and the rest sleep again`` () : unit =
@@ -877,9 +877,9 @@ module TestKeventRegistration =
                 match UnixKqueue.tryFinishKevent 2 system with
                 | Ok (KeventOutcome.Answered [ event ], finished) ->
                     event |> shouldEqual expected
-                    UnixTaskTable.parkedFor 2 finished.Tasks |> shouldEqual None
+                    UnixThreadTable.parkedFor 2 finished.Threads |> shouldEqual None
                     finished
-                | other -> failwith $"expected task 2 to take the event, got %A{other}"
+                | other -> failwith $"expected thread 2 to take the event, got %A{other}"
 
             match UnixKqueue.tryFinishKevent 1 system with
             | Ok (KeventOutcome.WouldBlock _, reparked) when clear ->
@@ -889,7 +889,7 @@ module TestKeventRegistration =
             | Ok (KeventOutcome.Answered [ event ], _) when not clear ->
                 // Without EV_CLEAR the registration stays queued while ready.
                 event |> shouldEqual expected
-            | other -> failwith $"unexpected finish for task 1 (EV_CLEAR %b{clear}): %A{other}"
+            | other -> failwith $"unexpected finish for thread 1 (EV_CLEAR %b{clear}): %A{other}"
 
             UnixSystem.checkInvariants system |> shouldEqual []
 

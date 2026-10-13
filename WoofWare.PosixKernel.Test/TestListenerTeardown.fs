@@ -52,11 +52,11 @@ module TestListenerTeardown =
         |> Array.filter (fun line -> line <> "")
         |> Array.toList
 
-    /// A booted system of `platform`, with tasks 1 to 4.
+    /// A booted system of `platform`, with threads 1 to 4.
     let private systemOn (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> platform
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with

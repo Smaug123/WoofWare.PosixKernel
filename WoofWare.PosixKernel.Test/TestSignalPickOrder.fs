@@ -7,7 +7,7 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// The order a task takes its pending signals in, held to the rows of
+/// The order a thread takes its pending signals in, held to the rows of
 /// `docs/plans/2026-08-23-posix-kernel-extraction/signal-pick-order.c`, which are
 /// checked in as `signalOrder/linux.txt` (Linux 6.18.5, aarch64) and
 /// `signalOrder/darwin.txt` (Darwin 27.0.0; the same rows as on 25.6.0).
@@ -16,7 +16,7 @@ open WoofWare.PosixKernel
 /// to generate, generated them, and then took them: with `sigwait` (so in the
 /// order they are picked, whatever their dispositions), or by unblocking them
 /// under handlers. Each is replayed here on a fresh state holding them pending,
-/// whose only task then returns to user mode and runs the handlers its frames
+/// whose only thread then returns to user mode and runs the handlers its frames
 /// say, the expected order being the probe's output rather than anything
 /// derived from the model.
 [<TestFixture>]
@@ -25,7 +25,7 @@ module TestSignalPickOrder =
 
     let private leader : int = 0
 
-    let private tasks : Set<int> = Set.singleton leader
+    let private threads : Set<int> = Set.singleton leader
 
     let private handler : string = "h"
 
@@ -127,7 +127,7 @@ module TestSignalPickOrder =
             (state : SignalState<int, string>)
             : HandlerFrame<int, string> list * SignalState<int, string>
             =
-            match SignalState.onReturnToUser CoreDumps.Suppressed leader tasks leader state with
+            match SignalState.onReturnToUser CoreDumps.Suppressed leader threads leader state with
             | Ok (None, state) -> [], state
             | Ok (Some (SignalDelivery.RunHandlers frames), state) -> frames, state
             | other -> failwith $"expected handlers to run, got %A{other}"
@@ -369,7 +369,7 @@ module TestSignalPickOrder =
             ]
 
     [<Test>]
-    let ``Linux takes a task's own signals before the process's`` () : unit =
+    let ``Linux takes a thread's own signals before the process's`` () : unit =
         // pair thread=15 proc=4, and thread=4 proc=15.
         generateBlocked SignalNumbering.Linux Consumer.FullMask [ 15, true ; 4, false ]
         |> handlerOrder SignalNumbering.Linux
@@ -380,7 +380,7 @@ module TestSignalPickOrder =
         |> shouldEqual [ 4 ; 15 ]
 
     [<Test>]
-    let ``Darwin takes a task's own signals and the process's as one set`` () : unit =
+    let ``Darwin takes a thread's own signals and the process's as one set`` () : unit =
         // pair thread=15 proc=4, and thread=4 proc=15.
         generateBlocked SignalNumbering.Darwin Consumer.FullMask [ 15, true ; 4, false ]
         |> handlerOrder SignalNumbering.Darwin

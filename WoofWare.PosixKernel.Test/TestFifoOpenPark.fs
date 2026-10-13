@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.FifoOpen` and `WakePrimitive.FifoPartnerOpened`, which are
-/// reserved: nothing parks a task in a FIFO open yet. What every reader of a
+/// reserved: nothing parks a thread in a FIFO open yet. What every reader of a
 /// park already answers for it (its wake condition, the description it holds,
-/// how a signal ends it), and the invariant that reports a task parked in it,
-/// which is what makes "nothing parks a task in it" checked wherever a fuzzer
+/// how a signal ends it), and the invariant that reports a thread parked in it,
+/// which is what makes "nothing parks a thread in it" checked wherever a fuzzer
 /// checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -67,15 +67,15 @@ module TestFifoOpenPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a FIFO open is a ReservedPark defect, and its description outlives its last descriptor``
+    let ``a thread parked in a FIFO open is a ReservedPark defect, and its description outlives its last descriptor``
         ()
         : unit
         =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             // A real sleeping open holds a description no descriptor names. One
@@ -93,11 +93,11 @@ module TestFifoOpenPark =
                         PartnerOpens = 0L
                     }
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
             let closed =
                 match UnixDescriptor.tryClose 0 asleep with
@@ -108,13 +108,15 @@ module TestFifoOpenPark =
 
             closed
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton task) closed |> shouldEqual []
+            UnixWait.deadlines (Set.singleton thread) closed |> shouldEqual []
 
             // This library keeps no count of a FIFO's opens, so the primitive
             // cannot be evaluated, and asking fails loudly rather than guessing.
             let error =
-                Assert.Throws<Exception> (fun () -> UnixWait.satisfied task closed |> ignore<Set<WakePrimitive> option>)
+                Assert.Throws<Exception> (fun () ->
+                    UnixWait.satisfied thread closed |> ignore<Set<WakePrimitive> option>
+                )
 
             error.Message |> shouldContainText "FifoOpen"

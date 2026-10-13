@@ -593,13 +593,13 @@ module TestConnectedTransferAgainstHost =
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
-    /// A booted system of `platform`, with task 1 for `accept` and `SIGPIPE`
+    /// A booted system of `platform`, with thread 1 for `accept` and `SIGPIPE`
     /// ignored, as the test host and the .NET runtime ignore it.
     let private kernelSystem (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         let system =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.ensure 1
+            |> Threads.ensure 1
 
         { system with
             Process =

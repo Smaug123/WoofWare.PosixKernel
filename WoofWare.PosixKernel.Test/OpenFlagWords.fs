@@ -124,11 +124,11 @@ module internal OpenFlagWords =
     /// `OpenOutcomes.openPath`, by the process's leader and failing the test
     /// if the call sleeps, given the flag word that stands for `flags` on the
     /// system's own platform.
-    let openPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : OpenFlags)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         OpenOutcomes.openPath (encode system.Machine.UnixPlatform flags) path mode system

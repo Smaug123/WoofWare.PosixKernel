@@ -42,8 +42,8 @@ module TestUnixProcessState =
         UnixSystem.initial SimulatedUnixPlatform.linuxX64
 
     [<Test>]
-    let ``the signal state is keyed by whatever the client names tasks`` () : unit =
-        // The claim the two type parameters exist to make. `int` names a task and
+    let ``the signal state is keyed by whatever the client names threads`` () : unit =
+        // The claim the two type parameters exist to make. `int` names a thread and
         // `string` is a handler; a record that fixed either type to one client's
         // own would not compile here at all.
         let proc =

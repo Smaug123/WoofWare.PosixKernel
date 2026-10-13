@@ -1,11 +1,11 @@
 namespace WoofWare.PosixKernel
 
 /// What the client's scheduling has done to the machine: how long it has been
-/// up, and which task each of its processors is running.
+/// up, and which thread each of its processors is running.
 ///
 /// Both are the client's decisions, which this library only records: the
 /// client decides when time passes, and reports it with
-/// `UnixSystem.advanceClock`; and it decides which task runs where, and
+/// `UnixSystem.advanceClock`; and it decides which thread runs where, and
 /// reports each choice with `UnixScheduling.dispatch`. So both change between
 /// syscalls, as often as the client runs an instruction, where the rest of the
 /// machine (`UnixMachineState`) changes only in a syscall. Held beside the
@@ -24,18 +24,18 @@ type internal UnixSchedulingState =
             /// advances every clock stands still, so readings taken between them all
             /// name the same instant.
             NanosecondsSinceBoot : int64
-            /// The task running on each busy logical processor, by its thread ID:
-            /// what Linux calls a run queue's current task. An idle processor is
+            /// The thread running on each busy logical processor, by its thread ID:
+            /// what Linux calls a run queue's current thread. An idle processor is
             /// absent.
             ///
-            /// The client reports each task it runs with `UnixScheduling.dispatch`,
-            /// which puts it here, displacing whichever task the processor ran
-            /// before, whatever process that task belongs to. A task leaves it when
+            /// The client reports each thread it runs with `UnixScheduling.dispatch`,
+            /// which puts it here, displacing whichever thread the processor ran
+            /// before, whatever process that thread belongs to. A thread leaves it when
             /// it is dispatched elsewhere, when it parks in a syscall
             /// (`UnixWait.park`), and when it exits or its process ends. Keyed by
-            /// processor, so no processor runs two tasks; the machine's rather
+            /// processor, so no processor runs two threads; the machine's rather
             /// than a process's, because the machine's processes share its
-            /// processors; and by thread ID, which no two live tasks on the machine
+            /// processors; and by thread ID, which no two live threads on the machine
             /// share.
             Occupants : Map<CpuId, OsThreadId>
         }
@@ -86,7 +86,7 @@ module internal UnixSchedulingState =
     /// granularity its flavour reports.
     let nanosecondsSinceBoot (scheduling : UnixSchedulingState) : int64 = scheduling.NanosecondsSinceBoot
 
-    /// Whether `cpu` is running the task whose thread ID is `occupant`. See
+    /// Whether `cpu` is running the thread whose thread ID is `occupant`. See
     /// `UnixSchedulingState.Occupants`.
     let runs (cpu : CpuId) (occupant : OsThreadId) (scheduling : UnixSchedulingState) : bool =
         // Allocates nothing, unlike `Map.tryFind cpu scheduling.Occupants = Some occupant`, since
@@ -96,7 +96,7 @@ module internal UnixSchedulingState =
         scheduling.Occupants.TryGetValue (cpu, &running)
         && OsThreadId.toUInt64 running = OsThreadId.toUInt64 occupant
 
-    /// `scheduling` with the task whose thread ID is `occupant` taken off `cpu`,
+    /// `scheduling` with the thread whose thread ID is `occupant` taken off `cpu`,
     /// if it is running there, leaving the processor idle. See
     /// `UnixSchedulingState.Occupants`.
     let vacate (cpu : CpuId) (occupant : OsThreadId) (scheduling : UnixSchedulingState) : UnixSchedulingState =

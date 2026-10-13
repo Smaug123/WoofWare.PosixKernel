@@ -9,12 +9,12 @@ module internal ReadOutcomes =
 
     /// `UnixReadWrite.read` by the process's leader, failing the test if the
     /// call sleeps.
-    let read<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let read<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Task, 'Handler>, ReadRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         UnixReadWrite.tryRead system.Leader fd buffer count system
         |> Result.map (fun (outcome, after) ->

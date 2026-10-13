@@ -51,8 +51,8 @@ module TestDarwinPoll =
             Events = events
         }
 
-    /// The task every poll here is made by; `KeventWorld.darwin` has it, and
-    /// its helpers make their own calls as other tasks.
+    /// The thread every poll here is made by; `KeventWorld.darwin` has it, and
+    /// its helpers make their own calls as other threads.
     let private poller : int = 2
 
     let private sound (system : UnixSystem<int, string>) : unit =
@@ -609,7 +609,7 @@ module TestDarwinPoll =
     let private finishAnswer (system : UnixSystem<int, string>) : int16 list * int =
         match finish system with
         | Ok (PollOutcome.Answered (revents, count), after) ->
-            UnixTaskTable.parkedFor poller after.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor poller after.Threads |> shouldEqual None
             revents, count
         | other -> failwith $"the finish did not answer: %A{other}"
 
@@ -755,7 +755,7 @@ module TestDarwinPoll =
         let closed = KeventWorld.close listener parked
         sound closed
 
-        match UnixTaskTable.parkedFor poller closed.Tasks with
+        match UnixThreadTable.parkedFor poller closed.Threads with
         | Some (ParkedSyscall.KqueuePoll poll) ->
             (UnixMachineState.pollQueue poll.Queue closed.Machine).Registrations
             |> shouldEqual Map.empty
@@ -821,7 +821,9 @@ module TestDarwinPoll =
         // again.
         match finish early with
         | Ok (PollOutcome.WouldBlock _, again) ->
-            UnixTaskTable.parkedFor poller again.Tasks |> Option.isSome |> shouldEqual true
+            UnixThreadTable.parkedFor poller again.Threads
+            |> Option.isSome
+            |> shouldEqual true
         | other -> failwith $"expected a re-park, got %A{other}"
 
         // Something to report and an expired deadline at once: Darwin answers
@@ -921,7 +923,7 @@ module TestDarwinPoll =
         sound parked
 
         let queueId, queue =
-            match UnixTaskTable.parkedFor poller parked.Tasks with
+            match UnixThreadTable.parkedFor poller parked.Threads with
             | Some (ParkedSyscall.KqueuePoll poll) -> poll.Queue, UnixMachineState.pollQueue poll.Queue parked.Machine
             | other -> failwith $"expected a Darwin poll, got %A{other}"
 

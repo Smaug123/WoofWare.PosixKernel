@@ -6,7 +6,7 @@
   <img alt="Project logo: minimalistic face of a cartoon Shiba Inu, drawn in outline, sitting at the centre of three concentric rings." src="WoofWare.PosixKernel/logos/light.svg" width="300">
 </picture>
 
-A deterministic, purely functional simulation of a POSIX process: its filesystem, file descriptors, pipes, sockets, `poll`/epoll/kqueue, inotify, signals, tasks, clock and entropy, on a Linux or a Darwin kernel whose divergences were each measured on the real thing.
+A deterministic, purely functional simulation of a POSIX process: its filesystem, file descriptors, pipes, sockets, `poll`/epoll/kqueue, inotify, signals, threads, clock and entropy, on a Linux or a Darwin kernel whose divergences were each measured on the real thing.
 It performs no I/O and makes no host reads, so a replay never depends on the machine that produced it.
 
 The library's own README, [`WoofWare.PosixKernel/README.md`](WoofWare.PosixKernel/README.md), is the account of how a client uses it, and is also the package's README on [NuGet](https://www.nuget.org/packages/WoofWare.PosixKernel).

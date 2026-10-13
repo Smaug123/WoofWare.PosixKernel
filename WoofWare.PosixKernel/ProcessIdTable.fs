@@ -4,7 +4,7 @@ namespace WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 type internal ProcessIdCounter =
     /// Linux takes a process's ID from the counter it takes thread IDs from
-    /// (`ThreadIdAllocator`): the ID is the process's first task's thread ID.
+    /// (`ThreadIdAllocator`): the ID is the process's first thread's ID.
     | ThreadIds
     /// Darwin takes it from a counter of its own, unrelated to its 64-bit
     /// thread IDs. `next` is the ID the next process gets.

@@ -28,12 +28,12 @@ module TestSignalState =
     let private everyNumbering : SignalNumbering list =
         [ SignalNumbering.Linux ; SignalNumbering.Darwin ]
 
-    /// Stand-in for whatever a client uses to identify a task. Deliberately a
+    /// Stand-in for whatever a client uses to identify a thread. Deliberately a
     /// nominal type of this test's own rather than `int`: the point of these
-    /// tests is that `SignalState` is generic in its task identity, and an
+    /// tests is that `SignalState` is generic in its thread identity, and an
     /// `int` could satisfy the signature through some numeric path without the
     /// parameter being genuinely opaque.
-    type TestTask = | TestTask of int
+    type TestThread = | TestThread of int
 
     /// Stand-in for a client's signal-handler identity, which `SignalState` is
     /// generic in and constrains only to equality.
@@ -44,30 +44,30 @@ module TestSignalState =
     /// infer `obj` for the handler -- which `FS3559` rejects, correctly: an
     /// `obj` handler would make the equality constraint vacuous and the tests
     /// below would stop saying anything about it.
-    let private initial (numbering : SignalNumbering) : SignalState<TestTask, TestHandler> =
+    let private initial (numbering : SignalNumbering) : SignalState<TestThread, TestHandler> =
         SignalState.initial numbering Set.empty
 
     /// Most of the operations' behaviour does not depend on the numbering at
     /// all; those tests run on this instance and rely on the property test to
     /// cover the other numbering.
-    let private empty : SignalState<TestTask, TestHandler> =
+    let private empty : SignalState<TestThread, TestHandler> =
         initial SignalNumbering.Linux
 
     /// The signals a process that `generation` left running has.
     let private continuesWith
-        (generation : SignalGeneration<TestTask, TestHandler>)
-        : SignalState<TestTask, TestHandler>
+        (generation : SignalGeneration<TestThread, TestHandler>)
+        : SignalState<TestThread, TestHandler>
         =
         match generation with
         | SignalGeneration.ProcessContinues state -> state
         | SignalGeneration.ProcessTerminated _
         | SignalGeneration.ProcessStopped _ -> failwith $"expected the process to carry on, got %A{generation}"
 
-    let private t0 : TestTask = TestTask 0
-    let private t1 : TestTask = TestTask 1
-    let private t2 : TestTask = TestTask 2
+    let private t0 : TestThread = TestThread 0
+    let private t1 : TestThread = TestThread 1
+    let private t2 : TestThread = TestThread 2
 
-    let private allThreads : TestTask list = [ t0 ; t1 ; t2 ]
+    let private allThreads : TestThread list = [ t0 ; t1 ; t2 ]
 
     let private namedSignals : Signal list =
         [
@@ -119,33 +119,33 @@ module TestSignalState =
         |> List.filter (fun signal -> not (Signal.isUncatchableUnder numbering signal))
 
     /// What the leader, `t0`, takes as it returns to user mode, in a process
-    /// whose tasks are `tasks`. Fails the test on a refusal.
+    /// whose threads are `threads`. Fails the test on a refusal.
     let private leaderDelivery
-        (tasks : TestTask list)
-        (s : SignalState<TestTask, TestHandler>)
-        : SignalDelivery<TestTask, TestHandler> option * SignalState<TestTask, TestHandler>
+        (threads : TestThread list)
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalDelivery<TestThread, TestHandler> option * SignalState<TestThread, TestHandler>
         =
-        match SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList tasks) t0 s with
+        match SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList threads) t0 s with
         | Ok answer -> answer
         | Error refusal -> failwith $"onReturnToUser refused: %O{refusal}"
 
     /// The one entry a delivery ran a handler for, failing the test on any
     /// other delivery.
-    let private oneHandler (delivery : SignalDelivery<TestTask, TestHandler> option) : PendingSignal<TestTask> =
+    let private oneHandler (delivery : SignalDelivery<TestThread, TestHandler> option) : PendingSignal<TestThread> =
         match delivery with
         | Some (SignalDelivery.RunHandlers [ frame ]) -> frame.Entry
         | other -> failwith $"expected one handler frame, got %A{other}"
 
-    /// `SignalState.generate` in a process whose tasks are `tasks`, led by `t0`.
+    /// `SignalState.generate` in a process whose threads are `threads`, led by `t0`.
     /// Fails the test on a refusal.
     let private generateAmong
         (coreDumps : CoreDumps)
-        (tasks : TestTask list)
-        (entry : PendingSignal<TestTask>)
-        (s : SignalState<TestTask, TestHandler>)
-        : SignalGeneration<TestTask, TestHandler>
+        (threads : TestThread list)
+        (entry : PendingSignal<TestThread>)
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalGeneration<TestThread, TestHandler>
         =
-        match SignalState.generate coreDumps t0 (Set.ofList tasks) entry s with
+        match SignalState.generate coreDumps t0 (Set.ofList threads) entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
@@ -154,29 +154,33 @@ module TestSignalState =
     let private catch : SignalDisposition<TestHandler> =
         SignalDisposition.Catch (SignalCatch.ofHandler handler)
 
-    /// `task` inside a handler that blocks `signal` (see `HandlerFrames.enter`),
-    /// in a process whose tasks are `allThreads`, led by `t0`.
+    /// `thread` inside a handler that blocks `signal` (see `HandlerFrames.enter`),
+    /// in a process whose threads are `allThreads`, led by `t0`.
     let private block
-        (task : TestTask)
+        (thread : TestThread)
         (signal : Signal)
-        (s : SignalState<TestTask, TestHandler>)
-        : SignalState<TestTask, TestHandler>
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalState<TestThread, TestHandler>
         =
-        HandlerFrames.enter (TestHandler "carrier") t0 (Set.ofList allThreads) task (Set.singleton signal) s
+        HandlerFrames.enter (TestHandler "carrier") t0 (Set.ofList allThreads) thread (Set.singleton signal) s
 
-    /// Whether `task`'s mask holds `signal`.
-    let private isBlocked (task : TestTask) (signal : Signal) (s : SignalState<TestTask, TestHandler>) : bool =
-        SignalMask.contains signal (SignalState.maskOf task s)
+    /// Whether `thread`'s mask holds `signal`.
+    let private isBlocked (thread : TestThread) (signal : Signal) (s : SignalState<TestThread, TestHandler>) : bool =
+        SignalMask.contains signal (SignalState.maskOf thread s)
 
     /// Install `handler` for `signal`, as `sigaction` with a handler does.
-    let private enable (signal : Signal) (s : SignalState<TestTask, TestHandler>) : SignalState<TestTask, TestHandler> =
+    let private enable
+        (signal : Signal)
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalState<TestThread, TestHandler>
+        =
         SignalState.setDisposition signal catch s
 
     /// Restore `signal`'s default, as `sigaction` with `SIG_DFL` does.
     let private restoreDefault
         (signal : Signal)
-        (s : SignalState<TestTask, TestHandler>)
-        : SignalState<TestTask, TestHandler>
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalState<TestThread, TestHandler>
         =
         SignalState.setDisposition signal SignalDisposition.Default s
 
@@ -190,14 +194,14 @@ module TestSignalState =
             SignalState.disposition Signal.SIGINT s |> shouldEqual SignalDisposition.Default
             SignalState.maskOf t0 s |> shouldEqual SignalMask.empty
             SignalState.framesOf t0 s |> shouldEqual []
-            SignalState.tasksWithFrames s |> shouldEqual Set.empty
+            SignalState.threadsWithFrames s |> shouldEqual Set.empty
             SignalState.pending s |> Seq.toList |> shouldEqual []
             SignalState.dispositions s |> shouldEqual Map.empty
 
     [<Test>]
     let ``initial ignores exactly the inherited ignores`` () : unit =
         for numbering in everyNumbering do
-            let s : SignalState<TestTask, TestHandler> =
+            let s : SignalState<TestThread, TestHandler> =
                 SignalState.initial numbering (Set.ofList [ Signal.SIGHUP ; Signal.SIGUSR2 ])
 
             SignalState.dispositions s
@@ -218,7 +222,7 @@ module TestSignalState =
             for signal in kernelUncatchable do
                 Assert.Throws (fun () ->
                     SignalState.initial numbering (Set.singleton signal)
-                    |> ignore<SignalState<TestTask, TestHandler>>
+                    |> ignore<SignalState<TestThread, TestHandler>>
                 )
                 |> ignore<exn>
 
@@ -303,12 +307,12 @@ module TestSignalState =
         SignalState.pending s' |> Seq.toList |> shouldEqual []
 
     [<Test>]
-    let ``a handler frame blocks what its sa_mask names, for its task alone`` () : unit =
+    let ``a handler frame blocks what its sa_mask names, for its thread alone`` () : unit =
         let s = empty |> block t0 Signal.SIGINT
         isBlocked t0 Signal.SIGINT s |> shouldEqual true
         isBlocked t0 Signal.SIGHUP s |> shouldEqual false
         isBlocked t1 Signal.SIGINT s |> shouldEqual false
-        SignalState.tasksWithFrames s |> shouldEqual (Set.singleton t0)
+        SignalState.threadsWithFrames s |> shouldEqual (Set.singleton t0)
 
     [<Test>]
     let ``nested frames block the union of their masks, and sigreturn restores each mask exactly`` () : unit =
@@ -327,10 +331,10 @@ module TestSignalState =
         SignalState.maskOf t0 none |> shouldEqual SignalMask.empty
         SignalState.framesOf t0 none |> shouldEqual []
         // No empty stack is stored.
-        SignalState.tasksWithFrames none |> shouldEqual Set.empty
+        SignalState.threadsWithFrames none |> shouldEqual Set.empty
 
     [<Test>]
-    let ``sigreturn refuses any frame but the task's innermost`` () : unit =
+    let ``sigreturn refuses any frame but the thread's innermost`` () : unit =
         let two = empty |> block t0 Signal.SIGINT |> block t0 Signal.SIGHUP
 
         let outer =
@@ -473,7 +477,7 @@ module TestSignalState =
 
                 Assert.Throws (fun () ->
                     SignalState.initial numbering (Set.singleton signal)
-                    |> ignore<SignalState<TestTask, TestHandler>>
+                    |> ignore<SignalState<TestThread, TestHandler>>
                 )
                 |> ignore<exn>
 
@@ -685,7 +689,7 @@ module TestSignalState =
 
     [<Test>]
     let ``onReturnToUser surfaces Stop and Continue defaults`` () : unit =
-        let deliveryFor (signal : Signal) : SignalDelivery<TestTask, TestHandler> option =
+        let deliveryFor (signal : Signal) : SignalDelivery<TestThread, TestHandler> option =
             empty
             |> SignalState.enqueue
                 {
@@ -746,13 +750,13 @@ module TestSignalState =
         let before =
             SignalMask.ofSignals SignalNumbering.Linux (Set.ofList [ Signal.SIGCONT ; Signal.SIGWINCH ])
 
-        let toProcess (signal : Signal) : PendingSignal<TestTask> =
+        let toProcess (signal : Signal) : PendingSignal<TestThread> =
             {
                 Signal = signal
                 Target = ValueNone
             }
 
-        let suspended (pending : Signal list) : SignalState<TestTask, TestHandler> =
+        let suspended (pending : Signal list) : SignalState<TestThread, TestHandler> =
             pending
             |> List.fold
                 (fun s signal -> SignalState.enqueue (toProcess signal) s)
@@ -831,7 +835,7 @@ module TestSignalState =
                 Target = ValueNone
             }
 
-        // Every task blocks it.
+        // Every thread blocks it.
         let blocked = empty |> block t0 Signal.SIGTERM |> block t1 Signal.SIGTERM
 
         let s' =
@@ -840,7 +844,7 @@ module TestSignalState =
         SignalState.pending s' |> shouldEqual [ entry ]
 
         // A thread-directed one whose target blocks it waits even though
-        // another task would not block it.
+        // another thread would not block it.
         let directed =
             { entry with
                 Target = ValueSome t0
@@ -1036,13 +1040,13 @@ module TestSignalState =
             }
 
         let s = empty |> enable Signal.SIGINT |> SignalState.enqueue entry
-        let tasks = Set.ofList [ t2 ; t0 ; t1 ]
+        let threads = Set.ofList [ t2 ; t0 ; t1 ]
 
-        for task in [ t1 ; t2 ] do
-            SignalState.onReturnToUser CoreDumps.Suppressed t0 tasks task s
+        for thread in [ t1 ; t2 ] do
+            SignalState.onReturnToUser CoreDumps.Suppressed t0 threads thread s
             |> shouldEqual (Ok (None, s))
 
-        match SignalState.onReturnToUser CoreDumps.Suppressed t0 tasks t0 s with
+        match SignalState.onReturnToUser CoreDumps.Suppressed t0 threads t0 s with
         | Ok (Some (SignalDelivery.RunHandlers [ frame ]), s') ->
             frame.Entry |> shouldEqual entry
             frame.Action.Handler |> shouldEqual handler
@@ -1051,7 +1055,7 @@ module TestSignalState =
         | other -> failwith $"expected one handler frame for the leader, got %A{other}"
 
     [<Test>]
-    let ``onReturnToUser refuses every task while a caught signal pending on the process could reach only a non-leader``
+    let ``onReturnToUser refuses every thread while a caught signal pending on the process could reach only a non-leader``
         ()
         : unit
         =
@@ -1065,8 +1069,8 @@ module TestSignalState =
                     Target = ValueNone
                 }
 
-        for task in [ t0 ; t1 ; t2 ] do
-            SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ; t2 ]) task s
+        for thread in [ t0 ; t1 ; t2 ] do
+            SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ; t2 ]) thread s
             |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGINT))
 
     [<Test>]
@@ -1086,20 +1090,20 @@ module TestSignalState =
         SignalState.generate CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ; t2 ]) entry s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGINT))
 
-        // Once every task blocks it, it is simply pending.
+        // Once every thread blocks it, it is simply pending.
         SignalState.generate CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) entry s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
 
     [<Test>]
-    let ``a default SIGCONT sent to the process that only a task but the leader could take is refused under Linux``
+    let ``a default SIGCONT sent to the process that only a thread but the leader could take is refused under Linux``
         ()
         : unit
         =
-        // Linux leaves it pending on the process until whichever task takes it
+        // Linux leaves it pending on the process until whichever thread takes it
         // discards it as it returns to user mode, and only the leader is
-        // asked. Darwin hands it to that task, discarding it at once.
+        // asked. Darwin hands it to that thread, discarding it at once.
         let entry =
             {
                 Signal = Signal.SIGCONT
@@ -1119,7 +1123,7 @@ module TestSignalState =
         SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) t0 (SignalState.enqueue entry s)
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGCONT))
 
-        // With every task blocking it, it is simply pending.
+        // With every thread blocking it, it is simply pending.
         SignalState.generate CoreDumps.Suppressed t0 (Set.singleton t0) entry s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
@@ -1138,7 +1142,7 @@ module TestSignalState =
         |> shouldEqual (Ok [])
 
     [<Test>]
-    let ``onReturnToUser holds a signal every task blocks`` () : unit =
+    let ``onReturnToUser holds a signal every thread blocks`` () : unit =
         let s =
             empty
             |> enable Signal.SIGINT
@@ -1169,12 +1173,12 @@ module TestSignalState =
                     Target = ValueSome t0
                 }
 
-        for task in [ t0 ; t1 ] do
-            SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) task s
+        for thread in [ t0 ; t1 ] do
+            SignalState.onReturnToUser CoreDumps.Suppressed t0 (Set.ofList [ t0 ; t1 ]) thread s
             |> shouldEqual (Ok (None, s))
 
     [<Test>]
-    let ``a signal pending on something that is not a task fails loudly`` () : unit =
+    let ``a signal pending on something that is not a thread fails loudly`` () : unit =
         let s =
             empty
             |> enable Signal.SIGINT
@@ -1186,25 +1190,25 @@ module TestSignalState =
 
         let exn = Assert.Throws<exn> (fun () -> leaderDelivery [ t0 ; t1 ] s |> ignore)
 
-        exn.Message |> shouldContainText "not one of the process's tasks"
+        exn.Message |> shouldContainText "not one of the process's threads"
 
     [<Test>]
-    let ``asking with a leader or task that is not a task fails loudly`` () : unit =
-        let tasks = Set.ofList [ t0 ; t1 ]
+    let ``asking with a leader or thread that is not a thread fails loudly`` () : unit =
+        let threads = Set.ofList [ t0 ; t1 ]
 
-        (Assert.Throws<exn> (fun () -> SignalState.onReturnToUser CoreDumps.Suppressed t2 tasks t0 empty |> ignore))
+        (Assert.Throws<exn> (fun () -> SignalState.onReturnToUser CoreDumps.Suppressed t2 threads t0 empty |> ignore))
             .Message
         |> shouldContainText "leader"
 
-        (Assert.Throws<exn> (fun () -> SignalState.onReturnToUser CoreDumps.Suppressed t0 tasks t2 empty |> ignore))
+        (Assert.Throws<exn> (fun () -> SignalState.onReturnToUser CoreDumps.Suppressed t0 threads t2 empty |> ignore))
             .Message
-        |> shouldContainText "task asked"
+        |> shouldContainText "thread asked"
 
         (Assert.Throws<exn> (fun () ->
             SignalState.generate
                 CoreDumps.Suppressed
                 t2
-                tasks
+                threads
                 {
                     Signal = Signal.SIGINT
                     Target = ValueNone
@@ -1216,7 +1220,7 @@ module TestSignalState =
         |> shouldContainText "leader"
 
     [<Test>]
-    let ``onReturnToUser walks past what the task blocks and what is not its own, leaving both`` () : unit =
+    let ``onReturnToUser walks past what the thread blocks and what is not its own, leaving both`` () : unit =
         // SIGHUP (1) is pending on t1 alone, SIGINT (2) on the process, and
         // SIGQUIT (3) on the process but blocked everywhere: the leader skips the
         // first as not its own and the last as blocked, and takes SIGINT.
@@ -1255,7 +1259,7 @@ module TestSignalState =
 
     // ----------------------- Handler frames ----------------------- //
 
-    let private processSignal (signal : Signal) : PendingSignal<TestTask> =
+    let private processSignal (signal : Signal) : PendingSignal<TestThread> =
         {
             Signal = signal
             Target = ValueNone
@@ -1264,8 +1268,8 @@ module TestSignalState =
     let private catchWith
         (signal : Signal)
         (f : SignalCatch<TestHandler> -> SignalCatch<TestHandler>)
-        (s : SignalState<TestTask, TestHandler>)
-        : SignalState<TestTask, TestHandler>
+        (s : SignalState<TestThread, TestHandler>)
+        : SignalState<TestThread, TestHandler>
         =
         SignalState.setDisposition signal (SignalDisposition.Catch (f (SignalCatch.ofHandler handler))) s
 
@@ -1464,28 +1468,28 @@ module TestSignalState =
 
     /// Operation language for the random property test. Each constructor
     /// maps to exactly one public method on the API, except `Spawn`, which is
-    /// a task joining the process: it has no entries yet, so only the task set
+    /// a thread joining the process: it has no entries yet, so only the thread set
     /// the operations are given changes.
     type private Op =
         | SetDisposition of signal : Signal * disposition : SignalDisposition<TestHandler>
         /// `changeMask`, as `sigprocmask(2)` calls it, with a set of signals.
-        | ChangeMask of task : TestTask * change : SignalMaskChange * set : Set<Signal>
-        | Enqueue of entry : PendingSignal<TestTask>
-        | Generate of coreDumps : CoreDumps * entry : PendingSignal<TestTask>
-        | Deliver of coreDumps : CoreDumps * task : TestTask
-        /// `sigreturn` of the task's innermost frame, which it has.
-        | Sigreturn of task : TestTask
-        /// `suspend`, as `sigsuspend(2)` calls it, by a task with no mask to
+        | ChangeMask of thread : TestThread * change : SignalMaskChange * set : Set<Signal>
+        | Enqueue of entry : PendingSignal<TestThread>
+        | Generate of coreDumps : CoreDumps * entry : PendingSignal<TestThread>
+        | Deliver of coreDumps : CoreDumps * thread : TestThread
+        /// `sigreturn` of the thread's innermost frame, which it has.
+        | Sigreturn of thread : TestThread
+        /// `suspend`, as `sigsuspend(2)` calls it, by a thread with no mask to
         /// restore already.
-        | Suspend of task : TestTask * temporary : Set<Signal>
-        | Spawn of task : TestTask
-        | Exit of task : TestTask
+        | Suspend of thread : TestThread * temporary : Set<Signal>
+        | Spawn of thread : TestThread
+        | Exit of thread : TestThread
 
     /// The leader of every process the property test runs. It never exits.
-    let private referenceLeader : TestTask = t0
+    let private referenceLeader : TestThread = t0
 
-    /// Every task the property test's processes can have.
-    let private taskPool : TestTask list = [ t0 ; t1 ; t2 ; TestTask 3 ]
+    /// Every thread the property test's processes can have.
+    let private threadPool : TestThread list = [ t0 ; t1 ; t2 ; TestThread 3 ]
 
     /// Reference implementation: simple lists / sets / maps, completely
     /// independent of the production module's internal representation.
@@ -1496,19 +1500,19 @@ module TestSignalState =
     ///
     /// It keeps pending signals in the order they were generated, and sorts
     /// them only when asked which comes first, where the production module
-    /// keeps them sorted as they arrive. It keeps each task's frames as a
+    /// keeps them sorted as they arrive. It keeps each thread's frames as a
     /// list that may be empty, where the production module drops an empty
     /// stack.
     type private ReferenceState =
         {
             Dispositions : Map<Signal, SignalDisposition<TestHandler>>
-            /// Each task's mask; may hold an empty one.
-            Blocked : Map<TestTask, Set<Signal>>
-            /// The mask each task in `sigsuspend` gets back.
-            Restore : Map<TestTask, Set<Signal>>
-            Frames : Map<TestTask, HandlerFrame<TestTask, TestHandler> list>
+            /// Each thread's mask; may hold an empty one.
+            Blocked : Map<TestThread, Set<Signal>>
+            /// The mask each thread in `sigsuspend` gets back.
+            Restore : Map<TestThread, Set<Signal>>
+            Frames : Map<TestThread, HandlerFrame<TestThread, TestHandler> list>
             NextFrame : int64
-            Pending : PendingSignal<TestTask> list
+            Pending : PendingSignal<TestThread> list
         }
 
     let private referenceEmpty : ReferenceState =
@@ -1525,14 +1529,18 @@ module TestSignalState =
         Map.tryFind signal r.Dispositions
         |> Option.defaultValue SignalDisposition.Default
 
-    let private referenceFrames (r : ReferenceState) (task : TestTask) : HandlerFrame<TestTask, TestHandler> list =
-        Map.tryFind task r.Frames |> Option.defaultValue []
+    let private referenceFrames
+        (r : ReferenceState)
+        (thread : TestThread)
+        : HandlerFrame<TestThread, TestHandler> list
+        =
+        Map.tryFind thread r.Frames |> Option.defaultValue []
 
-    let private referenceMask (r : ReferenceState) (task : TestTask) : Set<Signal> =
-        Map.tryFind task r.Blocked |> Option.defaultValue Set.empty
+    let private referenceMask (r : ReferenceState) (thread : TestThread) : Set<Signal> =
+        Map.tryFind thread r.Blocked |> Option.defaultValue Set.empty
 
-    let private referenceBlocks (r : ReferenceState) (task : TestTask) (signal : Signal) : bool =
-        Set.contains signal (referenceMask r task)
+    let private referenceBlocks (r : ReferenceState) (thread : TestThread) (signal : Signal) : bool =
+        Set.contains signal (referenceMask r thread)
 
     /// SIGKILL and SIGSTOP, written as numbers: what a mask never holds.
     let private referenceUnmaskable (numbering : SignalNumbering) (signal : Signal) : bool =
@@ -1601,32 +1609,32 @@ module TestSignalState =
 
     [<RequireQualifiedAccess>]
     type private ReferenceReceiver =
-        | Task of TestTask
+        | Thread of TestThread
         | BeyondLeader
         | Nobody
 
     /// Who would take `e` now: its target, if not blocking; for the process's
-    /// own, the leader if not blocking, and otherwise "some other task", which
+    /// own, the leader if not blocking, and otherwise "some other thread", which
     /// the model does not name.
     let private referenceReceiver
-        (tasks : Set<TestTask>)
+        (threads : Set<TestThread>)
         (r : ReferenceState)
-        (e : PendingSignal<TestTask>)
+        (e : PendingSignal<TestThread>)
         : ReferenceReceiver
         =
         match e.Target with
-        | ValueSome task ->
-            if referenceBlocks r task e.Signal then
+        | ValueSome thread ->
+            if referenceBlocks r thread e.Signal then
                 ReferenceReceiver.Nobody
             else
-                ReferenceReceiver.Task task
+                ReferenceReceiver.Thread thread
         | ValueNone ->
             if not (referenceBlocks r referenceLeader e.Signal) then
-                ReferenceReceiver.Task referenceLeader
+                ReferenceReceiver.Thread referenceLeader
             elif
-                tasks
+                threads
                 |> Set.toList
-                |> List.exists (fun task -> not (referenceBlocks r task e.Signal))
+                |> List.exists (fun thread -> not (referenceBlocks r thread e.Signal))
             then
                 ReferenceReceiver.BeyondLeader
             else
@@ -1644,24 +1652,24 @@ module TestSignalState =
         | SignalNumbering.Linux -> 1, signo
         | SignalNumbering.Darwin -> 0, signo
 
-    /// What `task` could take, in the order it takes them: a naive stable sort
+    /// What `thread` could take, in the order it takes them: a naive stable sort
     /// of the entries in generation order. Linux takes its own set before the
     /// process's; Darwin takes them as one, its own first where they tie.
     let private referenceCandidates
         (numbering : SignalNumbering)
-        (task : TestTask)
+        (thread : TestThread)
         (r : ReferenceState)
-        : PendingSignal<TestTask> list
+        : PendingSignal<TestThread> list
         =
-        let own = r.Pending |> List.filter (fun e -> e.Target = ValueSome task)
+        let own = r.Pending |> List.filter (fun e -> e.Target = ValueSome thread)
 
         let shared =
-            if task = referenceLeader then
+            if thread = referenceLeader then
                 r.Pending |> List.filter (fun e -> e.Target = ValueNone)
             else
                 []
 
-        let byKey (entries : PendingSignal<TestTask> list) : PendingSignal<TestTask> list =
+        let byKey (entries : PendingSignal<TestThread> list) : PendingSignal<TestThread> list =
             entries |> List.sortBy (fun e -> referencePickKey numbering e.Signal)
 
         match numbering with
@@ -1670,15 +1678,19 @@ module TestSignalState =
 
     /// Every pending entry grouped by set, the process's first, each set in the
     /// order it is taken in: what `SignalState.pending` promises.
-    let private referencePendingView (numbering : SignalNumbering) (r : ReferenceState) : PendingSignal<TestTask> list =
+    let private referencePendingView
+        (numbering : SignalNumbering)
+        (r : ReferenceState)
+        : PendingSignal<TestThread> list
+        =
         r.Pending
         |> List.sortBy (fun e -> e.Target, referencePickKey numbering e.Signal)
 
     /// `pending` without its first entry equal to `e`: the earliest generated.
     let rec private referenceRemoveFirst
-        (e : PendingSignal<TestTask>)
-        (pending : PendingSignal<TestTask> list)
-        : PendingSignal<TestTask> list
+        (e : PendingSignal<TestThread>)
+        (pending : PendingSignal<TestThread> list)
+        : PendingSignal<TestThread> list
         =
         match pending with
         | [] -> failwith $"reference: %A{e} is not pending"
@@ -1718,7 +1730,7 @@ module TestSignalState =
     /// Coalescing of standard signals, on an entry already admitted.
     let private referenceAdmit
         (numbering : SignalNumbering)
-        (entry : PendingSignal<TestTask>)
+        (entry : PendingSignal<TestThread>)
         (r : ReferenceState)
         : ReferenceState
         =
@@ -1735,7 +1747,7 @@ module TestSignalState =
 
     let private referenceEnqueue
         (numbering : SignalNumbering)
-        (entry : PendingSignal<TestTask>)
+        (entry : PendingSignal<TestThread>)
         (r : ReferenceState)
         : ReferenceState
         =
@@ -1759,9 +1771,9 @@ module TestSignalState =
         | RefusedAsMerged of Signal
 
     /// What generating `entry` does at once, and the state after.
-    /// A default-disposition signal some task could receive takes its default
+    /// A default-disposition signal some thread could receive takes its default
     /// here: terminate, stop, or be discarded if the default ignores it; an
-    /// ignored one some task could receive is discarded. A caught one for the
+    /// ignored one some thread could receive is discarded. A caught one for the
     /// process that only a non-leader could receive is refused, and so, under
     /// Darwin's numbering, is one left pending beside an instance in the set
     /// Darwin holds as the same: it keeps a signal sent to the process in the
@@ -1769,20 +1781,20 @@ module TestSignalState =
     let private referenceGenerate
         (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
-        (tasks : Set<TestTask>)
-        (entry : PendingSignal<TestTask>)
+        (threads : Set<TestThread>)
+        (entry : PendingSignal<TestThread>)
         (r : ReferenceState)
         : ReferenceGeneration
         =
         match referenceBeginGeneration numbering entry.Signal r with
         | None -> ReferenceGeneration.Continues r
         | Some r ->
-            let receiver = referenceReceiver tasks r entry
+            let receiver = referenceReceiver threads r entry
 
-            let darwinSet (target : TestTask voption) : TestTask =
+            let darwinSet (target : TestThread voption) : TestThread =
                 match target with
                 | ValueNone -> referenceLeader
-                | ValueSome task -> task
+                | ValueSome thread -> thread
 
             let pend () : ReferenceGeneration =
                 let mergedOnDarwin =
@@ -1810,7 +1822,7 @@ module TestSignalState =
             | _, SignalDisposition.Default, DefaultDisposition.Stop -> ReferenceGeneration.Stopped (entry.Signal, r)
             // What is left is ignored: SIG_IGN, or a default that discards the
             // signal or continues the process. Linux leaves one the leader
-            // blocks pending on the process, for another task to take, which
+            // blocks pending on the process, for another thread to take, which
             // the model refuses; Darwin, and Linux where the receiver does not
             // block it, discard it at once.
             | ReferenceReceiver.BeyondLeader, _, _ when numbering = SignalNumbering.Linux ->
@@ -1818,40 +1830,40 @@ module TestSignalState =
             | _, _, _ -> ReferenceGeneration.Continues r
 
     /// The reference's return to user mode: after every action, start again
-    /// from the head of the task's candidates and take the first it can, where
+    /// from the head of the thread's candidates and take the first it can, where
     /// the production module walks them once. A distinct algorithm, so a
     /// regression in either side surfaces as a divergence.
     let private referenceOnReturnToUser
         (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
-        (tasks : Set<TestTask>)
-        (task : TestTask)
+        (threads : Set<TestThread>)
+        (thread : TestThread)
         (r : ReferenceState)
-        : Result<SignalDelivery<TestTask, TestHandler> option * ReferenceState, SignalReceiverRefusal>
+        : Result<SignalDelivery<TestThread, TestHandler> option * ReferenceState, SignalReceiverRefusal>
         =
         let refused =
             referencePendingView numbering r
-            |> List.tryFind (fun e -> referenceReceiver tasks r e = ReferenceReceiver.BeyondLeader)
+            |> List.tryFind (fun e -> referenceReceiver threads r e = ReferenceReceiver.BeyondLeader)
 
         match refused with
         | Some e -> Error (SignalReceiverRefusal.LeaderBlocks e.Signal)
         | None ->
 
         let rec go
-            (pushed : HandlerFrame<TestTask, TestHandler> list)
+            (pushed : HandlerFrame<TestThread, TestHandler> list)
             (r : ReferenceState)
-            : Result<SignalDelivery<TestTask, TestHandler> option * ReferenceState, SignalReceiverRefusal>
+            : Result<SignalDelivery<TestThread, TestHandler> option * ReferenceState, SignalReceiverRefusal>
             =
             let next =
-                referenceCandidates numbering task r
-                |> List.tryFind (fun e -> not (referenceBlocks r task e.Signal))
+                referenceCandidates numbering thread r
+                |> List.tryFind (fun e -> not (referenceBlocks r thread e.Signal))
 
-            let removed (e : PendingSignal<TestTask>) : ReferenceState =
+            let removed (e : PendingSignal<TestThread>) : ReferenceState =
                 { r with
                     Pending = referenceRemoveFirst e r.Pending
                 }
 
-            let alone (e : PendingSignal<TestTask>) (delivery : SignalDelivery<TestTask, TestHandler>) =
+            let alone (e : PendingSignal<TestThread>) (delivery : SignalDelivery<TestThread, TestHandler>) =
                 if pushed.IsEmpty then
                     Ok (Some delivery, removed e)
                 else
@@ -1866,12 +1878,12 @@ module TestSignalState =
 
             match referenceDisposition r e.Signal with
             | SignalDisposition.Catch action ->
-                let current = referenceMask r task
+                let current = referenceMask r thread
 
                 // The first frame of a return from `sigsuspend` saves the mask
                 // the call replaced.
                 let saved =
-                    match pushed, Map.tryFind task r.Restore with
+                    match pushed, Map.tryFind thread r.Restore with
                     | [], Some restore -> restore
                     | _, _ -> current
 
@@ -1905,8 +1917,8 @@ module TestSignalState =
                                 Map.add e.Signal SignalDisposition.Default r.Dispositions
                             else
                                 r.Dispositions
-                        Blocked = Map.add task mask r.Blocked
-                        Frames = Map.add task (frame :: referenceFrames r task) r.Frames
+                        Blocked = Map.add thread mask r.Blocked
+                        Frames = Map.add thread (frame :: referenceFrames r thread) r.Frames
                         NextFrame = r.NextFrame + 1L
                     }
 
@@ -1923,18 +1935,18 @@ module TestSignalState =
                 | DefaultDisposition.Stop -> alone e (SignalDelivery.DefaultStop e.Signal)
                 | DefaultDisposition.Continue -> failwith "unreachable: handled above"
 
-        // The return gives a task in `sigsuspend` its mask back: through the
+        // The return gives a thread in `sigsuspend` its mask back: through the
         // outermost frame when one was pushed, and at once otherwise, unless
         // it took a default SIGCONT, after which the return goes on.
         go [] r
         |> Result.map (fun (delivery, r') ->
-            match Map.tryFind task r'.Restore, delivery with
+            match Map.tryFind thread r'.Restore, delivery with
             | None, _ -> delivery, r'
             | Some _, Some (SignalDelivery.DefaultContinue _) -> delivery, r'
             | Some restore, _ ->
                 let cleared =
                     { r' with
-                        Restore = Map.remove task r'.Restore
+                        Restore = Map.remove thread r'.Restore
                     }
 
                 if r'.NextFrame > r.NextFrame then
@@ -1942,21 +1954,21 @@ module TestSignalState =
                 else
                     delivery,
                     { cleared with
-                        Blocked = Map.add task restore cleared.Blocked
+                        Blocked = Map.add thread restore cleared.Blocked
                     }
         )
 
     /// Advance both implementations by one op, asserting agreement on
     /// `onReturnToUser`'s full returned action (since the next step's
     /// observable state alone cannot always distinguish a divergence in
-    /// which entry was consumed). Answers the task set after the op too.
+    /// which entry was consumed). Answers the thread set after the op too.
     let private stepBoth
         (numbering : SignalNumbering)
-        (tasks : Set<TestTask>)
+        (threads : Set<TestThread>)
         (op : Op)
-        (s : SignalState<TestTask, TestHandler>)
+        (s : SignalState<TestThread, TestHandler>)
         (r : ReferenceState)
-        : SignalState<TestTask, TestHandler> * ReferenceState * Set<TestTask>
+        : SignalState<TestThread, TestHandler> * ReferenceState * Set<TestThread>
         =
         match op with
         | Op.SetDisposition (signal, disposition) ->
@@ -1971,10 +1983,10 @@ module TestSignalState =
                 Dispositions = Map.add signal (referenceStored numbering disposition) r.Dispositions
                 Pending = pending
             },
-            tasks
-        | Op.ChangeMask (task, change, set) ->
+            threads
+        | Op.ChangeMask (thread, change, set) ->
             let set = set |> Set.filter (referenceUnmaskable numbering >> not)
-            let current = referenceMask r task
+            let current = referenceMask r thread
 
             let changed =
                 match change with
@@ -1982,79 +1994,79 @@ module TestSignalState =
                 | SignalMaskChange.Unblock -> Set.difference current set
                 | SignalMaskChange.SetMask -> set
 
-            SignalState.changeMask change (SignalMask.ofSignals numbering set) task s,
+            SignalState.changeMask change (SignalMask.ofSignals numbering set) thread s,
             { r with
-                Blocked = Map.add task changed r.Blocked
+                Blocked = Map.add thread changed r.Blocked
             },
-            tasks
-        | Op.Sigreturn task ->
-            match referenceFrames r task with
+            threads
+        | Op.Sigreturn thread ->
+            match referenceFrames r thread with
             | innermost :: outer ->
-                SignalState.sigreturn task innermost.Id s,
+                SignalState.sigreturn thread innermost.Id s,
                 { r with
-                    Frames = Map.add task outer r.Frames
-                    Blocked = Map.add task (SignalMask.signals innermost.SavedMask) r.Blocked
+                    Frames = Map.add thread outer r.Frames
+                    Blocked = Map.add thread (SignalMask.signals innermost.SavedMask) r.Blocked
                 },
-                tasks
-            | [] -> failwith $"generated a sigreturn for %O{task}, which has no frame"
-        | Op.Suspend (task, temporary) ->
-            SignalState.suspend task (SignalMask.ofSignals numbering temporary) s,
+                threads
+            | [] -> failwith $"generated a sigreturn for %O{thread}, which has no frame"
+        | Op.Suspend (thread, temporary) ->
+            SignalState.suspend thread (SignalMask.ofSignals numbering temporary) s,
             { r with
-                Restore = Map.add task (referenceMask r task) r.Restore
-                Blocked = Map.add task (temporary |> Set.filter (referenceUnmaskable numbering >> not)) r.Blocked
+                Restore = Map.add thread (referenceMask r thread) r.Restore
+                Blocked = Map.add thread (temporary |> Set.filter (referenceUnmaskable numbering >> not)) r.Blocked
             },
-            tasks
-        | Op.Enqueue e -> SignalState.enqueue e s, referenceEnqueue numbering e r, tasks
+            threads
+        | Op.Enqueue e -> SignalState.enqueue e s, referenceEnqueue numbering e r, threads
         | Op.Generate (coreDumps, e) ->
-            let actual = SignalState.generate coreDumps referenceLeader tasks e s
+            let actual = SignalState.generate coreDumps referenceLeader threads e s
 
-            let expected = referenceGenerate numbering coreDumps tasks e r
+            let expected = referenceGenerate numbering coreDumps threads e r
 
             // A terminated process has no state to carry on with, and a refused
             // generation did not happen, so in both the run goes on from the
             // state the signal was generated in.
             match actual, expected with
-            | Ok (SignalGeneration.ProcessContinues s'), ReferenceGeneration.Continues r' -> s', r', tasks
+            | Ok (SignalGeneration.ProcessContinues s'), ReferenceGeneration.Continues r' -> s', r', threads
             | Ok (SignalGeneration.ProcessStopped (a, s')), ReferenceGeneration.Stopped (b, r') when a = b ->
-                s', r', tasks
+                s', r', threads
             | Ok (SignalGeneration.ProcessTerminated (a, aCore)), ReferenceGeneration.Terminated (b, bCore) when
                 a = b && aCore = bCore
                 ->
-                s, r, tasks
-            | Error (SignalReceiverRefusal.LeaderBlocks a), ReferenceGeneration.Refused b when a = b -> s, r, tasks
+                s, r, threads
+            | Error (SignalReceiverRefusal.LeaderBlocks a), ReferenceGeneration.Refused b when a = b -> s, r, threads
             | Error (SignalReceiverRefusal.PendingForProcessAndLeader a), ReferenceGeneration.RefusedAsMerged b when
                 a = b
                 ->
-                s, r, tasks
+                s, r, threads
             | _ -> failwith $"generate disagreed: actual=%A{actual}, reference=%A{expected}"
-        | Op.Deliver (coreDumps, task) ->
-            let actual = SignalState.onReturnToUser coreDumps referenceLeader tasks task s
-            let expected = referenceOnReturnToUser numbering coreDumps tasks task r
+        | Op.Deliver (coreDumps, thread) ->
+            let actual = SignalState.onReturnToUser coreDumps referenceLeader threads thread s
+            let expected = referenceOnReturnToUser numbering coreDumps threads thread r
 
             match actual, expected with
             | Ok (actualDelivery, s'), Ok (expectedDelivery, r') ->
                 if actualDelivery <> expectedDelivery then
                     failwith $"onReturnToUser disagreed: actual=%A{actualDelivery}, reference=%A{expectedDelivery}"
 
-                s', r', tasks
-            | Error a, Error b when a = b -> s, r, tasks
+                s', r', threads
+            | Error a, Error b when a = b -> s, r, threads
             | _ -> failwith $"onReturnToUser disagreed: actual=%A{actual}, reference=%A{expected}"
-        | Op.Spawn task -> s, r, Set.add task tasks
-        | Op.Exit task ->
-            SignalState.forgetTask task s,
+        | Op.Spawn thread -> s, r, Set.add thread threads
+        | Op.Exit thread ->
+            SignalState.forgetThread thread s,
             { r with
-                Blocked = Map.remove task r.Blocked
-                Restore = Map.remove task r.Restore
-                Frames = Map.remove task r.Frames
-                Pending = r.Pending |> List.filter (fun e -> e.Target <> ValueSome task)
+                Blocked = Map.remove thread r.Blocked
+                Restore = Map.remove thread r.Restore
+                Frames = Map.remove thread r.Frames
+                Pending = r.Pending |> List.filter (fun e -> e.Target <> ValueSome thread)
             },
-            Set.remove task tasks
+            Set.remove thread threads
 
     /// Compare every observable accessor; the accessors are the contract.
     let private assertEquivalent
         (numbering : SignalNumbering)
-        (tasks : Set<TestTask>)
-        (s : SignalState<TestTask, TestHandler>)
+        (threads : Set<TestThread>)
+        (s : SignalState<TestThread, TestHandler>)
         (r : ReferenceState)
         : unit
         =
@@ -2067,14 +2079,14 @@ module TestSignalState =
         |> Seq.toList
         |> shouldEqual (referencePendingView numbering r)
 
-        for task in tasks do
-            SignalState.pendingFor referenceLeader task s
-            |> shouldEqual (referenceCandidates numbering task r)
+        for thread in threads do
+            SignalState.pendingFor referenceLeader thread s
+            |> shouldEqual (referenceCandidates numbering thread r)
 
         for sig0 in allSignals numbering do
             SignalState.disposition sig0 s |> shouldEqual (referenceDisposition r sig0)
 
-        for tid in taskPool do
+        for tid in threadPool do
             SignalState.framesOf tid s |> shouldEqual (referenceFrames r tid)
 
             SignalState.maskOf tid s
@@ -2085,7 +2097,7 @@ module TestSignalState =
             |> Option.map SignalMask.signals
             |> shouldEqual (Map.tryFind tid r.Restore)
 
-        SignalState.tasksWithFrames s
+        SignalState.threadsWithFrames s
         |> shouldEqual (
             r.Frames
             |> Map.filter (fun _ frames -> not frames.IsEmpty)
@@ -2093,12 +2105,12 @@ module TestSignalState =
             |> Set.ofSeq
         )
 
-        SignalState.tasksWithMasksToRestore s
+        SignalState.threadsWithMasksToRestore s
         |> shouldEqual (r.Restore |> Map.keys |> Set.ofSeq)
 
         // Equal as sets, so a stored empty mask on the production side is a
         // failure even though every `maskOf` would agree with it.
-        SignalState.tasksWithMasks s
+        SignalState.threadsWithMasks s
         |> shouldEqual (
             r.Blocked
             |> Map.filter (fun _ mask -> not mask.IsEmpty)
@@ -2106,8 +2118,8 @@ module TestSignalState =
             |> Set.ofSeq
         )
 
-        for tid in tasks do
-            let seen (e : PendingSignal<TestTask>) : bool =
+        for tid in threads do
+            let seen (e : PendingSignal<TestThread>) : bool =
                 match e.Target with
                 | ValueSome target -> target = tid
                 | ValueNone -> numbering = SignalNumbering.Linux || tid = referenceLeader
@@ -2134,13 +2146,13 @@ module TestSignalState =
 
     let private randomOp
         (numbering : SignalNumbering)
-        (tasks : Set<TestTask>)
+        (threads : Set<TestThread>)
         (r : ReferenceState)
         (rng : System.Random)
         : Op
         =
         let pick (xs : 'a list) : 'a = xs.[rng.Next xs.Length]
-        let current = Set.toList tasks
+        let current = Set.toList threads
 
         let pickDisposition () : SignalDisposition<TestHandler> =
             let pickCatch (h : TestHandler) : SignalDisposition<TestHandler> =
@@ -2178,7 +2190,7 @@ module TestSignalState =
             // before a delivery consumes it. So are the job-control signals,
             // for the flush between them, and a few signals Linux takes early
             // or late, so that the two pick rules part company often, and
-            // signals the leader blocks, which another task may not.
+            // signals the leader blocks, which another thread may not.
             //
             // A signal is blocked only while a frame's mask holds it, so
             // signals some frame blocks are over-weighted too: that is how a
@@ -2199,7 +2211,7 @@ module TestSignalState =
             | 8 when not anyMask.IsEmpty -> pick anyMask
             | _ -> pick (allSignals numbering)
 
-        let pickTarget () : TestTask voption =
+        let pickTarget () : TestThread voption =
             if rng.Next 2 = 0 then
                 ValueNone
             else
@@ -2210,7 +2222,7 @@ module TestSignalState =
         // Darwin's numbering, generating at the partner of an entry already
         // pending is over-weighted; otherwise about two walks in a hundred
         // reach the refusal.
-        let pickGeneratedEntry () : PendingSignal<TestTask> =
+        let pickGeneratedEntry () : PendingSignal<TestThread> =
             let partners =
                 match numbering with
                 | SignalNumbering.Linux -> []
@@ -2223,7 +2235,7 @@ module TestSignalState =
                                 { p with
                                     Target = ValueSome referenceLeader
                                 }
-                        | ValueSome task when task = referenceLeader ->
+                        | ValueSome thread when thread = referenceLeader ->
                             Some
                                 { p with
                                     Target = ValueNone
@@ -2239,41 +2251,41 @@ module TestSignalState =
                     Target = pickTarget ()
                 }
 
-        // Darwin takes a task's candidates lowest number first, the process's
-        // and its own as one, so an action passes a candidate the task blocks
-        // only when a higher-numbered signal the task does not block is
-        // pending beside it. The blocked one must be directed at the task: one
+        // Darwin takes a thread's candidates lowest number first, the process's
+        // and its own as one, so an action passes a candidate the thread blocks
+        // only when a higher-numbered signal the thread does not block is
+        // pending beside it. The blocked one must be directed at the thread: one
         // directed at the process, which the leader blocks, is refused at
-        // delivery while another task could take it. So under Darwin's
-        // numbering, a task some frame masks is over-weighted as a target: it
+        // delivery while another thread could take it. So under Darwin's
+        // numbering, a thread some frame masks is over-weighted as a target: it
         // is sent a signal its mask holds, or, once one is pending for it, a
         // signal above it that it would take; otherwise about one walk in a
         // hundred lines the two up.
-        let pickEnqueuedEntry () : PendingSignal<TestTask> =
+        let pickEnqueuedEntry () : PendingSignal<TestThread> =
             let masked =
                 match numbering with
                 | SignalNumbering.Linux -> []
                 | SignalNumbering.Darwin ->
                     current
-                    |> List.choose (fun task ->
-                        match referenceMask r task |> Set.toList with
+                    |> List.choose (fun thread ->
+                        match referenceMask r thread |> Set.toList with
                         | [] -> None
-                        | mask -> Some (task, mask)
+                        | mask -> Some (thread, mask)
                     )
 
             match masked with
             | _ :: _ when rng.Next 2 = 0 ->
-                let task, mask = pick masked
+                let thread, mask = pick masked
 
                 let heldHere =
                     r.Pending
-                    |> List.filter (fun p -> p.Target = ValueSome task && referenceBlocks r task p.Signal)
+                    |> List.filter (fun p -> p.Target = ValueSome thread && referenceBlocks r thread p.Signal)
 
                 let deliverableAbove (held : Signal) : Signal list =
                     allSignals numbering
                     |> List.filter (fun signal ->
                         referencePickKey numbering signal > referencePickKey numbering held
-                        && not (referenceBlocks r task signal)
+                        && not (referenceBlocks r thread signal)
                         && not (referenceIgnoredAtGeneration numbering r signal)
                     )
 
@@ -2287,7 +2299,7 @@ module TestSignalState =
 
                 {
                     Signal = signal
-                    Target = ValueSome task
+                    Target = ValueSome thread
                 }
             | _ ->
                 {
@@ -2298,7 +2310,7 @@ module TestSignalState =
         let kind = rng.Next 120
 
         if kind >= 112 then
-            match current |> List.filter (fun task -> not (Map.containsKey task r.Restore)) with
+            match current |> List.filter (fun thread -> not (Map.containsKey thread r.Restore)) with
             | [] -> Op.Deliver (pickCoreDumps (), referenceLeader)
             | free ->
                 // Over-weights what is pending, so that the temporary mask
@@ -2342,7 +2354,7 @@ module TestSignalState =
             // SIGKILL and SIGSTOP, and the refusal has its own unit test.
             Op.SetDisposition (pick (settableSignals numbering), pickDisposition ())
         elif kind < 42 then
-            match current |> List.filter (fun task -> not (referenceFrames r task).IsEmpty) with
+            match current |> List.filter (fun thread -> not (referenceFrames r thread).IsEmpty) with
             | [] -> Op.Deliver (pickCoreDumps (), referenceLeader)
             | framed -> Op.Sigreturn (pick framed)
         elif kind < 60 then
@@ -2350,17 +2362,17 @@ module TestSignalState =
         elif kind < 70 then
             Op.Generate (pickCoreDumps (), pickGeneratedEntry ())
         elif kind < 94 then
-            // The leader is asked half the time: it is the only task that takes
+            // The leader is asked half the time: it is the only thread that takes
             // the process's own signals.
-            let task = if rng.Next 2 = 0 then referenceLeader else pick current
+            let thread = if rng.Next 2 = 0 then referenceLeader else pick current
 
-            Op.Deliver (pickCoreDumps (), task)
+            Op.Deliver (pickCoreDumps (), thread)
         else
-            match taskPool |> List.filter (fun task -> not (Set.contains task tasks)) with
+            match threadPool |> List.filter (fun thread -> not (Set.contains thread threads)) with
             | absent when not absent.IsEmpty && rng.Next 2 = 0 -> Op.Spawn (pick absent)
             | _ ->
-                match current |> List.filter (fun task -> task <> referenceLeader) with
-                | [] -> Op.Spawn (pick (taskPool |> List.filter (fun task -> not (Set.contains task tasks))))
+                match current |> List.filter (fun thread -> thread <> referenceLeader) with
+                | [] -> Op.Spawn (pick (threadPool |> List.filter (fun thread -> not (Set.contains thread threads))))
                 | others -> Op.Exit (pick others)
 
     /// The paths of the reference that the oracle walk must reach, each counted
@@ -2410,17 +2422,17 @@ module TestSignalState =
 
             let mutable s = initial numbering
             let mutable r = referenceEmpty
-            let mutable tasks = Set.ofList [ t0 ; t1 ; t2 ]
-            assertEquivalent numbering tasks s r
+            let mutable threads = Set.ofList [ t0 ; t1 ; t2 ]
+            assertEquivalent numbering threads s r
 
             for _ in 1..steps do
-                let op = randomOp numbering tasks r rng
+                let op = randomOp numbering threads r rng
 
                 // Distribution telemetry collected before the step so we can
                 // see what shape the random walk drove the model into.
                 match op with
-                | Op.Deliver (coreDumps, task) ->
-                    let candidates = referenceCandidates numbering task r
+                | Op.Deliver (coreDumps, thread) ->
+                    let candidates = referenceCandidates numbering thread r
 
                     if
                         candidates |> List.exists (fun e -> e.Target.IsSome)
@@ -2431,11 +2443,11 @@ module TestSignalState =
                     if candidates <> (r.Pending |> List.filter (fun e -> List.contains e candidates)) then
                         cover OracleLabel.OutOfGenerationOrder
 
-                    match referenceOnReturnToUser numbering coreDumps tasks task r with
+                    match referenceOnReturnToUser numbering coreDumps threads thread r with
                     | Error _ -> cover OracleLabel.DeliveryRefusals
                     | Ok (expected, r') ->
 
-                    if Map.containsKey task r.Restore then
+                    if Map.containsKey thread r.Restore then
                         if r'.NextFrame > r.NextFrame then
                             cover OracleLabel.RestoresThroughFrames
                         else
@@ -2457,7 +2469,7 @@ module TestSignalState =
                         then
                             cover OracleLabel.ResetHands
 
-                        if task <> referenceLeader then
+                        if thread <> referenceLeader then
                             cover OracleLabel.NonLeaderDeliveries
                     | Some (SignalDelivery.DefaultTerminate (_, cored)) ->
                         cover OracleLabel.DefaultTerminates
@@ -2480,7 +2492,7 @@ module TestSignalState =
                     for _ in 1 .. List.length r.Pending - List.length r'.Pending - consumed do
                         cover OracleLabel.IgnoredDiscards
 
-                    // An action fired past a candidate the task blocks.
+                    // An action fired past a candidate the thread blocks.
                     match expected, candidates with
                     | Some _, head :: _ when List.contains head r'.Pending -> cover OracleLabel.ActionAfterSkip
                     | _ -> ()
@@ -2489,7 +2501,7 @@ module TestSignalState =
                     if
                         candidates
                         |> List.exists (fun e ->
-                            referenceBlocks r task e.Signal
+                            referenceBlocks r thread e.Signal
                             && (
                                 match referenceDisposition r e.Signal with
                                 | SignalDisposition.Catch _ -> true
@@ -2499,7 +2511,7 @@ module TestSignalState =
                     then
                         cover OracleLabel.HeldByFrame
                 | Op.Generate (coreDumps, e) ->
-                    match referenceGenerate numbering coreDumps tasks e r with
+                    match referenceGenerate numbering coreDumps threads e r with
                     | ReferenceGeneration.Terminated (_, cored) ->
                         cover OracleLabel.GeneratedTerminations
 
@@ -2560,11 +2572,11 @@ module TestSignalState =
                         | _ -> ()
                 | _ -> ()
 
-                let s', r', tasks' = stepBoth numbering tasks op s r
+                let s', r', threads' = stepBoth numbering threads op s r
                 s <- s'
                 r <- r'
-                tasks <- tasks'
-                assertEquivalent numbering tasks s r
+                threads <- threads'
+                assertEquivalent numbering threads s r
 
         // The seed is drawn from the whole range, so that each fresh case walks
         // a fresh sequence: FsCheck draws a size-bounded integer from 0 to 100

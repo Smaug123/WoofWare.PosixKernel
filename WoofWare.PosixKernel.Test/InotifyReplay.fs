@@ -102,7 +102,7 @@ module internal InotifyReplay =
 
     /// A machine like the one measured: Linux 6.18.5 aarch64, the measuring
     /// VM's `fs.inotify` sysctls, `seed` at the root, and a process of
-    /// `credentials` with tasks 0 to 2 standing at the root.
+    /// `credentials` with threads 0 to 2 standing at the root.
     let boot (credentials : Credentials) (seed : (string * SeedEntry) list) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxArm64
         |> UnixBootImage.tryWithInotifyLimits
@@ -117,7 +117,7 @@ module internal InotifyReplay =
             (owner 0u)
             (seed |> List.map (fun (n, e) -> name n, e) |> Map.ofList)
         |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Threads.ensure
 
     /// `IN_NONBLOCK`.
     let nonblock : int = 0x800

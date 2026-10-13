@@ -564,9 +564,9 @@ module TestUnmodelledException =
 
     [<Test>]
     let ``exitThread throws exactly when tryExitThread refuses`` () : unit =
-        // Task 0 leads, and task 2 is parked in an `flock` on an event queue,
-        // so the leader's exit is unmodelled, the parked task's is a misuse,
-        // and task 1's is answered.
+        // Thread 0 leads, and thread 2 is parked in an `flock` on an event queue,
+        // so the leader's exit is unmodelled, the parked thread's is a misuse,
+        // and thread 1's is answered.
         let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
             let system = booted platform
 
@@ -583,8 +583,8 @@ module TestUnmodelledException =
                 | None -> failwith $"fd %d{fd} names no description"
 
             UnixSystemState.withFileDescriptors registry system
-            |> Tasks.ensure 1
-            |> Tasks.ensure 2
+            |> Threads.ensure 1
+            |> Threads.ensure 2
             |> UnixWait.park
                 2
                 (ParkedSyscall.Flock
@@ -596,14 +596,14 @@ module TestUnmodelledException =
         covering
             40
             (Gen.zip platformGen (Gen.choose (0, 2)))
-            (fun (platform, task) ->
+            (fun (platform, thread) ->
                 let system = world platform
 
                 agrees
                     ThreadExitRefusal.kind
                     ThreadExitRefusal.describe
-                    (fun () -> UnixTaskLifecycle.tryExitThread task 0 system)
-                    (fun () -> UnixTaskLifecycle.exitThread task 0 system)
+                    (fun () -> UnixThreadLifecycle.tryExitThread thread 0 system)
+                    (fun () -> UnixThreadLifecycle.exitThread thread 0 system)
             )
             [
                 Observed.Answered

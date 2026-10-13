@@ -109,7 +109,7 @@ module internal GetIdsRefusal =
 /// The calls by which a process reads and changes who it is: `getresuid(2)`,
 /// `getresgid(2)`, `setresuid(2)`, `setresgid(2)` and `setgroups(2)`.
 ///
-/// Each changes the whole process, every task alike, as the C library's
+/// Each changes the whole process, every thread alike, as the C library's
 /// wrappers do. (Linux's own system calls change only the calling thread, and
 /// the C library makes every other thread repeat the call.)
 [<RequireQualifiedAccess>]
@@ -119,12 +119,12 @@ module UnixCredentials =
     // time. Measured on Linux 6.18.5 (`setresid.c`): with any one of the three
     // pointers NULL the call is EFAULT, and the IDs before it have been
     // written and those after it have not.
-    let private getIds<'Id, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private getIds<'Id, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
         ((realId, effectiveId, savedId) : 'Id * 'Id * 'Id)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetIdsAnswer<'Id>, GetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -150,11 +150,11 @@ module UnixCredentials =
         write [] [ real, realId ; effective, effectiveId ; saved, savedId ]
 
     /// `getresuid`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetresuid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetIdsAnswer<UserId>, GetIdsRefusal>
         =
         let credentials = system.Process.Credentials
@@ -169,22 +169,22 @@ module UnixCredentials =
     /// no such call.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
-    let getresuid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetIdsAnswer<UserId>
         =
         tryGetresuid real effective saved system
         |> Refusal.orRaise "UnixCredentials.getresuid" GetIdsRefusal.kind GetIdsRefusal.describe
 
     /// `getresgid`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetresgid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetIdsAnswer<GroupId>, GetIdsRefusal>
         =
         let credentials = system.Process.Credentials
@@ -199,11 +199,11 @@ module UnixCredentials =
     /// no such call.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
-    let getresgid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetIdsAnswer<GroupId>
         =
         tryGetresgid real effective saved system
@@ -256,10 +256,11 @@ module UnixCredentials =
     // none whatever the sysctl says: `CoreDumps.Suppressed` is a suppression
     // the dumpable flag does not decide (the process started dumpable, and a
     // flag set again by a later change cannot lift an `RLIMIT_CORE` of 0).
-    let private keepCoreDumps<'Id, 'Task, 'Handler when 'Id : equality and 'Task : comparison and 'Handler : equality>
+    let private keepCoreDumps<'Id, 'Thread, 'Handler
+        when 'Id : equality and 'Thread : comparison and 'Handler : equality>
         (effectiveBefore : 'Id)
         (effectiveAfter : 'Id)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<unit, SetIdsRefusal>
         =
         match system.Process.CoreDumps with
@@ -268,12 +269,12 @@ module UnixCredentials =
         | CoreDumps.Suppressed -> Ok ()
 
     /// `setresuid`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetresuid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SetIdsRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
@@ -319,23 +320,23 @@ module UnixCredentials =
     /// writes one turns on `fs.suid_dumpable`, which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
-    let setresuid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySetresuid real effective saved system
         |> Refusal.orRaise "UnixCredentials.setresuid" SetIdsRefusal.kind SetIdsRefusal.describe
 
     /// `setresgid`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetresgid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SetIdsRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
@@ -382,12 +383,12 @@ module UnixCredentials =
     /// writes one turns on `fs.suid_dumpable`, which this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
-    let setresgid<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySetresgid real effective saved system
         |> Refusal.orRaise "UnixCredentials.setresgid" SetIdsRefusal.kind SetIdsRefusal.describe
@@ -430,11 +431,11 @@ module UnixCredentials =
         | GroupListWords.FaultsAfter readable -> parse [] readable |> Result.bind (fun _ -> Error UnixError.EFAULT)
 
     /// `setgroups`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetgroups<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (size : int)
         (words : GroupListWords)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SetGroupsRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetGroupsRefusal>
         =
         let platform = system.Machine.UnixPlatform
         let limit = SimulatedUnixPlatform.supplementaryGroupLimit platform
@@ -504,11 +505,11 @@ module UnixCredentials =
     ///
     /// Refused for a privileged Darwin process, whose answer has not been
     /// measured.
-    let setgroups<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (size : int)
         (words : GroupListWords)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySetgroups size words system
         |> Refusal.orRaise "UnixCredentials.setgroups" SetGroupsRefusal.kind SetGroupsRefusal.describe

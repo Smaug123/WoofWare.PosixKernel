@@ -858,8 +858,8 @@ type KqueueState =
             /// Whether a `close(2)` has ended a `kevent` wait on this kqueue, which
             /// Darwin calls draining it.
             ///
-            /// Closing a descriptor while a task is asleep in `kevent` through that
-            /// same descriptor ends that task's wait, and every other task's wait on
+            /// Closing a descriptor while a thread is asleep in `kevent` through that
+            /// same descriptor ends that thread's wait, and every other thread's wait on
             /// the kqueue, with `EBADF`; and from then on every wait on the kqueue
             /// through a descriptor that survived the close is `EBADF` at once.
             /// Closing a descriptor no waiter entered through changes nothing.
@@ -3928,7 +3928,7 @@ module FileDescriptorRegistry =
     /// `SimulatedMachine.checkInvariants`'s, which sees every table.
     ///
     /// Whether a description is still referenced, and whether its holds are
-    /// those the parks name, are not among them: the parks are the tasks',
+    /// those the parks name, are not among them: the parks are the threads',
     /// which a registry does not hold, so those are `UnixSystem.checkInvariants`'s
     /// `UnreferencedDescription` and `HoldCountMismatch`.
     let checkInvariants (registry : FileDescriptorRegistry) : FileDescriptorRegistryDefect list =

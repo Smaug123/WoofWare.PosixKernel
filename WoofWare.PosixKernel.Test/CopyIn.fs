@@ -94,13 +94,13 @@ module internal CopyIn =
 
     /// The bytes `syscall`'s copy-in takes from `blob`: as many as
     /// `tryAdmitSockaddrCopy` answers `Transfer` with, and none otherwise.
-    let admitted<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let admitted<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : SockaddrCopySyscall)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (blob : byte[])
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ImmutableArray<byte>
         =
         match UnixSocket.tryAdmitSockaddrCopy syscall fd destination declaredLength system with
@@ -132,13 +132,13 @@ module internal CopyIn =
     /// `UnixSocket.bind`, and if it stops at the copy, `bindWithAddress` of the
     /// bytes of `blob` its `copyRange` names. Held to the internal steps it is
     /// made of: admitting the copy, then `tryBindBytes` of what it takes.
-    let bind<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (blob : byte[])
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         let expected =
             UnixSocket.tryBindBytes
@@ -157,17 +157,17 @@ module internal CopyIn =
 
         agreeing "bind" expected actual
 
-    /// `connect(2)` as `task` makes it, through the library's public
+    /// `connect(2)` as `thread` makes it, through the library's public
     /// protocol, held to the internal steps it is made of, as `bind` is, and
     /// failing the test if the call sleeps.
-    let connectAs<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let connectAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (blob : byte[])
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         let expected =
             UnixConnection.tryConnectBytes
@@ -178,7 +178,7 @@ module internal CopyIn =
                 system
 
         let actual =
-            match UnixConnection.tryConnect task fd destination declaredLength system with
+            match UnixConnection.tryConnect thread fd destination declaredLength system with
             | Error refusal -> Error refusal
             | Ok (CallProgress.Answered answer) -> Ok answer
             | Ok (CallProgress.NeedsCopyIn paused) ->
@@ -188,13 +188,13 @@ module internal CopyIn =
         agreeing "connect" expected actual
 
     /// `connect(2)` as the process's leader makes it: `connectAs`.
-    let connect<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (blob : byte[])
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         connectAs system.Leader fd destination declaredLength blob system
 

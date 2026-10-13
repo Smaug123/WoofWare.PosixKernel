@@ -181,11 +181,11 @@ module TestStateQueries =
             |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
 
     [<Test>]
-    let ``park is absent until a task sleeps, and then names the syscall it sleeps in`` () : unit =
+    let ``park is absent until a thread sleeps, and then names the syscall it sleeps in`` () : unit =
         for platform in platforms do
             let system = initialOn platform
 
-            UnixTaskState.park (UnixTaskTable.get 0 system.Tasks) |> shouldEqual None
+            UnixThreadState.park (UnixThreadTable.get 0 system.Threads) |> shouldEqual None
 
             let system =
                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
@@ -197,8 +197,8 @@ module TestStateQueries =
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 
-            let park = UnixTaskState.park (UnixTaskTable.get 0 system.Tasks)
-            park |> shouldEqual (UnixTaskTable.parkOf 0 system.Tasks)
+            let park = UnixThreadState.park (UnixThreadTable.get 0 system.Threads)
+            park |> shouldEqual (UnixThreadTable.parkOf 0 system.Threads)
 
             match park |> Option.map (fun park -> park.Syscall) with
             | Some (ParkedSyscall.PipeRead _) -> ()
@@ -227,7 +227,7 @@ module TestStateQueries =
                 |> UnixSystem.advanceClock 1_234L
 
             UnixSystem.leader system |> shouldEqual system.Leader
-            UnixSystem.tasks system |> shouldEqual system.Tasks
+            UnixSystem.threads system |> shouldEqual system.Threads
             UnixSystem.platform system |> shouldEqual platform
             UnixSystem.processorCount system |> shouldEqual 3
             UnixSystem.environment system |> shouldEqual [ entry ]

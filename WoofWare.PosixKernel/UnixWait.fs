@@ -12,7 +12,7 @@ type internal ExclusiveWaitQueue =
     /// The waiters in `write` for room in this pipe.
     | PipeWriters of PipeId
 
-/// Parking a task in a syscall, and deciding which parked tasks a system wakes.
+/// Parking a thread in a syscall, and deciding which parked threads a system wakes.
 ///
 /// Wakes are pulled rather than pushed: nothing that makes a condition true
 /// wakes anyone. A client asks `wakes` of each state it reaches instead, so no
@@ -20,25 +20,25 @@ type internal ExclusiveWaitQueue =
 [<RequireQualifiedAccess>]
 module UnixWait =
 
-    /// Record that `task` has parked in `parked`, placing it after every park
+    /// Record that `thread` has parked in `parked`, placing it after every park
     /// made before it, and taking the holds the call keeps on the open file
-    /// descriptions it names (`ParkedSyscall.descriptions`). A task that sleeps
+    /// descriptions it names (`ParkedSyscall.descriptions`). A thread that sleeps
     /// is no longer running, so it leaves its processor idle
     /// (`UnixSchedulingState.Occupants`).
     ///
     /// Refuses to replace a park of one syscall with a park of another, and
-    /// otherwise accepts a re-park of the same syscall, which moves the task to
+    /// otherwise accepts a re-park of the same syscall, which moves the thread to
     /// the back of park order and lets go of the holds the earlier park took.
-    let internal park<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get thread system.Threads
 
-        let taskPark =
+        let threadPark =
             {
                 Syscall = parked
                 Ordinal = system.Machine.NextParkOrdinal
@@ -51,36 +51,36 @@ module UnixWait =
                 }
             Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
         }
-        |> UnixParkState.setPark task taskPark
+        |> UnixParkState.setPark thread threadPark
 
-    /// The primitives of the wake condition of the call `task` is parked in
-    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `task` is
-    /// not parked in a call, including when the process has no task by that
+    /// The primitives of the wake condition of the call `thread` is parked in
+    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `thread` is
+    /// not parked in a call, including when the process has no thread by that
     /// name.
     ///
     /// An empty set means the call would get no further now. A non-empty one
-    /// is what lets `wakes` name the task, and is not enough on its own: a
+    /// is what lets `wakes` name the thread, and is not enough on its own: a
     /// queue whose waiters a kernel wakes one at a time wakes only one of
-    /// them, so a client that holds several tasks asleep asks `wakes`. This
-    /// asks about one task alone, which is cheaper.
+    /// them, so a client that holds several threads asleep asks `wakes`. This
+    /// asks about one thread alone, which is cheaper.
     ///
     /// The condition is read from the park, which holds every open file
     /// description it names until the call returns, so it is never asked
     /// about a description that has gone.
-    let satisfied<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
-        Map.tryFind task system.Tasks
-        |> Option.bind UnixTaskState.parkedIn
-        |> Option.map (fun parked -> WakeCondition.satisfied task (WakeCondition.ofPark parked) system)
+        Map.tryFind thread system.Threads
+        |> Option.bind UnixThreadState.parkedIn
+        |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
 
-    /// The tasks of `asleep` that `system` wakes now, in the order they parked,
+    /// The threads of `asleep` that `system` wakes now, in the order they parked,
     /// each with the primitives of its wake condition which hold.
     ///
-    /// `asleep` is the client's: the tasks it is holding asleep in a syscall.
-    /// Every one must be parked. A task the client has woken keeps its park
+    /// `asleep` is the client's: the threads it is holding asleep in a syscall.
+    /// Every one must be parked. A thread the client has woken keeps its park
     /// until its call finishes, so the parks alone cannot say who is asleep.
     ///
     /// A waiter whose `flock` has become grantable, whose polled descriptor is
@@ -93,56 +93,57 @@ module UnixWait =
     /// parked first waking; under Darwin every one of them wakes. Waiters in
     /// `read` or `write` on a connected socket all wake, under either
     /// flavour. Exclusive
-    /// queues wake none while any task parked on the same queue has been woken
+    /// queues wake none while any thread parked on the same queue has been woken
     /// and has not yet finished its call (that is, is parked but not in
-    /// `asleep`), since that task will take it. The end of a pipe closing
+    /// `asleep`), since that thread will take it. The end of a pipe closing
     /// wakes every waiter on the other end, under either flavour; and an event
     /// to report, or a close that drains a kqueue, wakes every waiter in
     /// `kevent` on it.
     ///
-    /// A woken task is owed no success: several waiters for one lock all wake,
+    /// A woken thread is owed no success: several waiters for one lock all wake,
     /// and all but one find it taken again and re-park.
-    let rec wakes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (asleep : Set<'Task>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ('Task * Set<WakePrimitive>) list
+    let rec wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (asleep : Set<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Set<WakePrimitive>) list
         =
         wakesAmong [ (), asleep, system ] system.Machine
-        |> List.map (fun ((), task, fired) -> task, fired)
+        |> List.map (fun ((), thread, fired) -> thread, fired)
 
     /// `wakes`, of every process on `machine` at once: each of `views` is one
-    /// process's view of `machine`, with the tasks of it the client holds
+    /// process's view of `machine`, with the threads of it the client holds
     /// asleep, and the process is named by its `'Process`. Every process with
-    /// a task parked must be among them, since a parked task not asleep stands
+    /// a thread parked must be among them, since a parked thread not asleep stands
     /// for a woken call on whatever queue it waits on.
     ///
-    /// Each task's condition is asked of its own process's view, and a queue
+    /// Each thread's condition is asked of its own process's view, and a queue
     /// waiters wait on exclusively wakes one of them by park order across
     /// every view, the ordinals being the machine's. The answer is in park
     /// order across every view.
-    and internal wakesAmong<'Process, 'Task, 'Handler
-        when 'Process : equality and 'Task : comparison and 'Handler : equality>
-        (views : ('Process * Set<'Task> * UnixSystem<'Task, 'Handler>) list)
+    and internal wakesAmong<'Process, 'Thread, 'Handler
+        when 'Process : equality and 'Thread : comparison and 'Handler : equality>
+        (views : ('Process * Set<'Thread> * UnixSystem<'Thread, 'Handler>) list)
         (machine : UnixMachineState)
-        : ('Process * 'Task * Set<WakePrimitive>) list
+        : ('Process * 'Thread * Set<WakePrimitive>) list
         =
         let satisfied =
             views
             |> List.collect (fun (owner, asleep, system) ->
                 asleep
                 |> Set.toList
-                |> List.choose (fun task ->
-                    match UnixTaskTable.parkOf task system.Tasks with
+                |> List.choose (fun thread ->
+                    match UnixThreadTable.parkOf thread system.Threads with
                     | None ->
                         failwith
-                            $"UnixWait.wakes: task %O{task} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the task goes to sleep (this is a bug in the client)."
+                            $"UnixWait.wakes: thread %O{thread} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
                     | Some park ->
-                        let fired = WakeCondition.satisfied task (WakeCondition.ofPark park.Syscall) system
+                        let fired =
+                            WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall) system
 
                         if Set.isEmpty fired then
                             None
                         else
-                            Some (park.Ordinal, (owner, task), fired)
+                            Some (park.Ordinal, (owner, thread), fired)
                 )
             )
             |> List.sortBy (fun (ordinal, _, _) -> ordinal)
@@ -215,7 +216,7 @@ module UnixWait =
 
         // The pipe a parked transfer's description names. `WakeCondition.satisfied`
         // has already failed loudly for a description that is gone or names
-        // something else, for every task asked about; a task woken and not yet
+        // something else, for every thread asked about; a thread woken and not yet
         // finished is not asked, so is looked up leniently here.
         let pipeOf (description : OpenFileDescriptionId) : PipeId option =
             match OpenFileTable.tryFind description machine.OpenFiles with
@@ -256,8 +257,8 @@ module UnixWait =
             // observable). Measured (`inotify-descriptor-probe.c` row S
             // two-sleepers-one-record): of two readers, one took the record.
             | WakePrimitive.InotifyRecordQueued _
-            // A signal is pending to the task it was sent to, or, sent to the
-            // process, to whichever task the receiver rule picks. No wait queue
+            // A signal is pending to the thread it was sent to, or, sent to the
+            // process, to whichever thread the receiver rule picks. No wait queue
             // is shared.
             | WakePrimitive.AwaitedSignalPending _ -> None
             // Reserved, and in no condition yet. Linux's `unix_wait_for_peer`
@@ -268,9 +269,9 @@ module UnixWait =
         let finishing : Set<ExclusiveWaitQueue> =
             views
             |> Seq.collect (fun (_, asleep, system) ->
-                system.Tasks
+                system.Threads
                 |> Map.toSeq
-                |> Seq.filter (fun (task, _) -> not (Set.contains task asleep))
+                |> Seq.filter (fun (thread, _) -> not (Set.contains thread asleep))
             )
             |> Seq.choose (fun (_, state) ->
                 match state.Parked with
@@ -350,13 +351,13 @@ module UnixWait =
             )
             |> Set.ofSeq
 
-        let chosen : Map<ExclusiveWaitQueue, 'Process * 'Task> =
+        let chosen : Map<ExclusiveWaitQueue, 'Process * 'Thread> =
             satisfied
-            |> List.collect (fun (ordinal, task, fired) ->
+            |> List.collect (fun (ordinal, thread, fired) ->
                 fired
                 |> Set.toList
                 |> List.choose (fun primitive ->
-                    exclusiveQueueOf primitive |> Option.map (fun queue -> queue, (ordinal, task))
+                    exclusiveQueueOf primitive |> Option.map (fun queue -> queue, (ordinal, thread))
                 )
             )
             |> List.groupBy fst
@@ -378,15 +379,15 @@ module UnixWait =
             |> Map.ofList
 
         satisfied
-        |> List.filter (fun (_, task, fired) ->
+        |> List.filter (fun (_, thread, fired) ->
             fired
             |> Set.exists (fun primitive ->
                 match exclusiveQueueOf primitive with
-                | Some queue -> Map.tryFind queue chosen = Some task
+                | Some queue -> Map.tryFind queue chosen = Some thread
                 | None -> true
             )
         )
-        |> List.map (fun (_, (owner, task), fired) -> owner, task, fired)
+        |> List.map (fun (_, (owner, thread), fired) -> owner, thread, fired)
 
     /// Every deadline the parks of `asleep` are waiting for, in nanoseconds since
     /// boot, with a repeat for each park that waits for it.
@@ -394,17 +395,17 @@ module UnixWait =
     /// What a client with nothing runnable reads to learn how far it may advance
     /// the clock before one of these calls times out. `asleep` means what it
     /// means to `wakes`.
-    let deadlines<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (asleep : Set<'Task>)
-        (system : UnixSystem<'Task, 'Handler>)
+    let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (asleep : Set<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : int64 list
         =
         asleep
         |> Set.toList
-        |> List.collect (fun task ->
-            match UnixTaskTable.parkOf task system.Tasks with
+        |> List.collect (fun thread ->
+            match UnixThreadTable.parkOf thread system.Threads with
             | None ->
                 failwith
-                    $"UnixWait.deadlines: task %O{task} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the task goes to sleep (this is a bug in the client)."
+                    $"UnixWait.deadlines: thread %O{thread} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
             | Some park -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
         )

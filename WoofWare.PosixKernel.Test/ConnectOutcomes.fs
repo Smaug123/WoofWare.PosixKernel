@@ -10,9 +10,9 @@ module internal ConnectOutcomes =
     /// A connect's result as the answer it returned, failing the test if the
     /// call slept or restarted. No connect sleeps in this version: the one that
     /// would, to a full listener, is refused.
-    let answered<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (result : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, ConnectRefusal>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+    let answered<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (result : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         result
         |> Result.map (fun (outcome, after) ->

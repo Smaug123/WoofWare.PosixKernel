@@ -43,7 +43,7 @@ type internal GetRandomRefusal =
     | Buffer of BufferRefusal
     /// The simulated kernel has no `getrandom` system call.
     | NoSuchSyscall of flavour : SimulatedUnixFlavour
-    /// A request that moves `count` bytes, more than a page, by a task with a
+    /// A request that moves `count` bytes, more than a page, by a thread with a
     /// signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -57,7 +57,7 @@ module internal GetRandomRefusal =
         | GetRandomRefusal.NoSuchSyscall flavour ->
             $"the simulated kernel is %O{flavour}, which has no getrandom system call; getentropy(2) is how a process asks it for random bytes."
         | GetRandomRefusal.SignalAtPageBoundary count ->
-            $"the request moves %d{count} bytes, more than a page, and a signal is pending that the calling task would take on its return to user mode. Linux's getrandom stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short getrandom."
+            $"the request moves %d{count} bytes, more than a page, and a signal is pending that the calling thread would take on its return to user mode. Linux's getrandom stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short getrandom."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetRandomRefusal) : RefusalKind =
@@ -138,12 +138,12 @@ module UnixEntropy =
     /// buffer screen, the zero-length shortcut, and the one point at which the
     /// buffer must be able to hold bytes. `Error` is a refusal; `Ok (Error _)`
     /// is an errno.
-    let private transfer<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private transfer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (stopsShort : int -> bool)
         (buffer : UserBuffer)
         (length : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<EntropyDraw * UnixSystem<'Task, 'Handler>, UnixError>, TransferRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<EntropyDraw * UnixSystem<'Thread, 'Handler>, UnixError>, TransferRefusal>
         =
         match
             UserBufferCheck.faultsBeforeOperationFor
@@ -195,13 +195,13 @@ module UnixEntropy =
         )
 
     /// `getRandom`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetRandom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryGetRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<GetRandomAnswer * UnixSystem<'Task, 'Handler>, GetRandomRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetRandomAnswer * UnixSystem<'Thread, 'Handler>, GetRandomRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin as flavour -> Error (GetRandomRefusal.NoSuchSyscall flavour)
@@ -224,12 +224,12 @@ module UnixEntropy =
         // the clamped count succeeds rather than faulting.
         let length = int (min count (getRandomMaxTransfer system.Machine.UnixPlatform))
 
-        if not (Map.containsKey task system.Tasks) then
+        if not (Map.containsKey thread system.Threads) then
             failwith
-                $"UnixEntropy.getRandom: task %O{task} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
+                $"UnixEntropy.getRandom: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
 
         let stopsShort (moved : int) =
-            SyscallInterruption.stopsAtPageBoundary task moved system
+            SyscallInterruption.stopsAtPageBoundary thread moved system
 
         match transfer stopsShort buffer length system with
         | Error (TransferRefusal.Buffer refusal) -> Error (GetRandomRefusal.Buffer refusal)
@@ -247,29 +247,29 @@ module UnixEntropy =
     ///
     /// Never blocks. Linux-only: under any other flavour the call is refused.
     ///
-    /// `task` is the task making the call, which must be one of the process's.
-    /// A request that moves more than a page, by a task with a signal pending,
+    /// `thread` is the thread making the call, which must be one of the process's.
+    /// A request that moves more than a page, by a thread with a signal pending,
     /// is refused: a real one stops
     /// short at the first page boundary.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getrandom` system call.</exception>
-    let getRandom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let getRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : GetRandomAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : GetRandomAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryGetRandom task buffer count flags system
+        tryGetRandom thread buffer count flags system
         |> Refusal.orRaise "UnixEntropy.getRandom" GetRandomRefusal.kind GetRandomRefusal.describe
 
     /// `getEntropy`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetEntropy<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (length : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<GetEntropyAnswer * UnixSystem<'Task, 'Handler>, GetEntropyRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetEntropyAnswer * UnixSystem<'Thread, 'Handler>, GetEntropyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux as flavour -> Error (GetEntropyRefusal.NoSuchSyscall flavour)
@@ -300,11 +300,11 @@ module UnixEntropy =
     /// Darwin-only: under any other flavour the call is refused.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getentropy` system call.</exception>
-    let getEntropy<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (length : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : GetEntropyAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : GetEntropyAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryGetEntropy buffer length system
         |> Refusal.orRaise "UnixEntropy.getEntropy" GetEntropyRefusal.kind GetEntropyRefusal.describe

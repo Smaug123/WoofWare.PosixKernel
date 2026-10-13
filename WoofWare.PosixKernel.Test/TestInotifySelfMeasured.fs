@@ -348,7 +348,7 @@ module TestInotifySelfMeasured =
         let produced = ResizeArray<string * string> ()
 
         for name, order in [ "open-a-b-a", "aba" ; "open-a-b", "ab" ; "open-b-a", "ba" ] do
-            let pids, machine = Machines.withTasks SimulatedUnixPlatform.linuxArm64 2 1
+            let pids, machine = Machines.withThreads SimulatedUnixPlatform.linuxArm64 2 1
             let child, parent = pids.[0], pids.[1]
 
             let machine =
@@ -380,7 +380,7 @@ module TestInotifySelfMeasured =
                     )
                     machine
 
-            let ended = UnixTaskLifecycle.exitGroup 0 0 (Machines.viewOf child machine)
+            let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf child machine)
 
             let machine =
                 match SimulatedMachine.tryEndProcess ended machine with

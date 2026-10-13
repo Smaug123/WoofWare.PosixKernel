@@ -351,7 +351,7 @@ module TestSimulatedMachine =
                     Processes = Map.add other machine.Processes.[pid] machine.Processes
                 }
 
-            let leaderTid = UnixTaskState.osThreadId (UnixTaskTable.get 0 system.Tasks)
+            let leaderTid = UnixThreadState.osThreadId (UnixThreadTable.get 0 system.Threads)
 
             // The launched pipes' three descriptions are each named once by the
             // machine's record and twice by the two tables.

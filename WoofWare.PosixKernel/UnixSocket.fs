@@ -490,7 +490,7 @@ type private DarwinAttach =
 /// of the address buffer to copy, and `UnixSocket.bindWithAddress` takes them
 /// and finishes the call.
 [<NoEquality ; NoComparison>]
-type PausedBind<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
             Fd : int
@@ -499,7 +499,7 @@ type PausedBind<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
             Range : CopyRange
             /// The system the call was made in: everything a `bind` does before
             /// the copy is a question.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -508,8 +508,8 @@ module PausedBind =
     /// `UnixSocket.bindWithAddress` takes. Always from the start of the
     /// buffer, and the whole of the length the caller declared, as far as the
     /// kernel reads one.
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedBind<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedBind<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -519,7 +519,7 @@ module PausedBind =
 /// bytes of the value buffer to copy, and `UnixSocket.setsockoptWithValue`
 /// takes them and finishes the call.
 [<NoEquality ; NoComparison>]
-type PausedSetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
             Fd : int
@@ -530,7 +530,7 @@ type PausedSetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equ
             Range : CopyRange
             /// The system the call was made in: everything a `setsockopt` does
             /// before the copy is a question.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -540,8 +540,8 @@ module PausedSetSockOpt =
     /// buffer: a C `int`, or for `SO_LINGER` a `struct linger` of two, in the
     /// simulated machine's byte order (`SimulatedUnixPlatform.encodeCInt`),
     /// whatever length the caller declared.
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedSetSockOpt<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedSetSockOpt<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -551,7 +551,7 @@ module PausedSetSockOpt =
 /// `UnixSocket.getsockopt` answers it, and `UnixSocket.getsockoptWithLength`
 /// takes what the cell holds and finishes the call.
 [<NoEquality ; NoComparison>]
-type PausedGetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
             Fd : int
@@ -561,7 +561,7 @@ type PausedGetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equ
             Length : UserBuffer
             /// The system the call was made in: everything a `getsockopt` does
             /// before reading the cell is a question.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -643,12 +643,12 @@ module UnixSocket =
     /// Everything `bind(2)` or `connect(2)` decides before the kernel copies the
     /// caller's sockaddr in: the step before the copy that `bind` and
     /// `UnixConnection.connect` answer as a `CallProgress`. Changes nothing.
-    let internal tryAdmitSockaddrCopy<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryAdmitSockaddrCopy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : SockaddrCopySyscall)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<SockaddrCopyAdmission, SockaddrCopyRefusal>
         =
         let answered (error : UnixError) : Result<SockaddrCopyAdmission, SockaddrCopyRefusal> =
@@ -1056,13 +1056,13 @@ module UnixSocket =
     /// beside a separate `FileDescriptorRegistry.createSocket`, because the two
     /// must agree: the identity this mints is the identity the description
     /// names, and splitting them would let a caller do one without the other.
-    let private allocate<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private allocate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : SocketDomain)
         (kind : SocketKind)
         (protocol : SocketProtocol)
         (nonBlocking : bool)
-        (system : UnixSystem<'Task, 'Handler>)
-        : int * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int * UnixSystem<'Thread, 'Handler>
         =
         let socketId = system.Machine.NextSocketId
         let (SocketId raw) = socketId
@@ -1097,12 +1097,12 @@ module UnixSocket =
         |> UnixSystemState.withFileDescriptors registry
 
     /// `socket`, with a refusal answered as the `Error` rather than raised.
-    let internal trySocket<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : int)
         (socketType : int)
         (protocol : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<int * UnixSystem<'Task, 'Handler>, UnixError>, SocketRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, SocketRefusal>
         =
         // Measured (`fcntl-dup.c`, LIMIT rows): with no descriptor left below
         // the limit, Darwin answers EMFILE ahead of every screen of the three
@@ -1170,12 +1170,12 @@ module UnixSocket =
     /// a datagram socket. Anything else is the errno the flavour answers, or is
     /// refused where that answer depends on what this kernel does not model. A
     /// failure changes nothing.
-    let socket<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let socket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (domain : int)
         (socketType : int)
         (protocol : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<int * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         trySocket domain socketType protocol system
         |> Refusal.orRaise "UnixSocket.socket" SocketRefusal.kind SocketRefusal.describe
@@ -1271,12 +1271,12 @@ module UnixSocket =
 
     /// `bind(2)` once every fault has been ruled out: give `socketId` the IPv4
     /// `binding`, choosing a port for it if it asks for port 0.
-    let private bindAt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private bindAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (socket : SocketDescription)
         (binding : Ipv4Binding)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         match
             (if binding.Endpoint.Port > 0us then
@@ -1325,12 +1325,12 @@ module UnixSocket =
     /// `bind(2)` past the copy: what it answers for the sockaddr `copied`
     /// decodes to, on `fd`, which `tryAdmitSockaddrCopy` has taken as far as the
     /// copy.
-    let internal bindDecoded<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal bindDecoded<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (declaredLength : uint32)
         (copied : CopiedInternetSockaddr)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         let family = copied.Family
         let endpoint = copied.Endpoint
@@ -1346,7 +1346,7 @@ module UnixSocket =
 
         let socket = UnixMachineState.socket socketId system.Machine
 
-        let withSocket (socket : SocketDescription) (system : UnixSystem<'Task, 'Handler>) =
+        let withSocket (socket : SocketDescription) (system : UnixSystem<'Thread, 'Handler>) =
             { system with
                 Machine =
                     { system.Machine with
@@ -1497,12 +1497,12 @@ module UnixSocket =
     /// with other sockets exactly as the IPv4 address would, measured on both
     /// flavours against every combination of `SO_REUSEADDR` and listening
     /// (`docs/probes/dual-mode/dual-mode.c`, C).
-    let internal bindDecodedV6<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal bindDecodedV6<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (declaredLength : uint32)
         (copied : CopiedInternetV6Sockaddr)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let platform = system.Machine.UnixPlatform
@@ -1640,13 +1640,13 @@ module UnixSocket =
     /// kernel copies: the step `bindWithAddress` takes. It runs the admission
     /// again itself, and fails loudly unless `copied` is exactly what that
     /// copies.
-    let internal tryBindBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryBindBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         match tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination declaredLength system with
         | Error refusal -> Error (BindRefusal.Copy refusal)
@@ -1681,11 +1681,11 @@ module UnixSocket =
                     system
 
     /// `listen`, with a refusal answered as the `Error` rather than raised.
-    let internal tryListen<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryListen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (backlog : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ListenAnswer * UnixSystem<'Task, 'Handler>, ListenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ListenAnswer * UnixSystem<'Thread, 'Handler>, ListenRefusal>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (ListenAnswer.Failed UnixError.EBADF, system)
@@ -1813,11 +1813,11 @@ module UnixSocket =
     ///
     /// A re-listen keeps the queue and updates the backlog, which is Linux's
     /// documented behaviour (`sk_max_ack_backlog` is simply re-assigned).
-    let listen<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let listen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (backlog : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ListenAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ListenAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryListen fd backlog system
         |> Refusal.orRaise "UnixSocket.listen" ListenRefusal.kind ListenRefusal.describe
@@ -1829,11 +1829,11 @@ module UnixSocket =
     /// agree between the two calls on both flavours
     /// (`socket-address-length.c`, every row it asks both), and for an IPv6
     /// socket at the lengths `docs/probes/dual-mode/dual-mode.c` asks (A).
-    let private reportAddress<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private reportAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (whole : byte[])
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // Measured (`socket-address-length.c`): Linux's `move_addr_to_user`
@@ -1896,11 +1896,11 @@ module UnixSocket =
             Ok (SimulatedUnixPlatform.encodeInternetV6Sockaddr machine.UnixPlatform endpoint)
 
     /// `getsockname`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockname<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // The descriptor is classified before the destination is looked at, and
@@ -1956,22 +1956,22 @@ module UnixSocket =
     /// `socklen_t` it is, so no length is an error there.
     ///
     /// Changes nothing and returns no system: a `getsockname` reads.
-    let getsockname<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getsockname<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetSockNameAnswer
         =
         tryGetsockname fd destination declaredLength system
         |> Refusal.orRaise "UnixSocket.getsockname" GetSockNameRefusal.kind GetSockNameRefusal.describe
 
     /// `getpeername`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetpeername<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetSockNameAnswer, GetSockNameRefusal>
         =
         // EBADF and ENOTSOCK come first, the destination untouched, exactly as
@@ -2083,11 +2083,11 @@ module UnixSocket =
     /// loopback handshake lands, which a deterministic kernel need not wait for.
     ///
     /// Changes nothing and returns no system: a `getpeername` reads.
-    let getpeername<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getpeername<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetSockNameAnswer
         =
         tryGetpeername fd destination declaredLength system
@@ -2214,9 +2214,9 @@ module UnixSocket =
     /// The descriptor screens `setsockopt(2)` and `getsockopt(2)` share, which
     /// both flavours make ahead of anything about the option: EBADF, then
     /// ENOTSOCK.
-    let private socketOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private socketOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<SocketId, UnixError>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
@@ -2234,13 +2234,13 @@ module UnixSocket =
     /// Everything `setsockopt(2)` decides before the kernel copies the option's
     /// value in: the step before the copy that `setsockopt` answers as a
     /// `CallProgress`. Changes nothing.
-    let internal tryAdmitSetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryAdmitSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<SetSockOptAdmission, SocketOptionRefusal>
         =
         let platform = system.Machine.UnixPlatform
@@ -2369,15 +2369,15 @@ module UnixSocket =
     /// copies, or `None` where it copies none: the step `setsockoptWithValue`
     /// takes. It runs the admission again itself, and fails loudly unless
     /// `supplied` is exactly what that copies.
-    let internal trySetsockoptBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetsockoptBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
         (supplied : ImmutableArray<byte> option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let neverRead (reason : string) =
             if supplied.IsSome then
@@ -2388,7 +2388,7 @@ module UnixSocket =
         // `None` where the kernel copies nothing.
         let proceed
             (copied : ImmutableArray<byte> option)
-            : Result<SetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+            : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
             =
             let platform = system.Machine.UnixPlatform
             let flavour = SimulatedUnixPlatform.flavour platform
@@ -2569,13 +2569,13 @@ module UnixSocket =
     /// Everything `getsockopt(2)` decides before the kernel reads the caller's
     /// length cell: the step before the copy that `getsockopt` answers as a
     /// `CallProgress`. Changes nothing.
-    let internal tryAdmitGetSockOpt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryAdmitGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetSockOptAdmission, SocketOptionRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -2624,15 +2624,15 @@ module UnixSocket =
     /// where it does not: the step `getsockoptWithLength` takes. It runs the
     /// admission again itself, and fails loudly unless `declaredLength` is
     /// present exactly when that reads the cell.
-    let internal tryGetsockoptLength<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetsockoptLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
         (declaredLength : uint32 option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<GetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let lengthNeverRead (reason : string) =
             if declaredLength.IsSome then
@@ -2643,7 +2643,7 @@ module UnixSocket =
         // out of its cell, or `None` where the kernel never reads the cell.
         let proceed
             (declaredLength : uint32 option)
-            : Result<GetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+            : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
             =
             let platform = system.Machine.UnixPlatform
             let flavour = SimulatedUnixPlatform.flavour platform
@@ -2849,12 +2849,12 @@ module UnixSocket =
                     "UnixSocket.getsockopt: the kernel reads the caller's length cell, but the caller supplied no length (this is a bug in the caller)."
 
     /// `bind`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBind<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedBind<'Task, 'Handler>, BindAnswer * UnixSystem<'Task, 'Handler>>, BindRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * UnixSystem<'Thread, 'Handler>>, BindRefusal>
         =
         match tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd address declaredLength system with
         | Error refusal -> Error (BindRefusal.Copy refusal)
@@ -2919,21 +2919,21 @@ module UnixSocket =
     /// Answers where the socket ended up, which for a request of port 0 is a
     /// port this kernel chose.
     /// </remarks>
-    let bind<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedBind<'Task, 'Handler>, BindAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedBind<'Thread, 'Handler>, BindAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryBind fd address declaredLength system
         |> Refusal.orRaise "UnixSocket.bind" BindRefusal.kind BindRefusal.describe
 
     /// `bindWithAddress`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBindWithAddress<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryBindWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedBind<'Task, 'Handler>)
-        : Result<BindAnswer * UnixSystem<'Task, 'Handler>, BindRefusal>
+        (paused : PausedBind<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         CopyRange.require "UnixSocket.bindWithAddress" paused.Range copied
         tryBindBytes paused.Fd paused.Address paused.DeclaredLength copied paused.System
@@ -2944,24 +2944,24 @@ module UnixSocket =
     /// family, port and address out of. See `bind`.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedBind.copyRange`'s `ByteCount` long.</exception>
-    let bindWithAddress<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let bindWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedBind<'Task, 'Handler>)
-        : BindAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedBind<'Thread, 'Handler>)
+        : BindAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryBindWithAddress copied paused
         |> Refusal.orRaise "UnixSocket.bindWithAddress" BindRefusal.kind BindRefusal.describe
 
     /// `setsockopt`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetsockopt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedSetSockOpt<'Task, 'Handler>, SetSockOptAnswer * UnixSystem<'Task, 'Handler>>,
+              CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
               SocketOptionRefusal
            >
         =
@@ -3045,23 +3045,23 @@ module UnixSocket =
     /// this kernel by the socket's flag, which agrees only while it has not
     /// changed.
     /// </remarks>
-    let setsockopt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (optionLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedSetSockOpt<'Task, 'Handler>, SetSockOptAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSetSockOpt<'Thread, 'Handler>, SetSockOptAnswer * UnixSystem<'Thread, 'Handler>>
         =
         trySetsockopt fd level optionName value optionLength system
         |> Refusal.orRaise "UnixSocket.setsockopt" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
     /// `setsockoptWithValue`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetsockoptWithValue<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySetsockoptWithValue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedSetSockOpt<'Task, 'Handler>)
-        : Result<SetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (paused : PausedSetSockOpt<'Thread, 'Handler>)
+        : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         CopyRange.require "UnixSocket.setsockoptWithValue" paused.Range copied
 
@@ -3080,24 +3080,24 @@ module UnixSocket =
     /// `setsockopt`.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedSetSockOpt.copyRange`'s `ByteCount` long.</exception>
-    let setsockoptWithValue<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setsockoptWithValue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedSetSockOpt<'Task, 'Handler>)
-        : SetSockOptAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedSetSockOpt<'Thread, 'Handler>)
+        : SetSockOptAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySetsockoptWithValue copied paused
         |> Refusal.orRaise "UnixSocket.setsockoptWithValue" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
     /// `getsockopt`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockopt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedGetSockOpt<'Task, 'Handler>, GetSockOptAnswer * UnixSystem<'Task, 'Handler>>,
+              CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * UnixSystem<'Thread, 'Handler>>,
               SocketOptionRefusal
            >
         =
@@ -3158,23 +3158,23 @@ module UnixSocket =
     ///
     /// Reading any option but `SO_ERROR` changes nothing.
     /// </remarks>
-    let getsockopt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getsockopt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (level : int)
         (optionName : int)
         (value : UserBuffer)
         (length : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedGetSockOpt<'Task, 'Handler>, GetSockOptAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedGetSockOpt<'Thread, 'Handler>, GetSockOptAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryGetsockopt fd level optionName value length system
         |> Refusal.orRaise "UnixSocket.getsockopt" SocketOptionRefusal.kind SocketOptionRefusal.describe
 
     /// `getsockoptWithLength`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetsockoptWithLength<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetsockoptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (declaredLength : uint32)
-        (paused : PausedGetSockOpt<'Task, 'Handler>)
-        : Result<GetSockOptAnswer * UnixSystem<'Task, 'Handler>, SocketOptionRefusal>
+        (paused : PausedGetSockOpt<'Thread, 'Handler>)
+        : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         tryGetsockoptLength
             paused.Fd
@@ -3187,10 +3187,10 @@ module UnixSocket =
 
     /// The rest of the `getsockopt` `paused` stopped: `declaredLength` is the
     /// `socklen_t` the caller's length cell holds. See `getsockopt`.
-    let getsockoptWithLength<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getsockoptWithLength<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (declaredLength : uint32)
-        (paused : PausedGetSockOpt<'Task, 'Handler>)
-        : GetSockOptAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedGetSockOpt<'Thread, 'Handler>)
+        : GetSockOptAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryGetsockoptWithLength declaredLength paused
         |> Refusal.orRaise "UnixSocket.getsockoptWithLength" SocketOptionRefusal.kind SocketOptionRefusal.describe

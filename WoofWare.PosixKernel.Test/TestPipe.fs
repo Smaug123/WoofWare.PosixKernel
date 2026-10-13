@@ -262,14 +262,14 @@ module TestPipe =
                 }
         }
 
-    /// The `SIGPIPE` a write by `task` into a pipe with no reader raises: the
-    /// writing task's own on Linux, and the process's on Darwin.
-    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (task : int) : PendingSignal<int> =
+    /// The `SIGPIPE` a write by `thread` into a pipe with no reader raises: the
+    /// writing thread's own on Linux, and the process's on Darwin.
+    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (thread : int) : PendingSignal<int> =
         {
             Signal = Signal.SIGPIPE
             Target =
                 match flavour with
-                | SimulatedUnixFlavour.Linux -> ValueSome task
+                | SimulatedUnixFlavour.Linux -> ValueSome thread
                 | SimulatedUnixFlavour.Darwin -> ValueNone
         }
 
@@ -407,7 +407,7 @@ module TestPipe =
                             endedProcess.Termination
                             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
 
-                            EndedMachine.assertTasksGone system endedProcess
+                            EndedMachine.assertThreadsGone system endedProcess
                             ended <- true
                         | SignalDisposition.Ignore,
                           Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
@@ -448,7 +448,7 @@ module TestPipe =
                     match expected, actual with
                     | Error (), Ok (WriteStep.WouldBlock (condition, after)) when readerOpen ->
                         // The write sleeps, having put in what fits. The
-                        // property's one task is then asleep, so the call is
+                        // property's one thread is then asleep, so the call is
                         // checked here and not kept: the sequence carries on
                         // from the system it was made in.
                         let writer =
@@ -464,7 +464,7 @@ module TestPipe =
                                 ReadsSeen = reads
                             }
 
-                        UnixTaskTable.parkedFor system.Leader after.Tasks
+                        UnixThreadTable.parkedFor system.Leader after.Threads
                         |> shouldEqual (Some (ParkedSyscall.PipeWrite parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeWrite parked))
@@ -556,7 +556,7 @@ module TestPipe =
                                 Count = count
                             }
 
-                        UnixTaskTable.parkedFor system.Leader after.Tasks
+                        UnixThreadTable.parkedFor system.Leader after.Threads
                         |> shouldEqual (Some (ParkedSyscall.PipeRead parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeRead parked))
@@ -1067,7 +1067,7 @@ module TestPipe =
 
             match WriteOutcomes.admitThenWrite system.Leader w UserBuffer.Mapped (payload 0 70000) system with
             | Ok (WriteStep.WouldBlock (_, after)) ->
-                match UnixTaskTable.parkedFor system.Leader after.Tasks with
+                match UnixThreadTable.parkedFor system.Leader after.Threads with
                 | Some (ParkedSyscall.PipeWrite parked) -> (parked.Count, parked.Written) |> shouldEqual (70000, 65536)
                 | other -> failwith $"%O{platform}: %A{other}"
             | other -> failwith $"%O{platform}: %A{other}"
@@ -1137,7 +1137,7 @@ module TestPipe =
     [<Test>]
     let ``flock on Linux contends between a pipe's two ends and not with another pipe; Darwin refuses it`` () : unit =
         // The process's leader, which every system here starts with.
-        let task = 0
+        let thread = 0
 
         let lockExNb = 2 ||| 4
 
@@ -1146,7 +1146,7 @@ module TestPipe =
         let (r2, _), system = pipeOrFail 0 system
 
         let flockOf fd system =
-            match UnixDescriptor.tryFlock task fd lockExNb system with
+            match UnixDescriptor.tryFlock thread fd lockExNb system with
             | Ok (SyscallOutcome.Answered answer, system) -> answer, system
             | other -> failwith $"%A{other}"
 
@@ -1159,7 +1159,7 @@ module TestPipe =
 
         let (r, _), darwin = pipeOrFail 0 (systemOn SimulatedUnixPlatform.macOsArm64)
 
-        match UnixDescriptor.tryFlock task r lockExNb darwin with
+        match UnixDescriptor.tryFlock thread r lockExNb darwin with
         | Error (FLockRefusal.DarwinPipe _) -> ()
         | other -> failwith $"%A{other}"
 
@@ -1304,7 +1304,7 @@ module TestPipe =
             | Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, _) -> ()
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Tasks.ensure 1 system) with
+            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Threads.ensure 1 system) with
             | Ok (EpollWaitOutcome.Failed UnixError.EINVAL, _) -> ()
             | other -> failwith $"%A{other}"
 

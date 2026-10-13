@@ -89,7 +89,7 @@ module TestMultiProcess =
         // A thread of the first process takes the next thread ID, so the
         // second process gets the one after.
         let worker, first =
-            match UnixTaskLifecycle.trySpawn 0 1 (CpuId 0) first with
+            match UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) first with
             | Ok (SpawnAnswer.Spawned worker, first) -> worker, first
             | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn: %O{error}"
             | Error refusal -> failwith $"spawn: %s{SpawnRefusal.describe refusal}"
@@ -106,7 +106,7 @@ module TestMultiProcess =
         let view = viewOf pid machine
         UnixSystem.processId view |> shouldEqual pid
 
-        UnixTaskState.osThreadId (UnixTaskTable.get 0 view.Tasks)
+        UnixThreadState.osThreadId (UnixThreadTable.get 0 view.Threads)
         |> OsThreadId.toUInt64
         |> shouldEqual 4244UL
 
@@ -140,7 +140,7 @@ module TestMultiProcess =
 
         pids
         |> List.map (fun pid ->
-            UnixTaskState.osThreadId (UnixTaskTable.get 0 (viewOf pid machine).Tasks)
+            UnixThreadState.osThreadId (UnixThreadTable.get 0 (viewOf pid machine).Threads)
             |> OsThreadId.toUInt64
         )
         |> shouldEqual [ 9001UL ; 9002UL ]
@@ -198,7 +198,7 @@ module TestMultiProcess =
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
-        UnixTaskState.osThreadId (UnixTaskTable.get 0 (viewOf pid machine).Tasks)
+        UnixThreadState.osThreadId (UnixThreadTable.get 0 (viewOf pid machine).Threads)
         |> OsThreadId.toUInt64
         |> shouldEqual (System.UInt64.MaxValue - 1UL)
 

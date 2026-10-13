@@ -50,7 +50,7 @@ type internal PollRefusal =
     /// `SimulatedUnixPlatform.descriptorBound`.
     | UnmodelledEntryCount of count : int
     /// Under Darwin, a sleeping call has both something to report and reached
-    /// its deadline. Darwin answers whichever reached the sleeping task first,
+    /// its deadline. Darwin answers whichever reached the sleeping thread first,
     /// which this kernel does not record.
     | EventsBesideDeadline
     /// Nothing is ready, and the timeout ends past the last instant the
@@ -58,7 +58,7 @@ type internal PollRefusal =
     /// an `int64` of nanoseconds) can represent: `nanosecondsSinceBoot` plus
     /// `timeoutMilliseconds` overflows it.
     | DeadlineBeyondClock of nanosecondsSinceBoot : int64 * timeoutMilliseconds : int
-    /// The poll was asleep and a signal is pending for the task, and this
+    /// The poll was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
@@ -73,7 +73,7 @@ type PollOutcome =
     /// 10240 entries; and a poll that was asleep fails with `EINTR` when a
     /// signal with a handler interrupts it.
     | Failed of error : UnixError
-    /// `poll` did not return. The calling task is parked, and sleeps until
+    /// `poll` did not return. The calling thread is parked, and sleeps until
     /// `UnixWait.wakes` wakes it; then
     /// `UnixPoll.finishPoll` finishes the call.
     | WouldBlock of WakeCondition
@@ -97,7 +97,7 @@ module internal PollRefusal =
         | PollRefusal.UnmodelledEntryCount count ->
             $"the poll has %d{count} entries, more than FD_SETSIZE (1024) and no more than OPEN_MAX (10240). Darwin answers EINVAL for such a count exactly when it exceeds the RLIMIT_NOFILE soft limit (for root, the source says, only when it exceeds 1024 too), and this kernel assumes only that the limit is at least the descriptor bound."
         | PollRefusal.EventsBesideDeadline ->
-            "a task asleep in poll has both something to report and reached its deadline (0). Darwin answers whichever reached the sleeping task first, and this kernel does not record which did."
+            "a thread asleep in poll has both something to report and reached its deadline (0). Darwin answers whichever reached the sleeping thread first, and this kernel does not record which did."
         | PollRefusal.DeadlineBeyondClock (now, timeoutMilliseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
@@ -162,8 +162,8 @@ type EpollWaitOutcome =
     /// `<sys/epoll.h>` numbering (`EpollEvents`). Empty when the call timed
     /// out, or had a timeout of 0 and found nothing.
     | Answered of events : (uint64 * uint32) list
-    /// `epoll_wait` did not return. The calling task is parked, and sleeps
-    /// until `UnixWait.satisfied` of the task is non-empty and
+    /// `epoll_wait` did not return. The calling thread is parked, and sleeps
+    /// until `UnixWait.satisfied` of the thread is non-empty and
     /// `UnixWait.wakes` wakes it; then `UnixPoll.finishEpollWait` finishes the
     /// call.
     | WouldBlock of WakeCondition
@@ -188,7 +188,7 @@ type internal EpollWaitRefusal =
     /// `int64` of nanoseconds) can represent: `nanosecondsSinceBoot` plus
     /// `timeoutMilliseconds` overflows it.
     | DeadlineBeyondClock of nanosecondsSinceBoot : int64 * timeoutMilliseconds : int
-    /// The wait was asleep and a signal is pending for the task, and this
+    /// The wait was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
@@ -391,11 +391,11 @@ module UnixPoll =
     ///
     /// Changes nothing: everything a wait does before it reaches the instance
     /// is a question.
-    let private admitEpollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private admitEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (maxEvents : int)
         (buffer : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<OpenFileDescriptionId, UnixError>, BufferRefusal>
         =
         // Measured on 6.18.5, each adjacent pair separated by an input that
@@ -460,13 +460,13 @@ module UnixPoll =
         | OpenFileTarget.Epoll _ -> Ok (Ok epoll)
 
     /// `epollCtl`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollCtl<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryEpollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epfd : int)
         (op : int)
         (fd : int)
         (event : EpollEventArgument)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<EpollCtlAnswer * UnixSystem<'Task, 'Handler>, EpollCtlRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollCtlAnswer * UnixSystem<'Thread, 'Handler>, EpollCtlRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollCtlRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -608,7 +608,7 @@ module UnixPoll =
         // An ADD or MOD whose target is ready under the new mask makes the
         // registration pending at that moment (measured rows E, I and K), and
         // a MOD of an entry already pending leaves its place alone (row L).
-        let pendIfReady (system : UnixSystem<'Task, 'Handler>) : UnixSystem<'Task, 'Handler> =
+        let pendIfReady (system : UnixSystem<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
             let alreadyPending = List.contains key epollState.Ready
 
             // The ADD's or MOD's poll of the target (`LinuxReadiness.polled`).
@@ -756,13 +756,13 @@ module UnixPoll =
     /// Under the Darwin flavour every call is refused: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
-    let epollCtl<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let epollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epfd : int)
         (op : int)
         (fd : int)
         (event : EpollEventArgument)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EpollCtlAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EpollCtlAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryEpollCtl epfd op fd event system
         |> Refusal.orRaise "UnixPoll.epollCtl" EpollCtlRefusal.kind EpollCtlRefusal.describe
@@ -793,8 +793,8 @@ module UnixPoll =
 
     /// What `entry` reports right now under the Linux flavour, as `do_pollfd`
     /// computes it: by looking its descriptor up afresh.
-    let private reportOne<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let private reportOne<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         (entry : PollEntry)
         : Result<int16, PollRefusal>
         =
@@ -851,8 +851,8 @@ module UnixPoll =
     /// Every entry's report, in list order, stopping at the first entry that
     /// cannot be answered: a real `poll` inspects its entries in order, so that
     /// is the entry a refusal names.
-    let private scan<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let private scan<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         (entries : PollEntry list)
         : Result<int16 list * int, PollRefusal>
         =
@@ -874,10 +874,10 @@ module UnixPoll =
 
     /// What a Linux `poll` of `entries` does besides reporting: each open
     /// descriptor's target is polled (`LinuxReadiness.polled`).
-    let private polledEntries<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private polledEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entries : PollEntry list)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         (system, entries)
         ||> List.fold (fun system entry ->
@@ -920,13 +920,13 @@ module UnixPoll =
             else
                 Ok (Some (now + timeout))
 
-    /// A Linux-flavoured `poll(2)`, after the parked-task check: see `poll`.
-    let private linuxPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    /// A Linux-flavoured `poll(2)`, after the parked-thread check: see `poll`.
+    let private linuxPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
         match scan system entries with
         | Error refusal -> Error refusal
@@ -967,14 +967,14 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
 
-    /// Finish the Linux-flavoured `poll` `task` is parked in: see `finishPoll`.
-    let private finishLinuxPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    /// Finish the Linux-flavoured `poll` `thread` is parked in: see `finishPoll`.
+    let private finishLinuxPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedPoll)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
         let entries =
             parked.Entries
@@ -988,7 +988,7 @@ module UnixPoll =
                 | ParkedPollEntry.Watched (fd, description, events) ->
                     if (OpenFileTable.tryFind description system.Machine.OpenFiles).IsNone then
                         failwith
-                            $"UnixPoll.finishPoll: task %O{task}'s poll watches open file description %O{description}, which is not in the table, but a park holds its descriptions until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                            $"UnixPoll.finishPoll: thread %O{thread}'s poll watches open file description %O{description}, which is not in the table, but a park holds its descriptions until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
 
                     match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
                     | Some current when current = description ->
@@ -998,7 +998,7 @@ module UnixPoll =
                         }
                     | other ->
                         failwith
-                            $"UnixPoll.finishPoll: task %O{task}'s poll watches fd %d{fd} on open file description %O{description}, but fd %d{fd} now names %A{other}. `close` refuses to close a descriptor a parked poll watches (this is a bug in this library, or in a caller that closed it without UnixDescriptor.close)."
+                            $"UnixPoll.finishPoll: thread %O{thread}'s poll watches fd %d{fd} on open file description %O{description}, but fd %d{fd} now names %A{other}. `close` refuses to close a descriptor a parked poll watches (this is a bug in this library, or in a caller that closed it without UnixDescriptor.close)."
             )
 
         match scan system entries with
@@ -1012,19 +1012,19 @@ module UnixPoll =
             | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
             | None -> false
 
-        let finished = (UnixParkState.unpark task system)
+        let finished = (UnixParkState.unpark thread system)
 
         // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, sections D
         // and E), with the sleeper held off the CPU until both held: a ready
         // descriptor beats a pending signal, and a pending signal beats an
         // expired deadline, whichever came first.
         if triggered > 0 then
-            SyscallInterruption.beforeCompleting task system
+            SyscallInterruption.beforeCompleting thread system
             |> Result.mapError PollRefusal.Interruption
             |> Result.map (fun () -> PollOutcome.Answered (reported, triggered), finished)
         else
 
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (PollRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (PollOutcome.Failed UnixError.EINTR, finished)
         | Ok (Some SyscallInterruption.Restart) ->
@@ -1036,7 +1036,7 @@ module UnixPoll =
             Ok (PollOutcome.Answered (reported, triggered), finished)
         else
             let parkedAgain = ParkedSyscall.Poll parked
-            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
 
     // Darwin's limits on how many entries one call takes (`OPEN_MAX` and
     // `FD_SETSIZE` in `poll_nocancel`), measured in `poll-darwin.c` section N.
@@ -1071,10 +1071,10 @@ module UnixPoll =
 
     /// What registering `group` (a read or write filter, or `None` for
     /// `EVFILT_VNODE`) through the descriptor `fd` does.
-    let private darwinRegistration<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private darwinRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (group : KqueueFilter option)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<DarwinRegistration, PollRefusal>
         =
         // Measured on Darwin 27.0.0 (`poll-darwin.c` section S), each row of
@@ -1118,9 +1118,9 @@ module UnixPoll =
     /// each entry's `revents` so far (`POLLNVAL` for an entry whose
     /// registration failed, 0 otherwise), the registrations, and the
     /// descriptors an `EVFILT_VNODE` registered on.
-    let private darwinRegister<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private darwinRegister<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entries : PollEntry list)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<int16 list * Map<int * KqueueFilter, PollRegistration> * int list, PollRefusal>
         =
         let rec registerGroups
@@ -1197,13 +1197,13 @@ module UnixPoll =
     let private triggered (revents : int16 list) : int =
         revents |> List.filter (fun revents -> revents <> 0s) |> List.length
 
-    /// A Darwin-flavoured `poll(2)`, after the parked-task check: see `poll`.
-    let private darwinPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    /// A Darwin-flavoured `poll(2)`, after the parked-thread check: see `poll`.
+    let private darwinPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
         let count = List.length entries
 
@@ -1286,14 +1286,14 @@ module UnixPoll =
                 Machine = machine
             }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
 
-    /// Finish the Darwin-flavoured `poll` `task` is parked in: see `finishPoll`.
-    let private finishDarwinPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    /// Finish the Darwin-flavoured `poll` `thread` is parked in: see `finishPoll`.
+    let private finishDarwinPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (parked : ParkedKqueuePoll)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
         let zero = parked.Entries |> List.map (fun _ -> 0s)
         let queue = UnixMachineState.pollQueue parked.Queue system.Machine
@@ -1308,7 +1308,7 @@ module UnixPoll =
             | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
             | None -> false
 
-        let finished = (UnixParkState.unpark task system)
+        let finished = (UnixParkState.unpark thread system)
 
         // A woken Darwin wait answers whichever of its wake-ups reached it
         // first -- a report, its deadline or a signal -- and this library does
@@ -1317,23 +1317,23 @@ module UnixPoll =
         if reported > 0 && timedOut then
             Error PollRefusal.EventsBesideDeadline
         elif reported > 0 then
-            SyscallInterruption.beforeCompleting task system
+            SyscallInterruption.beforeCompleting thread system
             |> Result.mapError PollRefusal.Interruption
             |> Result.map (fun () -> PollOutcome.Answered (revents, reported), finished)
         elif timedOut then
-            SyscallInterruption.beforeCompleting task system
+            SyscallInterruption.beforeCompleting thread system
             |> Result.mapError PollRefusal.Interruption
             |> Result.map (fun () -> PollOutcome.Answered (zero, 0), finished)
         else
 
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (PollRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (PollOutcome.Failed UnixError.EINTR, finished)
         | Ok (Some SyscallInterruption.Restart) ->
             failwith
                 "UnixPoll.finishPoll: a poll restarted after a signal, where `SyscallInterruption.ruleOf` says a poll never restarts (this is a bug in this library)."
         | Ok None ->
-            // Whatever woke the task has gone again. Its scan consumed what
+            // Whatever woke the thread has gone again. Its scan consumed what
             // reported without adding anything, and dropped what is no longer
             // ready, as a woken real poll's does, and it sleeps on, keeping its
             // kqueue.
@@ -1351,28 +1351,28 @@ module UnixPoll =
                             system.Machine
                 }
 
-            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain system)
+            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
 
     /// `poll`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixPoll.poll: task %O{task} is parked in %A{parked}, and is issuing a poll. A task blocks in one syscall at a time; a parked poll is finished with `finishPoll` (this is a bug in the client)."
+                $"UnixPoll.poll: thread %O{thread} is parked in %A{parked}, and is issuing a poll. A thread blocks in one syscall at a time; a parked poll is finished with `finishPoll` (this is a bug in the client)."
         | None ->
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-        | SimulatedUnixFlavour.Linux -> linuxPoll task entries milliseconds system
-        | SimulatedUnixFlavour.Darwin -> darwinPoll task entries milliseconds system
+        | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
+        | SimulatedUnixFlavour.Darwin -> darwinPoll thread entries milliseconds system
 
     /// `poll(2)`: what each entry reports, and how many entries carry anything;
-    /// or, when nothing does and the timeout lets it, the calling task sleeps.
+    /// or, when nothing does and the timeout lets it, the calling thread sleeps.
     ///
     /// Each entry's `Events`, and each `revents` answered for it, is the raw
     /// bits in the simulated flavour's own `<poll.h>` numbering. The count is
@@ -1403,7 +1403,7 @@ module UnixPoll =
     /// negative timeout other than -1.
     ///
     /// `milliseconds` is read as the flavour reads it. Zero answers now. A
-    /// positive timeout, when nothing is reported, parks `task` until something
+    /// positive timeout, when nothing is reported, parks `thread` until something
     /// is or `milliseconds` have passed on the machine's monotonic clock,
     /// whichever is first; at the deadline and not before, the call finishes
     /// with 0. -1 is infinite on both, and under Linux so is every negative
@@ -1412,33 +1412,33 @@ module UnixPoll =
     /// values itself does that before calling.
     ///
     /// A poll with anything to report is answered at every timeout. The system
-    /// comes back unchanged unless the task parked.
+    /// comes back unchanged unless the thread parked.
     ///
-    /// `task` must not already be parked: a task blocks in one syscall at a
+    /// `thread` must not already be parked: a thread blocks in one syscall at a
     /// time, and a parked `poll` is finished with `finishPoll`.
-    let poll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : PollOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryPoll task entries milliseconds system
+        tryPoll thread entries milliseconds system
         |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
 
     /// `finishPoll`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Task, 'Handler>, PollRefusal>
+    let internal tryFinishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some (ParkedSyscall.Poll parked as held) ->
             // `close` refuses to close a descriptor a parked Linux poll
             // watches, so each description the call held is still named by its
             // descriptor; released all the same, as every finishing call
             // releases what its park held.
-            finishLinuxPoll task parked system
+            finishLinuxPoll thread parked system
             |> Result.map (fun (outcome, after) ->
                 outcome,
                 ObjectLifetime.releaseUnreferencedUnrefusable
@@ -1448,15 +1448,15 @@ module UnixPoll =
             )
         // A Darwin poll holds no description (see `ParkedSyscall.descriptions`),
         // so its return releases nothing.
-        | Some (ParkedSyscall.KqueuePoll parked) -> finishDarwinPoll task parked system
+        | Some (ParkedSyscall.KqueuePoll parked) -> finishDarwinPoll thread parked system
         | Some other ->
             failwith
-                $"UnixPoll.finishPoll: task %O{task} is parked in %A{other}, not in a poll, so there is no poll to finish (this is a bug in the client)."
+                $"UnixPoll.finishPoll: thread %O{thread} is parked in %A{other}, not in a poll, so there is no poll to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixPoll.finishPoll: task %O{task} is not parked, so there is no poll to finish. Only a task `poll` answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixPoll.finishPoll: thread %O{thread} is not parked, so there is no poll to finish. Only a thread `poll` answered `WouldBlock` finishes here (this is a bug in the client)."
 
-    /// Finish the `poll` `task` parked in, as a woken real poll does, and
+    /// Finish the `poll` `thread` parked in, as a woken real poll does, and
     /// answer.
     ///
     /// **Under Linux** it scans the entries the call was made with, not
@@ -1473,25 +1473,25 @@ module UnixPoll =
     /// filters. It answers the count when anything is reported, 0 when the
     /// deadline has passed, and `Failed EINTR` when a signal with a handler
     /// interrupts it; and refuses each pair of those that hold at once, since
-    /// Darwin answers whichever reached the sleeping task first.
+    /// Darwin answers whichever reached the sleeping thread first.
     ///
-    /// Otherwise it re-parks the task on the same call and deadline, since
+    /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
     ///
-    /// `task` must be parked in a `poll`.
-    let finishPoll<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : PollOutcome * UnixSystem<'Task, 'Handler>
+    /// `thread` must be parked in a `poll`.
+    let finishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishPoll task system
+        tryFinishPoll thread system
         |> Refusal.orRaise "UnixPoll.finishPoll" PollRefusal.kind PollRefusal.describe
 
     /// `epollCreate1`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollCreate1<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryEpollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<int * UnixSystem<'Task, 'Handler>, UnixError>, EpollCreateRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollCreateRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -1540,10 +1540,10 @@ module UnixPoll =
     /// Under the Darwin flavour every call is refused: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
-    let epollCreate1<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let epollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<int * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         tryEpollCreate1 flags system
         |> Refusal.orRaise "UnixPoll.epollCreate1" EpollCreateRefusal.kind EpollCreateRefusal.describe
@@ -1565,16 +1565,16 @@ module UnixPoll =
             | UserBuffer.Opaque -> Error (EpollWaitRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
             | UserBuffer.Addressless -> Error (EpollWaitRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
 
-    /// Park `task` in a wait on the epoll instance `epoll` for up to
+    /// Park `thread` in a wait on the epoll instance `epoll` for up to
     /// `maxEvents` events, until `deadline`.
-    let private parkEpollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private parkEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (epoll : OpenFileDescriptionId)
         (maxEvents : int)
         (buffer : UserBuffer)
         (deadline : int64 option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EpollWaitOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
         =
         let parked =
             ParkedSyscall.EpollWait
@@ -1585,22 +1585,22 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park task parked system
+        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system
 
     /// `epollWait`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (epfd : int)
         (maxEvents : int)
         (buffer : UserBuffer)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Task, 'Handler>, EpollWaitRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixPoll.epollWait: task %O{task} is parked in %A{parked}, and is issuing an epoll_wait. A task blocks in one syscall at a time; a parked wait is finished with `finishEpollWait` (this is a bug in the client)."
+                $"UnixPoll.epollWait: thread %O{thread} is parked in %A{parked}, and is issuing an epoll_wait. A thread blocks in one syscall at a time; a parked wait is finished with `finishEpollWait` (this is a bug in the client)."
         | None ->
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -1626,10 +1626,10 @@ module UnixPoll =
 
         match relativeDeadline now milliseconds with
         | Error () -> Error (EpollWaitRefusal.DeadlineBeyondClock (now, milliseconds))
-        | Ok deadline -> Ok (parkEpollWait task epoll maxEvents buffer deadline system)
+        | Ok deadline -> Ok (parkEpollWait thread epoll maxEvents buffer deadline system)
 
     /// <summary>
-    /// `epoll_wait(2)`, made by `task`: take up to `maxEvents` events off the
+    /// `epoll_wait(2)`, made by `thread`: take up to `maxEvents` events off the
     /// epoll instance `epfd` names, sleeping for up to `milliseconds` if it has
     /// none.
     ///
@@ -1645,7 +1645,7 @@ module UnixPoll =
     /// not; the entries a full `maxEvents` spared stay pending in order. A wait
     /// that finds something answers it
     /// whatever the timeout. One that finds nothing answers no events at once
-    /// for a timeout of 0; parks `task` for a positive timeout until an event is
+    /// for a timeout of 0; parks `thread` for a positive timeout until an event is
     /// deliverable or `milliseconds` have passed on the machine's monotonic
     /// clock; and parks it until an event is deliverable for any negative
     /// timeout, which is infinite. A parked wait is finished with
@@ -1657,39 +1657,39 @@ module UnixPoll =
     /// whose bytes it cannot hold, and refuses it. A call that delivers
     /// nothing never looks at the buffer past the screen.
     ///
-    /// Of several tasks parked on one epoll instance, one event wakes one of them (see
+    /// Of several threads parked on one epoll instance, one event wakes one of them (see
     /// `UnixWait.wakes`).
     ///
-    /// `task` must not already be parked. Under the Darwin flavour every call
+    /// `thread` must not already be parked. Under the Darwin flavour every call
     /// is refused: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
-    let epollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let epollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (epfd : int)
         (maxEvents : int)
         (buffer : UserBuffer)
         (milliseconds : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EpollWaitOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryEpollWait task epfd maxEvents buffer milliseconds system
+        tryEpollWait thread epfd maxEvents buffer milliseconds system
         |> Refusal.orRaise "UnixPoll.epollWait" EpollWaitRefusal.kind EpollWaitRefusal.describe
 
-    let private finishEpollWaitHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Task, 'Handler>, EpollWaitRefusal>
+    let private finishEpollWaitHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let parked =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some (ParkedSyscall.EpollWait parked) -> parked
             | Some other ->
                 failwith
-                    $"UnixPoll.finishEpollWait: task %O{task} is parked in %A{other}, not in an epoll_wait, so there is no wait to finish (this is a bug in the client)."
+                    $"UnixPoll.finishEpollWait: thread %O{thread} is parked in %A{other}, not in an epoll_wait, so there is no wait to finish (this is a bug in the client)."
             | None ->
                 failwith
-                    $"UnixPoll.finishEpollWait: task %O{task} is not parked, so there is no wait to finish. Only a task `epollWait` answered `WouldBlock` finishes here (this is a bug in the client)."
+                    $"UnixPoll.finishEpollWait: thread %O{thread} is not parked, so there is no wait to finish. Only a thread `epollWait` answered `WouldBlock` finishes here (this is a bug in the client)."
 
         let delivered, system = EpollReadyList.drain parked.Epoll parked.MaxEvents system
 
@@ -1698,48 +1698,48 @@ module UnixPoll =
             | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
             | None -> false
 
-        let finished = (UnixParkState.unpark task system)
+        let finished = (UnixParkState.unpark thread system)
 
         // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, sections D
         // and E), with the sleeper held off the CPU until both held: an event
         // beats a pending signal, and so does an expired deadline, whichever
         // came first.
         if not (List.isEmpty delivered) || timedOut then
-            SyscallInterruption.beforeCompleting task system
+            SyscallInterruption.beforeCompleting thread system
             |> Result.mapError EpollWaitRefusal.Interruption
             |> Result.bind (fun () -> copyOut parked.Epoll parked.Buffer delivered)
             |> Result.map (fun () -> EpollWaitOutcome.Answered delivered, finished)
         else
 
-        match SyscallInterruption.ofPark task system with
+        match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (EpollWaitRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (EpollWaitOutcome.Failed UnixError.EINTR, finished)
         | Ok (Some SyscallInterruption.Restart) ->
             failwith
                 "UnixPoll.finishEpollWait: an epoll_wait restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
-        | Ok None -> Ok (parkEpollWait task parked.Epoll parked.MaxEvents parked.Buffer parked.Deadline system)
+        | Ok None -> Ok (parkEpollWait thread parked.Epoll parked.MaxEvents parked.Buffer parked.Deadline system)
 
     /// `finishEpollWait`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishEpollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Task, 'Handler>, EpollWaitRefusal>
+    let internal tryFinishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor thread system.Threads with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
         // The call's reference to the epoll instance goes as it returns, and with it the
         // epoll instance, if no descriptor names it any more (`open-file-references.c`
         // section E).
-        finishEpollWaitHolding task system
+        finishEpollWaitHolding thread system
         |> Result.map (fun (outcome, after) ->
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixPoll.finishEpollWait" held after
         )
 
     /// <summary>
-    /// Finish the wait on an epoll instance that `task` is parked in: walk
+    /// Finish the wait on an epoll instance that `thread` is parked in: walk
     /// the epoll instance again, as a woken real wait does, and answer.
     ///
     /// Delivers from the epoll instance the call was made on and with the `maxEvents` it
@@ -1752,7 +1752,7 @@ module UnixPoll =
     /// an expired deadline both holding as the waiter runs report the event);
     /// no events when the deadline has passed, whether or not a signal is
     /// pending; `Failed EINTR` when a signal with a handler interrupts it; and
-    /// otherwise re-parks the task on the same epoll instance and deadline, since
+    /// otherwise re-parks the thread on the same epoll instance and deadline, since
     /// whatever woke it has gone again. A re-park goes to the back of park
     /// order, which puts it first in line for the epoll instance's next event. An answer
     /// clears the park.
@@ -1760,13 +1760,13 @@ module UnixPoll =
     /// Delivering events copies them out to the buffer the call was made with;
     /// see `epollWait` for the buffers that refuses.
     ///
-    /// `task` must be parked in an `epoll_wait`.
+    /// `thread` must be parked in an `epoll_wait`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
-    let finishEpollWait<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EpollWaitOutcome * UnixSystem<'Task, 'Handler>
+    let finishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishEpollWait task system
+        tryFinishEpollWait thread system
         |> Refusal.orRaise "UnixPoll.finishEpollWait" EpollWaitRefusal.kind EpollWaitRefusal.describe

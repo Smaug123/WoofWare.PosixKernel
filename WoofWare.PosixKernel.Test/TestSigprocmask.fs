@@ -26,13 +26,13 @@ module TestSigprocmask =
 
     /// `UnixSignal.sigprocmask`, failing the test on a refusal.
     let private sigprocmask
-        (task : int)
+        (thread : int)
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
         : Result<SignalMask * UnixSystem<int, string>, UnixError>
         =
-        match UnixSignal.trySigprocmask task how set system with
+        match UnixSignal.trySigprocmask thread how set system with
         | Ok answered -> answered
         | Error refusal -> failwith $"sigprocmask was refused: %s{SigprocmaskRefusal.describe refusal}"
 
@@ -65,39 +65,39 @@ module TestSigprocmask =
 
     let private call
         (route : Route)
-        (task : int)
+        (thread : int)
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
         : Result<SignalMask * UnixSystem<int, string>, UnixError>
         =
         match route with
-        | Route.Libc -> sigprocmask task how set system
-        | Route.Pthread -> UnixSignal.pthreadSigmask task how set system
-        | Route.Raw -> UnixSignal.rtSigprocmask task how set 8UL system
+        | Route.Libc -> sigprocmask thread how set system
+        | Route.Pthread -> UnixSignal.pthreadSigmask thread how set system
+        | Route.Raw -> UnixSignal.rtSigprocmask thread how set 8UL system
 
     let private maskOfWord (flavour : SimulatedUnixFlavour) (word : uint64) : SignalMask =
         match SignalMask.ofWord (numberingOf flavour) word with
         | Ok mask -> mask
         | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
-    let private wordOf (task : int) (system : UnixSystem<int, string>) : uint64 =
-        SignalState.maskOf task system.Process.Signals |> SignalMask.toWord
+    let private wordOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
+        SignalState.maskOf thread system.Process.Signals |> SignalMask.toWord
 
     let private orFail (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : UnixSystem<int, string> =
         match result with
         | Ok (_, system) -> system
         | Error errno -> failwith $"the mask call failed with %O{errno}"
 
-    /// `task` with exactly `word` blocked, set through `pthread_sigmask`.
+    /// `thread` with exactly `word` blocked, set through `pthread_sigmask`.
     let private withMask
         (flavour : SimulatedUnixFlavour)
-        (task : int)
+        (thread : int)
         (word : uint64)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSignal.pthreadSigmask task (setmask flavour) (Some (maskOfWord flavour word)) system
+        UnixSignal.pthreadSigmask thread (setmask flavour) (Some (maskOfWord flavour word)) system
         |> orFail
 
     // HUP, INT and TERM are 1, 2 and 15 under both numberings.
@@ -234,23 +234,23 @@ module TestSigprocmask =
         |> ignore
 
     [<Test>]
-    let ``Darwin's sigprocmask changes every task's mask, and every other call the caller's alone`` () : unit =
+    let ``Darwin's sigprocmask changes every thread's mask, and every other call the caller's alone`` () : unit =
         // The probe's "spread" rows: the main thread blocks HUP (1) and a
         // second thread INT (2), then the main thread calls.
         let measured (flavour : SimulatedUnixFlavour) (route : Route) (how : int) : uint64 * uint64 =
-            let everyTask = flavour = SimulatedUnixFlavour.Darwin && route = Route.Libc
+            let everyThread = flavour = SimulatedUnixFlavour.Darwin && route = Route.Libc
 
             if how = block flavour then
-                0x4001UL, (if everyTask then 0x4002UL else 0x2UL)
+                0x4001UL, (if everyThread then 0x4002UL else 0x2UL)
             elif how = unblock flavour then
-                0x0UL, (if everyTask then 0x0UL else 0x2UL)
+                0x0UL, (if everyThread then 0x0UL else 0x2UL)
             else
-                0x4000UL, (if everyTask then 0x4000UL else 0x2UL)
+                0x4000UL, (if everyThread then 0x4000UL else 0x2UL)
 
         for flavour in flavours do
             let start =
                 systemOn flavour
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 hup
                 |> withMask flavour 1 int'
 
@@ -343,7 +343,7 @@ module TestSigprocmask =
                 | other -> failwith $"%O{flavour}: expected three frames, got %A{other}"
 
     [<Test>]
-    let ``sigpending sees the process's signals from every task on Linux, and from the main thread alone on Darwin``
+    let ``sigpending sees the process's signals from every thread on Linux, and from the main thread alone on Darwin``
         ()
         : unit
         =
@@ -356,7 +356,7 @@ module TestSigprocmask =
                 let mask = SignalMask.ofSignals numbering (Set.singleton signal)
 
                 systemOn flavour
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 (SignalMask.toWord mask)
                 |> withMask flavour 1 (SignalMask.toWord mask)
 
@@ -514,8 +514,11 @@ module TestSigprocmask =
             UnixSignal.sigpending 0 after |> shouldEqual SignalMask.empty
 
     [<Test>]
-    let ``a caught signal the leader blocks and another task does not is refused, with no handler involved`` () : unit =
-        // Which task takes it is the receiver rule this library does not
+    let ``a caught signal the leader blocks and another thread does not is refused, with no handler involved``
+        ()
+        : unit
+        =
+        // Which thread takes it is the receiver rule this library does not
         // model (`SignalReceiverRefusal.LeaderBlocks`).
         for flavour in flavours do
             let usr1 =
@@ -525,7 +528,7 @@ module TestSigprocmask =
             let system =
                 systemOn flavour
                 |> catching flavour Signal.SIGUSR1
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 usr1
 
             SignalState.framesOf 0 system.Process.Signals |> shouldEqual []
@@ -534,7 +537,7 @@ module TestSigprocmask =
             |> Result.map (fun _ -> ())
             |> shouldEqual (Error (KillRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)))
 
-            // Once the other task blocks it too, it is simply pending.
+            // Once the other thread blocks it too, it is simply pending.
             let both = system |> withMask flavour 1 usr1
 
             let pending =
@@ -543,20 +546,20 @@ module TestSigprocmask =
             UnixSignal.sigpending 0 pending |> SignalMask.toWord |> shouldEqual usr1
 
     [<Test>]
-    let ``a sigprocmask that unblocks a signal pending for a task asleep in poll is refused on Darwin, and wakes nothing on Linux``
+    let ``a sigprocmask that unblocks a signal pending for a thread asleep in poll is refused on Darwin, and wakes nothing on Linux``
         ()
         : unit
         =
         // `unblock-wakes-sleeper.c`: on Darwin the sleeper slept on until its
         // own condition ended the call, which this library cannot express
-        // (`TestUnblockForAnotherTask` searches every call and signal).
+        // (`TestUnblockForAnotherThread` searches every call and signal).
         for flavour in flavours do
             let usr1 = SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGUSR1)
 
             let system =
                 systemOn flavour
                 |> catching flavour Signal.SIGUSR1
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 1 (SignalMask.toWord usr1)
 
             let system =
@@ -566,7 +569,7 @@ module TestSigprocmask =
             // it.
             let parked =
                 match UnixPoll.tryPoll 1 [] -1 system with
-                | Ok (_, system) when UnixTaskTable.parkOf 1 system.Tasks |> Option.isSome -> system
+                | Ok (_, system) when UnixThreadTable.parkOf 1 system.Threads |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
             UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
@@ -574,7 +577,7 @@ module TestSigprocmask =
             match flavour, UnixSignal.trySigprocmask 0 (unblock flavour) (Some usr1) parked with
             | SimulatedUnixFlavour.Darwin, Error refusal ->
                 refusal
-                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherTask (1, Signal.SIGUSR1))
+                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (1, Signal.SIGUSR1))
             | SimulatedUnixFlavour.Linux, Ok (Ok (_, unblocked)) ->
                 UnixWait.wakes (Set.singleton 1) unblocked |> shouldEqual []
             | _, other -> failwith $"%O{flavour}: the sigprocmask answered %A{other}"
@@ -583,14 +586,14 @@ module TestSigprocmask =
     type private MaskCall =
         {
             Route : Route
-            Task : int
+            Thread : int
             How : int
             Set : uint64 option
             /// `rt_sigprocmask`'s `sigsetsize`; read for `Route.Raw` alone.
             Size : uint64
         }
 
-    /// The reference: each task's mask as a word, and the mask calls' rules
+    /// The reference: each thread's mask as a word, and the mask calls' rules
     /// written out from the probe's rows rather than read from the library.
     let private referenceCall
         (flavour : SimulatedUnixFlavour)
@@ -598,7 +601,7 @@ module TestSigprocmask =
         (call : MaskCall)
         : Result<uint64 * Map<int, uint64>, UnixError>
         =
-        let old = Map.find call.Task masks
+        let old = Map.find call.Thread masks
 
         let killStop =
             match flavour with
@@ -639,11 +642,11 @@ module TestSigprocmask =
                     if flavour = SimulatedUnixFlavour.Darwin && call.Route = Route.Libc then
                         masks |> Map.keys |> List.ofSeq
                     else
-                        [ call.Task ]
+                        [ call.Thread ]
 
                 let masks =
                     (masks, targets)
-                    ||> List.fold (fun masks task -> Map.add task (change (Map.find task masks)) masks)
+                    ||> List.fold (fun masks thread -> Map.add thread (change (Map.find thread masks)) masks)
 
                 Ok (old, masks)
 
@@ -676,7 +679,7 @@ module TestSigprocmask =
                 let callGen =
                     gen {
                         let! route = Gen.elements (routesOf flavour)
-                        let! task = Gen.elements [ 0 ; 1 ]
+                        let! thread = Gen.elements [ 0 ; 1 ]
 
                         let! how =
                             Gen.frequency
@@ -691,7 +694,7 @@ module TestSigprocmask =
                         return
                             {
                                 Route = route
-                                Task = task
+                                Thread = thread
                                 How = how
                                 Set = set
                                 Size = size
@@ -703,7 +706,7 @@ module TestSigprocmask =
             }
 
         let property (flavour : SimulatedUnixFlavour, calls : MaskCall list) : unit =
-            let start = systemOn flavour |> Tasks.spawn 1
+            let start = systemOn flavour |> Threads.spawn 1
 
             ((start, Map.ofList [ 0, 0UL ; 1, 0UL ]), calls)
             ||> List.fold (fun (system, masks) c ->
@@ -711,8 +714,8 @@ module TestSigprocmask =
 
                 let actual =
                     match c.Route with
-                    | Route.Raw -> UnixSignal.rtSigprocmask c.Task c.How set c.Size system
-                    | route -> call route c.Task c.How set system
+                    | Route.Raw -> UnixSignal.rtSigprocmask c.Thread c.How set c.Size system
+                    | route -> call route c.Thread c.How set system
 
                 let expected = referenceCall flavour masks c
 
@@ -720,10 +723,11 @@ module TestSigprocmask =
                 | Ok (old, system'), Ok (expectedOld, masks') ->
                     (c, SignalMask.toWord old) |> shouldEqual (c, expectedOld)
 
-                    for task in [ 0 ; 1 ] do
-                        (c, task, wordOf task system') |> shouldEqual (c, task, Map.find task masks')
+                    for thread in [ 0 ; 1 ] do
+                        (c, thread, wordOf thread system')
+                        |> shouldEqual (c, thread, Map.find thread masks')
 
-                    SignalState.tasksWithMasks system'.Process.Signals
+                    SignalState.threadsWithMasks system'.Process.Signals
                     |> shouldEqual (masks' |> Map.filter (fun _ w -> w <> 0UL) |> Map.keys |> Set.ofSeq)
 
                     UnixSystem.checkInvariants system' |> shouldEqual []

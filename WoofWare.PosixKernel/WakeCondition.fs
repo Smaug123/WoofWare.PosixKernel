@@ -1,6 +1,6 @@
 namespace WoofWare.PosixKernel
 
-/// One thing a task parked in a syscall can be waiting for, which holds or does
+/// One thing a thread parked in a syscall can be waiting for, which holds or does
 /// not of a given system.
 ///
 /// A primitive names live kernel objects rather than a snapshot of them, and
@@ -53,7 +53,7 @@ type WakePrimitive =
     /// `POLLERR` and `POLLHUP` a poll reports unasked. It never waits on a
     /// epoll instance, whose level is not modelled.
     | DescriptorReady of description : OpenFileDescriptionId * conditions : uint32
-    /// The Darwin `poll` the waiting task is asleep in would report something
+    /// The Darwin `poll` the waiting thread is asleep in would report something
     /// were it to scan the kqueue it made for itself now.
     ///
     /// Names no kernel object, as `SignalDeliverable` names none: the kqueue
@@ -121,7 +121,7 @@ type WakePrimitive =
     /// otherwise only room of the send buffer's low-water mark does.
     | ConnectionWritable of writer : OpenFileDescriptionId * remaining : int
     /// Under Darwin, a close has ended the blocking `accept`, or the blocking
-    /// `read` or `write` of a pipe or a connected socket, the waiting task is
+    /// `read` or `write` of a pipe or a connected socket, the waiting thread is
     /// asleep in (`SleepTarget.EndedByClose`).
     ///
     /// Names no kernel object, as `SignalDeliverable` names none: the call
@@ -137,13 +137,13 @@ type WakePrimitive =
     /// often it is asked: a syscall's relative timeout becomes one of these when
     /// the call parks.
     | DeadlinePassed of nanosecondsSinceBoot : int64
-    /// A signal with a handler is deliverable to the task that waits: were it to
-    /// return to user mode now, it would run that handler. For a task in
+    /// A signal with a handler is deliverable to the thread that waits: were it to
+    /// return to user mode now, it would run that handler. For a thread in
     /// `sigsuspend`, any signal its temporary mask lets through that its
     /// finishing call would act on.
     ///
     /// Names no kernel object, because what it asks about is the waiter itself:
-    /// a condition is always some task's, and `satisfied` is told whose. Every
+    /// a condition is always some thread's, and `satisfied` is told whose. Every
     /// park waits for it, since every sleep this library models is one a signal
     /// interrupts; `SyscallInterruption.ruleOf` says how the interrupted call
     /// then ends.
@@ -159,7 +159,7 @@ type WakePrimitive =
     /// `opener` is the description the sleeping call made and holds
     /// (`ParkedFifoOpen.Opener`).
     ///
-    /// Reserved: nothing parks a task in a FIFO open yet, so no condition this
+    /// Reserved: nothing parks a thread in a FIFO open yet, so no condition this
     /// library hands out contains it.
     | FifoPartnerOpened of opener : OpenFileDescriptionId * opens : int64
     /// The inotify instance the open file description `reader` names holds a
@@ -170,14 +170,14 @@ type WakePrimitive =
     /// takes the record, which a change to what the instance watches queues,
     /// in any process, or `inotify_rm_watch(2)`.
     | InotifyRecordQueued of reader : OpenFileDescriptionId
-    /// A signal in `awaited` is pending to the task that waits.
+    /// A signal in `awaited` is pending to the thread that waits.
     ///
     /// What a signal wait (`sigwait(3)`, `sigwaitinfo(2)`, `sigtimedwait(2)`)
     /// waits for. `awaited` is the call's set (`ParkedSignalWait.Awaited`).
     /// Not `SignalDeliverable`: an awaited signal is taken by the call rather
     /// than delivered, and is commonly blocked, or at its default action.
     ///
-    /// Reserved: nothing parks a task in a signal wait yet, so no condition
+    /// Reserved: nothing parks a thread in a signal wait yet, so no condition
     /// this library hands out contains it.
     | AwaitedSignalPending of awaited : SignalMask
     /// The listening socket `listener` has room in its accept queue for one
@@ -190,11 +190,11 @@ type WakePrimitive =
     /// TCP connect to a full listener waits for its SYN retransmit instead
     /// (`DeadlinePassed`), and looks for room only then.
     ///
-    /// Reserved: nothing parks a task in a connect yet, so no condition this
+    /// Reserved: nothing parks a thread in a connect yet, so no condition this
     /// library hands out contains it.
     | AcceptQueueHasRoom of listener : SocketId
 
-/// What a task parked in a syscall is waiting for: one primitive, or the first
+/// What a thread parked in a syscall is waiting for: one primitive, or the first
 /// of several.
 ///
 /// Data, and deliberately transparent: a client that cannot make progress needs
@@ -220,39 +220,39 @@ module WakeCondition =
     /// The pipe the open file description `description` names `pipeEnd` of, and
     /// that pipe; fails loudly, naming the waiter's `primitive`, for a
     /// description that is gone or names something else.
-    let private pipeOfWaiter<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private pipeOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PipeId * PipeState
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a task waits on it (%A{primitive}), and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a thread waits on it (%A{primitive}), and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             match found.Target with
             | OpenFileTarget.Pipe (pipeId, named) when named = pipeEnd ->
                 pipeId, UnixMachineState.pipe pipeId system.Machine
             | target ->
                 failwith
-                    $"WakeCondition.satisfied: a task waits on open file description %O{description} for %A{primitive}, but the description names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
+                    $"WakeCondition.satisfied: a thread waits on open file description %O{description} for %A{primitive}, but the description names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
 
     /// The connection the socket the open file description `description` names
     /// is an end of, which end, and its transfer; fails loudly, naming the
     /// waiter's `primitive`, for a description that is gone or names
     /// something else.
-    let private connectionOfWaiter<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private connectionOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ConnectionEnd * TcpTransfer
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a task waits on it (%A{primitive}), and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a thread waits on it (%A{primitive}), and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             let phase =
                 match found.Target with
@@ -271,17 +271,17 @@ module WakeCondition =
                 connectionEnd, (UnixMachineState.connection connectionId system.Machine).Transfer
             | None ->
                 failwith
-                    $"WakeCondition.satisfied: a task waits on open file description %O{description} for %A{primitive}, but the description names %A{found.Target} (%A{phase}) rather than an end of a connection. Nothing takes a socket out of a connection while a descriptor or a call holds it, so the park was recorded on one that was never connected (this is a bug in the caller that recorded it)."
+                    $"WakeCondition.satisfied: a thread waits on open file description %O{description} for %A{primitive}, but the description names %A{found.Target} (%A{phase}) rather than an end of a connection. Nothing takes a socket out of a connection while a descriptor or a call holds it, so the park was recorded on one that was never connected (this is a bug in the caller that recorded it)."
 
-    /// Whether a close has ended the call `task` is asleep in.
-    let private endedByClose<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    /// Whether a close has ended the call `thread` is asleep in.
+    let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match
-            Map.tryFind task system.Tasks
-            |> Option.bind UnixTaskState.park
+            Map.tryFind thread system.Threads
+            |> Option.bind UnixThreadState.park
             |> Option.map (fun park -> park.Syscall)
         with
         | Some (ParkedSyscall.Accept {
@@ -323,10 +323,10 @@ module WakeCondition =
 
     // A primitive that names a description no longer in the table has had its
     // wait broken underneath it: see `satisfied`.
-    let private holds<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (primitive : WakePrimitive)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match primitive with
@@ -336,18 +336,18 @@ module WakeCondition =
             match OpenFileTable.tryFind requester openFiles with
             | None ->
                 failwith
-                    $"WakeCondition.satisfied: open file description %O{requester} is not in the table, but a task is parked on an flock of it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"WakeCondition.satisfied: open file description %O{requester} is not in the table, but a thread is parked on an flock of it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
             | Some description ->
                 OpenFileTable.flockConflicts (OpenFileDescription.object requester description) requester mode openFiles
                 |> not
         | WakePrimitive.EpollEventDeliverable epoll -> EpollReadyList.hasDeliverableEvent epoll system
         | WakePrimitive.KqueueEventDeliverable kqueue -> KqueueQueue.hasDeliverableEvent kqueue system
-        | WakePrimitive.KqueuePollReportable -> KqueuePoll.reportable task system
+        | WakePrimitive.KqueuePollReportable -> KqueuePoll.reportable thread system
         | WakePrimitive.KqueueDrained kqueue ->
             match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
             | None ->
                 failwith
-                    $"WakeCondition.satisfied: open file description %O{kqueue} is not in the table, but a task waits in kevent on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"WakeCondition.satisfied: open file description %O{kqueue} is not in the table, but a thread waits in kevent on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
             | Some description ->
                 match description.Target with
                 | OpenFileTarget.Kqueue state -> state.Drained
@@ -360,18 +360,18 @@ module WakeCondition =
                 | OpenFileTarget.Inotify _
                 | OpenFileTarget.Epoll _ ->
                     failwith
-                        $"WakeCondition.satisfied: a task waits in kevent on open file description %O{kqueue}, which names %A{description.Target} rather than a kqueue (this is a bug in the caller that recorded the park)."
+                        $"WakeCondition.satisfied: a thread waits in kevent on open file description %O{kqueue}, which names %A{description.Target} rather than a kqueue (this is a bug in the caller that recorded the park)."
         | WakePrimitive.DescriptorReady (description, conditions) ->
             if (OpenFileTable.tryFind description system.Machine.OpenFiles).IsNone then
                 failwith
-                    $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a task waits for it to become ready, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"WakeCondition.satisfied: open file description %O{description} is not in the table, but a thread waits for it to become ready, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
 
             LinuxReadiness.ofDescription description system &&& conditions <> 0u
         | WakePrimitive.AcceptQueueNonEmpty listener ->
             match OpenFileTable.tryFind listener system.Machine.OpenFiles with
             | None ->
                 failwith
-                    $"WakeCondition.satisfied: open file description %O{listener} is not in the table, but a task is parked in an accept on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"WakeCondition.satisfied: open file description %O{listener} is not in the table, but a thread is parked in an accept on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
             | Some description ->
 
             match description.Target with
@@ -380,7 +380,7 @@ module WakeCondition =
                 | SocketPhase.Listening listenState -> not (List.isEmpty listenState.Queue)
                 | phase ->
                     failwith
-                        $"WakeCondition.satisfied: a task is parked in an accept on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
+                        $"WakeCondition.satisfied: a thread is parked in an accept on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
             | OpenFileTarget.File _
             | OpenFileTarget.Directory _
             | OpenFileTarget.CharacterDevice _
@@ -390,7 +390,7 @@ module WakeCondition =
             | OpenFileTarget.Inotify _
             | OpenFileTarget.Epoll _ ->
                 failwith
-                    $"WakeCondition.satisfied: a task is parked in an accept on open file description %O{listener}, which names %A{description.Target} rather than a socket (this is a bug in the caller that recorded it)."
+                    $"WakeCondition.satisfied: a thread is parked in an accept on open file description %O{listener}, which names %A{description.Target} rather than a socket (this is a bug in the caller that recorded it)."
         | WakePrimitive.PipeHasBytes reader ->
             let _, pipe = pipeOfWaiter primitive reader PipeEnd.Read system
             PipeBuffer.held pipe.Buffer > 0
@@ -418,16 +418,16 @@ module WakeCondition =
             let connectionEnd, transfer = connectionOfWaiter primitive writer system
             TcpTransfer.writeResumes connectionEnd remaining transfer
         | WakePrimitive.DeadlinePassed deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-        | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes task system
+        | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes thread system
         // `satisfied` answers a call a close has ended before it asks any
         // primitive, so this is asked only of one no close has ended.
         | WakePrimitive.EndedByClose -> false
         | WakePrimitive.FifoPartnerOpened _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but this library keeps no count of a FIFO's opens to evaluate it against: nothing parks a task in a FIFO open yet (`ParkedSyscall.FifoOpen` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but this library keeps no count of a FIFO's opens to evaluate it against: nothing parks a thread in a FIFO open yet (`ParkedSyscall.FifoOpen` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
         | WakePrimitive.AcceptQueueHasRoom _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but nothing parks a task in a connect yet (`ParkedSyscall.Connect` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but nothing parks a thread in a connect yet (`ParkedSyscall.Connect` is reserved), so the park was recorded by hand (this is a bug in the caller that recorded it)."
         | WakePrimitive.InotifyRecordQueued reader ->
             not (
                 InotifyQueue.isEmpty
@@ -435,9 +435,9 @@ module WakeCondition =
             )
         | WakePrimitive.AwaitedSignalPending _ ->
             failwith
-                $"WakeCondition.satisfied: task %O{task} waits for %A{primitive}, but nothing parks a task in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
+                $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but nothing parks a thread in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
 
-    /// The primitives of `condition`, the wake condition of `task`, which hold of
+    /// The primitives of `condition`, the wake condition of `thread`, which hold of
     /// `system`: empty exactly when the syscall that parked on it would get no
     /// further now.
     ///
@@ -446,7 +446,7 @@ module WakeCondition =
     /// reports differently.
     ///
     /// Pure, and cheap enough to poll. It is never a promise that finishing
-    /// succeeds: another task can take the lock in between, and the caller
+    /// succeeds: another thread can take the lock in between, and the caller
     /// then parks again.
     ///
     /// **A condition is only ever asked of a system whose kernel objects it
@@ -456,21 +456,21 @@ module WakeCondition =
     /// descriptor until the call returns. Asking about a description that has
     /// gone means a park was ended or a description destroyed some other way,
     /// and it fails loudly rather than answering: the honest answers are
-    /// "grantable", which wakes the task into an `EBADF` no kernel produces,
+    /// "grantable", which wakes the thread into an `EBADF` no kernel produces,
     /// and "not yet", which sleeps forever.
     ///
     /// Internal because a condition built by hand, or kept from a park that
     /// has since ended, can name a description that has gone. A client asks
-    /// `UnixWait.satisfied` about a task, which reads the condition from the
-    /// task's own park, and that park holds what it names.
+    /// `UnixWait.satisfied` about a thread, which reads the condition from the
+    /// thread's own park, and that park holds what it names.
     ///
-    /// A task whose call a close has ended (`WakePrimitive.EndedByClose`)
+    /// A thread whose call a close has ended (`WakePrimitive.EndedByClose`)
     /// answers that primitive alone: the call holds nothing any more, and the
     /// descriptions its other primitives name may have gone with the close.
-    let internal satisfied<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (condition : WakeCondition)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
         let rec primitives (condition : WakeCondition) : WakePrimitive list =
@@ -481,7 +481,7 @@ module WakeCondition =
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =
             match condition with
             | WakeCondition.Primitive primitive ->
-                if holds task primitive system then
+                if holds thread primitive system then
                     Set.singleton primitive
                 else
                     Set.empty
@@ -489,12 +489,12 @@ module WakeCondition =
                 (live first, rest)
                 ||> List.fold (fun acc condition -> Set.union acc (live condition))
 
-        if endedByClose task system then
+        if endedByClose thread system then
             if List.contains WakePrimitive.EndedByClose (primitives condition) then
                 Set.singleton WakePrimitive.EndedByClose
             else
                 failwith
-                    $"WakeCondition.satisfied: a close has ended the call task %O{task} is asleep in, and it was asked about %A{condition}, which does not wait for that, so is not the wake condition of the call (this is a bug in the caller)."
+                    $"WakeCondition.satisfied: a close has ended the call thread %O{thread} is asleep in, and it was asked about %A{condition}, which does not wait for that, so is not the wake condition of the call (this is a bug in the caller)."
         else
             live condition
 
@@ -530,7 +530,7 @@ module WakeCondition =
         | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _) -> []
         | WakeCondition.AnyOf (first, rest) -> deadlines first @ List.collect deadlines rest
 
-    /// What the task holding `parked` is waiting for: what its syscall waits
+    /// What the thread holding `parked` is waiting for: what its syscall waits
     /// for, or a signal (`WakePrimitive.SignalDeliverable`), whichever comes
     /// first.
     ///
@@ -542,7 +542,7 @@ module WakeCondition =
     /// for a signal alone, and so does a parked `sigsuspend`.
     ///
     /// Deriving rather than storing the condition beside the record is what stops
-    /// the two disagreeing: a client cannot park a task on one object while
+    /// the two disagreeing: a client cannot park a thread on one object while
     /// polling for another, because the thing polled *is* the thing parked on.
     let ofPark (parked : ParkedSyscall) : WakeCondition =
         let ended = WakeCondition.Primitive WakePrimitive.EndedByClose
@@ -662,7 +662,7 @@ module WakeCondition =
             | ParkedSyscall.InotifyRead read ->
                 [ WakeCondition.Primitive (WakePrimitive.InotifyRecordQueued read.Instance) ]
             // Its deadline, or a signal. The descriptors it waits on join this
-            // when something parks a task in it.
+            // when something parks a thread in it.
             | ParkedSyscall.Select select ->
                 select.Deadline
                 |> Option.map (WakePrimitive.DeadlinePassed >> WakeCondition.Primitive)
@@ -671,7 +671,7 @@ module WakeCondition =
             // signal with a handler outside its set. Under Darwin a signal
             // outside the set does not end the call (measured,
             // `docs/probes/sigwait`): its handler runs only once the call
-            // returns. Saying so for a Darwin task in a signal wait is
+            // returns. Saying so for a Darwin thread in a signal wait is
             // `SignalDeliverable`'s evaluation's, which is not modelled:
             // evaluating this condition fails at `AwaitedSignalPending`.
             | ParkedSyscall.SignalWait wait ->
@@ -683,12 +683,12 @@ module WakeCondition =
                 WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending wait.Awaited)
                 :: deadline
             // A signal alone, while they are reserved: what a datagram transfer
-            // waits for joins this when something parks a task in one.
+            // waits for joins this when something parks a thread in one.
             | ParkedSyscall.DatagramReceive _
             | ParkedSyscall.DatagramSend _ -> []
             // A signal alone, while it is reserved: a retransmit deadline, or
             // room in the listener's queue, joins this when something parks a
-            // task in it.
+            // thread in it.
             | ParkedSyscall.Connect _ -> []
 
         let signal = WakeCondition.Primitive WakePrimitive.SignalDeliverable
@@ -698,19 +698,19 @@ module WakeCondition =
         | first :: rest -> WakeCondition.AnyOf (first, rest @ [ signal ])
 
 /// What became of a request this kernel could answer, where "answer" may be
-/// "the calling task sleeps".
+/// "the calling thread sleeps".
 [<RequireQualifiedAccess>]
 type SyscallOutcome =
     /// The entry point returned.
     | Answered of SyscallAnswer
-    /// The entry point did not return. The calling task sleeps until
+    /// The entry point did not return. The calling thread sleeps until
     /// `UnixWait.wakes` wakes it, and then
     /// finishes the call; what sleeping means, and when to re-ask, are the client's
     /// scheduler's business, which is why this library has no opinion on either.
     ///
     /// **Finishing is not re-issuing the original call.** The syscall's
     /// arguments named a descriptor; the condition names the kernel object that
-    /// descriptor stood for, and a sleeping task keeps the object rather than
+    /// descriptor stood for, and a sleeping thread keeps the object rather than
     /// the number. Descriptor numbers are reused as soon as they are free, so a
     /// `close` of the number this call was made through can leave that number
     /// naming something else entirely by the time the waiter wakes, while the
@@ -724,7 +724,7 @@ type SyscallOutcome =
     /// rather than a refusal, which by design carries no system at all.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The task is
+    /// restarts: it never returns. The thread is
     /// no longer parked. Once the handlers have run, the client issues the call
     /// again with the arguments it was first made with, descriptor numbers
     /// included, as a real kernel re-executes it.

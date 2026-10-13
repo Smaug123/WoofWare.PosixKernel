@@ -128,10 +128,10 @@ module TestReadme =
         |> shouldEqual []
 
     /// The type arguments a README signature leaves out.
-    let private elidedTypeArguments : Set<string> = Set.ofList [ "Task" ; "Handler" ]
+    let private elidedTypeArguments : Set<string> = Set.ofList [ "Thread" ; "Handler" ]
 
     /// How the README writes a type: as F# source would, without the type
-    /// arguments `'Task` and `'Handler` (`UnixSystem<'Task, 'Handler>` is
+    /// arguments `'Thread` and `'Handler` (`UnixSystem<'Thread, 'Handler>` is
     /// `UnixSystem`), except as the arguments of a `Map` or `Set`.
     let rec private render (postfixArgument : bool) (t : Type) : string =
         let parenthesised (s : string) : string =
@@ -296,15 +296,22 @@ module TestReadme =
     [<Test>]
     let ``every call the README shows has the arguments it shows`` () : unit =
         // Controls: a right shape, a wrong order, and a wrong type.
-        matchCall "UnixReadWrite.read" [ "task", None ; "fd", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "thread", None ; "fd", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual true
 
-        matchCall "UnixReadWrite.read" [ "fd", None ; "task", None ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "fd", None ; "thread", None ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual false
 
-        matchCall "UnixReadWrite.read" [ "task", Some "'Task" ; "fd", Some "int64" ; "buffer", None ; "count", None ]
+        matchCall
+            "UnixReadWrite.read"
+            [
+                "thread", Some "'Thread"
+                "fd", Some "int64"
+                "buffer", None
+                "count", None
+            ]
         |> Result.isOk
         |> shouldEqual false
 
@@ -401,7 +408,7 @@ module TestReadme =
             "UnixClock"
             "UnixEntropy"
             "UnixCredentials"
-            "UnixTaskLifecycle"
+            "UnixThreadLifecycle"
             "UnixScheduling"
             "UnixWait"
             "SimulatedMachine"

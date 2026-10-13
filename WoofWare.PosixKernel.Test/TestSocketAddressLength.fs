@@ -61,7 +61,7 @@ module TestSocketAddressLength =
     let private isLinux (platform : SimulatedUnixPlatform) : bool =
         SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
-    /// A fresh process on `platform` whose leader is task 0, as every call here
+    /// A fresh process on `platform` whose leader is thread 0, as every call here
     /// is made by.
     let private systemOn (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         UnixSystem.initial platform
@@ -412,7 +412,7 @@ module TestSocketAddressLength =
         for platform in platforms do
             for word in [ 0xFFFF_FFFFu ; 0x8000_0000u ; 16u ] do
                 let listenerFd, system = withListener platform
-                let system = Tasks.ensure 1 system
+                let system = Threads.ensure 1 system
 
                 let system =
                     match UnixConnection.tryAccept 1 listenerFd UserBuffer.Mapped word system with
@@ -424,7 +424,7 @@ module TestSocketAddressLength =
                 match UnixConnection.tryFinishAccept 1 system, isLinux platform && int word < 0 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
                     queueOf listenerFd after |> shouldEqual []
-                    UnixTaskTable.parkedFor 1 after.Tasks |> shouldEqual None
+                    UnixThreadTable.parkedFor 1 after.Threads |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
                 | Ok (AcceptOutcome.Accepted _, _), false -> ()
                 | other, _ -> failwith $"%O{platform} 0x%08x{word}: got %A{other}"

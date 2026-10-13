@@ -13,7 +13,7 @@ open WoofWare.PosixKernel
 /// while the other streams carry on as launched.
 ///
 /// The oracle is a reference small enough to read at a glance: a write to a
-/// gone stream raises SIGPIPE at the writing task on Linux and at the process
+/// gone stream raises SIGPIPE at the writing thread on Linux and at the process
 /// on Darwin, except Linux's zero-length write, which answers 0; what the
 /// signal does is the disposition's to say; and a write to a drained stream
 /// is delivered whole.
@@ -58,15 +58,15 @@ module TestStreamReaderGone =
         =
         UnixSystem.initial platform
         |> Launched.boot (launch gone) 0 (CpuId 0)
-        |> Tasks.spawn 1
+        |> Threads.spawn 1
         |> withSigPipe disposition
 
-    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (task : int) : PendingSignal<int> =
+    let private sigPipeFrom (flavour : SimulatedUnixFlavour) (thread : int) : PendingSignal<int> =
         {
             Signal = Signal.SIGPIPE
             Target =
                 match flavour with
-                | SimulatedUnixFlavour.Linux -> ValueSome task
+                | SimulatedUnixFlavour.Linux -> ValueSome thread
                 | SimulatedUnixFlavour.Darwin -> ValueNone
         }
 
@@ -99,20 +99,20 @@ module TestStreamReaderGone =
             let mutable pending : Set<PendingSignal<int>> = Set.empty
             let mutable ended = false
 
-            for i, (task, fd, count) in List.indexed ops |> Seq.takeWhile (fun _ -> not ended) do
+            for i, (thread, fd, count) in List.indexed ops |> Seq.takeWhile (fun _ -> not ended) do
                 let where =
-                    $"%O{platform}, gone %A{gone}, %A{disposition}, call %d{i}: task %d{task} writes %d{count} to fd %d{fd}"
+                    $"%O{platform}, gone %A{gone}, %A{disposition}, call %d{i}: thread %d{thread} writes %d{count} to fd %d{fd}"
 
                 let bytes = payload i count
 
-                let actual = WriteOutcomes.admitThenWrite task fd UserBuffer.Mapped bytes system
+                let actual = WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes system
 
                 // `write` without the admission, as a caller holding the bytes
                 // may make it, answers the same.
-                UnixReadWrite.tryWriteBytes task fd bytes system |> shouldEqual actual
+                UnixReadWrite.tryWriteBytes thread fd bytes system |> shouldEqual actual
 
                 if Set.contains fd gone && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
-                    let raised = sigPipeFrom flavour task
+                    let raised = sigPipeFrom flavour thread
 
                     match disposition, actual with
                     | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
@@ -187,16 +187,16 @@ module TestStreamReaderGone =
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 200, Prop.forAll (Arb.fromGen gen) property)
 
     /// The Darwin signal is the process's, which its leader takes; one the
-    /// leader blocks while another task does not would go to that other task,
-    /// which is not modelled. Linux's is the writing task's own, so the same
+    /// leader blocks while another thread does not would go to that other thread,
+    /// which is not modelled. Linux's is the writing thread's own, so the same
     /// write from the blocking leader leaves it pending there.
     [<Test>]
-    let ``a caught SIGPIPE that only a task other than the leader could take is refused on Darwin`` () : unit =
+    let ``a caught SIGPIPE that only a thread other than the leader could take is refused on Darwin`` () : unit =
         for platform in platforms do
             let system =
                 systemOn platform (Set.singleton 1) (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
 
-            let tasks = system.Tasks |> Map.keys |> Set.ofSeq
+            let threads = system.Threads |> Map.keys |> Set.ofSeq
 
             let system =
                 { system with
@@ -206,7 +206,7 @@ module TestStreamReaderGone =
                                 HandlerFrames.enter
                                     "carrier"
                                     system.Leader
-                                    tasks
+                                    threads
                                     system.Leader
                                     (Set.singleton Signal.SIGPIPE)
                                     system.Process.Signals
@@ -259,11 +259,11 @@ module TestStreamReaderGone =
             Map.containsKey pipe closed.Machine.Pipes |> shouldEqual false
             assertSound "closed" closed
 
-    /// A write is made by one of the process's tasks, which the signal it may
-    /// raise is aimed at; a task the process does not have is the client's
+    /// A write is made by one of the process's threads, which the signal it may
+    /// raise is aimed at; a thread the process does not have is the client's
     /// mistake, refused before anything is answered.
     [<Test>]
-    let ``a write by a task the process does not have fails loudly`` () : unit =
+    let ``a write by a thread the process does not have fails loudly`` () : unit =
         for platform in platforms do
             let system = systemOn platform Set.empty SignalDisposition.Ignore
 
@@ -274,7 +274,8 @@ module TestStreamReaderGone =
                         |> ignore<Result<WriteStep<WriteAdmission, int, string>, WriteRefusal>>
                     )
 
-                admit.Message |> shouldContainText "task 7 is not one of the process's tasks"
+                admit.Message
+                |> shouldContainText "thread 7 is not one of the process's threads"
 
                 let write =
                     Assert.Throws (fun () ->
@@ -282,7 +283,8 @@ module TestStreamReaderGone =
                         |> ignore<Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>>
                     )
 
-                write.Message |> shouldContainText "task 7 is not one of the process's tasks"
+                write.Message
+                |> shouldContainText "thread 7 is not one of the process's threads"
 
     /// Process ID 1 is an init process, which ignores a signal it has no
     /// handler for; that is not modelled, so its broken-pipe write is refused,

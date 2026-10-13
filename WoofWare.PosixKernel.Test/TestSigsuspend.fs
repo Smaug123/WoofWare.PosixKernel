@@ -11,7 +11,7 @@ open WoofWare.PosixKernel
 /// every row of `docs/plans/2026-08-23-posix-kernel-extraction/sigsuspend-mask.c`
 /// (measured 2026-10-08 on Linux 6.18.5 aarch64 with glibc 2.41, and Darwin
 /// 27.0.0 arm64), replayed from its embedded outputs; a reference model of the
-/// masks a task in the call has, over random signal sequences; and the
+/// masks a thread in the call has, over random signal sequences; and the
 /// invariants a mask to restore keeps.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -109,8 +109,8 @@ module TestSigsuspend =
 
     let private hex (mask : SignalMask) : string = $"%x{SignalMask.toWord mask}"
 
-    let private maskIn (task : int) (system : UnixSystem<int, string>) : SignalMask =
-        SignalState.maskOf task system.Process.Signals
+    let private maskIn (thread : int) (system : UnixSystem<int, string>) : SignalMask =
+        SignalState.maskOf thread system.Process.Signals
 
     let private print (text : string) : Step =
         fun r ->
@@ -126,15 +126,15 @@ module TestSigsuspend =
 
     /// The probe's `set_current`: the raw per-thread call, which on Linux
     /// keeps 32 and 33.
-    let private setMask (task : int) (mask : Replay -> SignalMask) : Step =
+    let private setMask (thread : int) (mask : Replay -> SignalMask) : Step =
         fun r ->
             let set = Some (mask r)
             let setmask = how r.Flavour SignalMaskChange.SetMask
 
             let result =
                 match r.Flavour with
-                | SimulatedUnixFlavour.Linux -> UnixSignal.rtSigprocmask task setmask set 8UL r.System
-                | SimulatedUnixFlavour.Darwin -> UnixSignal.pthreadSigmask task setmask set r.System
+                | SimulatedUnixFlavour.Linux -> UnixSignal.rtSigprocmask thread setmask set 8UL r.System
+                | SimulatedUnixFlavour.Darwin -> UnixSignal.pthreadSigmask thread setmask set r.System
 
             match result with
             | Ok (_, system) ->
@@ -275,7 +275,7 @@ module TestSigsuspend =
     /// finishes the call, and returns if the call ends.
     let private wakeIfDue : Step =
         fun r ->
-            match UnixTaskTable.parkedFor main r.System.Tasks with
+            match UnixThreadTable.parkedFor main r.System.Threads with
             | None -> Ok r
             | Some ParkedSyscall.SigSuspend ->
                 match UnixWait.wakes (Set.singleton main) r.System with
@@ -338,8 +338,8 @@ module TestSigsuspend =
     let private probeSend (toProcess : bool) (signal : Signal) : Step =
         send toProcess signal >=> woke $"woke-after-%s{probeName signal}"
 
-    let private printMaskOf (label : string) (task : int) : Step =
-        printWith (fun r -> $" %s{label}=%s{hex (maskIn task r.System)}")
+    let private printMaskOf (label : string) (thread : int) : Step =
+        printWith (fun r -> $" %s{label}=%s{hex (maskIn thread r.System)}")
 
     let private printPending (label : string) : Step =
         printWith (fun r -> $" %s{label}=%s{hex (UnixSignal.sigpending main r.System)}")
@@ -347,7 +347,7 @@ module TestSigsuspend =
     /// The probe's `with_helper`: a second thread, which blocks every signal.
     let private spawnHelper : Step =
         fun r ->
-            match UnixTaskLifecycle.trySpawn main helper (CpuId 0) r.System with
+            match UnixThreadLifecycle.trySpawn main helper (CpuId 0) r.System with
             | Ok (SpawnAnswer.Spawned _, system) ->
                 setMask
                     helper
@@ -821,7 +821,7 @@ module TestSigsuspend =
         /// The helper sets a signal's disposition.
         | SetDisposition of Signal * ModelDisposition
         /// The helper calls the C library's `sigprocmask`, which on Darwin
-        /// changes every task's mask, and then blocks every signal again.
+        /// changes every thread's mask, and then blocks every signal again.
         | Spread of SignalMaskChange * Set<Signal>
 
     /// The paths of the model that its walk must reach.
@@ -896,8 +896,8 @@ module TestSigsuspend =
             let setmask = how flavour SignalMaskChange.SetMask
             let everyBit = maskOfWord flavour (everyBitWord flavour)
 
-            let withMask (task : int) (mask : SignalMask) (system : UnixSystem<int, string>) =
-                match UnixSignal.pthreadSigmask task setmask (Some mask) system with
+            let withMask (thread : int) (mask : SignalMask) (system : UnixSystem<int, string>) =
+                match UnixSignal.pthreadSigmask thread setmask (Some mask) system with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
@@ -908,7 +908,7 @@ module TestSigsuspend =
                 let booted = boot flavour
 
                 let spawned =
-                    match UnixTaskLifecycle.trySpawn main helper (CpuId 0) booted with
+                    match UnixThreadLifecycle.trySpawn main helper (CpuId 0) booted with
                     | Ok (SpawnAnswer.Spawned _, system) -> system
                     | other -> failwith $"spawn: %A{other}"
 
@@ -937,7 +937,7 @@ module TestSigsuspend =
                 (step, SignalState.maskToRestore main signals |> Option.map SignalMask.toWord)
                 |> shouldEqual (step, model.Restore |> Option.map words)
 
-                (step, UnixTaskTable.parkedFor main system.Tasks)
+                (step, UnixThreadTable.parkedFor main system.Threads)
                 |> shouldEqual (step, (if model.Parked then Some ParkedSyscall.SigSuspend else None))
 
                 (step,
@@ -1146,7 +1146,7 @@ module TestSigsuspend =
 
                     // Darwin's spread reaches the main thread's mask, and is
                     // refused where it would unblock a signal pending there
-                    // (`SigprocmaskRefusal.DarwinUnblockedForAnotherTask`).
+                    // (`SigprocmaskRefusal.DarwinUnblockedForAnotherThread`).
                     let unblockedForMain =
                         match numbering with
                         | SignalNumbering.Darwin ->
@@ -1159,8 +1159,8 @@ module TestSigsuspend =
                         | SignalNumbering.Linux -> Set.empty
 
                     match UnixSignal.trySigprocmask helper (how flavour change) (Some (maskOf set)) system with
-                    | Error (SigprocmaskRefusal.DarwinUnblockedForAnotherTask (task, signal)) ->
-                        (task, Set.contains signal unblockedForMain) |> shouldEqual (main, true)
+                    | Error (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (thread, signal)) ->
+                        (thread, Set.contains signal unblockedForMain) |> shouldEqual (main, true)
                         cover ModelLabel.RefusedSpread
                     | Ok (Ok (_, after)) ->
                         unblockedForMain |> shouldEqual Set.empty
@@ -1224,19 +1224,19 @@ module TestSigsuspend =
                 }
         }
 
-    let private suspended (task : int) (signals : SignalState<int, string>) : SignalState<int, string> =
-        SignalState.suspend task SignalMask.empty signals
+    let private suspended (thread : int) (signals : SignalState<int, string>) : SignalState<int, string> =
+        SignalState.suspend thread SignalMask.empty signals
 
     [<Test>]
-    let ``a mask to restore for a task the table does not hold is a defect`` () : unit =
+    let ``a mask to restore for a thread the table does not hold is a defect`` () : unit =
         let system = boot SimulatedUnixFlavour.Linux
 
         system
         |> withSignals (suspended 42 system.Process.Signals)
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutTask 42 ]
+        |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutThread 42 ]
 
-        // The control: a task between its call's answer and its return to user
+        // The control: a thread between its call's answer and its return to user
         // mode holds one, parked in nothing.
         system
         |> withSignals (suspended main system.Process.Signals)
@@ -1251,7 +1251,7 @@ module TestSigsuspend =
             | other -> failwith $"poll: %A{other}"
 
         let parked =
-            UnixTaskTable.parkedFor main polling.Tasks
+            UnixThreadTable.parkedFor main polling.Threads
             |> Option.defaultWith (fun () -> failwith "the poll did not park")
 
         polling
@@ -1284,7 +1284,7 @@ module TestSigsuspend =
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let spawned =
-                match UnixTaskLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
+                match UnixThreadLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
                 | Ok (SpawnAnswer.Spawned _, system) -> system
                 | other -> failwith $"spawn: %A{other}"
 
@@ -1301,25 +1301,25 @@ module TestSigsuspend =
             SignalState.maskToRestore helper asleep.Process.Signals
             |> shouldEqual (Some hup)
 
-            match UnixTaskLifecycle.tryExitThread helper 0 asleep with
-            | Error (ThreadExitRefusal.Parked (task, _)) -> task |> shouldEqual helper
-            | other -> failwith $"a parked task's exit: %A{other}"
+            match UnixThreadLifecycle.tryExitThread helper 0 asleep with
+            | Error (ThreadExitRefusal.Parked (thread, _)) -> thread |> shouldEqual helper
+            | other -> failwith $"a parked thread's exit: %A{other}"
 
-            let ended = UnixTaskLifecycle.exitGroup main 0 asleep
+            let ended = UnixThreadLifecycle.exitGroup main 0 asleep
 
-            SignalState.tasksWithMasksToRestore ended.FinalProcess.Signals
+            SignalState.threadsWithMasksToRestore ended.FinalProcess.Signals
             |> shouldEqual Set.empty
 
-            SignalState.tasksWithMasks ended.FinalProcess.Signals |> shouldEqual Set.empty
+            SignalState.threadsWithMasks ended.FinalProcess.Signals |> shouldEqual Set.empty
 
-            // And `forgetTask` alone, on a task whose call has ended and which has
+            // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.
             let forgotten =
                 SignalState.suspend helper usr1 blocking.Process.Signals
-                |> SignalState.forgetTask helper
+                |> SignalState.forgetThread helper
 
             SignalState.maskToRestore helper forgotten |> shouldEqual None
-            SignalState.tasksWithMasksToRestore forgotten |> shouldEqual Set.empty
+            SignalState.threadsWithMasksToRestore forgotten |> shouldEqual Set.empty
             SignalState.maskOf helper forgotten |> shouldEqual SignalMask.empty
 
     [<Test>]
@@ -1355,7 +1355,7 @@ module TestSigsuspend =
                 | Error e -> failwith $"%s{what}: %A{e}"
 
             let spawned =
-                match UnixTaskLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
+                match UnixThreadLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
                 | Ok (SpawnAnswer.Spawned _, system) -> system
                 | other -> failwith $"spawn: %A{other}"
 
@@ -1383,5 +1383,5 @@ module TestSigsuspend =
             match UnixSignal.trySigprocmask helper (how flavour SignalMaskChange.Unblock) (Some cont) asleep with
             | Error refusal ->
                 refusal
-                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherTask (main, Signal.SIGCONT))
+                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (main, Signal.SIGCONT))
             | other -> failwith $"%A{disposition}: sigprocmask answered %A{other}"

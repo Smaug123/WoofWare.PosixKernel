@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.Connect` and `WakePrimitive.AcceptQueueHasRoom`, which are
-/// reserved: nothing parks a task in a connect yet. What every reader of a
+/// reserved: nothing parks a thread in a connect yet. What every reader of a
 /// park already answers for it (the wake condition, the description it holds,
-/// how a signal ends it), and the invariant that reports a task parked in it,
-/// which is what makes "nothing parks a task in it" checked wherever a fuzzer
+/// how a signal ends it), and the invariant that reports a thread parked in it,
+/// which is what makes "nothing parks a thread in it" checked wherever a fuzzer
 /// checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -57,12 +57,12 @@ module TestConnectPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a connect is a ReservedPark defect`` () : unit =
+    let ``a thread parked in a connect is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =
@@ -76,15 +76,15 @@ module TestConnectPark =
                         ParkedConnect.Socket = socket
                     }
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
             OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-            UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual []
-            UnixWait.satisfied task asleep |> shouldEqual (Some Set.empty)
+            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
+            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
 
     [<Test>]
     let ``no park's condition waits for room in an accept queue yet`` () : unit =
@@ -109,13 +109,13 @@ module TestConnectPark =
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen connectGen) property)
 
         // And asking whether it holds fails loudly, naming it, rather than
-        // guessing: a task waits for it only if its park was recorded by hand.
-        let awake = boot SimulatedUnixFlavour.Linux |> Tasks.ensure task
+        // guessing: a thread waits for it only if its park was recorded by hand.
+        let awake = boot SimulatedUnixFlavour.Linux |> Threads.ensure thread
 
         let error =
             Assert.Throws<Exception> (fun () ->
                 WakeCondition.satisfied
-                    task
+                    thread
                     (WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom (SocketId 1L)))
                     awake
                 |> ignore<Set<WakePrimitive>>

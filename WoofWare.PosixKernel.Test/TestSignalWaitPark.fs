@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.SignalWait` and `WakePrimitive.AwaitedSignalPending`, which
-/// are reserved: nothing parks a task in a signal wait yet. What every reader
+/// are reserved: nothing parks a thread in a signal wait yet. What every reader
 /// of a park already answers for it (its wake condition, its deadline, the
 /// descriptions it holds, how a signal ends it), and the invariant that reports
-/// a task parked in it, which is what makes "nothing parks a task in it"
+/// a thread parked in it, which is what makes "nothing parks a thread in it"
 /// checked wherever a fuzzer checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -95,10 +95,13 @@ module TestSignalWaitPark =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-    let private task : int = 1
+    let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a signal wait is a ReservedPark defect, whose deadline the wait machinery reads`` () : unit =
+    let ``a thread parked in a signal wait is a ReservedPark defect, whose deadline the wait machinery reads``
+        ()
+        : unit
+        =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let numbering =
                 SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
@@ -113,20 +116,22 @@ module TestSignalWaitPark =
                         Destination = Some UserBuffer.Mapped
                     }
 
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park task parked awake
+            let asleep = UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (task, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton task) asleep |> shouldEqual [ deadline ]
+            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
 
             // Which pending signals a wait may take is not modelled, so asking
             // fails loudly rather than guessing.
             let error =
-                Assert.Throws<Exception> (fun () -> UnixWait.satisfied task asleep |> ignore<Set<WakePrimitive> option>)
+                Assert.Throws<Exception> (fun () ->
+                    UnixWait.satisfied thread asleep |> ignore<Set<WakePrimitive> option>
+                )
 
             error.Message |> shouldContainText "SignalWait"

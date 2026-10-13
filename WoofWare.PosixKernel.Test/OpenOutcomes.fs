@@ -10,9 +10,9 @@ module internal OpenOutcomes =
     /// An open's result as the answer it returned, failing the test if the
     /// call slept or restarted. Nothing in this version makes a FIFO, the one
     /// object whose open sleeps, so no open the library answers can do either.
-    let answered<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (result : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, OpenRefusal>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+    let answered<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (result : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         result
         |> Result.map (fun (outcome, after) ->
@@ -24,23 +24,23 @@ module internal OpenOutcomes =
 
     /// `UnixNamespace.openPath` by the process's leader, failing the test if
     /// the call sleeps.
-    let openPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         UnixNamespace.tryOpenPath system.Leader flags path mode system |> answered
 
     /// `UnixNamespace.openat` by the process's leader, failing the test if the
     /// call sleeps.
-    let openat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let openat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         UnixNamespace.tryOpenat system.Leader dirfd path flags mode system |> answered

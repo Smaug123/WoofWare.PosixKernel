@@ -2,7 +2,7 @@ namespace WoofWare.PosixKernel
 
 /// What the kernel keeps of the status a process ended with: the argument its last
 /// `exit_group(2)` (which `exit(3)` and `_exit(2)` make) was given, or the argument
-/// of the thread-exit syscall its last task made.
+/// of the thread-exit syscall its last thread made.
 ///
 /// Linux keeps the low 8 bits of the argument, and Darwin the low 24. A parent's
 /// `waitpid(2)` reports the low 8 bits on both (`ExitStatus.waitpidExitCode`);
@@ -47,7 +47,7 @@ module ExitStatus =
 /// How a process ended.
 [<RequireQualifiedAccess>]
 type ProcessTermination =
-    /// The process exited: its last `exit_group(2)`, or its last task's thread-exit
+    /// The process exited: its last `exit_group(2)`, or its last thread's thread-exit
     /// syscall, ended it with this status.
     | Exited of ExitStatus
     /// A signal killed the process, and it wrote a core dump iff `coreDumped`.

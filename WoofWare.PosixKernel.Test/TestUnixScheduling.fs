@@ -11,51 +11,51 @@ open WoofWare.PosixKernel
 /// One step of the scheduling property, on a machine of several processes.
 ///
 /// Every index is reduced modulo the number of candidates the step can be
-/// taken by, and a step with none is skipped. Each process's leader, task 0,
+/// taken by, and a step with none is skipped. Each process's leader, thread 0,
 /// never parks, so it can always write the byte that wakes a reader, and end
 /// the process.
 [<RequireQualifiedAccess>]
 type SchedulingOp =
-    /// The process's leader creates a task on the processor `cpu`, modulo the
+    /// The process's leader creates a thread on the processor `cpu`, modulo the
     /// machine's count.
     | Spawn of proc : int * cpu : int
-    /// The client dispatches a live task, parked or not: to `cpu` modulo the
+    /// The client dispatches a live thread, parked or not: to `cpu` modulo the
     /// count, or with `beyond`, to a processor the machine does not have.
-    | Dispatch of task : int * cpu : int * beyond : int option
-    /// The client dispatches a task it has woken and not yet finished, to
-    /// `cpu` modulo the count: how a woken task gets back onto a processor.
-    | DispatchWoken of task : int * cpu : int
-    /// A task other than a leader reads a byte from its process's pipe, which
+    | Dispatch of thread : int * cpu : int * beyond : int option
+    /// The client dispatches a thread it has woken and not yet finished, to
+    /// `cpu` modulo the count: how a woken thread gets back onto a processor.
+    | DispatchWoken of thread : int * cpu : int
+    /// A thread other than a leader reads a byte from its process's pipe, which
     /// parks it if the pipe is empty.
     | Park of proc : int
     /// The process's leader writes a byte into its pipe, and the client asks
     /// which of the readers it holds asleep that wakes.
     | Wake of proc : int
     /// The client finishes a woken read, which returns or parks again.
-    | Finish of task : int
-    /// A task that may exit does: a leader only when it is its process's last.
-    | ExitThread of task : int
+    | Finish of thread : int
+    /// A thread that may exit does: a leader only when it is its process's last.
+    | ExitThread of thread : int
     /// The process's leader calls `exit_group`.
     | EndProcess of proc : int
     /// A process is launched, its leader on `cpu`, modulo the count.
     | Launch of cpu : int
 
 /// `UnixScheduling` against a reference that derives what runs where from the
-/// history of events alone, rather than from a record it updates: a task runs
-/// on a processor exactly when the most recent event naming the task or that
-/// processor is the task's dispatch there; a task's processor is that of its
+/// history of events alone, rather than from a record it updates: a thread runs
+/// on a processor exactly when the most recent event naming the thread or that
+/// processor is the thread's dispatch there; a thread's processor is that of its
 /// latest dispatch, or else the one it was created on. The events are creation,
 /// dispatch, park and exit.
 ///
 /// Run on a machine of 1 to 4 processors and 1 to 3 processes, with at most 6
-/// tasks, on Linux and Darwin.
+/// threads, on Linux and Darwin.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestUnixScheduling =
 
     let private propertyConfig : Config = Config.QuickThrowOnFailure.WithMaxTest 300
 
-    let private maxTasks : int = 6
+    let private maxThreads : int = 6
     let private maxProcesses : int = 3
 
     [<RequireQualifiedAccess>]
@@ -70,7 +70,7 @@ module TestUnixScheduling =
             Pid : ProcessId
             Name : int
             /// Unique across the run, so that the reference never confuses two
-            /// tasks however names and IDs are reused.
+            /// threads however names and IDs are reused.
             Serial : int
             /// Parked in its read, and held asleep by the client.
             Asleep : bool
@@ -94,7 +94,7 @@ module TestUnixScheduling =
     // --- the reference ---
 
     /// The processor `serial` runs on: its latest event is its dispatch to a
-    /// processor no later event dispatches another task to.
+    /// processor no later event dispatches another thread to.
     let private runningOracle (serial : int) (events : Event list) : CpuId option =
         let rec go (dispatchedSince : Set<CpuId>) (events : Event list) : CpuId option =
             match events with
@@ -119,7 +119,7 @@ module TestUnixScheduling =
         )
 
     /// Whether `serial`'s latest event is a dispatch: so that, if it is not
-    /// running, another task was dispatched to its processor since.
+    /// running, another thread was dispatched to its processor since.
     let private lastDispatched (serial : int) (events : Event list) : bool =
         events
         |> List.tryPick (fun event ->
@@ -137,12 +137,12 @@ module TestUnixScheduling =
     /// A path the generated runs must reach.
     [<RequireQualifiedAccess>]
     type private Reached =
-        /// A Linux `getcpu`, refused, by a task not parked whose processor a
+        /// A Linux `getcpu`, refused, by a thread not parked whose processor a
         /// later dispatch has taken.
         | DisplacedGetCpu
-        /// A dispatch of a task woken from a park.
+        /// A dispatch of a thread woken from a park.
         | WokenDispatched
-        /// A dispatch onto a processor a task of another process is running on.
+        /// A dispatch onto a processor a thread of another process is running on.
         | CrossProcessDisplacement
         /// A dispatch onto a processor the machine does not have, which throws.
         | BeyondDispatch
@@ -167,7 +167,7 @@ module TestUnixScheduling =
             )
 
     let private launch (cpu : int) (world : World) : World =
-        if Map.count world.NextName >= maxProcesses || List.length world.Live >= maxTasks then
+        if Map.count world.NextName >= maxProcesses || List.length world.Live >= maxThreads then
             world
         else
 
@@ -236,14 +236,14 @@ module TestUnixScheduling =
     let private processes (world : World) : ProcessId list =
         world.NextName |> Map.keys |> List.ofSeq
 
-    let private replace (task : Live) (world : World) : World =
+    let private replace (thread : Live) (world : World) : World =
         { world with
             Live =
                 world.Live
-                |> List.map (fun live -> if live.Serial = task.Serial then task else live)
+                |> List.map (fun live -> if live.Serial = thread.Serial then thread else live)
         }
 
-    /// The process `pid` ended: every task of it exits.
+    /// The process `pid` ended: every thread of it exits.
     let private ended (pid : ProcessId) (world : World) : World =
         let dying = world.Live |> List.filter (fun live -> live.Pid = pid)
 
@@ -268,7 +268,7 @@ module TestUnixScheduling =
         | SchedulingOp.Launch cpu -> launch cpu world
         | SchedulingOp.Spawn (proc, cpu) ->
             match pick proc (processes world) with
-            | Some pid when List.length world.Live < maxTasks ->
+            | Some pid when List.length world.Live < maxThreads ->
                 let name = world.NextName.[pid]
                 let cpu = CpuId (cpu % world.Count)
 
@@ -277,7 +277,7 @@ module TestUnixScheduling =
                     |> Machines.doIn
                         pid
                         (fun view ->
-                            match UnixTaskLifecycle.trySpawn 0 name cpu view with
+                            match UnixThreadLifecycle.trySpawn 0 name cpu view with
                             | Ok (SpawnAnswer.Spawned _, view) -> view
                             | other -> failwith $"spawn: %A{other}"
                         )
@@ -304,40 +304,43 @@ module TestUnixScheduling =
         | SchedulingOp.Dispatch (index, cpu, beyond) ->
             match pick index world.Live with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 match beyond with
                 | Some k ->
                     let cpus = beyondCpus world.Count
                     let cpu = CpuId (List.item (k % List.length cpus) cpus)
                     cover Reached.BeyondDispatch
 
-                    throws (fun () -> UnixScheduling.dispatch task.Name cpu (viewOf task.Pid world))
+                    throws (fun () -> UnixScheduling.dispatch thread.Name cpu (viewOf thread.Pid world))
                     |> shouldEqual true
 
                     world
                 | None ->
                     let cpu = CpuId (cpu % world.Count)
 
-                    if task.Woken then
+                    if thread.Woken then
                         cover Reached.WokenDispatched
 
                     let displacesAnotherProcess =
                         world.Live
                         |> List.exists (fun other ->
-                            other.Pid <> task.Pid && runningOracle other.Serial world.Events = Some cpu
+                            other.Pid <> thread.Pid && runningOracle other.Serial world.Events = Some cpu
                         )
 
                     if displacesAnotherProcess then
                         cover Reached.CrossProcessDisplacement
 
                     { world with
-                        Machine = world.Machine |> Machines.doIn task.Pid (UnixScheduling.dispatch task.Name cpu)
-                        Events = Event.Dispatched (task.Serial, cpu) :: world.Events
+                        Machine =
+                            world.Machine
+                            |> Machines.doIn thread.Pid (UnixScheduling.dispatch thread.Name cpu)
+                        Events = Event.Dispatched (thread.Serial, cpu) :: world.Events
                     }
         | SchedulingOp.DispatchWoken (index, cpu) ->
             match pick index (world.Live |> List.filter (fun live -> live.Woken)) with
             | None -> world
-            | Some task -> apply cover (SchedulingOp.Dispatch (List.findIndex ((=) task) world.Live, cpu, None)) world
+            | Some thread ->
+                apply cover (SchedulingOp.Dispatch (List.findIndex ((=) thread) world.Live, cpu, None)) world
         | SchedulingOp.Park proc ->
             let candidates =
                 world.Live
@@ -345,13 +348,13 @@ module TestUnixScheduling =
 
             match pick proc candidates with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 let outcome, machine =
                     world.Machine
                     |> Machines.inProcess
-                        task.Pid
+                        thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryRead task.Name 3 UserBuffer.Mapped 1UL view with
+                            match UnixReadWrite.tryRead thread.Name 3 UserBuffer.Mapped 1UL view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -365,11 +368,11 @@ module TestUnixScheduling =
 
                 if outcome then
                     { replace
-                          { task with
+                          { thread with
                               Asleep = true
                           }
                           world with
-                        Events = Event.Parked task.Serial :: world.Events
+                        Events = Event.Parked thread.Serial :: world.Events
                     }
                 else
                     world
@@ -393,7 +396,7 @@ module TestUnixScheduling =
                     world.Live
                     |> List.filter (fun live -> live.Asleep)
                     |> List.groupBy (fun live -> live.Pid)
-                    |> List.map (fun (pid, tasks) -> pid, tasks |> List.map (fun live -> live.Name) |> Set.ofList)
+                    |> List.map (fun (pid, threads) -> pid, threads |> List.map (fun live -> live.Name) |> Set.ofList)
                     |> Map.ofList
 
                 let woken = SimulatedMachine.wakes asleep machine |> List.map fst |> Set.ofList
@@ -415,13 +418,13 @@ module TestUnixScheduling =
         | SchedulingOp.Finish index ->
             match pick index (world.Live |> List.filter (fun live -> live.Woken)) with
             | None -> world
-            | Some task ->
+            | Some thread ->
                 let parksAgain, machine =
                     world.Machine
                     |> Machines.inProcess
-                        task.Pid
+                        thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryFinishRead task.Name view with
+                            match UnixReadWrite.tryFinishRead thread.Name view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -430,7 +433,7 @@ module TestUnixScheduling =
 
                 let world =
                     replace
-                        { task with
+                        { thread with
                             Asleep = parksAgain
                             Woken = false
                         }
@@ -440,7 +443,7 @@ module TestUnixScheduling =
 
                 if parksAgain then
                     { world with
-                        Events = Event.Parked task.Serial :: world.Events
+                        Events = Event.Parked thread.Serial :: world.Events
                     }
                 else
                     world
@@ -462,25 +465,25 @@ module TestUnixScheduling =
 
             match pick index candidates with
             | None -> world
-            | Some task ->
-                match UnixTaskLifecycle.tryExitThread task.Name 0 (viewOf task.Pid world) with
+            | Some thread ->
+                match UnixThreadLifecycle.tryExitThread thread.Name 0 (viewOf thread.Pid world) with
                 | Ok (ProcessFate.Continues ((), view)) ->
                     { world with
                         Machine = SimulatedMachine.unfocus view world.Machine
-                        Live = world.Live |> List.filter (fun live -> live.Serial <> task.Serial)
-                        Events = Event.Exited task.Serial :: world.Events
+                        Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
+                        Events = Event.Exited thread.Serial :: world.Events
                     }
                 | Ok (ProcessFate.ProcessEnded e) ->
                     { world with
                         Machine = endOn e world.Machine
                     }
-                    |> ended task.Pid
+                    |> ended thread.Pid
                 | Error refusal -> failwith $"exitThread: %s{ThreadExitRefusal.describe refusal}"
         | SchedulingOp.EndProcess proc ->
             match pick proc (processes world) with
             | None -> world
             | Some pid ->
-                let e = UnixTaskLifecycle.exitGroup 0 0 (viewOf pid world)
+                let e = UnixThreadLifecycle.exitGroup 0 0 (viewOf pid world)
 
                 { world with
                     Machine = endOn e world.Machine
@@ -494,31 +497,31 @@ module TestUnixScheduling =
         let linux =
             SimulatedUnixPlatform.flavour world.Platform = SimulatedUnixFlavour.Linux
 
-        for task in world.Live do
-            let view = viewOf task.Pid world
-            let running = runningOracle task.Serial world.Events
-            let context = $"%A{task}, after %A{List.rev world.Events}"
+        for thread in world.Live do
+            let view = viewOf thread.Pid world
+            let running = runningOracle thread.Serial world.Events
+            let context = $"%A{thread}, after %A{List.rev world.Events}"
 
-            UnixScheduling.runningOn task.Name view
+            UnixScheduling.runningOn thread.Name view
             |> fun answered ->
                 if answered <> running then
                     failwith $"runningOn %A{answered}: %s{context}"
 
-            (UnixTaskTable.get task.Name view.Tasks).Cpu
-            |> shouldEqual (cpuOracle task.Serial world.Events)
+            (UnixThreadTable.get thread.Name view.Threads).Cpu
+            |> shouldEqual (cpuOracle thread.Serial world.Events)
 
-            let parked = task.Asleep || task.Woken
+            let parked = thread.Asleep || thread.Woken
 
             match running with
             | Some cpu ->
-                if not (obj.ReferenceEquals (UnixScheduling.dispatch task.Name cpu view, view)) then
+                if not (obj.ReferenceEquals (UnixScheduling.dispatch thread.Name cpu view, view)) then
                     failwith $"re-dispatching to %O{cpu} changed the system: %s{context}"
             | None -> ()
 
             if linux then
                 match running with
                 | Some cpu when not parked ->
-                    UnixScheduling.tryGetcpu task.Name view
+                    UnixScheduling.tryGetcpu thread.Name view
                     |> shouldEqual (
                         Ok
                             {
@@ -528,13 +531,13 @@ module TestUnixScheduling =
                     )
                 | Some _
                 | None ->
-                    if not parked && lastDispatched task.Serial world.Events then
+                    if not parked && lastDispatched thread.Serial world.Events then
                         cover Reached.DisplacedGetCpu
 
-                    if not (throws (fun () -> UnixScheduling.tryGetcpu task.Name view)) then
-                        failwith $"getcpu answered for a task not running, or parked: %s{context}"
+                    if not (throws (fun () -> UnixScheduling.tryGetcpu thread.Name view)) then
+                        failwith $"getcpu answered for a thread not running, or parked: %s{context}"
             else
-                UnixScheduling.tryGetcpu task.Name view
+                UnixScheduling.tryGetcpu thread.Name view
                 |> shouldEqual (Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
     let private op : Gen<SchedulingOp> =
@@ -602,8 +605,8 @@ module TestUnixScheduling =
         // `CoverageSample.check` draws, so a run cannot miss one by chance.
         let floors =
             [
-                "a displaced task's getcpu", reached.Count Reached.DisplacedGetCpu, 1000
-                "a woken task dispatched while parked", reached.Count Reached.WokenDispatched, 30
+                "a displaced thread's getcpu", reached.Count Reached.DisplacedGetCpu, 1000
+                "a woken thread dispatched while parked", reached.Count Reached.WokenDispatched, 30
                 "a displacement across processes", reached.Count Reached.CrossProcessDisplacement, 180
                 "a dispatch beyond the machine", reached.Count Reached.BeyondDispatch, 85
             ]
@@ -614,9 +617,9 @@ module TestUnixScheduling =
 
     [<Test>]
     let ``two processes dispatched onto one processor in turn displace each other`` () : unit =
-        // The shape a client with one global interleaving produces: one task
+        // The shape a client with one global interleaving produces: one thread
         // per step, from whichever process, onto the same processor indices.
-        let pids, machine = Machines.withTasks SimulatedUnixPlatform.linuxX64 2 1
+        let pids, machine = Machines.withThreads SimulatedUnixPlatform.linuxX64 2 1
 
         let first, second =
             match pids with
@@ -638,20 +641,20 @@ module TestUnixScheduling =
                 runningOn other machine |> shouldEqual None
                 getcpu pid machine |> shouldEqual true
                 getcpu other machine |> shouldEqual false
-                // The displaced task keeps the processor as its own.
-                (UnixTaskTable.get 0 (Machines.viewOf other machine).Tasks).Cpu
+                // The displaced thread keeps the processor as its own.
+                (UnixThreadTable.get 0 (Machines.viewOf other machine).Threads).Cpu
                 |> shouldEqual (CpuId 0)
 
                 Machines.assertClean machine
 
     [<Test>]
-    let ``a dispatch elsewhere leaves the task's previous processor idle`` () : unit =
+    let ``a dispatch elsewhere leaves the thread's previous processor idle`` () : unit =
         let system : UnixSystem<int, string> =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> UnixBootImage.tryWithProcessorCount 2
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn 1
+            |> Threads.spawn 1
 
         let system =
             system
@@ -659,7 +662,7 @@ module TestUnixScheduling =
             |> UnixScheduling.dispatch 0 (CpuId 1)
 
         system.Scheduling.Occupants
-        |> shouldEqual (Map.ofList [ CpuId 1, (UnixTaskTable.get 0 system.Tasks).OsThreadId ])
+        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 system.Threads).OsThreadId ])
 
         UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 1))
         UnixScheduling.runningOn 1 system |> shouldEqual None
@@ -678,7 +681,7 @@ module TestUnixScheduling =
         UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 0))
 
     [<Test>]
-    let ``runningOn answers None for a name that is no task`` () : unit =
+    let ``runningOn answers None for a name that is no thread`` () : unit =
         let system : UnixSystem<int, string> =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -702,13 +705,13 @@ module TestUnixScheduling =
                 }
         }
 
-    let private threadIdOf (pid : ProcessId) (task : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
-        (UnixTaskTable.get task (Machines.viewOf pid machine).Tasks).OsThreadId
+    let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
+        (UnixThreadTable.get thread (Machines.viewOf pid machine).Threads).OsThreadId
 
     [<Test>]
     let ``checkInvariants reports an occupied processor the machine does not have`` () : unit =
         let pids, machine =
-            Machines.withTasksOn
+            Machines.withThreadsOn
                 (UnixBootImage.tryWithProcessorCount 2
                  >> Configured.expectOk ProcessorCountRefusal.describe)
                 SimulatedUnixPlatform.linuxX64
@@ -728,8 +731,8 @@ module TestUnixScheduling =
         |> shouldEqual true
 
     [<Test>]
-    let ``checkInvariants reports an occupant no live task is, and only where it can tell`` () : unit =
-        let pids, machine = Machines.withTasks SimulatedUnixPlatform.linuxX64 2 1
+    let ``checkInvariants reports an occupant no live thread is, and only where it can tell`` () : unit =
+        let pids, machine = Machines.withThreads SimulatedUnixPlatform.linuxX64 2 1
 
         let first, second =
             match pids with
@@ -738,16 +741,16 @@ module TestUnixScheduling =
 
         let secondLeader = threadIdOf second 0 machine
 
-        // The thread ID of a task that has exited.
+        // The thread ID of a thread that has exited.
         let nobody, machine =
-            let machine = Machines.doIn first (Tasks.spawn 1) machine
+            let machine = Machines.doIn first (Threads.spawn 1) machine
             let nobody = threadIdOf first 1 machine
 
             let exited =
                 Machines.doIn
                     first
                     (fun view ->
-                        match UnixTaskLifecycle.tryExitThread 1 0 view with
+                        match UnixThreadLifecycle.tryExitThread 1 0 view with
                         | Ok (ProcessFate.Continues ((), view)) -> view
                         | other -> failwith $"exitThread: %A{other}"
                     )
@@ -755,10 +758,10 @@ module TestUnixScheduling =
 
             nobody, exited
 
-        // A thread ID no task holds is reported by the machine and by each
+        // A thread ID no thread holds is reported by the machine and by each
         // view.
         let forged = withOccupants [ CpuId 0, nobody ] machine
-        let defect = UnixSystemDefect.OccupantWithoutTask (CpuId 0, nobody)
+        let defect = UnixSystemDefect.OccupantWithoutThread (CpuId 0, nobody)
 
         SimulatedMachine.checkInvariants forged
         |> shouldEqual [ SimulatedMachineDefect.Machine defect ]
@@ -766,17 +769,17 @@ module TestUnixScheduling =
         UnixSystem.checkInvariants (Machines.viewOf first forged)
         |> shouldEqual [ defect ]
 
-        // Another process's running task is no defect in a view that cannot
-        // see that process's tasks.
+        // Another process's running thread is no defect in a view that cannot
+        // see that process's threads.
         let shared = withOccupants [ CpuId 0, secondLeader ] machine
         SimulatedMachine.checkInvariants shared |> shouldEqual []
         UnixSystem.checkInvariants (Machines.viewOf first shared) |> shouldEqual []
         UnixSystem.checkInvariants (Machines.viewOf second shared) |> shouldEqual []
 
     [<Test>]
-    let ``checkInvariants reports a running task whose processor is another`` () : unit =
+    let ``checkInvariants reports a running thread whose processor is another`` () : unit =
         let pids, machine =
-            Machines.withTasksOn
+            Machines.withThreadsOn
                 (UnixBootImage.tryWithProcessorCount 2
                  >> Configured.expectOk ProcessorCountRefusal.describe)
                 SimulatedUnixPlatform.linuxX64
@@ -794,7 +797,7 @@ module TestUnixScheduling =
             ]
 
     [<Test>]
-    let ``re-dispatching a running task allocates nothing`` () : unit =
+    let ``re-dispatching a running thread allocates nothing`` () : unit =
         // A client reports the thread it runs before every instruction, and almost every
         // report names the thread already running, so that report must cost no garbage.
         let system : UnixSystem<int, string> =
@@ -802,11 +805,11 @@ module TestUnixScheduling =
             |> UnixBootImage.tryWithProcessorCount 2
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn 1
+            |> Threads.spawn 1
             |> UnixScheduling.dispatch 0 (CpuId 0)
             |> UnixScheduling.dispatch 1 (CpuId 1)
 
-        // Made once, as a client reads them off the task rather than constructing them.
+        // Made once, as a client reads them off the thread rather than constructing them.
         let zero = CpuId 0
         let one = CpuId 1
 

@@ -7,31 +7,31 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// One step of the blocking-pipe property: a call by a task, a descriptor
+/// One step of the blocking-pipe property: a call by a thread, a descriptor
 /// operation, or a step of the client's scheduler.
 ///
-/// A task is named by its index, modulo their number, among the tasks the step
+/// A thread is named by its index, modulo their number, among the threads the step
 /// can be taken by: those making no call, for a call; those asleep or woken,
 /// for a signal; those woken, for a finish.
 [<RequireQualifiedAccess>]
 type BlockingPipeOp =
-    /// A task reads up to `count` bytes through descriptor `fd`.
-    | Read of task : int * fd : int * count : int * mapped : bool
-    /// A task writes `count` bytes through descriptor `fd`.
-    | Write of task : int * fd : int * count : int * mapped : bool
+    /// A thread reads up to `count` bytes through descriptor `fd`.
+    | Read of thread : int * fd : int * count : int * mapped : bool
+    /// A thread writes `count` bytes through descriptor `fd`.
+    | Write of thread : int * fd : int * count : int * mapped : bool
     | Close of fd : int
     | Dup of fd : int
     /// `dup2(oldFd, newFd)`, which closes an open `newFd` as `Close` does.
     | Dup2 of oldFd : int * newFd : int
     | SetNonBlocking of fd : int * value : bool
-    /// A caught `SIGUSR1` is sent to a task in a call.
-    | Signal of task : int
+    /// A caught `SIGUSR1` is sent to a thread in a call.
+    | Signal of thread : int
     /// The client asks which sleepers the system wakes.
     | Wake
-    /// The client finishes the call of a woken task.
-    | Finish of task : int
+    /// The client finishes the call of a woken thread.
+    | Finish of thread : int
 
-/// Blocking `read(2)` and `write(2)` on a pipe, by several tasks: what parks,
+/// Blocking `read(2)` and `write(2)` on a pipe, by several threads: what parks,
 /// who a change wakes, and how each woken call finishes.
 ///
 /// The property holds the library to a reference written out again from the
@@ -52,7 +52,7 @@ module TestBlockingPipe =
             SimulatedUnixPlatform.macOsArm64
         ]
 
-    let private tasks : int list = [ 0 ; 1 ; 2 ; 3 ]
+    let private threads : int list = [ 0 ; 1 ; 2 ; 3 ]
 
     /// What a call came to, in a shape both the library and the reference can
     /// produce.
@@ -148,7 +148,7 @@ module TestBlockingPipe =
                     Bytes = s.Bytes @ List.take taken rest
                 }
 
-    /// A call a task is in while the client holds it asleep or has woken it.
+    /// A call a thread is in while the client holds it asleep or has woken it.
     type private Call =
         | Reading of description : int * count : int * mapped : bool
         | Writing of description : int * payload : byte list * written : int * mapped : bool
@@ -217,11 +217,11 @@ module TestBlockingPipe =
     let private payload (index : int) (count : int) : byte list =
         List.init count (fun i -> byte ((index * 37 + i) % 251))
 
-    let private park (task : int) (fd : int) (call : Call) (r : Reference) : Reference =
+    let private park (thread : int) (fd : int) (call : Call) (r : Reference) : Reference =
         { r with
             Parks =
                 Map.add
-                    task
+                    thread
                     {
                         Call = call
                         Through = Some fd
@@ -233,15 +233,22 @@ module TestBlockingPipe =
             NextOrdinal = r.NextOrdinal + 1
         }
 
-    /// The task's call answered: the signal it had pending is taken as it
+    /// The thread's call answered: the signal it had pending is taken as it
     /// returns.
-    let private answered (task : int) (r : Reference) : Reference =
+    let private answered (thread : int) (r : Reference) : Reference =
         { r with
-            Parks = Map.remove task r.Parks
-            Signalled = Set.remove task r.Signalled
+            Parks = Map.remove thread r.Parks
+            Signalled = Set.remove thread r.Signalled
         }
 
-    let private referenceRead (task : int) (fd : int) (count : int) (mapped : bool) (r : Reference) : Seen * Reference =
+    let private referenceRead
+        (thread : int)
+        (fd : int)
+        (count : int)
+        (mapped : bool)
+        (r : Reference)
+        : Seen * Reference
+        =
         match Map.tryFind fd r.Fds with
         | None
         | Some (PipeEnd.Write, _) -> Seen.Failed UnixError.EBADF, r
@@ -264,10 +271,10 @@ module TestBlockingPipe =
             elif r.NonBlocking.[description] then
                 Seen.Failed UnixError.EAGAIN, r
             else
-                Seen.Sleeps, park task fd (Call.Reading (description, count, mapped)) r
+                Seen.Sleeps, park thread fd (Call.Reading (description, count, mapped)) r
 
     let private referenceWrite
-        (task : int)
+        (thread : int)
         (fd : int)
         (count : int)
         (mapped : bool)
@@ -306,7 +313,7 @@ module TestBlockingPipe =
                 if nonBlocking then
                     Seen.Failed UnixError.EAGAIN, r
                 else
-                    Seen.Sleeps, park task fd (Call.Writing (description, bytes, 0, mapped)) r
+                    Seen.Sleeps, park thread fd (Call.Writing (description, bytes, 0, mapped)) r
             elif not mapped then
                 Seen.Failed UnixError.EFAULT,
                 { r with
@@ -315,7 +322,7 @@ module TestBlockingPipe =
             elif takes < count && not nonBlocking then
                 Seen.Sleeps,
                 park
-                    task
+                    thread
                     fd
                     (Call.Writing (description, bytes, takes, mapped))
                     { r with
@@ -378,15 +385,15 @@ module TestBlockingPipe =
         let firstWriter = first hasRoom writerWoken
 
         asleep
-        |> List.filter (fun (task, park) ->
+        |> List.filter (fun (thread, park) ->
             park.Through.IsNone
-            || Set.contains task r.Signalled
+            || Set.contains thread r.Signalled
             || (
                 match park.Call with
                 | Call.Reading _ -> not (endOpen PipeEnd.Write r)
                 | Call.Writing _ -> not (endOpen PipeEnd.Read r)
             )
-            || (hasBytes park.Call && (not r.Linux || firstReader = Some task))
+            || (hasBytes park.Call && (not r.Linux || firstReader = Some thread))
             // Darwin wakes every writer at each read, and one whose description
             // has become non-blocking gives up.
             || (
@@ -395,7 +402,7 @@ module TestBlockingPipe =
                     not r.Linux && r.NonBlocking.[description] && r.Reads > park.ReadsSeen
                 | Call.Reading _ -> false
             )
-            || (hasRoom park.Call && (not r.Linux || firstWriter = Some task))
+            || (hasRoom park.Call && (not r.Linux || firstWriter = Some thread))
         )
         |> List.sortBy (fun (_, park) -> park.Ordinal)
         |> List.map fst
@@ -406,16 +413,16 @@ module TestBlockingPipe =
         else
             Seen.Failed UnixError.EINTR
 
-    /// The woken task's call, finished.
-    let private referenceFinish (task : int) (r : Reference) : Seen * Reference =
-        let park = r.Parks.[task]
-        let signalled = Set.contains task r.Signalled
+    /// The woken thread's call, finished.
+    let private referenceFinish (thread : int) (r : Reference) : Seen * Reference =
+        let park = r.Parks.[thread]
+        let signalled = Set.contains thread r.Signalled
 
         let reparked =
             { r with
                 Parks =
                     Map.add
-                        task
+                        thread
                         { park with
                             Woken = false
                             Ordinal = r.NextOrdinal
@@ -432,30 +439,30 @@ module TestBlockingPipe =
         match park.Call with
         // Ended by a Darwin close: end of file, or EPIPE whatever was put in
         // (`close-ends-call.c` sections P1-P5), whatever has happened since.
-        | Call.Reading _ when park.Through.IsNone -> Seen.ReadBytes [], answered task r
-        | Call.Writing _ when park.Through.IsNone -> Seen.Failed UnixError.EPIPE, answered task r
+        | Call.Reading _ when park.Through.IsNone -> Seen.ReadBytes [], answered thread r
+        | Call.Writing _ when park.Through.IsNone -> Seen.Failed UnixError.EPIPE, answered thread r
         | Call.Reading (_, count, mapped) ->
             if held r.Buffer > 0 || not (endOpen PipeEnd.Write r) then
                 if signalled && not r.Linux then
                     Seen.Refused, r
                 elif held r.Buffer = 0 then
-                    Seen.ReadBytes [], answered task r
+                    Seen.ReadBytes [], answered thread r
                 elif not mapped then
-                    Seen.Failed UnixError.EFAULT, answered task r
+                    Seen.Failed UnixError.EFAULT, answered thread r
                 else
                     let bytes, buffer = bufferRead count r.Buffer
 
                     Seen.ReadBytes bytes,
                     answered
-                        task
+                        thread
                         { r with
                             Buffer = buffer
                             Reads = r.Reads + 1
                         }
             elif signalled then
-                interrupted r, answered task r
+                interrupted r, answered thread r
             elif givesUp then
-                Seen.Failed UnixError.EAGAIN, answered task r
+                Seen.Failed UnixError.EAGAIN, answered thread r
             else
                 Seen.Sleeps, reparked
         | Call.Writing (description, payload, written, mapped) ->
@@ -465,14 +472,14 @@ module TestBlockingPipe =
                 if signalled && not r.Linux then
                     Seen.Refused, r
                 elif r.Linux && written > 0 then
-                    Seen.Wrote (int64 written), answered task r
+                    Seen.Wrote (int64 written), answered thread r
                 else
-                    Seen.Failed UnixError.EPIPE, answered task r
+                    Seen.Failed UnixError.EPIPE, answered thread r
             elif wouldResume payload written r > 0 then
                 if signalled && not r.Linux then
                     Seen.Refused, r
                 elif not mapped then
-                    Seen.Failed UnixError.EFAULT, answered task r
+                    Seen.Failed UnixError.EFAULT, answered thread r
                 else
                     let taken, buffer = resumes count (List.skip written payload) r.Buffer
                     let written = written + taken
@@ -483,15 +490,15 @@ module TestBlockingPipe =
                         }
 
                     if written = count then
-                        Seen.Wrote (int64 count), answered task r
+                        Seen.Wrote (int64 count), answered thread r
                     elif signalled || r.NonBlocking.[description] then
-                        Seen.Wrote (int64 written), answered task r
+                        Seen.Wrote (int64 written), answered thread r
                     else
                         Seen.Sleeps,
                         { r with
                             Parks =
                                 Map.add
-                                    task
+                                    thread
                                     { park with
                                         Call = Call.Writing (description, payload, written, mapped)
                                         Woken = false
@@ -503,11 +510,11 @@ module TestBlockingPipe =
                         }
             elif signalled || (givesUp && written > 0) then
                 if written > 0 then
-                    Seen.Wrote (int64 written), answered task r
+                    Seen.Wrote (int64 written), answered thread r
                 else
-                    interrupted r, answered task r
+                    interrupted r, answered thread r
             elif givesUp then
-                Seen.Failed UnixError.EAGAIN, answered task r
+                Seen.Failed UnixError.EAGAIN, answered thread r
             else
                 Seen.Sleeps, reparked
 
@@ -535,9 +542,9 @@ module TestBlockingPipe =
         | Error (WriteRefusal.Interruption _) -> Seen.Refused, None
         | Error refusal -> failwith $"write refused: %A{refusal}"
 
-    /// A write by `task`, admitted and then given the bytes it asks for.
+    /// A write by `thread`, admitted and then given the bytes it asks for.
     let private libraryWrite
-        (task : int)
+        (thread : int)
         (fd : int)
         (bytes : byte list)
         (mapped : bool)
@@ -549,31 +556,31 @@ module TestBlockingPipe =
             else
                 UserBuffer.Unmapped 8UL
 
-        WriteOutcomes.admitThenWrite task fd buffer (ImmutableArray.CreateRange bytes) system
+        WriteOutcomes.admitThenWrite thread fd buffer (ImmutableArray.CreateRange bytes) system
 
-    /// The woken write of `task`, finished, and given the bytes of `payload` it
+    /// The woken write of `thread`, finished, and given the bytes of `payload` it
     /// asks for.
-    let private libraryFinishWrite (task : int) (payload : byte list) (system : UnixSystem<int, string>) =
+    let private libraryFinishWrite (thread : int) (payload : byte list) (system : UnixSystem<int, string>) =
         let bytesAt (offset : int) (count : int) =
             payload |> List.skip offset |> List.take count |> ImmutableArray.CreateRange
 
-        WriteOutcomes.finishWrite task bytesAt system
+        WriteOutcomes.finishWrite thread bytesAt system
 
-    /// `task` returns to user mode: every handler it takes runs and returns.
-    let rec private returnToUser (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser task system with
+    /// `thread` returns to user mode: every handler it takes runs and returns.
+    let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixSignal.tryOnReturnToUser thread system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn task frame.Id system)
-            |> returnToUser task
-        | other -> failwith $"returning task %d{task} to user mode: %A{other}"
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            |> returnToUser thread
+        | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
     /// `weights` are the frequencies of a read, a write, a close, a dup, a
     /// change of `O_NONBLOCK`, a signal, a wake and a finish.
     let private opGenWeighted (weights : int * int * int * int * int * int * int * int) : Gen<BlockingPipeOp> =
         let reads, writes, closes, dups, nonBlocking, signals, wakes, finishes = weights
-        let task = Gen.elements tasks
+        let thread = Gen.elements threads
         let fd = Gen.choose (0, 4)
 
         let count =
@@ -606,7 +613,7 @@ module TestBlockingPipe =
             [
                 reads,
                 gen {
-                    let! t = task
+                    let! t = thread
                     let! fd = fd
                     let! c = count
                     let! m = mapped
@@ -614,7 +621,7 @@ module TestBlockingPipe =
                 }
                 writes,
                 gen {
-                    let! t = task
+                    let! t = thread
                     let! fd = fd
                     let! c = count
                     let! m = mapped
@@ -625,9 +632,9 @@ module TestBlockingPipe =
                 closes, Gen.map2 (fun o n -> BlockingPipeOp.Dup2 (o, n)) fd fd
                 nonBlocking,
                 Gen.map2 (fun fd v -> BlockingPipeOp.SetNonBlocking (fd, v)) fd (Gen.elements [ true ; false ])
-                signals, Gen.map BlockingPipeOp.Signal task
+                signals, Gen.map BlockingPipeOp.Signal thread
                 wakes, Gen.constant BlockingPipeOp.Wake
-                finishes, Gen.map BlockingPipeOp.Finish task
+                finishes, Gen.map BlockingPipeOp.Finish thread
             ]
 
     let private opGen : Gen<BlockingPipeOp> = opGenWeighted (5, 5, 1, 1, 1, 2, 6, 8)
@@ -639,7 +646,7 @@ module TestBlockingPipe =
 
     /// A write through the write end, fd 1, that sleeps having put some in; a
     /// signal to it; and its finish, which returns the count already in. Each
-    /// op names a task by index, as `opGenWeighted`'s do: the first idle task,
+    /// op names a thread by index, as `opGenWeighted`'s do: the first idle thread,
     /// then the first in a call, then the first woken.
     let private interruptedWrite : BlockingPipeOp list =
         [
@@ -689,8 +696,8 @@ module TestBlockingPipe =
                 )
 
             let bare =
-                (bare, List.tail tasks)
-                ||> List.fold (fun system task -> Tasks.spawn task system)
+                (bare, List.tail threads)
+                ||> List.fold (fun system thread -> Threads.spawn thread system)
 
             let bare =
                 { bare with
@@ -759,31 +766,31 @@ module TestBlockingPipe =
                 if expected <> actual then
                     failwith $"%s{where}: expected %A{expected}, got %A{actual}"
 
-            // After an answer the task returns to user mode, taking its signal.
-            let settle (task : int) (seen : Seen) (after : UnixSystem<int, string>) =
+            // After an answer the thread returns to user mode, taking its signal.
+            let settle (thread : int) (seen : Seen) (after : UnixSystem<int, string>) =
                 match seen with
                 | Seen.Sleeps -> after
                 | Seen.ReadBytes _
                 | Seen.Wrote _
                 | Seen.Failed _
-                | Seen.Restarts -> returnToUser task after
+                | Seen.Restarts -> returnToUser thread after
                 | Seen.Refused -> failwith "a refusal leaves no system"
 
             for i, op in List.indexed ops |> Seq.takeWhile (fun _ -> not stopped) do
                 let pick (eligible : int -> bool) (index : int) : int option =
-                    match List.filter eligible tasks with
+                    match List.filter eligible threads with
                     | [] -> None
                     | candidates -> Some candidates.[index % List.length candidates]
 
-                let idle (task : int) =
-                    not (Map.containsKey task reference.Parks)
+                let idle (thread : int) =
+                    not (Map.containsKey thread reference.Parks)
 
-                let inCall (task : int) = Map.containsKey task reference.Parks
+                let inCall (thread : int) = Map.containsKey thread reference.Parks
 
-                let woken (task : int) =
-                    Map.tryFind task reference.Parks |> Option.exists (fun park -> park.Woken)
+                let woken (thread : int) =
+                    Map.tryFind thread reference.Parks |> Option.exists (fun park -> park.Woken)
 
-                // The op with its task resolved, or `None` where no task can
+                // The op with its thread resolved, or `None` where no thread can
                 // take it.
                 let resolved =
                     match op with
@@ -827,7 +834,7 @@ module TestBlockingPipe =
                         |> Option.bind (fun (_, description) ->
                             reference.Parks
                             |> Map.tryFindKey (fun _ park -> descriptionOf park.Call = description)
-                            |> Option.map (fun task -> description, task)
+                            |> Option.map (fun thread -> description, thread)
                         )
 
                     // Linux's sleeping call holds its description, so no close
@@ -844,10 +851,10 @@ module TestBlockingPipe =
                             |> List.filter (fun (_, park) -> park.Through = Some fd)
                             |> List.map fst
 
-                    let woken (task : int) =
-                        let park = reference.Parks.[task]
+                    let woken (thread : int) =
+                        let park = reference.Parks.[thread]
 
-                        Set.contains task reference.Signalled
+                        Set.contains thread reference.Signalled
                         || (
                             match park.Call with
                             | Call.Reading _ -> held reference.Buffer > 0
@@ -867,11 +874,11 @@ module TestBlockingPipe =
                             cover "Linux close: the last descriptor onto a sleeping call's description"
 
                     match refusedFor, call system with
-                    | Some task, Error (CloseRefusal.DarwinWokenTransfer (description, refused)) ->
-                        refused |> shouldEqual task
+                    | Some thread, Error (CloseRefusal.DarwinWokenTransfer (description, refused)) ->
+                        refused |> shouldEqual thread
 
                         description
-                        |> shouldEqual libraryDescription.[descriptionOf reference.Parks.[task].Call]
+                        |> shouldEqual libraryDescription.[descriptionOf reference.Parks.[thread].Call]
 
                         cover "Darwin close: refused, the transfer woken"
                         system, reference
@@ -879,8 +886,8 @@ module TestBlockingPipe =
                         answer |> shouldEqual expectedAnswer
 
                         if not (List.isEmpty through) then
-                            for task in through do
-                                match reference.Parks.[task].Call with
+                            for thread in through do
+                                match reference.Parks.[thread].Call with
                                 | Call.Reading _ -> cover "Darwin close: ends a read"
                                 | Call.Writing _ -> cover "Darwin close: ends a write"
 
@@ -900,10 +907,10 @@ module TestBlockingPipe =
                                 Fds = Map.remove fd reference.Fds
                                 Parks =
                                     (reference.Parks, through)
-                                    ||> List.fold (fun parks task ->
+                                    ||> List.fold (fun parks thread ->
                                         Map.add
-                                            task
-                                            { parks.[task] with
+                                            thread
+                                            { parks.[thread] with
                                                 Through = None
                                             }
                                             parks
@@ -913,8 +920,8 @@ module TestBlockingPipe =
 
 
                 match op with
-                | BlockingPipeOp.Read (task, fd, count, mapped) ->
-                    let expected, after = referenceRead task fd count mapped reference
+                | BlockingPipeOp.Read (thread, fd, count, mapped) ->
+                    let expected, after = referenceRead thread fd count mapped reference
 
                     let buffer =
                         if mapped then
@@ -923,26 +930,26 @@ module TestBlockingPipe =
                             UserBuffer.Unmapped 8UL
 
                     let seen, actual =
-                        fromRead (UnixReadWrite.tryRead task fd buffer (uint64 count) system)
+                        fromRead (UnixReadWrite.tryRead thread fd buffer (uint64 count) system)
 
                     compare where expected seen
                     cover (label flavourName "read" seen)
-                    system <- settle task seen (Option.get actual)
+                    system <- settle thread seen (Option.get actual)
                     reference <- after
-                | BlockingPipeOp.Write (task, fd, count, mapped) ->
+                | BlockingPipeOp.Write (thread, fd, count, mapped) ->
                     let bytes = payload reference.Writes count
-                    let expected, after = referenceWrite task fd count mapped reference
-                    let seen, actual = fromWrite (libraryWrite task fd bytes mapped system)
+                    let expected, after = referenceWrite thread fd count mapped reference
+                    let seen, actual = fromWrite (libraryWrite thread fd bytes mapped system)
                     compare where expected seen
 
-                    match seen, after.Parks |> Map.tryFind task with
+                    match seen, after.Parks |> Map.tryFind thread with
                     | Seen.Sleeps,
                       Some {
                                Call = Call.Writing (_, _, written, _)
                            } when written > 0 -> cover $"%s{flavourName} write: sleeps having put some in"
                     | _ -> cover (label flavourName "write" seen)
 
-                    system <- settle task seen (Option.get actual)
+                    system <- settle thread seen (Option.get actual)
                     reference <- after
                 | BlockingPipeOp.Close fd ->
                     let after, afterReference =
@@ -1040,7 +1047,7 @@ module TestBlockingPipe =
                             { reference with
                                 NonBlocking = Map.add description value reference.NonBlocking
                             }
-                | BlockingPipeOp.Signal task ->
+                | BlockingPipeOp.Signal thread ->
                     system <-
                         { system with
                             Process =
@@ -1049,7 +1056,7 @@ module TestBlockingPipe =
                                         SignalState.enqueue
                                             {
                                                 Signal = Signal.SIGUSR1
-                                                Target = ValueSome task
+                                                Target = ValueSome thread
                                             }
                                             system.Process.Signals
                                 }
@@ -1057,7 +1064,7 @@ module TestBlockingPipe =
 
                     reference <-
                         { reference with
-                            Signalled = Set.add task reference.Signalled
+                            Signalled = Set.add thread reference.Signalled
                         }
                 | BlockingPipeOp.Wake ->
                     let asleep =
@@ -1077,8 +1084,8 @@ module TestBlockingPipe =
                     // Bytes or room that would satisfy several sleepers.
                     let satisfiable =
                         asleep
-                        |> Set.filter (fun task ->
-                            match reference.Parks.[task].Call with
+                        |> Set.filter (fun thread ->
+                            match reference.Parks.[thread].Call with
                             | Call.Reading _ -> held reference.Buffer > 0
                             | Call.Writing (_, payload, written, _) -> wouldResume payload written reference > 0
                         )
@@ -1090,30 +1097,31 @@ module TestBlockingPipe =
                         { reference with
                             Parks =
                                 (reference.Parks, woken)
-                                ||> List.fold (fun parks task ->
+                                ||> List.fold (fun parks thread ->
                                     Map.add
-                                        task
-                                        { parks.[task] with
+                                        thread
+                                        { parks.[thread] with
                                             Woken = true
                                         }
                                         parks
                                 )
                         }
-                | BlockingPipeOp.Finish task ->
-                    let call = reference.Parks.[task].Call
-                    let expected, after = referenceFinish task reference
+                | BlockingPipeOp.Finish thread ->
+                    let call = reference.Parks.[thread].Call
+                    let expected, after = referenceFinish thread reference
 
                     let seen, actual =
                         match call with
-                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead task system)
-                        | Call.Writing (_, payload, _, _) -> fromWrite (libraryFinishWrite task payload system)
+                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead thread system)
+                        | Call.Writing (_, payload, _, _) -> fromWrite (libraryFinishWrite thread payload system)
 
                     compare where expected seen
 
                     let what =
                         match call, seen with
-                        | Call.Reading _, _ when reference.Parks.[task].Through.IsNone -> "finish read ended by a close"
-                        | Call.Writing _, _ when reference.Parks.[task].Through.IsNone ->
+                        | Call.Reading _, _ when reference.Parks.[thread].Through.IsNone ->
+                            "finish read ended by a close"
+                        | Call.Writing _, _ when reference.Parks.[thread].Through.IsNone ->
                             "finish write ended by a close"
                         | Call.Writing (_, payload, written, _), Seen.Wrote n when
                             int n < List.length payload && int n = written
@@ -1134,7 +1142,7 @@ module TestBlockingPipe =
 
                     match actual with
                     | None -> stopped <- true
-                    | Some actual -> system <- settle task seen actual
+                    | Some actual -> system <- settle thread seen actual
 
                     reference <- after
 
@@ -1144,9 +1152,9 @@ module TestBlockingPipe =
                     | defects -> failwith $"%s{where}: %A{defects}"
 
                     // Every park agrees with the reference's, by progress.
-                    for task in tasks do
+                    for thread in threads do
                         let expected =
-                            Map.tryFind task reference.Parks
+                            Map.tryFind thread reference.Parks
                             |> Option.map (fun park ->
                                 match park.Call with
                                 | Call.Reading (_, count, _) -> 0, count, 0
@@ -1154,16 +1162,16 @@ module TestBlockingPipe =
                             )
 
                         let actual =
-                            UnixTaskTable.parkedFor task system.Tasks
+                            UnixThreadTable.parkedFor thread system.Threads
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.PipeRead read -> 0, read.Count, 0
                                 | ParkedSyscall.PipeWrite write -> 1, write.Count, write.Written
-                                | other -> failwith $"%s{where}: task %d{task} parked in %A{other}"
+                                | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
                             )
 
                         if expected <> actual then
-                            failwith $"%s{where}: task %d{task} parked as %A{actual}, expected %A{expected}"
+                            failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                     // A description exists exactly while something references
                     // it: a descriptor, or a call that has not yet returned.
@@ -1274,11 +1282,11 @@ module TestBlockingPipe =
 
     // --- the measured rows, one at a time ---
 
-    /// The task that sleeps in the tests below; the leader makes every change.
+    /// The thread that sleeps in the tests below; the leader makes every change.
     let private sleeper : int = 1
 
     /// A blocking pipe, its read end on fd 3 and its write end on fd 4, holding
-    /// `prefill` bytes, with `sleeper` a task and `SIGUSR1` caught, with
+    /// `prefill` bytes, with `sleeper` a thread and `SIGUSR1` caught, with
     /// `SA_RESTART` if `restart`, and `SIGPIPE` ignored.
     let private pipeHolding
         (platform : SimulatedUnixPlatform)
@@ -1289,7 +1297,7 @@ module TestBlockingPipe =
         let system =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn sleeper
+            |> Threads.spawn sleeper
 
         let system =
             { system with
@@ -1525,18 +1533,18 @@ module TestBlockingPipe =
                 for writing in [ false ; true ] do
                     let system =
                         pipeHolding platform false (if writing then 65536 else 0)
-                        |> Tasks.spawn 2
-                        |> Tasks.spawn 3
+                        |> Threads.spawn 2
+                        |> Threads.spawn 3
 
                     let system =
                         (system, order)
-                        ||> List.fold (fun system task ->
+                        ||> List.fold (fun system thread ->
                             if writing then
-                                match libraryWrite task 4 [ byte task ] true system with
+                                match libraryWrite thread 4 [ byte thread ] true system with
                                 | Ok (WriteStep.WouldBlock (_, system)) -> system
                                 | other -> failwith $"%A{other}"
                             else
-                                match UnixReadWrite.tryRead task 3 UserBuffer.Mapped 1UL system with
+                                match UnixReadWrite.tryRead thread 3 UserBuffer.Mapped 1UL system with
                                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                                 | other -> failwith $"%A{other}"
                         )
@@ -1571,7 +1579,7 @@ module TestBlockingPipe =
     let ``a sleeper that finds nothing to take sleeps again behind the others`` () : unit =
         // Section A3: two readers, the first woken; another read takes the
         // byte first.
-        let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> Tasks.spawn 2
+        let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> Threads.spawn 2
 
         let system =
             match UnixReadWrite.tryRead 2 3 UserBuffer.Mapped 1UL (readerAsleep system) with
@@ -1789,11 +1797,11 @@ module TestBlockingPipe =
                 )
             | Error refusal -> failwith $"%A{refusal}"
 
-    /// `task` asleep in a read of up to 16 bytes through `fd`.
-    let private readerAsleepThrough (task : int) (fd : int) (system : UnixSystem<int, string>) =
-        match UnixReadWrite.tryRead task fd UserBuffer.Mapped 16UL system with
+    /// `thread` asleep in a read of up to 16 bytes through `fd`.
+    let private readerAsleepThrough (thread : int) (fd : int) (system : UnixSystem<int, string>) =
+        match UnixReadWrite.tryRead thread fd UserBuffer.Mapped 16UL system with
         | Ok (ReadOutcome.WouldBlock _, system) -> system
-        | other -> failwith $"expected task %d{task}'s read through fd %d{fd} to sleep, got %A{other}"
+        | other -> failwith $"expected thread %d{thread}'s read through fd %d{fd} to sleep, got %A{other}"
 
     let private dupped (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match Answered.dup fd system with
@@ -1815,7 +1823,7 @@ module TestBlockingPipe =
             // Two readers through the read end.
             let system =
                 pipeHolding platform false 0
-                |> Tasks.spawn 2
+                |> Threads.spawn 2
                 |> readerAsleep
                 |> readerAsleepThrough 2 3
 
@@ -1834,12 +1842,12 @@ module TestBlockingPipe =
 
             let system =
                 (system, [ sleeper ; 2 ])
-                ||> List.fold (fun system task ->
-                    match UnixReadWrite.tryFinishRead task system with
+                ||> List.fold (fun system thread ->
+                    match UnixReadWrite.tryFinishRead thread system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.IsEmpty -> system
                     | other ->
                         failwith
-                            $"dup kept %b{keepDup}: expected task %d{task}'s read to end at end of file, got %A{other}"
+                            $"dup kept %b{keepDup}: expected thread %d{thread}'s read to end at end of file, got %A{other}"
                 )
 
             UnixSystem.checkInvariants system |> shouldEqual []
@@ -1931,15 +1939,15 @@ module TestBlockingPipe =
         WakeCondition.satisfied sleeper condition system
         |> shouldEqual (Set.singleton WakePrimitive.EndedByClose)
 
-    /// `UnixWait.satisfied` asks about a task rather than a condition, reading
-    /// the condition from the task's park: `None` for a task that is not
-    /// parked, or is not a task at all, and the primitives that hold otherwise,
+    /// `UnixWait.satisfied` asks about a thread rather than a condition, reading
+    /// the condition from the thread's park: `None` for a thread that is not
+    /// parked, or is not a thread at all, and the primitives that hold otherwise,
     /// however the descriptors the call was made through have been closed
     /// since. A condition kept from a park that has ended is what the internal
     /// `WakeCondition.satisfied` cannot answer, once the description it names
     /// has gone.
     [<Test>]
-    let ``UnixWait.satisfied answers for any task, from the task's own park`` () : unit =
+    let ``UnixWait.satisfied answers for any thread, from the thread's own park`` () : unit =
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
             let darwin =
                 match SimulatedUnixPlatform.flavour platform with
@@ -1985,7 +1993,7 @@ module TestBlockingPipe =
                 )
             )
 
-            // The call finishes, and then its descriptor closes: the task is not
+            // The call finishes, and then its descriptor closes: the thread is not
             // parked, and the condition it slept on names a description that
             // has gone.
             let finished =
@@ -2007,7 +2015,7 @@ module TestBlockingPipe =
     let ``Darwin: a transfer asleep through a dup of the descriptor closed sleeps on`` () : unit =
         let system =
             pipeHolding SimulatedUnixPlatform.macOsArm64 false 0
-            |> Tasks.spawn 2
+            |> Threads.spawn 2
             |> readerAsleep
 
         let duplicate, system = dupped 3 system
@@ -2053,8 +2061,8 @@ module TestBlockingPipe =
                 |> Option.get
 
             match UnixDescriptor.tryClose fd system with
-            | Error (CloseRefusal.DarwinWokenTransfer (refusedOn, task)) ->
-                (refusedOn, task) |> shouldEqual (description, sleeper)
+            | Error (CloseRefusal.DarwinWokenTransfer (refusedOn, thread)) ->
+                (refusedOn, thread) |> shouldEqual (description, sleeper)
             | other -> failwith $"expected the close of fd %d{fd} to be refused, got %A{other}"
 
         pipeHolding platform false 0 |> readerAsleep |> leaderWrites 1 |> refused 3
@@ -2088,7 +2096,7 @@ module TestBlockingPipe =
 
     /// The write a close ends returns before the close does, raising SIGPIPE
     /// for the process then: under the disposition the signal has at the
-    /// close, whatever it has by the time the writer's task finishes. One that
+    /// close, whatever it has by the time the writer's thread finishes. One that
     /// would end the process is refused, a close having no way to say so.
     [<Test>]
     let ``Darwin: the close raises an ended write's SIGPIPE under the disposition it has then`` () : unit =
@@ -2124,8 +2132,8 @@ module TestBlockingPipe =
 
         // The default at the close: the process would end.
         match UnixDescriptor.tryClose 4 (asleep () |> withSigpipe SignalDisposition.Default) with
-        | Error (CloseRefusal.DarwinEndedWriteSignal (task, EndedWriteSignalRefusal.TerminatesProcess)) ->
-            task |> shouldEqual sleeper
+        | Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess)) ->
+            thread |> shouldEqual sleeper
         | other -> failwith $"expected the close to be refused, got %A{other}"
 
     /// Measured (`close-ends-call.c`, section P8): the ending moves the pipe's
@@ -2261,7 +2269,7 @@ module TestBlockingPipe =
                         admitted
                 with
                 | Ok (WriteStep.WouldBlock (_, asleep)) ->
-                    match UnixTaskTable.parkedFor sleeper asleep.Tasks with
+                    match UnixThreadTable.parkedFor sleeper asleep.Threads with
                     | Some (ParkedSyscall.PipeWrite parked) ->
                         (parked.Count, parked.Written) |> shouldEqual (200000, 65536)
                     | other -> failwith $"%O{platform}: %A{other}"
@@ -2331,15 +2339,15 @@ module TestBlockingPipe =
 
             for writing in [ false ; true ] do
                 let system =
-                    pipeHolding platform false (if writing then 65536 else 0) |> Tasks.spawn 2
+                    pipeHolding platform false (if writing then 65536 else 0) |> Threads.spawn 2
 
-                let sleep (task : int) (system : UnixSystem<int, string>) =
+                let sleep (thread : int) (system : UnixSystem<int, string>) =
                     if writing then
-                        match libraryWrite task 4 (payload task 4096) true system with
+                        match libraryWrite thread 4 (payload thread 4096) true system with
                         | Ok (WriteStep.WouldBlock (_, system)) -> system
                         | other -> failwith $"%A{other}"
                     else
-                        match UnixReadWrite.tryRead task 3 UserBuffer.Mapped 1UL system with
+                        match UnixReadWrite.tryRead thread 3 UserBuffer.Mapped 1UL system with
                         | Ok (ReadOutcome.WouldBlock _, system) -> system
                         | other -> failwith $"%A{other}"
 
@@ -2355,11 +2363,11 @@ module TestBlockingPipe =
                 let woken = UnixWait.wakes (Set.ofList [ sleeper ; 2 ]) system |> List.map fst
                 woken |> shouldEqual (if linux then [ sleeper ] else [ sleeper ; 2 ])
 
-                let finish (task : int) (system : UnixSystem<int, string>) =
+                let finish (thread : int) (system : UnixSystem<int, string>) =
                     if writing then
-                        fromWrite (libraryFinishWrite task (payload task 4096) system)
+                        fromWrite (libraryFinishWrite thread (payload thread 4096) system)
                     else
-                        fromRead (UnixReadWrite.tryFinishRead task system)
+                        fromRead (UnixReadWrite.tryFinishRead thread system)
 
                 let first, after = finish sleeper system
 

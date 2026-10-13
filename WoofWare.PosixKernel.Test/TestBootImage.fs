@@ -205,7 +205,7 @@ module TestBootImage =
                 typeof<ProcessLaunch<int>>
                 typeof<UnixMachineState>
                 typeof<UnixProcessState<int, string>>
-                typeof<UnixTaskState>
+                typeof<UnixThreadState>
             ]
 
         for t in records do
@@ -221,8 +221,8 @@ module TestBootImage =
             t.GetConstructors (BindingFlags.Public ||| BindingFlags.Instance)
             |> shouldBeEmpty
 
-    /// Parking a task and releasing its park change a running system without
-    /// being syscalls, so a client parks a task by making a blocking syscall and
+    /// Parking a thread and releasing its park change a running system without
+    /// being syscalls, so a client parks a thread by making a blocking syscall and
     /// releases it by finishing one.
     [<Test>]
     let ``parking and releasing are not public`` () : unit =
@@ -243,7 +243,7 @@ module TestBootImage =
         for declaring, name in
             [
                 "WoofWare.PosixKernel.UnixWait", "park"
-                "WoofWare.PosixKernel.UnixTaskTable", "unpark"
+                "WoofWare.PosixKernel.UnixThreadTable", "unpark"
             ] do
             match named declaring name with
             | [ m ] -> (describe m, m.IsPublic) |> shouldEqual (describe m, false)

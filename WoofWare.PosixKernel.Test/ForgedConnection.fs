@@ -12,12 +12,12 @@ module internal ForgedConnection =
     /// on this machine (`TcpBufferSizing.newTransfer`), and then each end in
     /// `closed` closed in order (`TcpTransfer.close`): an end whose socket the
     /// test has not forged, or has forged as gone.
-    let add<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let add<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connection : ConnectionId)
         (domain : SocketDomain)
         (closed : ConnectionEnd list)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let transfer =
             (TcpBufferSizing.newTransfer domain system.Machine, closed)

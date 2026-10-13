@@ -25,7 +25,7 @@ module TestConnectedTransfer =
     let private port : uint16 = 6000us
 
     /// A system of `platform`, booted from an image `configure` configured,
-    /// with tasks 1 to 4 and `SIGPIPE` ignored.
+    /// with threads 1 to 4 and `SIGPIPE` ignored.
     let private systemOn
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (platform : SimulatedUnixPlatform)
@@ -35,7 +35,7 @@ module TestConnectedTransfer =
             UnixSystem.initial<int, string> platform
             |> configure
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> ([ 1..4 ], system) ||> List.foldBack Tasks.ensure
+            |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
         { system with
             Process =
@@ -1645,16 +1645,16 @@ module TestConnectedTransfer =
         let asleep =
             asleep
             |> List.groupBy fst
-            |> List.map (fun (pid, tasks) -> pid, tasks |> List.map snd |> Set.ofList)
+            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
         SimulatedMachine.wakes asleep machine |> List.map fst
 
-    /// `task` of `pid` waits with no timeout on the flavour's event queue,
+    /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
     let private sleepOn
         (pid : ProcessId)
-        (task : int)
+        (thread : int)
         (fd : int)
         (what : char)
         (machine : SimulatedMachine<int, string>)
@@ -1678,7 +1678,7 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixPoll.tryEpollWait task epoll 2 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait thread epoll 2 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 | SimulatedUnixFlavour.Darwin ->
@@ -1695,7 +1695,7 @@ module TestConnectedTransfer =
                         )
                         |> Seq.exactlyOne
 
-                    match UnixKqueue.tryKevent task kq 0 [] 2 UserBuffer.Mapped KeventTimeout.Null view with
+                    match UnixKqueue.tryKevent thread kq 0 [] 2 UserBuffer.Mapped KeventTimeout.Null view with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
             )
@@ -1785,7 +1785,7 @@ module TestConnectedTransfer =
                         Machines.doIn a (fun view -> receivedCount client 4096 view |> snd) machine
 
                 let ended =
-                    Machines.inProcess a (fun view -> UnixTaskLifecycle.exitGroup 0 0 view, view) machine
+                    Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
                     |> fst
 
                 let machine =

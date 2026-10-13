@@ -7,9 +7,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Every task is on a processor the machine has, in `[0, ProcessorCount)`:
-/// `UnixTaskLifecycle.spawn` throws for any other, a launch is refused for a
-/// leader on any other, and `checkInvariants` reports a task on any other.
+/// Every thread is on a processor the machine has, in `[0, ProcessorCount)`:
+/// `UnixThreadLifecycle.spawn` throws for any other, a launch is refused for a
+/// leader on any other, and `checkInvariants` reports a thread on any other.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestCpuRange =
@@ -79,14 +79,14 @@ module TestCpuRange =
 
             let spawned =
                 try
-                    Ok (UnixTaskLifecycle.trySpawn 0 1 (CpuId cpu) system)
+                    Ok (UnixThreadLifecycle.trySpawn 0 1 (CpuId cpu) system)
                 with e ->
                     Error e.Message
 
             match spawned, inRange count cpu with
             | Ok (Ok (SpawnAnswer.Spawned _, after)), true ->
                 cover Side.Inside
-                (UnixTaskTable.get 1 after.Tasks).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 1 after.Threads).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants after |> shouldEqual []
             | Error message, false ->
                 cover Side.Outside
@@ -105,7 +105,7 @@ module TestCpuRange =
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
                 cover Side.Inside
-                (UnixTaskTable.get 0 system.Tasks).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 0 system.Threads).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
@@ -126,7 +126,7 @@ module TestCpuRange =
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixTaskTable.get 0 (Machines.viewOf pid after).Tasks).Cpu
+                (UnixThreadTable.get 0 (Machines.viewOf pid after).Threads).Cpu
                 |> shouldEqual (CpuId cpu)
 
                 SimulatedMachine.checkInvariants after |> shouldEqual []
@@ -140,27 +140,29 @@ module TestCpuRange =
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
         |> assertBothSides
 
-    /// `system` with task `task`'s processor overwritten with `cpu`, as no
+    /// `system` with thread `thread`'s processor overwritten with `cpu`, as no
     /// public route can do.
-    let private forgeCpu (task : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
-            Tasks =
-                system.Tasks
+            Threads =
+                system.Threads
                 |> Map.add
-                    task
-                    { UnixTaskTable.get task system.Tasks with
+                    thread
+                    { UnixThreadTable.get thread system.Threads with
                         Cpu = CpuId cpu
                     }
         }
 
     [<Test>]
-    let ``checkInvariants reports exactly a task on a processor the machine does not have`` () : unit =
+    let ``checkInvariants reports exactly a thread on a processor the machine does not have`` () : unit =
         let property (cover : Side -> unit) (platform : SimulatedUnixPlatform, count : int, cpu : int) : unit =
-            let system = systemWith platform count |> Tasks.spawn 1 |> forgeCpu 1 cpu
+            let system = systemWith platform count |> Threads.spawn 1 |> forgeCpu 1 cpu
 
             let machine =
                 SimulatedMachine.ofSystem (systemWith platform count)
-                |> Machines.inProcess UnixSystem.defaultProcessId (fun view -> (), Tasks.spawn 1 view |> forgeCpu 1 cpu)
+                |> Machines.inProcess
+                    UnixSystem.defaultProcessId
+                    (fun view -> (), Threads.spawn 1 view |> forgeCpu 1 cpu)
                 |> snd
 
             if inRange count cpu then

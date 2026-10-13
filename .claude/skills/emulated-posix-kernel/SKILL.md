@@ -1,6 +1,6 @@
 ---
 name: emulated-posix-kernel
-description: Deciding how the emulated kernel should answer a syscall — whether a fact belongs to the platform, to boot or process configuration, or to the client; whose encoding a value is stated in; where per-task state lives; which test tier can observe the answer. Use when adding or changing anything in WoofWare.PosixKernel (the Unix* syscall files — UnixSocket.fs, UnixConnection.fs, UnixPoll.fs, UnixKqueue.fs, UnixInotify.fs, UnixDescriptor.fs, UnixPathResolution.fs, UnixReadWrite.fs, UnixNamespace.fs, UnixPipe.fs, UnixSignal.fs, UnixClock.fs, UnixEntropy.fs, UnixCredentials.fs, UnixTaskLifecycle.fs, UnixWait.fs, UnixSystem.fs, UnixBootImage.fs — as well as the platform profile and the per-syscall divergence rules it selects between — SimulatedUnixPlatform.fs, SimulatedUnixFlavour.fs, StartingPointRules.fs, CreatingOpenRules.fs, MkDirRules.fs, MkNodRules.fs, RemovalRules.fs, RenameRules.fs, AccessRules.fs, StatRules.fs, AttributeChangeRules.fs, TimestampChangeRules.fs, OwnerChangeRules.fs, ProtectedFiles.fs, Sockaddr.fs, UserBuffer.fs, EmulatedFileSystemType.fs — and ProcessLaunch.fs, VirtualFileSystem.fs, PathWalk.fs, FileDescriptorRegistry.fs, Signal.fs, SignalState.fs). Carries measured Linux/Darwin divergence tables — consult them rather than re-measuring.
+description: Deciding how the emulated kernel should answer a syscall — whether a fact belongs to the platform, to boot or process configuration, or to the client; whose encoding a value is stated in; where per-thread state lives; which test tier can observe the answer. Use when adding or changing anything in WoofWare.PosixKernel (the Unix* syscall files — UnixSocket.fs, UnixConnection.fs, UnixPoll.fs, UnixKqueue.fs, UnixInotify.fs, UnixDescriptor.fs, UnixPathResolution.fs, UnixReadWrite.fs, UnixNamespace.fs, UnixPipe.fs, UnixSignal.fs, UnixClock.fs, UnixEntropy.fs, UnixCredentials.fs, UnixThreadLifecycle.fs, UnixWait.fs, UnixSystem.fs, UnixBootImage.fs — as well as the platform profile and the per-syscall divergence rules it selects between — SimulatedUnixPlatform.fs, SimulatedUnixFlavour.fs, StartingPointRules.fs, CreatingOpenRules.fs, MkDirRules.fs, MkNodRules.fs, RemovalRules.fs, RenameRules.fs, AccessRules.fs, StatRules.fs, AttributeChangeRules.fs, TimestampChangeRules.fs, OwnerChangeRules.fs, ProtectedFiles.fs, Sockaddr.fs, UserBuffer.fs, EmulatedFileSystemType.fs — and ProcessLaunch.fs, VirtualFileSystem.fs, PathWalk.fs, FileDescriptorRegistry.fs, Signal.fs, SignalState.fs). Carries measured Linux/Darwin divergence tables — consult them rather than re-measuring.
 ---
 
 # Deciding what the emulated kernel says
@@ -14,7 +14,7 @@ follows.
 First ask whether it is the kernel's at all. `WoofWare.PosixKernel/README.md`,
 "What the kernel leaves to the client", lists what the library deliberately does
 not do — user memory and `mmap`, blocks inside the process (`futex`,
-`__psynch`), choosing which task runs, when time passes, running a signal
+`__psynch`), choosing which thread runs, when time passes, running a signal
 handler, `sigaltstack`, process creation — with why each is the client's and how
 the two meet. Change that section when you move the line.
 
@@ -70,25 +70,25 @@ Two rules for adding a configuration knob:
   `ProcessLaunch` and a machine knob on `UnixBootImage`. The kernel chooses a
   later process's ID; only the first one's is configuration.
 
-## 2. Per-task state: field or map?
+## 2. Per-thread state: field or map?
 
 The criterion is **whether an absent key has a truthful reading**:
 
-- **Field on `UnixTaskState`** when it does not — `Cpu`, `OsThreadId`. There is
+- **Field on `UnixThreadState`** when it does not — `Cpu`, `OsThreadId`. There is
   no honest default processor index or thread ID, and an arbitrary one aliases
-  two tasks. As a field, the compiler asks every future task-creation site which
+  two threads. As a field, the compiler asks every future thread-creation site which
   value it wants.
-- **`Map<'Task, _>` on the kernel** when it does — `SignalState`'s handler
+- **`Map<'Thread, _>` on the kernel** when it does — `SignalState`'s handler
   frames (no frame, so an empty mask).
 
-CPU placement has both, as Linux does. A task's processor (`UnixTaskState.Cpu`,
-the one it last ran on) is a field, because every task has one. Which task each
+CPU placement has both, as Linux does. A thread's processor (`UnixThreadState.Cpu`,
+the one it last ran on) is a field, because every thread has one. Which thread each
 processor is running (`UnixSchedulingState.Occupants`) is a `Map<CpuId, OsThreadId>`
 on the *machine*, because an idle processor is a truthful reading of an absent
 key, and because a machine's processes share its processors. Keying it by
-processor makes two tasks on one processor unrepresentable, and "is T running" is
+processor makes two threads on one processor unrepresentable, and "is T running" is
 derived from it (`UnixScheduling.runningOn`), never stored beside it. Every way a
-task stops running (a dispatch elsewhere, a park in `UnixWait.park`, an exit, a
+thread stops running (a dispatch elsewhere, a park in `UnixWait.park`, an exit, a
 process ending) must take it out of the map; `TestUnixScheduling` holds that to a
 reference that reads it off the event history.
 
@@ -96,22 +96,22 @@ The map form carries an obligation that is easy to miss: **remove the entry when
 the value returns to the default.** A client may compare two states for equality
 to decide whether a step changed anything, so a stored default is a state that
 looks different while behaving identically. No process can observe it; it
-corrodes determinism. `SignalState.sigreturn` drops a task's last frame rather
+corrodes determinism. `SignalState.sigreturn` drops a thread's last frame rather
 than storing an empty stack, and `TestSignalState.fs` property-tests that against
 a store-everything oracle: reads must agree, **and** no default may ever be
 stored.
 
-`SignalState.Blocked` is such a map: a task absent from it blocks nothing, and
-an empty mask is never stored. `sigprocmask(2)` and delivery set a task's mask,
-`sigreturn` restores the mask its frame saved, a new task copies its creator's,
-and a task's exit drops it. A test that needs a task to block signals calls
+`SignalState.Blocked` is such a map: a thread absent from it blocks nothing, and
+an empty mask is never stored. `sigprocmask(2)` and delivery set a thread's mask,
+`sigreturn` restores the mask its frame saved, a new thread copies its creator's,
+and a thread's exit drops it. A test that needs a thread to block signals calls
 `UnixSignal.pthreadSigmask`; putting it in a handler (`HandlerFrames` in
 `WoofWare.PosixKernel.Test`) still works, and is what a test of frames wants. A
 mask is a `SignalMask`, not a set of signals, because Darwin keeps bit 31, which
 names none.
 
-`SignalState.MasksToRestore` is the other per-task map: the mask a
-`sigsuspend(2)` replaced, held from the call until the task returns to user
+`SignalState.MasksToRestore` is the other per-thread map: the mask a
+`sigsuspend(2)` replaced, held from the call until the thread returns to user
 mode. There an absent key means "not in the call", so an empty mask *is*
 stored, as the mask to restore. It lives in the signal state rather than the
 park because it outlives the park: the finishing call unparks before

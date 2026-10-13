@@ -176,16 +176,16 @@ module UnixClock =
 
     /// `gettimeofday(2)`: the realtime clock in whole microseconds, on every
     /// flavour, as a timestamp.
-    let gettimeofday<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let gettimeofday<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : UnixTimestamp
         =
         truncate 1000 (UnixMachineState.realtime system.Scheduling system.Machine)
 
     /// `clockGettime`, with a refusal answered as the `Error` rather than raised.
-    let internal tryClockGettime<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryClockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (clockId : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<UnixTimestamp, UnixError>, ClockGettimeRefusal>
         =
         let machine = system.Machine
@@ -234,9 +234,9 @@ module UnixClock =
     /// Darwin's `CLOCK_REALTIME` and `CLOCK_MONOTONIC` report whole microseconds,
     /// dropping the finer digits. Every other answered clock reports to the
     /// nanosecond.
-    let clockGettime<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let clockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (clockId : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<UnixTimestamp, UnixError>
         =
         tryClockGettime clockId system

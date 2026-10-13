@@ -141,11 +141,11 @@ module UnixPipe =
                 )
 
     /// `pipe2`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPipe2<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryPipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Pipe2Answer * UnixSystem<'Task, 'Handler>, Pipe2Refusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Pipe2Answer * UnixSystem<'Thread, 'Handler>, Pipe2Refusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -258,11 +258,11 @@ module UnixPipe =
     /// the next. Both are owned by
     /// the process's effective user and group, and stamped with the machine's
     /// realtime clock.
-    let pipe2<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let pipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Pipe2Answer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Pipe2Answer * UnixSystem<'Thread, 'Handler>
         =
         tryPipe2 flags destination system
         |> Refusal.orRaise "UnixPipe.pipe2" Pipe2Refusal.kind Pipe2Refusal.describe

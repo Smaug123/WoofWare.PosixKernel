@@ -27,7 +27,7 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestEpollWait =
 
-    let private task : int = 1
+    let private thread : int = 1
     let private nanosecondsPerMillisecond : int64 = 1_000_000L
     let private data : uint64 = 0x1234UL
 
@@ -43,15 +43,15 @@ module TestEpollWait =
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
-    let private withTask (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Tasks.ensure name system
+    let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        Threads.ensure name system
 
     let private createEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixPoll.tryEpollCreate1 0 system with
         | Ok (Ok (fd, system)) -> fd, system
         | other -> failwith $"expected an epoll instance, got %A{other}"
 
-    /// A Linux-flavoured system with tasks 1 to 6 registered, a listening socket
+    /// A Linux-flavoured system with threads 1 to 6 registered, a listening socket
     /// with an empty accept queue, and an epoll instance holding one
     /// edge-triggered `EPOLLIN` registration of it: the listener's descriptor,
     /// and the epoll instance's.
@@ -60,7 +60,7 @@ module TestEpollWait =
             (UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
              |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)),
              [ 1..6 ])
-            ||> List.fold (fun system name -> withTask name system)
+            ||> List.fold (fun system name -> withThread name system)
 
         let socketId = system.Machine.NextSocketId
         let (SocketId raw) = socketId
@@ -205,7 +205,7 @@ module TestEpollWait =
         (system : UnixSystem<int, string>)
         : Result<EpollWaitOutcome * UnixSystem<int, string>, EpollWaitRefusal>
         =
-        UnixPoll.tryEpollWait task epoll 8 UserBuffer.Mapped milliseconds system
+        UnixPoll.tryEpollWait thread epoll 8 UserBuffer.Mapped milliseconds system
 
     let private parks
         (milliseconds : int)
@@ -217,19 +217,19 @@ module TestEpollWait =
         | other -> failwith $"expected a park, got %A{other}"
 
     let private finishes (system : UnixSystem<int, string>) : (uint64 * uint32) list * UnixSystem<int, string> =
-        match UnixPoll.tryFinishEpollWait task system with
+        match UnixPoll.tryFinishEpollWait thread system with
         | Ok (EpollWaitOutcome.Answered events, finished) -> events, finished
         | other -> failwith $"expected the wait to finish, got %A{other}"
 
     let private reparks (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixPoll.tryFinishEpollWait task system with
+        match UnixPoll.tryFinishEpollWait thread system with
         | Ok (EpollWaitOutcome.WouldBlock _, parked) -> parked
         | other -> failwith $"expected the wait to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match UnixWait.wakes (Set.singleton task) system with
+        match UnixWait.wakes (Set.singleton thread) system with
         | [] -> None
-        | [ woken, fired ] when woken = task -> Some fired
+        | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 300
@@ -303,7 +303,7 @@ module TestEpollWait =
                 None
 
         let property ((fd : int, maxEvents : int), (buffer : UserBuffer, milliseconds : int)) : unit =
-            match oracle fd maxEvents buffer, UnixPoll.tryEpollWait task fd maxEvents buffer milliseconds idle with
+            match oracle fd maxEvents buffer, UnixPoll.tryEpollWait thread fd maxEvents buffer milliseconds idle with
             | Some error, actual -> actual |> shouldEqual (Ok (EpollWaitOutcome.Failed error, idle))
             | None, Ok (EpollWaitOutcome.Failed error, _) ->
                 failwith $"the ladder let the call through, and epollWait failed it with %O{error}"
@@ -329,7 +329,7 @@ module TestEpollWait =
                     listener, wild, UnixError.EINVAL
                     0, UserBuffer.Mapped, UnixError.EINVAL
                 ] do
-                UnixPoll.tryEpollWait task fd maxEvents buffer milliseconds idle
+                UnixPoll.tryEpollWait thread fd maxEvents buffer milliseconds idle
                 |> shouldEqual (Ok (EpollWaitOutcome.Failed expected, idle))
 
         let negativeCount =
@@ -346,9 +346,9 @@ module TestEpollWait =
         let darwin =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> withTask task
+            |> withThread thread
 
-        UnixPoll.tryEpollWait task 3 8 UserBuffer.Mapped -1 darwin
+        UnixPoll.tryEpollWait thread 3 8 UserBuffer.Mapped -1 darwin
         |> shouldEqual (Error (EpollWaitRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
     // ------------------------------------------------------------------
@@ -363,7 +363,7 @@ module TestEpollWait =
             match waits milliseconds ready with
             | Ok (EpollWaitOutcome.Answered events, answered) ->
                 events |> shouldEqual delivered
-                UnixTaskTable.parkedFor task answered.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor thread answered.Threads |> shouldEqual None
                 pendingEntries answered |> shouldEqual 0
             | other -> failwith $"expected the event, got %A{other}"
 
@@ -377,7 +377,7 @@ module TestEpollWait =
 
             match waits 0 stale with
             | Ok (EpollWaitOutcome.Answered [], answered) ->
-                UnixTaskTable.parkedFor task answered.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor thread answered.Threads |> shouldEqual None
                 // The walk consumed the stale entry even though it delivered nothing.
                 pendingEntries answered |> shouldEqual 0
                 answered |> shouldEqual (snd (EpollReadyList.drain queueId 8 stale))
@@ -406,14 +406,14 @@ module TestEpollWait =
                 )
             )
 
-            UnixWait.deadlines (Set.singleton task) parked |> shouldEqual [ deadline ]
+            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
 
             // One nanosecond short: nothing wakes it, and a finish attempted anyway sleeps
             // again on the same deadline.
             let short = after (deadline - 1L - now) parked
             woken short |> shouldEqual None
             let reparked = reparks short
-            UnixWait.deadlines (Set.singleton task) reparked |> shouldEqual [ deadline ]
+            UnixWait.deadlines (Set.singleton thread) reparked |> shouldEqual [ deadline ]
 
             // At the deadline: woken by it, and finished with no events.
             let expired = after (deadline - now) parked
@@ -423,7 +423,7 @@ module TestEpollWait =
 
             let events, finished = finishes expired
             events |> shouldEqual []
-            UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
 
         let bounded =
             Gen.zip positiveTimeout start
@@ -441,9 +441,9 @@ module TestEpollWait =
                 Interruptible.condition (WakeCondition.Primitive (WakePrimitive.EpollEventDeliverable queueId))
             )
 
-            UnixWait.deadlines (Set.singleton task) parked |> shouldEqual []
+            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
 
-            match UnixTaskTable.parkedFor task parked.Tasks with
+            match UnixThreadTable.parkedFor thread parked.Threads with
             | Some (ParkedSyscall.EpollWait wait) ->
                 wait
                 |> shouldEqual
@@ -472,7 +472,7 @@ module TestEpollWait =
 
             let events, finished = finishes ready
             events |> shouldEqual delivered
-            UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip positiveTimeout start)) property)
 
@@ -506,7 +506,7 @@ module TestEpollWait =
     [<Test>]
     let ``a wake whose event goes stale parks again on the same deadline, behind every other park`` () : unit =
         let _, parked = parks 5 idle
-        let ordinalBefore = (UnixTaskTable.parkOf task parked.Tasks).Value.Ordinal
+        let ordinalBefore = (UnixThreadTable.parkOf thread parked.Threads).Value.Ordinal
         let ready = parked |> after 1L |> signal
 
         woken ready
@@ -518,10 +518,10 @@ module TestEpollWait =
 
         pendingEntries reparked |> shouldEqual 0
 
-        UnixWait.deadlines (Set.singleton task) reparked
+        UnixWait.deadlines (Set.singleton thread) reparked
         |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
-        let ordinalAfter = (UnixTaskTable.parkOf task reparked.Tasks).Value.Ordinal
+        let ordinalAfter = (UnixThreadTable.parkOf thread reparked.Threads).Value.Ordinal
         ordinalAfter |> shouldBeGreaterThan ordinalBefore
 
     [<Test>]
@@ -536,14 +536,14 @@ module TestEpollWait =
         | other -> failwith $"expected the event, got %A{other}"
 
     [<Test>]
-    let ``a parked task cannot wait again, and an unparked one cannot finish`` () : unit =
+    let ``a parked thread cannot wait again, and an unparked one cannot finish`` () : unit =
         let _, parked = parks -1 idle
 
         let exn = Assert.Throws<exn> (fun () -> waits -1 parked |> ignore)
         exn.Message |> shouldContainText "is parked"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishEpollWait task idle |> ignore)
+            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishEpollWait thread idle |> ignore)
 
         exn.Message |> shouldContainText "is not parked"
 
@@ -569,11 +569,11 @@ module TestEpollWait =
             let started = after now idle
 
             for buffer, refusal in uncopyable do
-                UnixPoll.tryEpollWait task epoll 8 buffer milliseconds (signal started)
+                UnixPoll.tryEpollWait thread epoll 8 buffer milliseconds (signal started)
                 |> shouldEqual (Error refusal)
 
                 // Nothing to copy: the buffer is never looked at past the screen.
-                match UnixPoll.tryEpollWait task epoll 8 buffer milliseconds started with
+                match UnixPoll.tryEpollWait thread epoll 8 buffer milliseconds started with
                 | Ok (EpollWaitOutcome.Answered [], _) -> milliseconds |> shouldEqual 0
                 | Ok (EpollWaitOutcome.WouldBlock _, _) -> milliseconds |> shouldNotEqual 0
                 | other -> failwith $"expected no delivery, got %A{other}"
@@ -585,20 +585,21 @@ module TestEpollWait =
     let ``a parked wait finishes by copying to the buffer it was entered with`` () : unit =
         for buffer, refusal in uncopyable do
             let _, parked =
-                match UnixPoll.tryEpollWait task epoll 8 buffer 5 idle with
+                match UnixPoll.tryEpollWait thread epoll 8 buffer 5 idle with
                 | Ok (EpollWaitOutcome.WouldBlock condition, parked) -> condition, parked
                 | other -> failwith $"expected a park, got %A{other}"
 
-            match UnixTaskTable.parkedFor task parked.Tasks with
+            match UnixThreadTable.parkedFor thread parked.Threads with
             | Some (ParkedSyscall.EpollWait wait) -> wait.Buffer |> shouldEqual buffer
             | other -> failwith $"expected an epoll_wait, got %A{other}"
 
-            UnixPoll.tryFinishEpollWait task (signal parked) |> shouldEqual (Error refusal)
+            UnixPoll.tryFinishEpollWait thread (signal parked)
+            |> shouldEqual (Error refusal)
 
             // Timing out copies nothing, so it answers.
-            match UnixPoll.tryFinishEpollWait task (after (5L * nanosecondsPerMillisecond) parked) with
+            match UnixPoll.tryFinishEpollWait thread (after (5L * nanosecondsPerMillisecond) parked) with
             | Ok (EpollWaitOutcome.Answered [], finished) ->
-                UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
             | other -> failwith $"expected the wait to time out, got %A{other}"
 
     // ------------------------------------------------------------------
@@ -619,9 +620,9 @@ module TestEpollWait =
         ()
         : unit
         =
-        // Up to three epoll instances, each with or without a deliverable event; tasks parking on them
-        // in a generated order, some more than once; a clock; and which parked tasks the
-        // client holds asleep. The oracle states the rule per task, where `UnixWait.wakes`
+        // Up to three epoll instances, each with or without a deliverable event; threads parking on them
+        // in a generated order, some more than once; a clock; and which parked threads the
+        // client holds asleep. The oracle states the rule per thread, where `UnixWait.wakes`
         // groups by epoll instance.
         let gen =
             gen {
@@ -696,8 +697,8 @@ module TestEpollWait =
                 )
                 |> after clock
 
-            let parkedTasks =
-                system.Tasks
+            let parkedThreads =
+                system.Threads
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
                     match state.Parked with
@@ -709,7 +710,7 @@ module TestEpollWait =
                 )
 
             let asleep =
-                parkedTasks
+                parkedThreads
                 |> List.map (fun (name, _, _) -> name)
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
@@ -718,17 +719,17 @@ module TestEpollWait =
                 pending.[List.findIndex ((=) queueId) epolls]
 
             let finishingOn (queueId : OpenFileDescriptionId) : bool =
-                parkedTasks
+                parkedThreads
                 |> List.exists (fun (name, wait, _) -> not (Set.contains name asleep) && wait.Epoll = queueId)
 
             let lastAsleepOn (queueId : OpenFileDescriptionId) : int =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, wait, _) -> Set.contains name asleep && wait.Epoll = queueId)
                 |> List.maxBy (fun (_, _, ordinal) -> ordinal)
                 |> fun (name, _, _) -> name
 
             let expected =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, _, _) -> Set.contains name asleep)
                 |> List.sortBy (fun (_, _, ordinal) -> ordinal)
                 |> List.choose (fun (name, wait, _) ->

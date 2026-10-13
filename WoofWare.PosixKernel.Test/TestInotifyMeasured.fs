@@ -99,7 +99,7 @@ module TestInotifyMeasured =
 
     /// A machine like the one measured: Linux 6.18.5 aarch64, the measuring
     /// VM's `fs.inotify` sysctls, `seed` at the root, and a process of
-    /// `credentials` with tasks 0 to 2.
+    /// `credentials` with threads 0 to 2.
     let private boot (credentials : Credentials) (seed : (string * SeedEntry) list) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxArm64
         |> UnixBootImage.tryWithInotifyLimits
@@ -114,7 +114,7 @@ module TestInotifyMeasured =
             rootOwner
             (seed |> List.map (fun (n, e) -> name n, e) |> Map.ofList)
         |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Threads.ensure
 
     /// `IN_CLOEXEC` and `IN_NONBLOCK`.
     let private cloexec : int = 0x80000
@@ -271,14 +271,14 @@ module TestInotifyMeasured =
         go 0 []
 
     let private read
-        (task : int)
+        (thread : int)
         (fd : int)
         (buffer : UserBuffer)
         (count : int)
         (system : UnixSystem<int, string>)
         : ReadOutcome * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead task fd buffer (uint64 count) system with
+        match UnixReadWrite.tryRead thread fd buffer (uint64 count) system with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"read(%d{fd}, %d{count}) refused: %s{ReadRefusal.describe refusal}"
 
@@ -772,7 +772,7 @@ module TestInotifyMeasured =
                 }
         }
 
-    let private signalTask (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalThread (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -780,28 +780,28 @@ module TestInotifyMeasured =
                         SignalState.enqueue
                             {
                                 Signal = Signal.SIGUSR1
-                                Target = ValueSome task
+                                Target = ValueSome thread
                             }
                             system.Process.Signals
                 }
         }
 
-    let private returned (task : int) (system : UnixSystem<int, string>) : bool =
-        match UnixWait.satisfied task system with
+    let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
+        match UnixWait.satisfied thread system with
         | Some woken -> not (Set.isEmpty woken)
-        | None -> failwith $"task %d{task} is not asleep"
+        | None -> failwith $"thread %d{thread} is not asleep"
 
-    /// What the woken read of `task` answers, as the probe prints it.
-    let private finish (task : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        match UnixReadWrite.tryFinishRead task system with
+    /// What the woken read of `thread` answers, as the probe prints it.
+    let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
+        match UnixReadWrite.tryFinishRead thread system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
         | Ok (ReadOutcome.Restarts, s) -> "restarts", s
         | other -> failwith $"%A{other}"
 
-    let private sleeps (task : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match read task fd UserBuffer.Mapped 4096 system with
+    let private sleeps (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match read thread fd UserBuffer.Mapped 4096 system with
         | ReadOutcome.WouldBlock _, system -> system
         | other, _ -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -842,7 +842,7 @@ module TestInotifyMeasured =
             $"close=%s{rc closed}; thread returned after 150 ms=%d{(if returned reader system then 1 else 0)}"
         )
 
-        system <- signalTask reader system
+        system <- signalThread reader system
         let woken = returned reader system
         let answer, s = finish reader system
         system <- s
@@ -852,7 +852,7 @@ module TestInotifyMeasured =
         system <- catching true system
         let fd, s = init1 cloexec system
         let _, s = addWatch fd "b" create s
-        system <- sleeps reader fd s |> signalTask reader
+        system <- sleeps reader fd s |> signalThread reader
 
         let restarted, s = finish reader system
         restarted |> shouldEqual "restarts"

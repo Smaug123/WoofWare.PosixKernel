@@ -6,7 +6,7 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// The thread IDs a process's tasks report: what the leader starts with, how each
+/// The thread IDs a process's threads report: what the leader starts with, how each
 /// flavour's counter hands out the rest, and the settings that move it.
 ///
 /// The literal rows are the measurements of
@@ -30,19 +30,19 @@ module TestThreadIds =
 
     let private pid (value : int32) : ProcessId = ProcessId.parseOrFail "test" value
 
-    let private idOf (task : int) (system : UnixSystem<int, string>) : uint64 =
-        OsThreadId.toUInt64 (UnixTaskState.osThreadId (UnixTaskTable.get task system.Tasks))
+    let private idOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread system.Threads))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
-        match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned id, system) -> OsThreadId.toUInt64 id, system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
 
-    let private exitOrFail (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixTaskLifecycle.tryExitThread task 0 system with
+    let private exitOrFail (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixThreadLifecycle.tryExitThread thread 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
-        | other -> failwith $"expected task %d{task}'s exit to leave the process running, got %A{other}"
+        | other -> failwith $"expected thread %d{thread}'s exit to leave the process running, got %A{other}"
 
     /// Spawn `child` and exit it at once, as `pthread_create` then `pthread_join`
     /// would: the id it had.
@@ -54,12 +54,14 @@ module TestThreadIds =
     let ``a fresh process's leader has the process ID as its thread ID, on both flavours`` () : unit =
         for system in [ linux ; darwin ] do
             system.Leader |> shouldEqual 0
-            system.Tasks |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
+            system.Threads |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
 
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
 
-            UnixTaskState.cpu (UnixTaskTable.get 0 system.Tasks) |> shouldEqual (CpuId 0)
+            UnixThreadState.cpu (UnixThreadTable.get 0 system.Threads)
+            |> shouldEqual (CpuId 0)
+
             UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]
@@ -72,7 +74,7 @@ module TestThreadIds =
 
         system.Leader |> shouldEqual "main"
 
-        UnixTaskState.cpu (UnixTaskTable.get "main" system.Tasks)
+        UnixThreadState.cpu (UnixThreadTable.get "main" system.Threads)
         |> shouldEqual (CpuId 3)
 
     [<Test>]
@@ -92,7 +94,7 @@ module TestThreadIds =
         concurrent |> shouldEqual [ 9UL .. 16UL ]
 
         let system =
-            (system, [ 1..8 ]) ||> List.fold (fun system task -> exitOrFail task system)
+            (system, [ 1..8 ]) ||> List.fold (fun system thread -> exitOrFail thread system)
 
         let sequential, system =
             (system, [ 11..18 ])
@@ -123,7 +125,7 @@ module TestThreadIds =
         concurrent |> shouldEqual [ 2897491UL .. 2897498UL ]
 
         let system =
-            (system, [ 1..8 ]) ||> List.fold (fun system task -> exitOrFail task system)
+            (system, [ 1..8 ]) ||> List.fold (fun system thread -> exitOrFail thread system)
 
         let sequential, system =
             (system, [ 11..18 ])
@@ -206,10 +208,10 @@ module TestThreadIds =
         let system = system |> UnixSystem.writePidMaxSysctl "test" 400
 
         let rec fill (child : int) (started : uint64 list) (system : UnixSystem<int, string>) =
-            match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
+            match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
             | Ok (SpawnAnswer.Spawned id, system) -> fill (child + 1) (OsThreadId.toUInt64 id :: started) system
             | Ok (SpawnAnswer.Failed error, after) ->
-                // A failed creation hands out no thread ID and adds no task.
+                // A failed creation hands out no thread ID and adds no thread.
                 after |> shouldEqual system
                 List.rev started, error, system
             | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
@@ -397,7 +399,7 @@ module TestThreadIds =
         UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]
-    let ``spawning from a parked task, from no task, or onto a live one fails loudly`` () : unit =
+    let ``spawning from a parked thread, from no thread, or onto a live one fails loudly`` () : unit =
         let system = linux |> spawnOrFail 1 |> snd
 
         let fails (f : unit -> unit) (text : string) : unit =
@@ -405,12 +407,12 @@ module TestThreadIds =
             exn.Message |> shouldContainText text
 
         let spawn (parent : int) (child : int) (system : UnixSystem<int, string>) () : unit =
-            UnixTaskLifecycle.trySpawn parent child (CpuId 0) system
+            UnixThreadLifecycle.trySpawn parent child (CpuId 0) system
             |> ignore<Result<SpawnAnswer * UnixSystem<int, string>, SpawnRefusal<int>>>
 
-        fails (spawn 7 2 system) "names no task"
-        fails (spawn 0 1 system) "already names a task"
-        fails (spawn 1 0 system) "already names a task"
+        fails (spawn 7 2 system) "names no thread"
+        fails (spawn 0 1 system) "already names a thread"
+        fails (spawn 1 0 system) "already names a thread"
 
         let parked =
             UnixWait.park
@@ -427,8 +429,8 @@ module TestThreadIds =
         // Each is a bug in the client even from inside a handler that blocks
         // something, which would otherwise be refused.
         let masked = system |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGUSR1)
-        fails (spawn 0 1 masked) "already names a task"
-        fails (spawn 7 2 masked) "names no task"
+        fails (spawn 0 1 masked) "already names a thread"
+        fails (spawn 7 2 masked) "names no thread"
 
     [<Test>]
     let ``a new thread starts with its creator's mask and nothing pending on it`` () : unit =
@@ -496,7 +498,7 @@ module TestThreadIds =
     let ``a thread created inside a handler starts with the mask the handler runs under`` () : unit =
         // A new thread's mask is its creator's current one; inside a handler
         // for SIGUSR1 without SA_NODEFER, that holds SIGUSR1. The handler's
-        // return restores its own task's mask alone.
+        // return restores its own thread's mask alone.
         for system in [ linux ; darwin ] do
             let usr1 =
                 Signal.toRawSignoUnder (SignalState.numbering system.Process.Signals) Signal.SIGUSR1
@@ -543,7 +545,7 @@ module TestThreadIds =
             |> Launched.leaderThreadId (System.UInt64.MaxValue - 1UL)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixTaskLifecycle.trySpawn 0 1 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // The refusal carries no system, and the one before it is as it was:
@@ -552,7 +554,7 @@ module TestThreadIds =
         |> Set.map OsThreadId.toUInt64
         |> shouldEqual (Set.singleton (System.UInt64.MaxValue - 1UL))
 
-        UnixTaskLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // One below, the counter hands out its last ID.
@@ -564,7 +566,7 @@ module TestThreadIds =
         let id, system = spawnOrFail 1 system
         id |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
-        UnixTaskLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
     // ------------------------------------------------------------------
@@ -572,13 +574,13 @@ module TestThreadIds =
 
     [<RequireQualifiedAccess>]
     type private Op =
-        /// Spawn a new task from the `parent`th live task (modulo how many there are).
+        /// Spawn a new thread from the `parent`th live thread (modulo how many there are).
         | Spawn of parent : int
-        /// Exit the `task`th live task other than the leader (modulo how many).
-        | Exit of task : int
-        /// `exit_group` from the `task`th live task (modulo how many), which ends the
+        /// Exit the `thread`th live thread other than the leader (modulo how many).
+        | Exit of thread : int
+        /// `exit_group` from the `thread`th live thread (modulo how many), which ends the
         /// process; the run goes on from the state before, as if it had not been made.
-        | ExitGroup of task : int
+        | ExitGroup of thread : int
         /// The administrator writes Linux's `pid_max`, whatever the live ids are.
         | WritePidMax of pidMax : int32
 
@@ -717,17 +719,17 @@ module TestThreadIds =
         | Setup.Darwin first -> idOf 0 system |> shouldEqual first
 
         let liveIds (system : UnixSystem<int, string>) : Set<uint64> =
-            system.Tasks
+            system.Threads
             |> Map.toSeq
-            |> Seq.map (fun (task, _) -> idOf task system)
+            |> Seq.map (fun (thread, _) -> idOf thread system)
             |> Set.ofSeq
 
         let check (system : UnixSystem<int, string>) : unit =
             UnixSystem.checkInvariants system |> shouldEqual []
-            // Unique among live tasks.
-            (liveIds system).Count |> shouldEqual system.Tasks.Count
+            // Unique among live threads.
+            (liveIds system).Count |> shouldEqual system.Threads.Count
 
-            // The machine's allocator records exactly the live tasks' IDs, which
+            // The machine's allocator records exactly the live threads' IDs, which
             // is what it skips.
             ThreadIdAllocator.live system.Machine.ThreadIds
             |> Set.map OsThreadId.toUInt64
@@ -741,18 +743,18 @@ module TestThreadIds =
             ((system, model, nextName, minted, last) : UnixSystem<int, string> * Model * int * Set<uint64> * uint64)
             (op : Op)
             =
-            let live = system.Tasks |> Map.keys |> List.ofSeq
+            let live = system.Threads |> Map.keys |> List.ofSeq
 
             match op with
             | Op.Spawn index ->
                 let parent = live.[index % live.Length]
                 let held = liveIds system
-                let actual = UnixTaskLifecycle.trySpawn parent nextName (CpuId 0) system
+                let actual = UnixThreadLifecycle.trySpawn parent nextName (CpuId 0) system
 
                 match modelNext held model, actual with
                 | Expected.Exhausted, Ok (SpawnAnswer.Failed error, after) ->
                     error |> shouldEqual UnixError.EAGAIN
-                    // A failed creation hands out no thread ID and adds no task.
+                    // A failed creation hands out no thread ID and adds no thread.
                     after |> shouldEqual system
                     cover ThreadIdLabel.Exhausted
                     system, model, nextName + 1, minted, last
@@ -790,19 +792,19 @@ module TestThreadIds =
                     after, model, nextName + 1, minted, id
                 | expected, actual -> failwith $"the model says %A{expected}, and the library %A{actual}"
             | Op.Exit index ->
-                match live |> List.filter (fun task -> task <> system.Leader) with
+                match live |> List.filter (fun thread -> thread <> system.Leader) with
                 | [] -> system, model, nextName, minted, last
                 | others ->
-                    let task = others.[index % others.Length]
-                    let after = exitOrFail task system
+                    let thread = others.[index % others.Length]
+                    let after = exitOrFail thread system
                     cover ThreadIdLabel.Exits
                     check after
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
-                let task = live.[index % live.Length]
-                let ended = UnixTaskLifecycle.exitGroup task 0 system
+                let thread = live.[index % live.Length]
+                let ended = UnixThreadLifecycle.exitGroup thread 0 system
 
-                // Every task's ID is freed with it, the process leaves the
+                // Every thread's ID is freed with it, the process leaves the
                 // machine, and nothing else on the machine moves.
                 ThreadIdAllocator.live ended.Machine.ThreadIds |> shouldEqual Set.empty
                 ProcessIdTable.live ended.Machine.ProcessIds |> shouldEqual Set.empty
@@ -828,7 +830,7 @@ module TestThreadIds =
                 let after = UnixSystem.writePidMaxSysctl "test" pidMax system
 
                 // The write changes the counter's bound and nothing else: every
-                // live task keeps its id.
+                // live thread keeps its id.
                 { after with
                     Machine =
                         { after.Machine with
@@ -850,7 +852,7 @@ module TestThreadIds =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
 
     [<TestCaseSource(nameof flavours)>]
-    let ``thread IDs follow the reference model, are unique among live tasks, and come back only after a wrap``
+    let ``thread IDs follow the reference model, are unique among live threads, and come back only after a wrap``
         (flavour : SimulatedUnixFlavour)
         : unit
         =

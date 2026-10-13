@@ -13,7 +13,7 @@ namespace WoofWare.PosixKernel
 /// A second process on the same simulated kernel would have its own
 /// copy of <c>UnixProcessState</c> but would share <c>UnixMachineState</c>.
 /// </remarks>
-type internal UnixProcessState<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type internal UnixProcessState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
             /// In-memory model of the simulated process's Unix file descriptor
@@ -117,7 +117,7 @@ type internal UnixProcessState<'Task, 'Handler when 'Task : comparison and 'Hand
             /// Held on the process (rather than per-thread) because POSIX
             /// signal disposition is process-wide; the per-thread pieces, each
             /// thread's handler frames and own pending set, live inside it too.
-            Signals : SignalState<'Task, 'Handler>
+            Signals : SignalState<'Thread, 'Handler>
             /// Whether the process writes a core dump when a signal whose default
             /// action dumps core kills it. Fixed for the whole run: this library
             /// models no `setrlimit(2)`; a client sets it once with
@@ -141,24 +141,24 @@ module internal UnixProcessState =
     /// root has not been measured are refused instead), and programs commonly
     /// skip their own guards when they find they are root. That is why
     /// `UnixSystem.defaultUserId` is not 0.
-    let callerPrivilege<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (proc : UnixProcessState<'Task, 'Handler>)
+    let callerPrivilege<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (proc : UnixProcessState<'Thread, 'Handler>)
         : CallerPrivilege
         =
         Credentials.privilege proc.Credentials
 
     /// The environment the process was started with, entry by entry, in order.
     /// See `UnixProcessState.Environment`.
-    let environment<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (proc : UnixProcessState<'Task, 'Handler>)
+    let environment<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (proc : UnixProcessState<'Thread, 'Handler>)
         : UnixByteString list
         =
         proc.Environment
 
     /// The path of the executable that started the process, or `None` if it has
     /// none. See `UnixProcessState.ProcessPath`.
-    let processPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (proc : UnixProcessState<'Task, 'Handler>)
+    let processPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (proc : UnixProcessState<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
         proc.ProcessPath
@@ -167,10 +167,10 @@ module internal UnixProcessState =
     ///
     /// For a client that runs the process's signal handlers, or checks its
     /// invariants. A process sees parts of this through `sigaction(2)` and the
-    /// handlers it runs; this is the whole of it, every task's handler frames
+    /// handlers it runs; this is the whole of it, every thread's handler frames
     /// and every pending signal included.
-    let signals<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (proc : UnixProcessState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+    let signals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (proc : UnixProcessState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         proc.Signals

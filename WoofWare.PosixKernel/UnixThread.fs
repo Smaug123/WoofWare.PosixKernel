@@ -41,7 +41,7 @@ type ParkedEpollWait =
         Deadline : int64 option
     }
 
-/// One task's in-flight `kevent(2)` wait on a kqueue: the state the call
+/// One thread's in-flight `kevent(2)` wait on a kqueue: the state the call
 /// captured when it was entered.
 type ParkedKevent =
     {
@@ -68,7 +68,7 @@ type ParkedKevent =
     }
 
 /// <summary>
-/// One task's in-flight <c>flock</c> acquisition: which open file description it is
+/// One thread's in-flight <c>flock</c> acquisition: which open file description it is
 /// waiting to lock, and how.
 /// </summary>
 /// <remarks>
@@ -131,7 +131,7 @@ type ParkedPollEntry =
     /// stay in step.
     | Watched of fd : int * description : OpenFileDescriptionId * events : int16
 
-/// One task's in-flight Linux-flavoured `poll(2)`: every entry the call was made with, in order,
+/// One thread's in-flight Linux-flavoured `poll(2)`: every entry the call was made with, in order,
 /// and when it times out.
 type ParkedPoll =
     {
@@ -198,7 +198,7 @@ type PollQueueId =
 ///
 /// Held on the machine rather than in the call's park, because a socket event
 /// in any process's call activates its filters, as one does a kqueue's, and no
-/// process's view holds another's tasks. It lives exactly as long as the park
+/// process's view holds another's threads. It lives exactly as long as the park
 /// naming it (`ParkedKqueuePoll.Queue`): the park's end destroys it.
 ///
 /// Its representation is internal, so a later version may change what a
@@ -251,7 +251,7 @@ module PollQueue =
     /// listed: the call reports a pipe's filter exactly while it is ready.
     let activated (queue : PollQueue) : (int * KqueueFilter) list = queue.Active
 
-/// One task's in-flight Darwin-flavoured `poll(2)`: its entries, the kqueue
+/// One thread's in-flight Darwin-flavoured `poll(2)`: its entries, the kqueue
 /// the call made for its own use, and when it times out.
 type ParkedKqueuePoll =
     {
@@ -303,7 +303,7 @@ module SleepTarget =
         | SleepTarget.Waiting (description, _) -> Some description
         | SleepTarget.EndedByClose _ -> None
 
-/// One task's in-flight blocking `accept(2)`: the listening socket it waits on
+/// One thread's in-flight blocking `accept(2)`: the listening socket it waits on
 /// for a connection, and where the connection's peer address goes when one
 /// arrives.
 type ParkedAccept =
@@ -329,7 +329,7 @@ type ParkedAccept =
         DeclaredLength : uint32
     }
 
-/// One task's in-flight blocking `read(2)` of a pipe that held nothing while a
+/// One thread's in-flight blocking `read(2)` of a pipe that held nothing while a
 /// write end was open.
 type ParkedPipeRead =
     {
@@ -348,7 +348,7 @@ type ParkedPipeRead =
         Count : int
     }
 
-/// One task's in-flight blocking `write(2)` into a pipe that had no room for all
+/// One thread's in-flight blocking `write(2)` into a pipe that had no room for all
 /// of it.
 ///
 /// Holds no bytes. A sleeping write copies from the caller's buffer as room
@@ -395,7 +395,7 @@ type TcpSendCall =
     /// (`MSG_NOSIGNAL`), an `EPIPE` raises no `SIGPIPE`.
     | Send of noSignal : bool
 
-/// One task's in-flight blocking `read(2)` or `recv(2)` of a connected stream
+/// One thread's in-flight blocking `read(2)` or `recv(2)` of a connected stream
 /// socket that had nothing to answer: no bytes, no FIN and no reset.
 type ParkedConnectionRead =
     {
@@ -416,7 +416,7 @@ type ParkedConnectionRead =
         Call : TcpReceiveCall
     }
 
-/// One task's in-flight blocking `write(2)` or `send(2)` to a connected stream
+/// One thread's in-flight blocking `write(2)` or `send(2)` to a connected stream
 /// socket whose buffers had no room for all of it.
 ///
 /// Holds no bytes, as `ParkedPipeWrite` holds none: the call that finishes the
@@ -453,7 +453,7 @@ type SleepRemainder =
     /// `destination`.
     ///
     /// `until` is in nanoseconds since boot, on the same clock as
-    /// `ParkedSleep.Deadline`. Under Linux it is the deadline (plus the task's
+    /// `ParkedSleep.Deadline`. Under Linux it is the deadline (plus the thread's
     /// timer slack, were that modelled). Under Darwin it is the C library's own
     /// completion time, which its 32-bit arithmetic on seconds makes differ
     /// from the deadline for requests of about 2^32 seconds or more.
@@ -464,10 +464,10 @@ type SleepRemainder =
     /// Under Darwin the C library writes it, so the kernel does not consult it.
     | Reported of until : int64 * destination : UserBuffer
 
-/// One task's in-flight `nanosleep(2)` or `clock_nanosleep(2)`: the state the
+/// One thread's in-flight `nanosleep(2)` or `clock_nanosleep(2)`: the state the
 /// call fixed when it was entered.
 ///
-/// Reserved: nothing parks a task in a sleep yet (`ParkedSyscall.Sleep`).
+/// Reserved: nothing parks a thread in a sleep yet (`ParkedSyscall.Sleep`).
 type ParkedSleep =
     {
         /// The instant, in nanoseconds since boot on the machine's virtual
@@ -479,10 +479,10 @@ type ParkedSleep =
         Remainder : SleepRemainder
     }
 
-/// One task's in-flight blocking `open(2)` or `openat(2)` of one end of a
+/// One thread's in-flight blocking `open(2)` or `openat(2)` of one end of a
 /// FIFO, asleep until the other end is opened.
 ///
-/// Reserved: nothing parks a task in a FIFO open yet (`ParkedSyscall.FifoOpen`).
+/// Reserved: nothing parks a thread in a FIFO open yet (`ParkedSyscall.FifoOpen`).
 type ParkedFifoOpen =
     {
         /// The open file description the call made before it slept, and holds
@@ -503,7 +503,7 @@ type ParkedFifoOpen =
         PartnerOpens : int64
     }
 
-/// One task's in-flight blocking `read(2)` of an inotify instance that held no
+/// One thread's in-flight blocking `read(2)` of an inotify instance that held no
 /// record.
 type ParkedInotifyRead =
     {
@@ -523,7 +523,7 @@ type ParkedInotifyRead =
         Count : int
     }
 
-/// One task's in-flight `select(2)` or `pselect(2)`: the state the call fixed
+/// One thread's in-flight `select(2)` or `pselect(2)`: the state the call fixed
 /// when it was entered.
 ///
 /// Its representation is internal, so a later version may change what it
@@ -543,11 +543,11 @@ type ParkedSelect =
             Deadline : int64 option
         }
 
-/// One task's in-flight `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`:
+/// One thread's in-flight `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`:
 /// Linux's `rt_sigtimedwait(2)` or Darwin's `__sigwait`, asleep until a signal
 /// in a set is pending. The state the call fixed when it was entered.
 ///
-/// Reserved: nothing parks a task in a signal wait yet
+/// Reserved: nothing parks a thread in a signal wait yet
 /// (`ParkedSyscall.SignalWait`).
 type ParkedSignalWait =
     {
@@ -571,7 +571,7 @@ type ParkedSignalWait =
         Destination : UserBuffer option
     }
 
-/// One task's in-flight blocking receive on a datagram socket that had
+/// One thread's in-flight blocking receive on a datagram socket that had
 /// nothing queued: a `read(2)`, `recv(2)`, `recvfrom(2)` or `recvmsg(2)`.
 ///
 /// Its representation is internal, so a later version may change what it
@@ -589,7 +589,7 @@ type ParkedDatagramReceive =
             Socket : OpenFileDescriptionId
         }
 
-/// One task's in-flight blocking send of a datagram on a Unix-domain socket
+/// One thread's in-flight blocking send of a datagram on a Unix-domain socket
 /// whose receiver, or whose own send buffer, had no room for it: a Linux
 /// `write(2)`, `send(2)`, `sendto(2)` or `sendmsg(2)`.
 ///
@@ -607,7 +607,7 @@ type ParkedDatagramSend =
             Socket : OpenFileDescriptionId
         }
 
-/// One task's in-flight blocking `connect(2)` to a listener whose accept queue
+/// One thread's in-flight blocking `connect(2)` to a listener whose accept queue
 /// was full.
 ///
 /// Its representation is internal, so a later version may change what it
@@ -627,16 +627,16 @@ type ParkedConnect =
         }
 
 /// <summary>
-/// The syscall a task is blocked in, if it is blocked in one.
+/// The syscall a thread is blocked in, if it is blocked in one.
 /// </summary>
 /// <remarks>
 /// One case per parking syscall.
 ///
-/// This is stored as a single field on the task holding it, because
-/// a task blocks in at most one syscall at a time.
+/// This is stored as a single field on the thread holding it, because
+/// a thread blocks in at most one syscall at a time.
 ///
 /// Each case's payload is its own syscall's business: what parks a
-/// task is generally arbitrary state specific to that syscall.
+/// thread is generally arbitrary state specific to that syscall.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type ParkedSyscall =
@@ -651,24 +651,24 @@ type ParkedSyscall =
     | ConnectionRead of ParkedConnectionRead
     | ConnectionWrite of ParkedConnectionWrite
     /// `sigsuspend(2)`, or `pause(2)`, which is `sigsuspend` with the mask the
-    /// task already has (`UnixSignal.pause`). Carries nothing: the temporary
-    /// mask is the task's mask while it sleeps, and the mask the call replaced
+    /// thread already has (`UnixSignal.pause`). Carries nothing: the temporary
+    /// mask is the thread's mask while it sleeps, and the mask the call replaced
     /// is the signal state's (`SignalState.maskToRestore`), because it outlives
-    /// the park, until the task returns to user mode.
+    /// the park, until the thread returns to user mode.
     | SigSuspend
     /// `nanosleep(2)`, or `clock_nanosleep(2)`. Waits for its deadline or for
     /// a signal with a handler, and holds no open file description.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Sleep of ParkedSleep
     /// A blocking `open(2)` or `openat(2)` of one end of a FIFO, waiting for
     /// the other end to be opened or for a signal with a handler. Holds the
     /// open file description it made (`ParkedFifoOpen.Opener`).
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | FifoOpen of ParkedFifoOpen
     /// A blocking `read(2)` of an inotify instance, waiting for a record or for
@@ -677,8 +677,8 @@ type ParkedSyscall =
     /// `select(2)` or `pselect(2)`, waiting for a descriptor in one of its sets
     /// to be ready, for its deadline, or for a signal with a handler.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Select of ParkedSelect
     /// `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`: waiting for a
@@ -686,8 +686,8 @@ type ParkedSyscall =
     /// under Linux, for a signal with a handler outside its set. Holds no open
     /// file description.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | SignalWait of ParkedSignalWait
     /// A blocking receive on a datagram socket, UDP or Unix-domain, connected
@@ -695,8 +695,8 @@ type ParkedSyscall =
     /// it sleeps until a datagram arrives, on both flavours, or a signal with
     /// a handler interrupts it. Holds the socket's open file description.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | DatagramReceive of ParkedDatagramReceive
     /// A blocking send of a datagram on a Unix-domain socket, which under Linux
@@ -704,8 +704,8 @@ type ParkedSyscall =
     /// UDP send never sleeps, and a Darwin Unix-domain send that has no room
     /// fails with `ENOBUFS`. Holds the socket's open file description.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | DatagramSend of ParkedDatagramSend
     /// A blocking `connect(2)` to a listener whose accept queue is full, under
@@ -714,8 +714,8 @@ type ParkedSyscall =
     /// Darwin connect never sleeps. Holds the connecting socket's open file
     /// description.
     ///
-    /// Reserved: nothing parks a task in it yet, and no finishing call answers
-    /// one. `UnixSystem.checkInvariants` reports a task parked in it as a
+    /// Reserved: nothing parks a thread in it yet, and no finishing call answers
+    /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Connect of ParkedConnect
 
@@ -773,8 +773,8 @@ module ParkedSyscall =
 
 /// Where one park stands in the order every park on this machine was made in.
 ///
-/// Minted from a counter the machine keeps as each task parks, so of any two
-/// tasks parked at once, the one parked earlier holds the smaller ordinal.
+/// Minted from a counter the machine keeps as each thread parks, so of any two
+/// threads parked at once, the one parked earlier holds the smaller ordinal.
 /// A kernel that wakes one waiter of several reads this to decide which.
 type ParkOrdinal =
     | ParkOrdinal of int64
@@ -784,13 +784,13 @@ type ParkOrdinal =
         match this with
         | ParkOrdinal.ParkOrdinal i -> $"<park #%i{i}>"
 
-/// One task's park: the syscall it is blocked in, and where the park stands in
+/// One thread's park: the syscall it is blocked in, and where the park stands in
 /// the order parks were made in.
-type TaskPark =
+type ThreadPark =
     {
-        /// The syscall the task is blocked in, with the state it was entered with.
+        /// The syscall the thread is blocked in, with the state it was entered with.
         Syscall : ParkedSyscall
-        /// When the task parked, relative to every other park.
+        /// When the thread parked, relative to every other park.
         ///
         /// A re-park (a woken waiter that finds its condition gone and sleeps
         /// again) mints a fresh one, as a real kernel queues such a waiter
@@ -798,12 +798,12 @@ type TaskPark =
         Ordinal : ParkOrdinal
     }
 
-/// What the emulated kernel knows about one task — one scheduling entity, what
+/// What the emulated kernel knows about one thread — one scheduling entity, what
 /// `gettid(2)` names.
 ///
 /// A process starts with one, its leader (`ProcessLaunch.create`), every thread it creates adds
-/// one (`UnixTaskLifecycle.spawn`), and the thread's exit removes it
-/// (`UnixTaskLifecycle.exitThread`), so the table holds a task for each thread
+/// one (`UnixThreadLifecycle.spawn`), and the thread's exit removes it
+/// (`UnixThreadLifecycle.exitThread`), so the table holds an entry for each thread
 /// from its creation until its exit. That is what makes the record total:
 /// `Cpu` and `OsThreadId` have no truthful default, so a `Map` of each would
 /// have no honest answer for an absent key, and the answer is that there is
@@ -812,36 +812,36 @@ type TaskPark =
 /// The per-thread errno is *not* here. On a real Unix errno lives in libc, not
 /// in the kernel: the kernel returns an error code and the syscall wrapper
 /// stores it, so the slot belongs to the client.
-type UnixTaskState =
+type UnixThreadState =
     internal
         {
-            /// The simulated logical processor this task last ran on, or, before
+            /// The simulated logical processor this thread last ran on, or, before
             /// the client first dispatches it, the one its creator named to
-            /// `UnixTaskLifecycle.spawn`, or to `ProcessLaunch.create` for a
+            /// `UnixThreadLifecycle.spawn`, or to `ProcessLaunch.create` for a
             /// process's leader: Linux's `task_cpu`. Always one the machine has,
             /// in `[0, UnixMachineState.ProcessorCount)`.
             ///
-            /// Only `UnixScheduling.dispatch` changes it. A task keeps it when it
-            /// stops running, by parking or by another task's dispatch to the
-            /// processor, as a blocked Linux task keeps its last processor
+            /// Only `UnixScheduling.dispatch` changes it. A thread keeps it when it
+            /// stops running, by parking or by another thread's dispatch to the
+            /// processor, as a blocked Linux thread keeps its last processor
             /// (`docs/plans/2026-08-23-posix-kernel-extraction/cpu-placement.c`,
-            /// section `sleeper`). Whether the task is running there is the
+            /// section `sleeper`). Whether the thread is running there is the
             /// machine's record (`UnixSchedulingState.Occupants`), which
             /// `UnixScheduling.runningOn` reads; `sched_getcpu(3)` reports this
-            /// only while the task runs.
+            /// only while the thread runs.
             Cpu : CpuId
-            /// The OS thread identifier this task reports, as `gettid(2)` does.
+            /// The OS thread identifier this thread reports, as `gettid(2)` does.
             ///
-            /// Minted by the machine's `ThreadIdAllocator` when the task is created,
-            /// and fixed from then on. No two live tasks share one. On Linux an exited
-            /// task's id comes back once the counter wraps at `pid_max`, so a stale
+            /// Minted by the machine's `ThreadIdAllocator` when the thread is created,
+            /// and fixed from then on. No two live threads share one. On Linux an exited
+            /// thread's id comes back once the counter wraps at `pid_max`, so a stale
             /// owner identity recorded by a user-space lock can then be mistaken for a
             /// live owner, as it can on a real Linux.
             OsThreadId : OsThreadId
-            /// The syscall this task is blocked in, and where that park stands in park
+            /// The syscall this thread is blocked in, and where that park stands in park
             /// order, if it is blocked in one.
             ///
-            /// A real kernel holds a blocked task's in-flight syscall arguments on
+            /// A real kernel holds a blocked thread's in-flight syscall arguments on
             /// its stack; this is that. Three readers, and they must agree, which is
             /// why there is one of it: the re-entry consults it rather than the
             /// caller's argument cells, which the process may have written since;
@@ -852,77 +852,81 @@ type UnixTaskState =
             /// description lives until the call returns.
             ///
             /// Every payload holds kernel objects by *identity*, never by descriptor
-            /// number: a sleeping task keeps the object rather than the number, and
+            /// number: a sleeping thread keeps the object rather than the number, and
             /// descriptor numbers are reused as soon as they are free.
-            Parked : TaskPark option
+            Parked : ThreadPark option
         }
 
-/// Reading one task.
+/// Reading one thread.
 ///
-/// A client gets a task's state by looking its name up in `UnixSystem.tasks`,
-/// which holds no entry for a name the process has no task by, so each reader
+/// A client gets a thread's state by looking its name up in `UnixSystem.threads`,
+/// which holds no entry for a name the process has no thread by, so each reader
 /// here answers for every state it can be given.
 [<RequireQualifiedAccess>]
-module UnixTaskState =
+module UnixThreadState =
 
-    /// The logical processor `task` last ran on, or, before the client first
+    /// The logical processor `thread` last ran on, or, before the client first
     /// dispatched it (`UnixScheduling.dispatch`), the one its creator named.
     /// Whether it is running there now is `UnixScheduling.runningOn`'s answer.
-    let cpu (task : UnixTaskState) : CpuId = task.Cpu
+    let cpu (thread : UnixThreadState) : CpuId = thread.Cpu
 
-    /// The OS thread ID `task` reports, as `gettid(2)` does: fixed when the
-    /// task is created, and held by no other live task on the machine.
-    let osThreadId (task : UnixTaskState) : OsThreadId = task.OsThreadId
+    /// The OS thread ID `thread` reports, as `gettid(2)` does: fixed when the
+    /// thread is created, and held by no other live thread on the machine.
+    let osThreadId (thread : UnixThreadState) : OsThreadId = thread.OsThreadId
 
-    /// The syscall `task` is blocked in, and where that park stands in park
+    /// The syscall `thread` is blocked in, and where that park stands in park
     /// order, if it is blocked in one. The park holds kernel objects by
-    /// identity, never by descriptor number: a sleeping task keeps the object
+    /// identity, never by descriptor number: a sleeping thread keeps the object
     /// rather than the number, and descriptor numbers are reused as soon as
     /// they are free.
-    let park (task : UnixTaskState) : TaskPark option = task.Parked
+    let park (thread : UnixThreadState) : ThreadPark option = thread.Parked
 
-    /// The syscall `task` is blocked in, if it is blocked in one: `park`
+    /// The syscall `thread` is blocked in, if it is blocked in one: `park`
     /// without its place in park order.
-    let parkedIn (task : UnixTaskState) : ParkedSyscall option =
-        task.Parked |> Option.map (fun park -> park.Syscall)
+    let parkedIn (thread : UnixThreadState) : ParkedSyscall option =
+        thread.Parked |> Option.map (fun park -> park.Syscall)
 
-/// The tasks a simulated process owns, by whatever a client uses to name one.
+/// The threads a simulated process owns, by whatever a client uses to name one.
 ///
-/// Generic in the task name for the same reason `SignalState` is: the identity
+/// Generic in the thread name for the same reason `SignalState` is: the identity
 /// of a scheduling entity is the client's, not this library's.
 [<RequireQualifiedAccess>]
-module UnixTaskTable =
+module UnixThreadTable =
 
-    /// The task `name` is.
+    /// The thread `name` is.
     ///
-    /// Total, and loudly partial rather than an option: every task is added
+    /// Total, and loudly partial rather than an option: every thread is added
     /// when it is created and removed only when it exits, so a name that
     /// resolves to nothing is a client bug rather than anything a process did.
-    let internal get<'Task when 'Task : comparison> (name : 'Task) (tasks : Map<'Task, UnixTaskState>) : UnixTaskState =
+    let internal get<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : UnixThreadState
+        =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
-        let mutable task = Unchecked.defaultof<UnixTaskState>
+        let mutable thread = Unchecked.defaultof<UnixThreadState>
 
-        if tasks.TryGetValue (name, &task) then
-            task
+        if threads.TryGetValue (name, &thread) then
+            thread
         else
             failwith
-                $"UnixTaskTable.get: %O{name} names no task. Every task enters the table when its thread is created, as its process's leader or by `UnixTaskLifecycle.spawn`, and leaves it when the thread exits, so this one was never created or has already exited (this is a bug in the client)."
+                $"UnixThreadTable.get: %O{name} names no thread. Every thread enters the table when it is created, as its process's leader or by `UnixThreadLifecycle.spawn`, and leaves it when the thread exits, so this one was never created or has already exited (this is a bug in the client)."
 
-    /// Add the task for a newly-created scheduling entity.
+    /// Add the thread for a newly-created scheduling entity.
     ///
-    /// Internal so that the only routes by which a task enters the table are
-    /// a process's launch and `UnixTaskLifecycle.spawn`, which mint its id.
-    let internal add<'Task when 'Task : comparison>
-        (name : 'Task)
+    /// Internal so that the only routes by which a thread enters the table are
+    /// a process's launch and `UnixThreadLifecycle.spawn`, which mint its id.
+    let internal add<'Thread when 'Thread : comparison>
+        (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
-        if Map.containsKey name tasks then
+        if Map.containsKey name threads then
             failwith
-                $"UnixTaskTable.add: %O{name} already names a task. A task is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
+                $"UnixThreadTable.add: %O{name} already names a thread. A thread is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
         Map.add
             name
@@ -931,29 +935,29 @@ module UnixTaskTable =
                 OsThreadId = osThreadId
                 Parked = None
             }
-            tasks
+            threads
 
     /// The syscall `name` is blocked in, if any. Fails loudly, as `get` does,
-    /// for a name that is not a task; a client reads `UnixTaskState.parkedIn`
+    /// for a name that is not a thread; a client reads `UnixThreadState.parkedIn`
     /// of the state it looked up instead.
-    let internal parkedFor<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
+    let internal parkedFor<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
         : ParkedSyscall option
         =
-        UnixTaskState.parkedIn (get name tasks)
+        UnixThreadState.parkedIn (get name threads)
 
     /// The park `name` is in, with its place in park order, if it is parked.
-    let internal parkOf<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
-        : TaskPark option
+    let internal parkOf<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : ThreadPark option
         =
-        (get name tasks).Parked
+        (get name threads).Parked
 
     /// Record that `name` is in `park`.
     ///
-    /// Refuses to replace a park of one syscall with a park of another. A task
+    /// Refuses to replace a park of one syscall with a park of another. A thread
     /// runs no user code between a wake and its re-entry into the syscall it
     /// woke from, so the only lawful writes are onto an absent record and onto a
     /// park of the same syscall — the re-park a beaten waiter performs. Anything
@@ -969,13 +973,13 @@ module UnixTaskTable =
     /// The table alone: it moves no hold on an open file description. Internal
     /// so that `UnixWait.park`, which mints the ordinal, and `UnixParkState`,
     /// which moves the holds, are the ways a park is written.
-    let internal withPark<'Task when 'Task : comparison>
-        (name : 'Task)
-        (park : TaskPark)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+    let internal withPark<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (park : ThreadPark)
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
-        let existing = get name tasks
+        let existing = get name threads
 
         // Which syscall a park is of, and nothing else about it.
         let kind (parked : ParkedSyscall) : int =
@@ -1007,14 +1011,14 @@ module UnixTaskTable =
 
         if not sameSyscall then
             failwith
-                $"UnixTaskTable.withPark: task %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A task blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
+                $"UnixThreadTable.withPark: thread %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A thread blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
 
         Map.add
             name
             { existing with
                 Parked = Some park
             }
-            tasks
+            threads
 
     /// Record that `name` is no longer parked: its syscall has finished.
     ///
@@ -1022,30 +1026,30 @@ module UnixTaskTable =
     /// table, where `UnixSystem.checkInvariants` reports them
     /// (`HoldCountMismatch`). `UnixParkState.unpark` ends a park and lets go of
     /// its holds.
-    let internal unpark<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+    let internal unpark<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
-        let existing = get name tasks
+        let existing = get name threads
 
         Map.add
             name
             { existing with
                 Parked = None
             }
-            tasks
+            threads
 
-    /// Compare the table against the tasks a client believes are live,
+    /// Compare the table against the threads a client believes are live,
     /// answering those it has no entry for and those it has an entry for but
     /// the client does not.
     ///
     /// Answers both sets rather than raising, so the client reports them in its
     /// own vocabulary: this library has no opinion on what a defect is called.
-    let reconcile<'Task when 'Task : comparison>
-        (live : Set<'Task>)
-        (tasks : Map<'Task, UnixTaskState>)
-        : 'Task list * 'Task list
+    let reconcile<'Thread when 'Thread : comparison>
+        (live : Set<'Thread>)
+        (threads : Map<'Thread, UnixThreadState>)
+        : 'Thread list * 'Thread list
         =
-        let named = tasks |> Map.toList |> List.map fst |> Set.ofList
+        let named = threads |> Map.toList |> List.map fst |> Set.ofList
         Set.difference live named |> Set.toList, Set.difference named live |> Set.toList
