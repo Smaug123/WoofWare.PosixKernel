@@ -223,6 +223,24 @@ module TestSimulatedMachine =
         | other -> failwith $"expected a refusal, got %A{other}"
 
     [<Test>]
+    let ``step by a name that is no thread of the process throws, and leaves the machine itself`` () : unit =
+        for platform in platforms do
+            let machine = SimulatedMachine.ofSystem (world platform)
+            let pid = machine |> SimulatedMachine.processIds |> Set.minElement
+
+            match SimulatedMachine.tryStep pid 99 Syscall.GetProcessId machine with
+            | Some (Error _, after) -> obj.ReferenceEquals (after, machine) |> shouldEqual true
+            | other -> failwith $"expected a refusal, got %A{other}"
+
+            let error =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    SimulatedMachine.step pid 99 Syscall.GetProcessId machine |> ignore
+                )
+
+            error.Message
+            |> shouldContainText "thread 99 is not one of the process's threads"
+
+    [<Test>]
     let ``unfocus refuses a view once another has been written back`` () : unit =
         for platform in platforms do
             let system = world platform
