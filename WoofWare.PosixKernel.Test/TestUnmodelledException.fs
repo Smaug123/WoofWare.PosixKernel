@@ -241,6 +241,22 @@ module TestUnmodelledException =
 
     let private smallInt : Gen<int> = Gen.choose (-3, 40)
 
+    /// A buffer the model cannot hold the answer for is a gap in what this
+    /// library represents, never the client's mistake, whichever call meets it.
+    [<Test>]
+    let ``a buffer refusal is unmodelled, whichever call meets it`` () : unit =
+        for case in FSharpType.GetUnionCases typeof<BufferRefusal> do
+            let refusal = FSharpValue.MakeUnion (case, [||]) :?> BufferRefusal
+            BufferRefusal.kind refusal |> shouldEqual RefusalKind.Unmodelled
+
+        // And through a call that refuses one: getrandom into memory whose bytes
+        // the client cannot produce.
+        Assert.Throws<UnmodelledException> (fun () ->
+            UnixEntropy.getRandom 0 UserBuffer.Opaque 8UL 0u (booted SimulatedUnixPlatform.linuxX64)
+            |> ignore<GetRandomAnswer * UnixSystem<int, string>>
+        )
+        |> ignore
+
     [<Test>]
     let ``socket throws exactly when trySocket refuses`` () : unit =
         let gen =
