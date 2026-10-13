@@ -633,19 +633,61 @@ module TestConnect =
                 UnixSystem.checkInvariants after |> shouldEqual []
 
     /// Darwin's implicit bind binds the wildcard at the port before it resolves
-    /// the source, so a port another socket holds against the wildcard is one
-    /// its search passes over, though this library's search, judging the port
-    /// for 127.0.0.1, can take it. Where it took the destination's own port,
-    /// the EINVAL answer would leave the socket holding the wildcard over that
-    /// other socket's binding, so it is refused instead.
+    /// the source, and its search passes over a port another socket holds at
+    /// any address, whatever `SO_REUSEADDR` says (measured,
+    /// `docs/probes/implicit-self-connect`, rows H and Hr), though this
+    /// library's search, judging the port for 127.0.0.1, can take it. Where it
+    /// took the destination's own port, the EINVAL answer would leave the
+    /// socket holding the wildcard over that other socket's binding, so it is
+    /// refused instead.
     [<Test>]
-    let ``Darwin refuses an implicit self-tuple on a port held against the wildcard`` () : unit =
+    let ``Darwin refuses an implicit self-tuple on a port held at another address`` () : unit =
         let platform = SimulatedUnixPlatform.macOsArm64
 
-        // Held at another address, which 127.0.0.1 does not overlap; a holder
-        // that did would have Darwin drop the SYN before any port is chosen.
+        for reuse in [ false ; true ] do
+            // Held at an address 127.0.0.1 does not overlap; a holder that did
+            // would have Darwin drop the SYN before any port is chosen.
+            let system =
+                let system = systemWithOnePort platform 40000us
+
+                { system with
+                    Machine =
+                        { system.Machine with
+                            LocalRoutes = UnixSystem.defaultLocalRoutes
+                        }
+                }
+
+            let holder =
+                { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
+                    ReuseAddress = reuse
+                }
+
+            let _, system = withSocket (SocketId 0L) holder system
+
+            let connecting =
+                { streamSocket None SocketPhase.Idle with
+                    ReuseAddress = reuse
+                }
+
+            let fd, system = withSocket (SocketId 1L) connecting system
+
+            match refusedBy fd (loopback 40000us) system with
+            | ConnectRefusal.DarwinImplicitBindHeld binding ->
+                binding
+                |> shouldEqual (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
+            | other -> failwith $"SO_REUSEADDR %b{reuse}: expected DarwinImplicitBindHeld, got %A{other}"
+
+    /// A socket bound to the wildcard is its own destination only where its
+    /// source is known to be: towards 127.0.0.1, which it resolves to.
+    /// Towards another loopback address the source is unmeasured, and the
+    /// connect is refused as such rather than answered as a self-tuple.
+    [<TestCaseSource(nameof platforms)>]
+    let ``a wildcard binding towards another loopback address is not a self-tuple``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
         let system =
-            let system = systemWithOnePort platform 40000us
+            let system = systemOn platform
 
             { system with
                 Machine =
@@ -654,18 +696,15 @@ module TestConnect =
                     }
             }
 
-        let holder =
-            streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle
-
-        let _, system = withSocket (SocketId 0L) holder system
+        let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
 
         let fd, system =
-            withSocket (SocketId 1L) (streamSocket None SocketPhase.Idle) system
+            withSocket (SocketId 0L) (streamSocket (boundAt wildcard) SocketPhase.Idle) system
 
-        refusedBy fd (loopback 40000us) system
-        |> shouldEqual (
-            ConnectRefusal.DarwinImplicitBindHeld (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
-        )
+        let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us
+
+        refusedBy fd other system
+        |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, true))
 
     /// The sockaddr copy's refusals come through `connect` under `Copy`, so a
     /// client matching on one type sees both kinds of refusal.

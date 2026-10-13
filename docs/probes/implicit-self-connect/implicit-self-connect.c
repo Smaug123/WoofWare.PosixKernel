@@ -35,6 +35,7 @@
 //       address, which 127.0.0.1 does not overlap; connects to 127.0.0.1:T
 //       from fresh sockets until the sequence has passed T, printing each
 //       port taken. A port taken equal to T would be a hit.
+//   Hr  Darwin: H, with every socket carrying SO_REUSEADDR.
 //   E1  Both, for comparison: bind(2) 127.0.0.1:P, then connect 127.0.0.1:P.
 //   E2  Both: bind(2) 0.0.0.0:P, then connect 127.0.0.1:P.
 #define _GNU_SOURCE
@@ -273,22 +274,27 @@ static int other_address(char *out, size_t len)
     return found;
 }
 
-static void held_elsewhere_row(void)
+// Row H, or Hr when every socket carries SO_REUSEADDR.
+static void held_elsewhere_row(int reuse)
 {
+    const char *row = reuse ? "Hr" : "H";
     char other[INET_ADDRSTRLEN];
     if (!other_address(other, sizeof other)) {
-        printf("H no non-loopback IPv4 address to hold the port at\n");
+        printf("%s no non-loopback IPv4 address to hold the port at\n", row);
         return;
     }
+    int one = 1;
     int target = next_target();
     int holder = socket(AF_INET, SOCK_STREAM, 0);
+    if (reuse) setsockopt(holder, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     int eh = bind_at(holder, other, target);
-    printf("H holder bind <other address>:T -> %s\n", err_name(eh));
+    printf("%s holder bind <other address>:T -> %s\n", row, err_name(eh));
     for (int attempt = 0; attempt < 6; attempt++) {
         int fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (reuse) setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
         int e = connect_to(fd, "127.0.0.1", target);
         int p = port_of(fd);
-        printf("H connect 127.0.0.1:T -> %s from port T%+d\n", err_name(e), p - target);
+        printf("%s connect 127.0.0.1:T -> %s from port T%+d\n", row, err_name(e), p - target);
         close(fd);
     }
     close(holder);
@@ -371,7 +377,8 @@ int main(int argc, char **argv)
     printf("listener at 127.0.0.1:%d -> %s\n", listener_port, err_name(el));
     darwin_rows("D", 0, listener_port);
     darwin_rows("N", 1, listener_port);
-    held_elsewhere_row();
+    held_elsewhere_row(0);
+    held_elsewhere_row(1);
     close(l);
 #endif
     return 0;
