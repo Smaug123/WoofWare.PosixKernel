@@ -132,11 +132,18 @@ Order: merge the in-flight branches; T1 and T2 alongside them; then P2 and P3; t
 6. An ended process is removed at once (§1).
 7. `Syscall` reserves exactly the calls the reserved parks imply.
 
-## 6. What the shape makes possible (out of scope)
+## 6. Relation to earlier decisions (docs/design, PR #24)
+
+- **`waiting-options` chose B (an algebra of wake conditions, pulled) over C (kernel-owned wait queues, pushed).** W1 keeps B. Nothing that makes a condition true wakes anyone; `UnixWait.wake` is today's sweep over today's conditions, and the only change is where the "woken, not yet finished" bit lives: in the park, rather than inferred from "parked but missing from the client's `asleep` set". So C's objection ("one forgetful producer is a silent deadlock") does not apply; today the forgetful party that causes a silent deadlock is the client, whose set must name every parked thread. C's other objection ("waiter state that duplicates the client's thread statuses") is answered the other way round: today the client's `asleep` set duplicates the kernel's park records, and after W1 a client reads a kernel-parked thread's status from the kernel instead of keeping its own copy. The exclusive-wake under-approximation recorded in "Decision, stage 3" is unchanged.
+- **`lifecycle-options` design B** ("a process table, single-process in practice": `UnixSystem = { Machine; Self; Processes : Map<ProcessId, ProcessEntry> }`) is close to this plan's target, without `Self`, since the caller names the process, and with an ended process removed at once rather than kept as a zombie, which that note's `EndedProcess`-as-zombie-payload upgrade path still allows. Leader-first thread exit stays refused, as there, for the leader-receives receiver rule; the measured Linux zombie-leader and Darwin vanishing-leader rows (mainexit) are what a later change would model.
+- **The scheduling decision (audit-2026-10-02, revised 2026-10-03)** stands: the kernel never chooses who runs. `wake` marks parks woken; when a woken thread runs is still the client's choice.
+- **audit-2026-10-02 rejected "`step` not covering read" and "the admit/write split" as defects.** Both are superseded by the 2026-10-13 decisions: `Syscall` becomes total, as labels `step` interprets; and the admission/apply split stays, but the apply step takes the admission's decision from the paused value instead of re-deriving it (P2).
+
+## 7. What the shape makes possible (out of scope)
 
 `kill` of another process (generation in the target's lens, `ESRCH`/`EINVAL` in the order `kill-arguments.c` measured); `getppid`, once a launch can name a parent; `fork` (copy the table, bump the counts, the client names the child's thread); `wait`, `SCM_RIGHTS`, and a pipe shared between launched processes.
 
-## 7. Things the view model leans on
+## 8. Things the view model leans on
 
 The wake memo's reference-equality reads (§2); `UnixSchedulingState` held apart from the machine, so a dispatch doesn't change the machine's identity; `FocusOrigin`'s custom equality being part of `UnixSystem`'s (deleting it makes more systems compare equal, harmlessly); tests reaching internals through `try*` functions (why C splits `tryX` from `tryXIn`); `UnixSystemDefect<'Thread>` naming a thread without its process; the docstrings of `PollQueue` and `KillRefusal.OtherProcess`, which explain themselves by the view; a paused call holding the whole kernel, so no other process runs during a copy-in, as is already true in effect.
 
