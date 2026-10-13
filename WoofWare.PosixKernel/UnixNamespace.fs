@@ -1329,17 +1329,11 @@ module UnixNamespace =
                     | None -> Error UnixError.EBADF
                     | Some description ->
 
-                    match description.Target with
-                    | OpenFileTarget.File (inode, _)
-                    | OpenFileTarget.Directory (inode, _)
-                    | OpenFileTarget.CharacterDevice (inode, _, _)
-                    | OpenFileTarget.Fifo (inode, _) -> Ok inode
-                    | OpenFileTarget.Pipe _
-                    | OpenFileTarget.Socket _
-                    | OpenFileTarget.Epoll _
-                    // The anonymous inode an epoll instance is on.
-                    | OpenFileTarget.Inotify _
-                    | OpenFileTarget.Kqueue _ -> Error UnixError.ENOENT
+                    // An epoll or inotify instance is on an anonymous
+                    // inode, which is no link either.
+                    match OpenFileTable.inodeOf description.Target with
+                    | Some inode -> Ok inode
+                    | None -> Error UnixError.ENOENT
 
                 Ok named, UnixError.ENOENT
             | AtPathTarget.CurrentDirectory

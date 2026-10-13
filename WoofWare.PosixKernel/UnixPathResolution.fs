@@ -684,16 +684,9 @@ module UnixPathResolution =
             | None -> Error (PathFailure.Errno UnixError.EBADF)
             | Some description ->
 
-            match description.Target with
-            | OpenFileTarget.Directory (inode, _)
-            | OpenFileTarget.File (inode, _)
-            | OpenFileTarget.CharacterDevice (inode, _, _)
-            | OpenFileTarget.Fifo (inode, _) -> Ok (PathStart.StartingObject inode)
-            | OpenFileTarget.Pipe _
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.Epoll _
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Kqueue _ -> Error (PathFailure.Refused (PathRefusal.UnmodelledStartingObject fd))
+            match OpenFileTable.inodeOf description.Target with
+            | Some inode -> Ok (PathStart.StartingObject inode)
+            | None -> Error (PathFailure.Refused (PathRefusal.UnmodelledStartingObject fd))
         | AtPathTarget.Walked ->
             walkStart directory path system
             |> Result.map PathStart.Walk

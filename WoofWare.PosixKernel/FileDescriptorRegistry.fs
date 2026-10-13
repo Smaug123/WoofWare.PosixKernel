@@ -1659,7 +1659,7 @@ module OpenFileTable =
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
-    let private inodeOf (target : OpenFileTarget) : InodeNumber option =
+    let internal inodeOf (target : OpenFileTarget) : InodeNumber option =
         match target with
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)

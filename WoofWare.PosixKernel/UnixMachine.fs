@@ -552,21 +552,10 @@ module UnixMachineState =
     /// want, though — see `ObjectLifetime.pinnedInodes`, which adds those the
     /// *filesystem* holds on behalf of these.
     let internal heldInodes (machine : UnixMachineState) : Set<InodeNumber> =
+        // An inotify instance's watch does not keep the inode it watches: the
+        // watch goes when the inode does.
         OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.File (inode, _)
-            | OpenFileTarget.Directory (inode, _)
-            | OpenFileTarget.CharacterDevice (inode, _, _)
-            | OpenFileTarget.Fifo (inode, _) -> Some inode
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.Epoll _
-            // A watch does not keep the inode it watches: the watch goes
-            // when the inode does.
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Pipe _ -> None
-        )
+        |> Seq.choose (fun (_, description) -> OpenFileTable.inodeOf description.Target)
         |> Set.ofSeq
         |> Set.union (
             OpenFileTable.toSeqOpenedThrough machine.OpenFiles
