@@ -1485,7 +1485,7 @@ module TestShutdownAgainstHost =
 
     let private payload : byte[] = Array.init (1 <<< 20) (fun i -> byte (i * 31 + 7))
 
-    /// A booted system of `platform`, with task 1 for `accept` and `SIGPIPE`
+    /// A booted system of `platform`, with thread 1 for `accept` and `SIGPIPE`
     /// ignored, as the test host and the .NET runtime ignore it.
     let private kernelSystem (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         let system =

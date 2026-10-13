@@ -25,16 +25,16 @@ module TestUnixSystemStep =
     let private holds (waiter : int) (condition : WakeCondition) (system : UnixSystem<int, string>) : bool =
         not (Set.isEmpty (WakeCondition.satisfied waiter condition system))
 
-    /// A system with task `name` registered, since a park is recorded against a
-    /// task and `UnixThreadTable` is loudly partial in names it has never minted.
+    /// A system with thread `name` registered, since a park is recorded against a
+    /// thread and `UnixThreadTable` is loudly partial in names it has never minted.
     let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Threads.ensure name system
 
-    /// The tasks the syscalls here are made by. The flock rows need three:
+    /// The threads the syscalls here are made by. The flock rows need three:
     /// `holderThread` through `first`, `waiterThread` through `second`, and
     /// `thirdThread` through any further descriptor. A blocked `flock` is recorded
-    /// against its task, and a parked task may not issue another, so the
-    /// contending calls have to come from different tasks.
+    /// against its thread, and a parked thread may not issue another, so the
+    /// contending calls have to come from different threads.
     let private holderThread : int = 1
     let private waiterThread : int = 2
     let private thirdThread : int = 3
@@ -2988,7 +2988,7 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlock holderThread first 2 both |> parked
 
         // The parked description takes a shared lock again while it waits, which
-        // a `dup` of its descriptor could do from another task (the parked task
+        // a `dup` of its descriptor could do from another thread (the parked thread
         // itself cannot: it is in one syscall). That lock is its own, so it must
         // not stand in the way of the exclusive one it wants.
         let reacquired = UnixDescriptor.tryFlock thirdThread first 1 parkedIn |> granted
@@ -3179,7 +3179,7 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``a resume is not a fresh syscall, so it does not re-validate what cannot have changed`` () : unit =
-        // Everything `flock` screens is over facts that cannot change while a task sleeps — the
+        // Everything `flock` screens is over facts that cannot change while a thread sleeps — the
         // operation bits, which this signature cannot even express, and the description's object
         // kind. So a resume under Darwin is served, where a fresh Darwin call on the same
         // descriptor would have to decide the flavour's rules all over again.
@@ -3198,7 +3198,7 @@ module TestUnixSystemStep =
     [<Test>]
     let ``a resume that has become a conversion is refused under Darwin`` () : unit =
         // The one screen a resume must re-apply, because it is over state that *can* change while
-        // a task sleeps. While this waiter held nothing, another task through a `dup` of its
+        // a thread sleeps. While this waiter held nothing, another thread through a `dup` of its
         // descriptor took a lock on its description — a first acquisition, which Darwin serves.
         // The resume is now a conversion, and Darwin's keep-versus-drop divergence on a failed
         // conversion is exactly what `DarwinConversion` refuses to guess at.
@@ -3226,7 +3226,7 @@ module TestUnixSystemStep =
     [<Test>]
     let ``a blocked flock records exactly what its condition says`` () : unit =
         // The record and the condition are one fact, written by the same call. A client that
-        // built the record separately could park a task on one lock while polling for another,
+        // built the record separately could park a thread on one lock while polling for another,
         // and nothing would notice.
         let first, second, system = withTwoDescriptions linux
 
@@ -3272,10 +3272,10 @@ module TestUnixSystemStep =
         | other -> failwith $"expected EAGAIN, got %A{other}"
 
     [<Test>]
-    let ``a parked task may not issue another flock`` () : unit =
-        // A task blocks in one syscall at a time. The parked call is finished through
+    let ``a parked thread may not issue another flock`` () : unit =
+        // A thread blocks in one syscall at a time. The parked call is finished through
         // `flockAcquire`; re-issuing it would park over the record, and a call on some other
-        // descriptor would be a task in two syscalls at once.
+        // descriptor would be a thread in two syscalls at once.
         let first, second, system = withTwoDescriptions linux
 
         let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
@@ -3287,20 +3287,20 @@ module TestUnixSystemStep =
         exn.Message |> shouldContainText "is parked in"
 
     [<Test>]
-    let ``a task the table does not hold cannot flock at all`` () : unit =
+    let ``a thread the table does not hold cannot flock at all`` () : unit =
         // Refused before the call is answered, so that a non-blocking call by an unregistered
-        // task is not served while a blocking one is refused.
+        // thread is not served while a blocking one is refused.
         let first, _, system = withTwoDescriptions linux
 
         let exn =
             Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlock 99 first 1 system |> ignore)
 
-        exn.Message |> shouldContainText "names no task"
+        exn.Message |> shouldContainText "names no thread"
 
     [<Test>]
-    let ``a parked task may not issue an open, and nor may a task the table does not hold`` () : unit =
-        // An open can sleep, so it takes its task as flock does, and fails loudly for one
-        // that is already parked or is not a task at all.
+    let ``a parked thread may not issue an open, and nor may a thread the table does not hold`` () : unit =
+        // An open can sleep, so it takes its thread as flock does, and fails loudly for one
+        // that is already parked or is not a thread at all.
         let first, second, system = withTwoDescriptions linux
 
         let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
@@ -3323,7 +3323,7 @@ module TestUnixSystemStep =
             parkedExn.Message |> shouldContainText "is parked in"
 
             let unknownExn = Assert.Throws<exn> (fun () -> open' 99 parkedIn)
-            unknownExn.Message |> shouldContainText "names no task"
+            unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its open is answered.
         match OpenOutcomes.answered (UnixNamespace.tryOpenPath holderThread 0 root 0 parkedIn) with
@@ -3331,9 +3331,9 @@ module TestUnixSystemStep =
         | other -> failwith $"the holder's open answered %A{other}"
 
     [<Test>]
-    let ``a parked task may not issue a connect, and nor may a task the table does not hold`` () : unit =
-        // A connect can sleep, so it takes its task as flock does, and fails
-        // loudly for one that is already parked or is not a task at all, before
+    let ``a parked thread may not issue a connect, and nor may a thread the table does not hold`` () : unit =
+        // A connect can sleep, so it takes its thread as flock does, and fails
+        // loudly for one that is already parked or is not a thread at all, before
         // it looks at the descriptor.
         let first, second, system = withTwoDescriptions linux
 
@@ -3348,7 +3348,7 @@ module TestUnixSystemStep =
         parkedExn.Message |> shouldContainText "is parked in"
 
         let unknownExn = Assert.Throws<exn> (fun () -> connect 99)
-        unknownExn.Message |> shouldContainText "names no task"
+        unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its connect is answered: `first` is not a
         // socket.
@@ -3365,14 +3365,14 @@ module TestUnixSystemStep =
         let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
         let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
 
-        // Beaten: the task is parked on the same record, so it can be woken again later.
+        // Beaten: the thread is parked on the same record, so it can be woken again later.
         let taken = UnixDescriptor.tryFlock thirdThread another 2 released |> granted
         let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
 
         UnixThreadTable.parkedFor waiterThread beaten.Threads
         |> shouldEqual (UnixThreadTable.parkedFor waiterThread parkedIn.Threads)
 
-        // Granted: the record is gone, and the task may issue an flock again.
+        // Granted: the record is gone, and the thread may issue an flock again.
         let freed = UnixDescriptor.tryFlock thirdThread another 8 beaten |> granted
         let finished = UnixDescriptor.tryFlockAcquire waiterThread freed |> granted
         UnixThreadTable.parkedFor waiterThread finished.Threads |> shouldEqual None
@@ -3411,7 +3411,7 @@ module TestUnixSystemStep =
         |> shouldEqual [ thirdThread, firedFor another ; waiterThread, firedFor second ]
 
     [<Test>]
-    let ``flockAcquire for a task that is not parked in an flock is refused`` () : unit =
+    let ``flockAcquire for a thread that is not parked in an flock is refused`` () : unit =
         let _, _, system = withTwoDescriptions linux
 
         let exn =
@@ -3452,7 +3452,7 @@ module TestUnixSystemStep =
                 holds waiterThread condition parkedIn |> shouldEqual false
             | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{other}"
 
-    /// `operation` by `task` through `fd`, which must be answered at once: the
+    /// `operation` by `thread` through `fd`, which must be answered at once: the
     /// answer.
     let private flockAnswer (thread : int) (fd : int) (operation : int) (system : UnixSystem<int, string>) =
         match UnixDescriptor.tryFlock thread fd operation system with
@@ -3600,7 +3600,7 @@ module TestUnixSystemStep =
             | Ok (fd, system) -> fd, system
             | Error refusal -> failwith $"expected a kqueue, got %A{refusal}"
 
-    /// Task 7 parked in an `epoll_wait` on the epoll instance `fd` names.
+    /// Thread 7 parked in an `epoll_wait` on the epoll instance `fd` names.
     let private parkedInEpollWait (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let system = withThread 7 system
 
@@ -3820,8 +3820,8 @@ module TestUnixSystemStep =
     [<Test>]
     let ``the two derivations agree: a park records what its condition says, and says it back`` () : unit =
         // `flock` goes condition to record and `ofPark` goes back. Each looks right alone, and
-        // a client polls what `ofPark` returns for the task `flock` parked, so a disagreement
-        // between them is a task waiting for one thing while the sweep watches another.
+        // a client polls what `ofPark` returns for the thread `flock` parked, so a disagreement
+        // between them is a thread waiting for one thing while the sweep watches another.
         let first, second, system = withTwoDescriptions linux
 
         let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted

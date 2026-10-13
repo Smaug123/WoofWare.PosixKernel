@@ -51,7 +51,7 @@ module TestEpollWait =
         | Ok (Ok (fd, system)) -> fd, system
         | other -> failwith $"expected an epoll instance, got %A{other}"
 
-    /// A Linux-flavoured system with tasks 1 to 6 registered, a listening socket
+    /// A Linux-flavoured system with threads 1 to 6 registered, a listening socket
     /// with an empty accept queue, and an epoll instance holding one
     /// edge-triggered `EPOLLIN` registration of it: the listener's descriptor,
     /// and the epoll instance's.
@@ -536,7 +536,7 @@ module TestEpollWait =
         | other -> failwith $"expected the event, got %A{other}"
 
     [<Test>]
-    let ``a parked task cannot wait again, and an unparked one cannot finish`` () : unit =
+    let ``a parked thread cannot wait again, and an unparked one cannot finish`` () : unit =
         let _, parked = parks -1 idle
 
         let exn = Assert.Throws<exn> (fun () -> waits -1 parked |> ignore)
@@ -620,9 +620,9 @@ module TestEpollWait =
         ()
         : unit
         =
-        // Up to three epoll instances, each with or without a deliverable event; tasks parking on them
-        // in a generated order, some more than once; a clock; and which parked tasks the
-        // client holds asleep. The oracle states the rule per task, where `UnixWait.wakes`
+        // Up to three epoll instances, each with or without a deliverable event; threads parking on them
+        // in a generated order, some more than once; a clock; and which parked threads the
+        // client holds asleep. The oracle states the rule per thread, where `UnixWait.wakes`
         // groups by epoll instance.
         let gen =
             gen {

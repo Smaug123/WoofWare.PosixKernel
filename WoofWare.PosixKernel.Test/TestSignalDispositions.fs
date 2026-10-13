@@ -41,7 +41,7 @@ module TestSignalDispositions =
 
     let private threads : Set<Thread> = Set.singleton t0
 
-    /// `SignalState.generate` in a process whose only task is `t0`.
+    /// `SignalState.generate` in a process whose only thread is `t0`.
     let private generateIn
         (entry : PendingSignal<Thread>)
         (s : SignalState<Thread, Handler>)

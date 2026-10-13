@@ -1160,12 +1160,12 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        // Loudly partial in an unregistered or parked task, before anything is
+        // Loudly partial in an unregistered or parked thread, before anything is
         // answered, as every call that can sleep is.
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixNamespace.%s{operation}: task %O{thread} is parked in %A{parked}, and is issuing an open. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
+                $"UnixNamespace.%s{operation}: thread %O{thread} is parked in %A{parked}, and is issuing an open. A thread blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
         | None ->
 
         // No open sleeps yet: nothing can make an object whose open waits.
@@ -1214,7 +1214,7 @@ module UnixNamespace =
         =
         openFrom "openPath" thread AtDirectory.CurrentDirectory flags path mode system
 
-    /// `open(2)`, made by `task`: resolve `path`, apply every check a kernel
+    /// `open(2)`, made by `thread`: resolve `path`, apply every check a kernel
     /// makes, and return a descriptor onto what it names. It is `openat` from
     /// `AT_FDCWD`.
     ///
@@ -1222,8 +1222,8 @@ module UnixNamespace =
     /// kernel: a blocking open of one end of a FIFO waits until the other end
     /// is opened. Nothing in this version makes a FIFO, so every open is
     /// answered at once (`SyscallOutcome.Answered`), and never `WouldBlock` or
-    /// `Restarts`. `task` must be registered in `Tasks`, and must not already
-    /// be parked: a task blocks in one syscall at a time.
+    /// `Restarts`. `thread` must be registered in `Threads`, and must not already
+    /// be parked: a thread blocks in one syscall at a time.
     ///
     /// `flags` is raw, in the simulated flavour's own `<fcntl.h>` numbering,
     /// which differs between Linux's architectures as well as between
@@ -1280,7 +1280,7 @@ module UnixNamespace =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         openFrom "openat" thread (AtDirectory.decode flavour dirfd) flags path mode system
 
-    /// `openat(2)`, made by `task`: `openPath` of `path`, starting from `dirfd`
+    /// `openat(2)`, made by `thread`: `openPath` of `path`, starting from `dirfd`
     /// if it is relative; `openPath` is this from `AT_FDCWD`.
     ///
     /// `dirfd` is raw, in this platform's own numbering. Everything `openPath`

@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.Connect` and `WakePrimitive.AcceptQueueHasRoom`, which are
-/// reserved: nothing parks a task in a connect yet. What every reader of a
+/// reserved: nothing parks a thread in a connect yet. What every reader of a
 /// park already answers for it (the wake condition, the description it holds,
-/// how a signal ends it), and the invariant that reports a task parked in it,
-/// which is what makes "nothing parks a task in it" checked wherever a fuzzer
+/// how a signal ends it), and the invariant that reports a thread parked in it,
+/// which is what makes "nothing parks a thread in it" checked wherever a fuzzer
 /// checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -60,7 +60,7 @@ module TestConnectPark =
     let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a connect is a ReservedPark defect`` () : unit =
+    let ``a thread parked in a connect is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
@@ -109,7 +109,7 @@ module TestConnectPark =
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen connectGen) property)
 
         // And asking whether it holds fails loudly, naming it, rather than
-        // guessing: a task waits for it only if its park was recorded by hand.
+        // guessing: a thread waits for it only if its park was recorded by hand.
         let awake = boot SimulatedUnixFlavour.Linux |> Threads.ensure thread
 
         let error =

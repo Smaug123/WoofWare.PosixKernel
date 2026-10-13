@@ -99,7 +99,7 @@ module TestInotifyMeasured =
 
     /// A machine like the one measured: Linux 6.18.5 aarch64, the measuring
     /// VM's `fs.inotify` sysctls, `seed` at the root, and a process of
-    /// `credentials` with tasks 0 to 2.
+    /// `credentials` with threads 0 to 2.
     let private boot (credentials : Credentials) (seed : (string * SeedEntry) list) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxArm64
         |> UnixBootImage.tryWithInotifyLimits
@@ -789,9 +789,9 @@ module TestInotifyMeasured =
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
         match UnixWait.satisfied thread system with
         | Some woken -> not (Set.isEmpty woken)
-        | None -> failwith $"task %d{thread} is not asleep"
+        | None -> failwith $"thread %d{thread} is not asleep"
 
-    /// What the woken read of `task` answers, as the probe prints it.
+    /// What the woken read of `thread` answers, as the probe prints it.
     let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
         match UnixReadWrite.tryFinishRead thread system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->

@@ -25,7 +25,7 @@ module TestConnectedTransfer =
     let private port : uint16 = 6000us
 
     /// A system of `platform`, booted from an image `configure` configured,
-    /// with tasks 1 to 4 and `SIGPIPE` ignored.
+    /// with threads 1 to 4 and `SIGPIPE` ignored.
     let private systemOn
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (platform : SimulatedUnixPlatform)
@@ -1650,7 +1650,7 @@ module TestConnectedTransfer =
 
         SimulatedMachine.wakes asleep machine |> List.map fst
 
-    /// `task` of `pid` waits with no timeout on the flavour's event queue,
+    /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
     let private sleepOn
         (pid : ProcessId)

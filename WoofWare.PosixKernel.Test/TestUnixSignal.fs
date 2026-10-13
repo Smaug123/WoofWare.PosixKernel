@@ -71,7 +71,7 @@ module TestUnixSignal =
             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGKILL, false))
 
             EndedMachine.assertThreadsGone system ended
-            // The process's end takes its tasks' per-task entries with them.
+            // The process's end takes its threads' per-thread entries with them.
             SignalState.threadsWithFrames ended.FinalProcess.Signals |> shouldBeEmpty
 
             { ended.FinalProcess with
@@ -107,7 +107,7 @@ module TestUnixSignal =
 
     [<Test>]
     let ``a signal the calling process cannot yet receive is left pending`` () : unit =
-        // Its only task is in a handler that blocks SIGTERM, so SIGTERM waits
+        // Its only thread is in a handler that blocks SIGTERM, so SIGTERM waits
         // in the process-wide pending set.
         let blocking = linux |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGTERM)
 
@@ -291,7 +291,7 @@ module TestUnixSignal =
     let private fatalSignals (coreDumps : CoreDumps) : (Signal * bool) list =
         [ Signal.SIGTERM, false ; Signal.SIGQUIT, (coreDumps = CoreDumps.Written) ]
 
-    /// A process of `flavour` whose only task blocks `signal`, which it has
+    /// A process of `flavour` whose only thread blocks `signal`, which it has
     /// sent itself with `kill(2)`, so that it is pending at its default.
     let private pendingBehindMask
         (flavour : SimulatedUnixFlavour)
@@ -312,7 +312,7 @@ module TestUnixSignal =
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
         | other -> failwith $"kill(self, %O{signal}) under %O{flavour}: %O{other}"
 
-    /// The process `before` was, ended by `onReturnToUser` of its only task,
+    /// The process `before` was, ended by `onReturnToUser` of its only thread,
     /// and then ended on its machine: the termination each reports.
     let private endedOnReturn (before : UnixSystem<int, string>) : ProcessTermination * ProcessTermination =
         match UnixSignal.tryOnReturnToUser 0 before with
@@ -329,7 +329,7 @@ module TestUnixSignal =
         | other -> failwith $"onReturnToUser answered %O{other}"
 
     [<Test>]
-    let ``a pending default that terminates, which sigsuspend unblocks, ends the process as the task returns``
+    let ``a pending default that terminates, which sigsuspend unblocks, ends the process as the thread returns``
         ()
         : unit
         =
@@ -347,7 +347,7 @@ module TestUnixSignal =
                     endedOnReturn suspended |> shouldEqual (expected, expected)
 
     [<Test>]
-    let ``a pending default that terminates, which pthread_sigmask unblocks, ends the process as the task returns``
+    let ``a pending default that terminates, which pthread_sigmask unblocks, ends the process as the thread returns``
         ()
         : unit
         =
@@ -381,7 +381,7 @@ module TestUnixSignal =
         ]
 
     /// One send: `kill(2)` of the calling process when `target` is `None`, and
-    /// `pthread_kill(3)` of the task `target` names otherwise.
+    /// `pthread_kill(3)` of the thread `target` names otherwise.
     type private Send =
         {
             Target : int option
@@ -392,13 +392,13 @@ module TestUnixSignal =
         {
             Flavour : SimulatedUnixFlavour
             CoreDumps : CoreDumps
-            /// How many tasks the process has, numbered from 0, its leader.
+            /// How many threads the process has, numbered from 0, its leader.
             Threads : int
             Dispositions : (Signal * SignalDisposition<string>) list
-            /// Each task's mask while the signals are sent.
+            /// Each thread's mask while the signals are sent.
             BlockedWhileSent : Set<Signal> list
             Sends : Send list
-            /// The task that returns to user mode, and the mask it does so under.
+            /// The thread that returns to user mode, and the mask it does so under.
             Returning : int
             MaskOnReturn : Set<Signal>
         }
@@ -523,7 +523,7 @@ module TestUnixSignal =
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> Some system
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _)))
                 | Ok (Ok (ProcessFate.ProcessEnded _)) -> None
-                // A signal the leader blocks and another task does not is
+                // A signal the leader blocks and another thread does not is
                 // refused; the send is skipped.
                 | Error _ -> Some system
                 | Ok (Error errno) -> failwith $"sending %O{send.Signal}: %O{errno}"
@@ -532,7 +532,7 @@ module TestUnixSignal =
         sent |> Option.map (setMask case.Returning case.MaskOnReturn)
 
     [<Test>]
-    let ``a task's return to user mode answers what the signal state decides, and a default that terminates ends the process``
+    let ``a thread's return to user mode answers what the signal state decides, and a default that terminates ends the process``
         ()
         : unit
         =
@@ -594,7 +594,7 @@ module TestUnixSignal =
                 SignalState.threadsWithFrames death.FinalProcess.Signals |> shouldBeEmpty
 
                 // The process as it stood once it had taken the signal, less
-                // what it held for its tasks.
+                // what it held for its threads.
                 let final = withSignals signals
 
                 { death.FinalProcess with

@@ -85,7 +85,7 @@ type internal FLockRefusal =
     /// refused on the request rather than on the outcome, so that the refusal is
     /// a property of what was asked rather than of who else held a lock.
     | DarwinConversion
-    /// The acquisition was asleep and a signal is pending for the task, and this
+    /// The acquisition was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
@@ -191,7 +191,7 @@ type internal EndedWriteSignalRefusal =
     /// The process is process ID 1, and what an init process does with a
     /// signal it has no handler for is not modelled.
     | InitProcess
-    /// Which task would take the signal is not modelled.
+    /// Which thread would take the signal is not modelled.
     | Receiver of SignalReceiverRefusal
 
 [<RequireQualifiedAccess>]
@@ -205,7 +205,7 @@ module internal EndedWriteSignalRefusal =
         | EndedWriteSignalRefusal.InitProcess ->
             "the process is process ID 1, and what an init process does with a signal it has no handler for is not modelled."
         | EndedWriteSignalRefusal.Receiver refusal ->
-            $"which task would take the signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
+            $"which thread would take the signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : EndedWriteSignalRefusal) : RefusalKind =
@@ -216,9 +216,9 @@ module internal EndedWriteSignalRefusal =
 
 /// Why this kernel will not close a descriptor.
 ///
-/// Generic in what names a task because most of them are about a task parked
+/// Generic in what names a thread because most of them are about a thread parked
 /// in a wait, and which one that is cannot be recomputed by the client:
-/// nothing stops two tasks parking on the same event queue, so a client repeating the
+/// nothing stops two threads parking on the same event queue, so a client repeating the
 /// search could name a different one from the one this refusal is about.
 ///
 /// Under Linux a sleeping call holds the description it sleeps on, so a close
@@ -232,10 +232,10 @@ type internal CloseRefusal<'Thread> =
     /// Releasing the description destroys an object in a state this kernel
     /// has not measured.
     | Release of DescriptionReleaseRefusal
-    /// Any descriptor onto an open file description that `task` is parked on
+    /// Any descriptor onto an open file description that `thread` is parked on
     /// an `flock` of, under the Darwin flavour.
     | DarwinFlockedDescriptorWithWaiter of description : OpenFileDescriptionId * thread : 'Thread
-    /// The descriptor `fd`, which `task` is parked in a Linux-flavoured
+    /// The descriptor `fd`, which `thread` is parked in a Linux-flavoured
     /// `poll(2)` watching.
     ///
     /// Refused because Linux's sleeping poll keeps the file it found, which
@@ -248,7 +248,7 @@ type internal CloseRefusal<'Thread> =
     /// registered through it from the kqueue the poll made, as Darwin does.
     | PolledDescriptor of fd : int * thread : 'Thread
     /// The descriptor a `read` or `write` of a pipe or a connected socket by
-    /// `task`, asleep on the open file description `description`, was made
+    /// `thread`, asleep on the open file description `description`, was made
     /// through, under the Darwin flavour, when the call has something besides
     /// the close to answer: bytes to read, room to write into, a FIN or a
     /// reset, a signal with a handler to take, or (a pipe write whose
@@ -258,12 +258,12 @@ type internal CloseRefusal<'Thread> =
     /// write with `EPIPE`, a socket's either with `EBADF`), and which of the
     /// close and what had already woken the call it answers is unmeasured.
     | DarwinWokenTransfer of description : OpenFileDescriptionId * thread : 'Thread
-    /// The close would end the pipe `write` `task` is asleep in, under the
+    /// The close would end the pipe `write` `thread` is asleep in, under the
     /// Darwin flavour, and the `SIGPIPE` that write raises as it returns is one
     /// this kernel cannot answer (`refusal`).
     | DarwinEndedWriteSignal of thread : 'Thread * refusal : EndedWriteSignalRefusal
     /// The descriptor is the last one onto the open file description of the
-    /// connected stream socket `socket`, whose `SO_LINGER` is on, and `task`'s
+    /// connected stream socket `socket`, whose `SO_LINGER` is on, and `thread`'s
     /// call in flight still holds that description, so the close would leave
     /// the socket to be closed when that call returns.
     ///
@@ -286,15 +286,15 @@ module internal CloseRefusal =
     let describe (refusal : CloseRefusal<'Thread>) : string =
         match refusal with
         | CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread) ->
-            $"the descriptor names open file description %O{description}, and task %O{thread} is parked on an `flock` of it. Measured on Darwin (open-file-references.c section D), closing the descriptor the flock was entered through does not return until the flock has, whether or not a dup keeps the description: the close blocks until the lock is granted or a signal ends the flock. This kernel models no close that sleeps, nor which descriptor a call was entered through."
+            $"the descriptor names open file description %O{description}, and thread %O{thread} is parked on an `flock` of it. Measured on Darwin (open-file-references.c section D), closing the descriptor the flock was entered through does not return until the flock has, whether or not a dup keeps the description: the close blocks until the lock is granted or a signal ends the flock. This kernel models no close that sleeps, nor which descriptor a call was entered through."
         | CloseRefusal.PolledDescriptor (fd, thread) ->
-            $"task %O{thread} is parked in a poll(2) watching fd %d{fd}. Measured on Linux (poll-timeout.c), the sleeping poll keeps the file it found: the close does not wake it, the closed file can still wake it (a datagram sent to a closed UDP socket's address did), and when it wakes it looks the number up again, answering POLLNVAL if the number is free and the new file's readiness if another open took the number. This kernel keeps the file alive, but a poll woken by that file and finding nothing under the number sleeps again until the file's next wake-up, an edge, where this kernel's wake conditions are levels: the poll would be woken again at once, for ever."
+            $"thread %O{thread} is parked in a poll(2) watching fd %d{fd}. Measured on Linux (poll-timeout.c), the sleeping poll keeps the file it found: the close does not wake it, the closed file can still wake it (a datagram sent to a closed UDP socket's address did), and when it wakes it looks the number up again, answering POLLNVAL if the number is free and the new file's readiness if another open took the number. This kernel keeps the file alive, but a poll woken by that file and finding nothing under the number sleeps again until the file's next wake-up, an edge, where this kernel's wake conditions are levels: the poll would be woken again at once, for ever."
         | CloseRefusal.DarwinWokenTransfer (description, thread) ->
-            $"task %O{thread} is asleep in a read or write of open file description %O{description}, a pipe end or a connected socket, made through this descriptor, and the call has something besides the close to answer: bytes, room, a FIN or a reset, a signal, or a read to give up at. Measured on Darwin (close-ends-call.c sections P1-P7, tcp-blocking.c sections R-close and W-close), closing the descriptor a sleeping read or write was made through ends it: a pipe read with end of file, a pipe write with EPIPE, and a socket's either with EBADF. Which of that and what had already woken the call a kernel answers is unmeasured: no probe has held a woken call off the CPU until a close, since Darwin has no SCHED_FIFO, and a woken call in a stopped process finishes in the kernel all the same (pipe-blocking.c section N4)."
+            $"thread %O{thread} is asleep in a read or write of open file description %O{description}, a pipe end or a connected socket, made through this descriptor, and the call has something besides the close to answer: bytes, room, a FIN or a reset, a signal, or a read to give up at. Measured on Darwin (close-ends-call.c sections P1-P7, tcp-blocking.c sections R-close and W-close), closing the descriptor a sleeping read or write was made through ends it: a pipe read with end of file, a pipe write with EPIPE, and a socket's either with EBADF. Which of that and what had already woken the call a kernel answers is unmeasured: no probe has held a woken call off the CPU until a close, since Darwin has no SCHED_FIFO, and a woken call in a stopped process finishes in the kernel all the same (pipe-blocking.c section N4)."
         | CloseRefusal.DarwinEndedWriteSignal (thread, refusal) ->
-            $"the close ends the pipe write task %O{thread} is asleep in through this descriptor. Measured on Darwin (close-ends-call.c sections P2-P4), that write answers EPIPE and raises SIGPIPE for the process as it returns, which it does before the close does; but %s{EndedWriteSignalRefusal.describe refusal}"
+            $"the close ends the pipe write thread %O{thread} is asleep in through this descriptor. Measured on Darwin (close-ends-call.c sections P2-P4), that write answers EPIPE and raises SIGPIPE for the process as it returns, which it does before the close does; but %s{EndedWriteSignalRefusal.describe refusal}"
         | CloseRefusal.LingeringCloseDeferredToCall (socket, thread) ->
-            $"the descriptor is the last one onto connected socket %O{socket}, whose SO_LINGER is on, and task %O{thread} is in a call that still holds it. Measured on Linux (tcp-blocking.c sections R-close and W-close), the close answers 0 and the socket is closed when that call returns. Under SO_LINGER that close would be abortive (a time of zero) or would wait for unsent bytes (a positive time), which this kernel refuses in some states, and the call can change the state before it returns; this kernel models no refusal at a call's return, nor a close deferred to one under SO_LINGER."
+            $"the descriptor is the last one onto connected socket %O{socket}, whose SO_LINGER is on, and thread %O{thread} is in a call that still holds it. Measured on Linux (tcp-blocking.c sections R-close and W-close), the close answers 0 and the socket is closed when that call returns. Under SO_LINGER that close would be abortive (a time of zero) or would wait for unsent bytes (a positive time), which this kernel refuses in some states, and the call can change the state before it returns; this kernel models no refusal at a call's return, nor a close deferred to one under SO_LINGER."
         | CloseRefusal.Release refusal -> DescriptionReleaseRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -1307,13 +1307,13 @@ module UnixDescriptor =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
         =
-        // Loudly partial in an unregistered task, before anything is answered:
+        // Loudly partial in an unregistered thread, before anything is answered:
         // a non-blocking call by one would otherwise be served and only a
         // blocking one refused.
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixDescriptor.flock: task %O{thread} is parked in %A{parked}, and is issuing an flock. A task blocks in one syscall at a time; a parked flock is finished with `flockAcquire`, and any other parked call's completion must clear its record first (this is a bug in the client)."
+                $"UnixDescriptor.flock: thread %O{thread} is parked in %A{parked}, and is issuing an flock. A thread blocks in one syscall at a time; a parked flock is finished with `flockAcquire`, and any other parked call's completion must clear its record first (this is a bug in the client)."
         | None ->
 
         // Unlike a foreign-function layer's error and open-flag encodings, these
@@ -1462,12 +1462,12 @@ module UnixDescriptor =
                     }
 
             // The condition is derived from the record rather than built beside
-            // it, so a task cannot be parked on one lock while a client polls
+            // it, so a thread cannot be parked on one lock while a client polls
             // for another.
             Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked advanced)
         | None -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), advanced)
 
-    /// `flock(2)`, made by `task`: take, convert or release an advisory lock on
+    /// `flock(2)`, made by `thread`: take, convert or release an advisory lock on
     /// `fd`'s open file description.
     ///
     /// Models Linux's rules and refuses under Darwin rather than guessing, for
@@ -1478,10 +1478,10 @@ module UnixDescriptor =
     /// of answers `SyscallOutcome.WouldBlock`, in the system a real kernel would
     /// have slept in — which is not the system the call arrived with, because
     /// the caller's own old lock has already gone — and that system records
-    /// `task` as parked on the lock. The record is what `close` reads to refuse
+    /// `thread` as parked on the lock. The record is what `close` reads to refuse
     /// destroying the description, and what `flockAcquire` finishes from once
-    /// the condition holds. `task` must be registered in `Tasks`, and must not
-    /// already be parked: a task blocks in one syscall at a time, and a parked
+    /// the condition holds. `thread` must be registered in `Threads`, and must not
+    /// already be parked: a thread blocks in one syscall at a time, and a parked
     /// `flock` is finished through `flockAcquire`, never re-issued.
     let flock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -1504,16 +1504,16 @@ module UnixDescriptor =
             | Some (ParkedSyscall.Flock parked) -> parked.Requester, parked.Mode
             | Some (ParkedSyscall.EpollWait wait) ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is parked in an epoll_wait on %O{wait.Epoll}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in an epoll_wait on %O{wait.Epoll}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
             | Some (ParkedSyscall.Kevent wait) ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is parked in a kevent on %O{wait.Kqueue}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in a kevent on %O{wait.Kqueue}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
             | Some (ParkedSyscall.Poll poll) ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is parked in a poll of %A{poll.Entries}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in a poll of %A{poll.Entries}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
             | Some (ParkedSyscall.Accept accept) ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is parked in an accept on %O{accept.Listener}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in an accept on %O{accept.Listener}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
             | Some (ParkedSyscall.KqueuePoll _ as other)
             | Some (ParkedSyscall.PipeRead _ as other)
             | Some (ParkedSyscall.PipeWrite _ as other)
@@ -1529,15 +1529,15 @@ module UnixDescriptor =
             | Some (ParkedSyscall.ConnectionRead _ as other)
             | Some (ParkedSyscall.ConnectionWrite _ as other) ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is parked in %A{other}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in %A{other}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
             | None ->
                 failwith
-                    $"UnixDescriptor.flockAcquire: task %O{thread} is not parked, so there is no acquisition to finish. A blocked `flock` records the park; only a task it answered `WouldBlock` finishes here (this is a bug in the client)."
+                    $"UnixDescriptor.flockAcquire: thread %O{thread} is not parked, so there is no acquisition to finish. A blocked `flock` records the park; only a thread it answered `WouldBlock` finishes here (this is a bug in the client)."
 
         match OpenFileTable.tryFind requester system.Machine.OpenFiles with
         | None ->
             failwith
-                $"UnixDescriptor.flockAcquire: open file description %O{requester} is not in the table, but task %O{thread} is parked on an flock of it, and a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"UnixDescriptor.flockAcquire: open file description %O{requester} is not in the table, but thread %O{thread} is parked on an flock of it, and a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some description ->
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, description.Flock with
@@ -1597,7 +1597,7 @@ module UnixDescriptor =
             | Error refusal -> Error (FLockRefusal.Interruption refusal)
             | Ok () -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), finished ())
 
-    /// Finish the `flock` acquisition `task` parked in, against the open file
+    /// Finish the `flock` acquisition `thread` parked in, against the open file
     /// description its park record names.
     ///
     /// From the record rather than by re-issuing `flock` with the descriptor
@@ -1607,17 +1607,17 @@ module UnixDescriptor =
     /// by the time the lock frees. A real kernel has no such hazard: the
     /// sleeping call holds the file, and the park holds the description, which
     /// outlives its last descriptor until this call returns and goes then,
-    /// taking with it any lock it was granted. `task` must be parked in an
+    /// taking with it any lock it was granted. `thread` must be parked in an
     /// `flock`.
     ///
     /// A grant clears the park record. `WouldBlock`, with the same condition
-    /// and the task re-parked on the same record behind every other park, is
+    /// and the thread re-parked on the same record behind every other park, is
     /// the answer when the lock has been taken since the waiter was woken. That is the ordinary case rather than
     /// an edge one: a release wakes every waiter and they race, so all but one
     /// of them find it gone.
     ///
     /// When the lock cannot be granted and a signal with a handler is pending
-    /// for the task, the signal ends the call: `Restarts` if every handler that
+    /// for the thread, the signal ends the call: `Restarts` if every handler that
     /// runs was installed with `SA_RESTART`, and `Answered (Failed EINTR)` if
     /// none was. Either clears the park, and a conversion's old lock stays
     /// dropped, as it is while the call sleeps.
@@ -1628,7 +1628,7 @@ module UnixDescriptor =
     /// unrepresentable; the Darwin refusals for a pipe, a socket and a kqueue
     /// are about the description's object kind, which never changes.
     /// `DarwinConversion` is the exception, because it screens *mutable* state —
-    /// while this task held nothing, another through a `dup` of its descriptor
+    /// while this thread held nothing, another through a `dup` of its descriptor
     /// could have taken a lock on this same description, which Darwin serves as
     /// a first acquisition, and the resume is then the conversion whose
     /// keep-versus-drop divergence is unmeasured.
@@ -1900,7 +1900,7 @@ module UnixDescriptor =
     // `FileDescriptorRegistry.dropDescriptor` cannot do this itself: the
     // socket table is the machine's rather than the process's, whether an
     // inode is still named is a question about the filesystem, and what a
-    // sleeping call holds is the task table's.
+    // sleeping call holds is the thread table's.
     /// `close`, with a refusal answered as the `Error` rather than raised.
     let internal tryClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
@@ -1932,8 +1932,8 @@ module UnixDescriptor =
         // does not return until the flock has (measured,
         // `open-file-references.c` section D), and the park does not record
         // which descriptor that was, so any close onto the description
-        // refuses. Checked against the park record rather than a task's run
-        // state, so the window between a wake and the woken task's re-entry is
+        // refuses. Checked against the park record rather than a thread's run
+        // state, so the window between a wake and the woken thread's re-entry is
         // covered too.
         let darwinRefusal : CloseRefusal<'Thread> option =
             if not darwin then
@@ -1944,10 +1944,10 @@ module UnixDescriptor =
                     match parked with
                     | ParkedSyscall.EpollWait wait when wait.Epoll = closingId ->
                         failwith
-                            $"UnixDescriptor.close: task %O{thread} is parked in an epoll_wait on %O{closingId} under the Darwin flavour, which has no epoll (this is a bug in the caller's state construction)."
+                            $"UnixDescriptor.close: thread %O{thread} is parked in an epoll_wait on %O{closingId} under the Darwin flavour, which has no epoll (this is a bug in the caller's state construction)."
                     | ParkedSyscall.InotifyRead read when read.Instance = closingId ->
                         failwith
-                            $"UnixDescriptor.close: task %O{thread} is parked in a read of the inotify instance %O{closingId} under the Darwin flavour, which has no inotify (this is a bug in the caller's state construction)."
+                            $"UnixDescriptor.close: thread %O{thread} is parked in a read of the inotify instance %O{closingId} under the Darwin flavour, which has no inotify (this is a bug in the caller's state construction)."
                     | ParkedSyscall.Flock parked when parked.Requester = closingId ->
                         Some (CloseRefusal.DarwinFlockedDescriptorWithWaiter (closingId, thread))
                     | ParkedSyscall.PipeRead read when enteredHere read.Reader ->
@@ -2181,7 +2181,7 @@ module UnixDescriptor =
             // Only Linux has inotify, and its close leaves the read asleep
             // (measured, `inotify-probe.c` row B close-under-read).
             | ParkedSyscall.InotifyRead _
-            // Reserved: nothing parks a task in it yet. Darwin's close of a
+            // Reserved: nothing parks a thread in it yet. Darwin's close of a
             // selected descriptor will end it, with EBADF (measured,
             // `docs/probes/select-park` row E1); Linux's leaves it asleep.
             | ParkedSyscall.Select _
@@ -2190,7 +2190,7 @@ module UnixDescriptor =
             // asleep.
             | ParkedSyscall.DatagramReceive _
             | ParkedSyscall.DatagramSend _
-            // Reserved: nothing parks a task in it yet, and no Darwin connect
+            // Reserved: nothing parks a thread in it yet, and no Darwin connect
             // sleeps.
             | ParkedSyscall.Connect _
             | ParkedSyscall.KqueuePoll _ -> None
@@ -2260,7 +2260,7 @@ module UnixDescriptor =
                         system
                 | None ->
                     failwith
-                        $"UnixDescriptor.close: task %O{thread} was parked a moment ago and is not now (this is a bug in this library)."
+                        $"UnixDescriptor.close: thread %O{thread} was parked a moment ago and is not now (this is a bug in this library)."
             )
 
         let machine = ended.Machine
@@ -2269,7 +2269,7 @@ module UnixDescriptor =
         // Measured (`close-ends-call.c` sections P2-P4 and P7): each write the
         // close ends raises SIGPIPE for the process as it returns, which is
         // before the close returns, so the signal's disposition is the one it
-        // has now, whatever it is by the time the write's task finishes.
+        // has now, whatever it is by the time the write's thread finishes.
         let signalled =
             (Ok system.Process.Signals, endedCalls)
             ||> List.fold (fun signals (thread, ended) ->
@@ -2410,7 +2410,7 @@ module UnixDescriptor =
                 | Some thread -> Some (CloseRefusal.LingeringCloseDeferredToCall (socketId, thread))
                 | None ->
                     failwith
-                        $"UnixDescriptor.close: closing fd %d{fd} left open file description %O{closingId} with no descriptor and undestroyed, but no task of this process is parked in a call that holds it (this is a bug in this library)."
+                        $"UnixDescriptor.close: closing fd %d{fd} left open file description %O{closingId} with no descriptor and undestroyed, but no thread of this process is parked in a call that holds it (this is a bug in this library)."
             | None, _
             | Some _, _ -> None
 
@@ -2419,7 +2419,7 @@ module UnixDescriptor =
         | None ->
 
         // Measured on Darwin 27.0.0 (`kqueue-kevent.c`, sections E and F):
-        // closing a descriptor a task is asleep in `kevent` through drains the
+        // closing a descriptor a thread is asleep in `kevent` through drains the
         // kqueue, which ends that wait and every other wait on the kqueue with
         // EBADF, and leaves every later wait on it EBADF too. Closing one no
         // waiter entered through changes nothing. A waiter holds the kqueue
@@ -2427,7 +2427,7 @@ module UnixDescriptor =
         // destroyed it, even when it closed the last descriptor: the kqueue
         // goes as the last call holding it returns.
         //
-        // Checked against the park records rather than a task's run state: a
+        // Checked against the park records rather than a thread's run state: a
         // woken waiter has not left the call yet.
         let registry =
             match closing.Target with
@@ -2522,7 +2522,7 @@ module UnixDescriptor =
     /// descriptor names it, the pipe's timestamps move as the call's return
     /// moves them, an ended write's `SIGPIPE` is generated for the process
     /// (refused where that would end the process),
-    /// and the task, still parked, learns its answer from its finishing call. A pipe or connection transfer that something had
+    /// and the thread, still parked, learns its answer from its finishing call. A pipe or connection transfer that something had
     /// already woken is refused.
     ///
     /// Every kqueue registration made through `fd` goes with it, in each kqueue

@@ -92,7 +92,7 @@ type internal LaunchRefusal =
     | CurrentDirectory of directory : AbsoluteUnixPath * fault : CurrentDirectoryFault
     /// The launch puts its leader on the logical processor `cpu`, and the
     /// machine has `processorCount`, numbered from 0, which do not include it.
-    /// Contradictory: no kernel runs a task on a processor it does not have.
+    /// Contradictory: no kernel runs a thread on a processor it does not have.
     | LeaderCpuBeyondMachine of cpu : CpuId * processorCount : int
 
 [<RequireQualifiedAccess>]
@@ -143,7 +143,7 @@ type ProcessLaunch<'Thread when 'Thread : comparison> =
             /// The descriptors the launcher set up, each a pipe end of its own
             /// whose other end is the client's.
             Streams : Map<int, LaunchDescriptor>
-            /// The process's first task, its thread-group leader.
+            /// The process's first thread, its thread-group leader.
             Leader : 'Thread
             /// The logical processor the leader starts on.
             LeaderCpu : CpuId
@@ -203,7 +203,7 @@ module ProcessLaunch =
 
     /// <summary>
     /// A process on `platform` with the descriptors `streams` open, and one
-    /// task, `leader`, on the logical processor `leaderCpu`; otherwise as a
+    /// thread, `leader`, on the logical processor `leaderCpu`; otherwise as a
     /// default process of the platform's flavour starts: in the root, with
     /// `UnixSystem.defaultCredentials`, `UnixSystem.defaultUmask`, no
     /// environment, no executable path (`UnixSystem.defaultProcessPath`) and
@@ -240,7 +240,7 @@ module ProcessLaunch =
     let platform<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : SimulatedUnixPlatform =
         launch.Platform
 
-    /// The process's first task.
+    /// The process's first thread.
     let leader<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : 'Thread = launch.Leader
 
     /// `withCredentials`, with a refusal answered as the `Error` rather than raised.
@@ -451,7 +451,7 @@ module ProcessLaunch =
     /// the thread ID `leaderThreadId`, which the machine's allocator already
     /// records as live: the machine after it, with the launch table's pipes,
     /// the process on its process table and a hold on its current directory,
-    /// and the process and its tasks.
+    /// and the process and its threads.
     let internal launchOnto<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
         (pid : ProcessId)

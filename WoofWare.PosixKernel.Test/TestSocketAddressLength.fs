@@ -61,7 +61,7 @@ module TestSocketAddressLength =
     let private isLinux (platform : SimulatedUnixPlatform) : bool =
         SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
-    /// A fresh process on `platform` whose leader is task 0, as every call here
+    /// A fresh process on `platform` whose leader is thread 0, as every call here
     /// is made by.
     let private systemOn (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         UnixSystem.initial platform

@@ -564,9 +564,9 @@ module TestUnmodelledException =
 
     [<Test>]
     let ``exitThread throws exactly when tryExitThread refuses`` () : unit =
-        // Task 0 leads, and task 2 is parked in an `flock` on an event queue,
-        // so the leader's exit is unmodelled, the parked task's is a misuse,
-        // and task 1's is answered.
+        // Thread 0 leads, and thread 2 is parked in an `flock` on an event queue,
+        // so the leader's exit is unmodelled, the parked thread's is a misuse,
+        // and thread 1's is answered.
         let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
             let system = booted platform
 

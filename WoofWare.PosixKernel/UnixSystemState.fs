@@ -39,13 +39,13 @@ type internal FocusOrigin<'Thread, 'Handler when 'Thread : comparison and 'Handl
         | FocusedFrom _ -> 1
 
 /// Everything one simulated POSIX process is, as a syscall sees it: the machine
-/// it runs on, its own per-process state, and its tasks.
+/// it runs on, its own per-process state, and its threads.
 ///
 /// On a `SimulatedMachine` holding several processes, this is one process's
 /// view of it (`SimulatedMachine.focus`): it holds no other process, so no
 /// syscall can reach one.
 ///
-/// Generic in what names a task and what a signal handler is, for the same
+/// Generic in what names a thread and what a signal handler is, for the same
 /// reason `SignalState` is: those are the client's identities and this library
 /// never learns them.
 ///
@@ -56,16 +56,16 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
     internal
         {
             Machine : UnixMachineState
-            /// How long the machine has been up, and which task each of its
+            /// How long the machine has been up, and which thread each of its
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
             Process : UnixProcessState<'Thread, 'Handler>
             Threads : Map<'Thread, UnixThreadState>
-            /// The process's first task, which it started with: its thread-group
+            /// The process's first thread, which it started with: its thread-group
             /// leader.
             ///
-            /// Always in `Tasks`. It cannot exit while another task lives
-            /// (`UnixThreadLifecycle.exitThread` refuses that), so it is a task for as
+            /// Always in `Threads`. It cannot exit while another thread lives
+            /// (`UnixThreadLifecycle.exitThread` refuses that), so it is a thread for as
             /// long as the process is running. On Linux its thread ID is the process ID.
             Leader : 'Thread
             /// Where this view was taken from, if a `SimulatedMachine` focused
@@ -130,7 +130,7 @@ module internal UnixSystemState =
                 }
         }
 
-/// Writing a task's park, together with the holds it takes on open file
+/// Writing a thread's park, together with the holds it takes on open file
 /// descriptions.
 [<RequireQualifiedAccess>]
 module internal UnixParkState =
@@ -177,7 +177,7 @@ module internal UnixParkState =
         | Some _
         | None -> queues
 
-    /// `system` with `task` parked in `park`, which replaces any park it was in,
+    /// `system` with `thread` parked in `park`, which replaces any park it was in,
     /// and with the holds the machine records moved to match: the old park's
     /// let go of, and the new park's taken; and a Darwin poll's kqueue the old
     /// park held destroyed, unless the new one holds it too. Every write of a
@@ -205,7 +205,7 @@ module internal UnixParkState =
             Threads = UnixThreadTable.withPark thread park system.Threads
         }
 
-    /// `system` with `task` no longer parked, its call having returned or been
+    /// `system` with `thread` no longer parked, its call having returned or been
     /// ended, and the holds its park took let go of. Destroys no description: a
     /// description only the park held stays in the table until
     /// `ObjectLifetime.releaseUnreferenced` is asked about it. A Darwin poll's
@@ -231,7 +231,7 @@ module internal UnixParkState =
 /// `UnixBootImage` configure and `UnixBootImage.boot` turns, by launching that
 /// first process (`ProcessLaunch`), into the `UnixSystem` that syscalls take.
 ///
-/// Generic in the task and handler types of the system it boots into.
+/// Generic in the thread and handler types of the system it boots into.
 ///
 /// Opaque, so that the only way to a system from it is `boot`, after which no
 /// setter applies.

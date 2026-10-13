@@ -17,7 +17,7 @@ open WoofWare.PosixKernel
 /// two kqueues, the first with a ready listener queued and the second drained;
 /// a connected client socket with nothing written either way; two inotify
 /// instances, one holding a record and one empty; the standard streams, whose
-/// readiness is the launch shape's; and two tasks,
+/// readiness is the launch shape's; and two threads,
 /// of which only `signalled` has a caught signal pending.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -244,7 +244,7 @@ module TestWakeCondition =
             Scheduling = UnixSchedulingState.advanceClock clock system.Scheduling
         }
 
-    /// The task with a caught signal pending; the other, 0, has none.
+    /// The thread with a caught signal pending; the other, 0, has none.
     let private signalled : int = 1
 
     let private oracleHolds (waiter : int) (clock : int64) (primitive : WakePrimitive) : bool =

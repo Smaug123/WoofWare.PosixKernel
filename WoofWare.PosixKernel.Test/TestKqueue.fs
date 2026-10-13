@@ -11,7 +11,7 @@ open WoofWare.PosixKernel
 
 /// `UnixKqueue.kqueue`, `UnixKqueue.kevent` and `UnixKqueue.finishKevent`: the
 /// descriptor `kqueue()` makes, `kevent`'s argument ladder, its timeout, and what
-/// a close does to a task asleep in it.
+/// a close does to a thread asleep in it.
 ///
 /// The facts these rows hold the library to were measured by
 /// `docs/plans/2026-08-23-posix-kernel-extraction/kqueue-kevent.c` on Darwin
@@ -81,19 +81,20 @@ module TestKqueue =
     let private parks (thread : int) (fd : int) (timeout : KeventTimeout) (system : UnixSystem<int, string>) =
         match waits thread fd timeout system with
         | Ok (KeventOutcome.WouldBlock condition, parked) -> condition, parked
-        | other -> failwith $"expected task %d{thread} to park, got %A{other}"
+        | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
     let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
         match UnixKqueue.tryFinishKevent thread system with
         | Ok (outcome, finished) ->
             UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
             outcome, finished
-        | Error refusal -> failwith $"expected task %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
+        | Error refusal ->
+            failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
 
     let private woken (asleep : int list) (system : UnixSystem<int, string>) : (int * Set<WakePrimitive>) list =
         UnixWait.wakes (Set.ofList asleep) system
 
-    /// `system` with a caught SIGUSR1 pending for `task`.
+    /// `system` with a caught SIGUSR1 pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
@@ -397,7 +398,7 @@ module TestKqueue =
             | other -> failwith $"malformed probe line %A{other}"
 
     /// A kqueue a close has drained, the descriptor that survived the close onto it, and
-    /// the system: task 1 slept in `kevent` through the closed descriptor, and has
+    /// the system: thread 1 slept in `kevent` through the closed descriptor, and has
     /// finished.
     let private drained : int * UnixSystem<int, string> =
         let k, system = createKqueue darwin
@@ -1002,7 +1003,7 @@ module TestKqueue =
     // ------------------------------------------------------------------
 
     [<Test>]
-    let ``a parked task cannot wait again, and an unparked one cannot finish`` () : unit =
+    let ``a parked thread cannot wait again, and an unparked one cannot finish`` () : unit =
         let fd, system = createKqueue darwin
         let _, parked = parks 1 fd KeventTimeout.Null system
 

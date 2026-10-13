@@ -230,7 +230,7 @@ module internal EpollReadyList =
     /// because both read the same annotated walk.
     ///
     /// Loudly partial in `epollId`, exactly as a parked `flock`'s wake condition
-    /// is: a task parked on an epoll instance holds it until its call returns, so the
+    /// is: a thread parked on an epoll instance holds it until its call returns, so the
     /// epoll instance cannot have gone while something waits on it. Asking about an epoll instance
     /// that has gone means a park was ended or the epoll instance destroyed some other
     /// way, and neither answer is honest: `true` wakes the waiter into an
@@ -243,7 +243,7 @@ module internal EpollReadyList =
         match OpenFileTable.tryFind epollId system.Machine.OpenFiles with
         | None ->
             failwith
-                $"EpollReadyList.hasDeliverableEvent: %O{epollId} names no live open file description, but a task waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"EpollReadyList.hasDeliverableEvent: %O{epollId} names no live open file description, but a thread waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some description ->
 
         match description.Target with
@@ -785,11 +785,11 @@ module internal KqueueQueue =
         }
 
     /// Whether a wait on the kqueue `kqueue` would report at least one event
-    /// right now: the question a task waiting in `kevent` on it is polled
+    /// right now: the question a thread waiting in `kevent` on it is polled
     /// against, and the one `drain` answers by reporting.
     ///
     /// Loudly partial in `kqueue`, as `EpollReadyList.hasDeliverableEvent` is
-    /// in its epoll instance: a task parked on a kqueue holds it until its call returns,
+    /// in its epoll instance: a thread parked on a kqueue holds it until its call returns,
     /// so the kqueue cannot have gone while something waits on it.
     let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
@@ -799,7 +799,7 @@ module internal KqueueQueue =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
         | None ->
             failwith
-                $"KqueueQueue.hasDeliverableEvent: %O{kqueue} names no live open file description, but a task waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"KqueueQueue.hasDeliverableEvent: %O{kqueue} names no live open file description, but a thread waits on it, and a park holds what it waits on until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some {
                    Target = OpenFileTarget.Kqueue state
                } ->
@@ -876,7 +876,7 @@ module internal KqueueQueue =
             }
             system
 
-/// Something that happened to a socket, which a task waiting in `epoll_wait`
+/// Something that happened to a socket, which a thread waiting in `epoll_wait`
 /// or `kevent` may be waiting for.
 ///
 /// The producers are a measured set, not "anything that writes the socket

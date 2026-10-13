@@ -157,7 +157,7 @@ module internal CopyIn =
 
         agreeing "bind" expected actual
 
-    /// `connect(2)` as `task` makes it, through the library's public
+    /// `connect(2)` as `thread` makes it, through the library's public
     /// protocol, held to the internal steps it is made of, as `bind` is, and
     /// failing the test if the call sleeps.
     let connectAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

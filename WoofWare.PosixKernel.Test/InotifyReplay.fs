@@ -102,7 +102,7 @@ module internal InotifyReplay =
 
     /// A machine like the one measured: Linux 6.18.5 aarch64, the measuring
     /// VM's `fs.inotify` sysctls, `seed` at the root, and a process of
-    /// `credentials` with tasks 0 to 2 standing at the root.
+    /// `credentials` with threads 0 to 2 standing at the root.
     let boot (credentials : Credentials) (seed : (string * SeedEntry) list) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxArm64
         |> UnixBootImage.tryWithInotifyLimits

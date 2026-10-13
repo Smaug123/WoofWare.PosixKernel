@@ -2,23 +2,23 @@ namespace WoofWare.PosixKernel.Test
 
 open WoofWare.PosixKernel
 
-/// A task inside a signal handler, for a test of handler frames, or one that
-/// needs a task to block signals the way a handler's mask blocks them.
+/// A thread inside a signal handler, for a test of handler frames, or one that
+/// needs a thread to block signals the way a handler's mask blocks them.
 /// (`UnixSignal.pthreadSigmask` blocks them without a handler.)
 [<RequireQualifiedAccess>]
 module HandlerFrames =
 
-    /// The signal these helpers deliver to put a task in a handler: SIGPROF.
+    /// The signal these helpers deliver to put a thread in a handler: SIGPROF.
     /// A test that uses them does not use it otherwise.
     let carrier : Signal = Signal.SIGPROF
 
-    /// `state` with `task` inside a handler for `carrier`, whose `sa_mask` is
-    /// `mask` and which has `SA_NODEFER`: `task`'s mask becomes its old mask
+    /// `state` with `thread` inside a handler for `carrier`, whose `sa_mask` is
+    /// `mask` and which has `SA_NODEFER`: `thread`'s mask becomes its old mask
     /// with `mask` added, and `carrier` is in it only if `mask` names it. The
     /// carrier's disposition is put back as it was. `None` if the return to
     /// user mode that delivers the carrier would deliver anything else too.
     ///
-    /// `leader` and `tasks` are as `SignalState.onReturnToUser` takes them.
+    /// `leader` and `threads` are as `SignalState.onReturnToUser` takes them.
     let tryEnterVia<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (carrier : Signal)
         (handler : 'Handler)
@@ -92,7 +92,7 @@ module HandlerFrames =
         =
         enterVia carrier handler leader threads thread mask state
 
-    /// `task` returns from its innermost handler.
+    /// `thread` returns from its innermost handler.
     let leave<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (state : SignalState<'Thread, 'Handler>)
@@ -102,7 +102,7 @@ module HandlerFrames =
         | innermost :: _ -> SignalState.sigreturn thread innermost.Id state
         | [] -> failwith $"%O{thread} is in no handler"
 
-    /// `enter` for a task of `system`, whose leader and tasks it takes.
+    /// `enter` for a thread of `system`, whose leader and threads it takes.
     let enterIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (handler : 'Handler)
         (thread : 'Thread)

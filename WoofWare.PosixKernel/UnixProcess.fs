@@ -167,7 +167,7 @@ module internal UnixProcessState =
     ///
     /// For a client that runs the process's signal handlers, or checks its
     /// invariants. A process sees parts of this through `sigaction(2)` and the
-    /// handlers it runs; this is the whole of it, every task's handler frames
+    /// handlers it runs; this is the whole of it, every thread's handler frames
     /// and every pending signal included.
     let signals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (proc : UnixProcessState<'Thread, 'Handler>)

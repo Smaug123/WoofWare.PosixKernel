@@ -43,7 +43,7 @@ type internal GetRandomRefusal =
     | Buffer of BufferRefusal
     /// The simulated kernel has no `getrandom` system call.
     | NoSuchSyscall of flavour : SimulatedUnixFlavour
-    /// A request that moves `count` bytes, more than a page, by a task with a
+    /// A request that moves `count` bytes, more than a page, by a thread with a
     /// signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -57,7 +57,7 @@ module internal GetRandomRefusal =
         | GetRandomRefusal.NoSuchSyscall flavour ->
             $"the simulated kernel is %O{flavour}, which has no getrandom system call; getentropy(2) is how a process asks it for random bytes."
         | GetRandomRefusal.SignalAtPageBoundary count ->
-            $"the request moves %d{count} bytes, more than a page, and a signal is pending that the calling task would take on its return to user mode. Linux's getrandom stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short getrandom."
+            $"the request moves %d{count} bytes, more than a page, and a signal is pending that the calling thread would take on its return to user mode. Linux's getrandom stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short getrandom."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetRandomRefusal) : RefusalKind =
@@ -226,7 +226,7 @@ module UnixEntropy =
 
         if not (Map.containsKey thread system.Threads) then
             failwith
-                $"UnixEntropy.getRandom: task %O{thread} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
+                $"UnixEntropy.getRandom: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
 
         let stopsShort (moved : int) =
             SyscallInterruption.stopsAtPageBoundary thread moved system
@@ -247,8 +247,8 @@ module UnixEntropy =
     ///
     /// Never blocks. Linux-only: under any other flavour the call is refused.
     ///
-    /// `task` is the task making the call, which must be one of the process's.
-    /// A request that moves more than a page, by a task with a signal pending,
+    /// `thread` is the thread making the call, which must be one of the process's.
+    /// A request that moves more than a page, by a thread with a signal pending,
     /// is refused: a real one stops
     /// short at the first page boundary.
     /// </summary>

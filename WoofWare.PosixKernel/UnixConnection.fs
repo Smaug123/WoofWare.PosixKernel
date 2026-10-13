@@ -9,7 +9,7 @@ type AcceptOutcome =
     /// The accept queue in particular is untouched: measured on both flavours,
     /// a failed `accept` leaves a queued connection queued.
     ///
-    /// Answered by `finishAccept`, the task is no longer parked in the system
+    /// Answered by `finishAccept`, the thread is no longer parked in the system
     /// this rides with.
     | Failed of error : UnixError
     /// A connection was dequeued and a socket materialised onto it. `fd` is the
@@ -34,13 +34,13 @@ type AcceptOutcome =
     /// only once it holds the connection.
     | DroppedConnection of error : UnixError
     /// The call did not return: the listener is blocking and its accept queue
-    /// is empty. The calling task is parked, and sleeps until
-    /// `UnixWait.satisfied` of the task is non-empty and
+    /// is empty. The calling thread is parked, and sleeps until
+    /// `UnixWait.satisfied` of the thread is non-empty and
     /// `UnixWait.wakes` wakes it; then `UnixConnection.finishAccept` finishes
     /// the call.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The task is
+    /// restarts: it never returns. The thread is
     /// no longer parked. Once the handlers have run, the client issues the
     /// `accept` again with the arguments it was first made with.
     ///
@@ -89,7 +89,7 @@ type internal AcceptRefusal =
     /// faults on it: both skip the copy and the length cell, which this
     /// library has no outcome for either.
     | UnmeasuredCopyOutFault of listener : SocketId
-    /// The accept was asleep and a signal is pending for the task, and this
+    /// The accept was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
     /// The accept would sleep on a listener a close has drained
@@ -361,7 +361,7 @@ type internal ConnectAddress =
 type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            /// The task that made the call, which the rest of it is made by.
+            /// The thread that made the call, which the rest of it is made by.
             Thread : 'Thread
             Fd : int
             Address : UserBuffer
@@ -1664,12 +1664,12 @@ module UnixConnection =
                 copied)
             system
 
-    /// What a `connect` by `task` through `fd` answers once the kernel holds
+    /// What a `connect` by `thread` through `fd` answers once the kernel holds
     /// the bytes it copied: `tryConnectBytes`'s answer, as the call's outcome.
     ///
     /// No connect sleeps yet: the one that would, to a full listener, is
     /// refused (`ConnectRefusal.AcceptQueueFull`), so this always answers
-    /// `SyscallOutcome.Answered`. The task is what a connect that sleeps will
+    /// `SyscallOutcome.Answered`. The thread is what a connect that sleeps will
     /// park.
     let private finishConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -1697,13 +1697,13 @@ module UnixConnection =
               ConnectRefusal
            >
         =
-        // Loudly partial in an unregistered or parked task, before anything is
+        // Loudly partial in an unregistered or parked thread, before anything is
         // answered, as every call that can sleep is. The paused call holds the
-        // system it was made in, so the task is still unparked when it resumes.
+        // system it was made in, so the thread is still unparked when it resumes.
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixConnection.connect: task %O{thread} is parked in %A{parked}, and is issuing a connect. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
+                $"UnixConnection.connect: thread %O{thread} is parked in %A{parked}, and is issuing a connect. A thread blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
         | None ->
 
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd address declaredLength system with
@@ -1732,7 +1732,7 @@ module UnixConnection =
             |> Ok
 
     /// <summary>
-    /// `connect(2)`, made by `task`: point `fd` at the address in the
+    /// `connect(2)`, made by `thread`: point `fd` at the address in the
     /// `struct sockaddr` the caller declared `declaredLength` bytes long at
     /// `address`, or ask what pointing it there would answer.
     /// </summary>
@@ -1751,11 +1751,11 @@ module UnixConnection =
     /// reports any other errno; the connection it defers is already settled on
     /// the socket's phase.
     ///
-    /// It takes the task, and its outcome is a `SyscallOutcome`, because under
+    /// It takes the thread, and its outcome is a `SyscallOutcome`, because under
     /// Linux a blocking connect to a listener whose accept queue is full sleeps
-    /// (`ParkedSyscall.Connect`): the paused call holds the task, so the
+    /// (`ParkedSyscall.Connect`): the paused call holds the thread, so the
     /// connect `connectWithAddress` finishes can park it. No connect sleeps in
-    /// this version: that one is refused. A task that is parked already, or
+    /// this version: that one is refused. A thread that is parked already, or
     /// that the table does not hold, fails loudly.
     /// </remarks>
     let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2098,7 +2098,7 @@ module UnixConnection =
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixConnection.accept: task %O{thread} is parked in %A{parked}, and is issuing an accept. A task blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
+                $"UnixConnection.accept: thread %O{thread} is parked in %A{parked}, and is issuing an accept. A thread blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
         | None ->
 
         // The descriptor is classified before the destination is looked at, and
@@ -2195,7 +2195,7 @@ module UnixConnection =
                 Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
-    /// `accept(2)`, made by `task`: take the oldest completed connection off
+    /// `accept(2)`, made by `thread`: take the oldest completed connection off
     /// `fd`'s accept queue and hand back a descriptor onto the server side of
     /// it; or, for a blocking listener with nothing queued, sleep until a
     /// connection arrives.
@@ -2218,10 +2218,10 @@ module UnixConnection =
     /// queue included.
     ///
     /// A listener whose description is blocking and whose queue is empty parks
-    /// `task` until a connection is queued, and the call is finished with
+    /// `thread` until a connection is queued, and the call is finished with
     /// `finishAccept`. It waits for ever: `SO_RCVTIMEO`, which bounds such a
     /// wait on Linux (and not on Darwin), is an option `setsockopt` refuses to
-    /// set. Of several tasks parked on one listener, a connection wakes the one
+    /// set. Of several threads parked on one listener, a connection wakes the one
     /// that parked first (see `UnixWait.wakes`). The destination is not looked
     /// at before the call sleeps.
     ///
@@ -2237,7 +2237,7 @@ module UnixConnection =
     /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client whose
     /// own sockets want one answer on every platform clears it itself.
     ///
-    /// `task` must not already be parked.
+    /// `thread` must not already be parked.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -2259,10 +2259,10 @@ module UnixConnection =
             | Some (ParkedSyscall.Accept parked) -> parked
             | Some other ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{thread} is parked in %A{other}, not in an accept, so there is no accept to finish (this is a bug in the client)."
+                    $"UnixConnection.finishAccept: thread %O{thread} is parked in %A{other}, not in an accept, so there is no accept to finish (this is a bug in the client)."
             | None ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{thread} is not parked, so there is no accept to finish. Only a task `accept` answered `WouldBlock` finishes here (this is a bug in the client)."
+                    $"UnixConnection.finishAccept: thread %O{thread} is not parked, so there is no accept to finish. Only a thread `accept` answered `WouldBlock` finishes here (this is a bug in the client)."
 
         match parked.Listener with
         | SleepTarget.EndedByClose _ ->
@@ -2278,7 +2278,7 @@ module UnixConnection =
             | Some description -> description
             | None ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{thread}'s accept waits on open file description %O{listenerId}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                    $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on open file description %O{listenerId}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
 
         let socketId =
             match description.Target with
@@ -2292,7 +2292,7 @@ module UnixConnection =
             | OpenFileTarget.Kqueue _
             | OpenFileTarget.Epoll _ ->
                 failwith
-                    $"UnixConnection.finishAccept: task %O{thread}'s accept waits on open file description %O{listenerId}, which names %A{description.Target} rather than a socket. `accept` parks only on a listening socket (this is a bug in the caller that recorded the park)."
+                    $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on open file description %O{listenerId}, which names %A{description.Target} rather than a socket. `accept` parks only on a listening socket (this is a bug in the caller that recorded the park)."
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -2301,7 +2301,7 @@ module UnixConnection =
                                     Drained = true
                                 } ->
             failwith
-                $"UnixConnection.finishAccept: task %O{thread}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
+                $"UnixConnection.finishAccept: thread %O{thread}'s accept sleeps on socket %O{socketId}, which a close has drained. The close that drains a listener ends every accept asleep on it, and `accept` refuses to sleep on a drained one (this is a bug in this library, or in a caller that assembled the state by hand)."
         | SocketPhase.Listening {
                                     Queue = _ :: _
                                 } ->
@@ -2331,7 +2331,7 @@ module UnixConnection =
                 )
         | phase ->
             failwith
-                $"UnixConnection.finishAccept: task %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
+                $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
     /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2352,13 +2352,13 @@ module UnixConnection =
         | Ok (outcome, after) ->
             Ok (outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after)
 
-    /// Finish the `accept` `task` is parked in: look at the listener's queue
+    /// Finish the `accept` `thread` is parked in: look at the listener's queue
     /// again, as a woken real accept does, and answer.
     ///
     /// Hands over the oldest connection on the queue, copying its peer address
     /// out to the destination the call was entered with; see `accept` for the
     /// destinations that refuses. A queue found empty again (another caller
-    /// took the connection) parks the task again, behind every other park,
+    /// took the connection) parks the thread again, behind every other park,
     /// which on a real kernel puts it at the back of the listener's queue of
     /// accepters. So does a listener whose description has become non-blocking
     /// while the call slept: measured on both flavours (`blocking-accept.c`
@@ -2367,9 +2367,9 @@ module UnixConnection =
     /// On the flavours whose accepted socket inherits `O_NONBLOCK`, it inherits
     /// the listening description's flag as it stands when the call finishes.
     ///
-    /// With the queue empty, a signal with a handler pending for the task ends
+    /// With the queue empty, a signal with a handler pending for the thread ends
     /// the call: `Restarts` if every handler that runs was installed with
-    /// `SA_RESTART`, and `Failed EINTR` if none was. Either way the task leaves
+    /// `SA_RESTART`, and `Failed EINTR` if none was. Either way the thread leaves
     /// the listener's queue of accepters, and issuing the call again puts it at
     /// the back. An answer, `Restarts` included, clears the park.
     ///
@@ -2382,7 +2382,7 @@ module UnixConnection =
     /// answers `ECONNABORTED`, whatever is queued and whatever signal is
     /// pending, and leaves the queue as it is.
     ///
-    /// `task` must be parked in an accept.
+    /// `thread` must be parked in an accept.
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)

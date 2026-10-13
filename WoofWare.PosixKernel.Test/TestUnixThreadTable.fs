@@ -4,9 +4,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// The task table, exercised directly rather than through a client.
+/// The thread table, exercised directly rather than through a client.
 ///
-/// It is generic in the task name for the same reason `SignalState` is: naming a
+/// It is generic in the thread name for the same reason `SignalState` is: naming a
 /// scheduling entity is the client's business. These rows use `int` as the name,
 /// which is the point — nothing here knows what a `ThreadId` is.
 [<TestFixture>]
@@ -15,7 +15,7 @@ module TestUnixThreadTable =
 
     let private empty : Map<int, UnixThreadState> = Map.empty
 
-    /// A Linux process whose leader is task 0, with process ID 4242, on a
+    /// A Linux process whose leader is thread 0, with process ID 4242, on a
     /// machine with four processors.
     let private initial : UnixSystem<int, string> =
         UnixSystem.initial SimulatedUnixPlatform.linuxX64
@@ -33,7 +33,7 @@ module TestUnixThreadTable =
         OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get name threads))
 
     [<Test>]
-    let ``a spawned task is readable`` () : unit =
+    let ``a spawned thread is readable`` () : unit =
         let threads = (initial |> withThread 7 3).Threads
 
         UnixThreadState.cpu (UnixThreadTable.get 7 threads) |> shouldEqual (CpuId 3)
@@ -45,7 +45,7 @@ module TestUnixThreadTable =
         let exn =
             Assert.Throws<exn> (fun () -> UnixThreadTable.get 7 empty |> ignore<UnixThreadState>)
 
-        exn.Message |> shouldContainText "names no task"
+        exn.Message |> shouldContainText "names no thread"
 
     [<Test>]
     let ``spawning one name twice is refused`` () : unit =
@@ -55,16 +55,16 @@ module TestUnixThreadTable =
         let exn =
             Assert.Throws<exn> (fun () -> withThread 7 5 system |> ignore<UnixSystem<int, string>>)
 
-        exn.Message |> shouldContainText "already names a task"
+        exn.Message |> shouldContainText "already names a thread"
 
         let leader =
             Assert.Throws<exn> (fun () -> withThread 0 5 system |> ignore<UnixSystem<int, string>>)
 
-        leader.Message |> shouldContainText "already names a task"
+        leader.Message |> shouldContainText "already names a thread"
 
     [<Test>]
-    let ``parking and releasing leave the rest of the task alone`` () : unit =
-        // On a task that is *not* on processor 0, so that "left alone" and "reset
+    let ``parking and releasing leave the rest of the thread alone`` () : unit =
+        // On a thread that is *not* on processor 0, so that "left alone" and "reset
         // to zero" are distinguishable.
         let system = initial |> withThread 7 3
 
@@ -103,14 +103,14 @@ module TestUnixThreadTable =
         |> shouldEqual ([], [])
 
     [<Test>]
-    let ``reconcile reports a live task the table has no entry for`` () : unit =
+    let ``reconcile reports a live thread the table has no entry for`` () : unit =
         let threads = (initial |> withThread 1 0).Threads
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [])
 
     [<Test>]
-    let ``reconcile reports an entry no live task claims`` () : unit =
+    let ``reconcile reports an entry no live thread claims`` () : unit =
         let threads = (initial |> withThread 1 0 |> withThread 2 1).Threads
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) threads

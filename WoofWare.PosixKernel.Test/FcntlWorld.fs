@@ -110,7 +110,7 @@ module internal FcntlWorld =
 
     /// A system on `run`'s platform, made by `run`'s caller, whose working
     /// directory holds the probe's `f` (eight bytes, the caller's, 0644), `d`
-    /// (the caller's, 0755) and `foreign` (root's, 0644), with tasks 1 to 3
+    /// (the caller's, 0755) and `foreign` (root's, 0644), with threads 1 to 3
     /// beside the leader 0.
     let system (run : Run) : UnixSystem<int, string> =
         let caller = InodeOwner.ofProcess run.Caller

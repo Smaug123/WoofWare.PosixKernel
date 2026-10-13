@@ -57,7 +57,7 @@ module TestPthreadKill =
         | SimulatedUnixFlavour.Linux -> 64
         | SimulatedUnixFlavour.Darwin -> 31
 
-    /// The numbers a task can be sent with `pthread_kill`: every signal but
+    /// The numbers a thread can be sent with `pthread_kill`: every signal but
     /// glibc's own 32 and 33, measured to be refused with EINVAL though
     /// `kill(2)` sends them.
     let private sendable (flavour : SimulatedUnixFlavour) (signo : int) : bool =
@@ -95,7 +95,7 @@ module TestPthreadKill =
     /// The probe's `args` rows: `raise` and `pthread_kill(pthread_self())`
     /// answered alike on both flavours, row for row.
     [<Test>]
-    let ``pthread_kill of the calling task answers the measured rows`` () : unit =
+    let ``pthread_kill of the calling thread answers the measured rows`` () : unit =
         let rows : (int * string * string) list =
             [
                 // signo, Linux, Darwin
@@ -133,7 +133,7 @@ module TestPthreadKill =
                 let! signo = signoGen
                 let! target = Gen.elements [ leader ; worker ]
                 let! coreDumps = Gen.elements [ CoreDumps.Suppressed ; CoreDumps.Written ]
-                // A handler frame on either task, blocking a few signals, so
+                // A handler frame on either thread, blocking a few signals, so
                 // that some sends find their target blocking them.
                 let! framed = Gen.elements [ None ; Some leader ; Some worker ]
                 let! blocked = Gen.subListOf [ 1 ; 2 ; 10 ; 15 ; 20 ; 28 ; 29 ; 34 ]
@@ -224,7 +224,7 @@ module TestPthreadKill =
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
-    /// Every delivery of `signal` to `task` from here on: `task` returns to user
+    /// Every delivery of `signal` to `thread` from here on: `thread` returns to user
     /// mode, runs each handler frame it is given and returns from it, until it
     /// is given nothing more. Fails on any delivery but a handler frame.
     let private drain
@@ -267,7 +267,7 @@ module TestPthreadKill =
                 }
         }
 
-    /// `task` inside a handler that blocks `signal`, entered through a carrier
+    /// `thread` inside a handler that blocks `signal`, entered through a carrier
     /// other than `signal`.
     let private blocking (signal : Signal) (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let carrier =
@@ -312,7 +312,10 @@ module TestPthreadKill =
     /// The probe's `handler` rows: a caught signal raised by either thread runs
     /// its handler on that thread, before `raise` returns, and on no other.
     [<Test>]
-    let ``a caught signal raised by a task is taken by that task alone, at its next return to user mode`` () : unit =
+    let ``a caught signal raised by a thread is taken by that thread alone, at its next return to user mode``
+        ()
+        : unit
+        =
         for flavour in flavours do
             let numbering = numberingOf flavour
 
@@ -335,11 +338,11 @@ module TestPthreadKill =
                     (flavour, signo, raiser, atRaiser, atBystander)
                     |> shouldEqual (flavour, signo, raiser, 1, 0)
 
-    /// The probe's `blocked` rows: a signal a task raises while it blocks it
-    /// stays pending on that task, though another task does not block it, and
+    /// The probe's `blocked` rows: a signal a thread raises while it blocks it
+    /// stays pending on that thread, though another thread does not block it, and
     /// the raiser takes it once it unblocks it.
     [<Test>]
-    let ``a signal a task raises while blocking it waits for that task, whoever else could take it`` () : unit =
+    let ``a signal a thread raises while blocking it waits for that thread, whoever else could take it`` () : unit =
         for flavour in flavours do
             let numbering = numberingOf flavour
 
@@ -374,14 +377,14 @@ module TestPthreadKill =
                     (flavour, signo, raiser, atBystander, whileBlocked, afterUnblock)
                     |> shouldEqual (flavour, signo, raiser, 0, 0, 1)
 
-    /// One of the probe's `pair` shapes: what every task blocks, which sends are
-    /// made, and how many instances each task took, main then worker, once each
+    /// One of the probe's `pair` shapes: what every thread blocks, which sends are
+    /// made, and how many instances each thread took, main then worker, once each
     /// unblocked in turn, main first. `None` where this library refuses.
     type private PairShape =
         {
             Name : string
             Threads : int list
-            /// `kill(2)`, or `pthread_kill` of the task named.
+            /// `kill(2)`, or `pthread_kill` of the thread named.
             Sends : int option list
             Linux : (int * int) option
             Darwin : (int * int) option
@@ -425,7 +428,7 @@ module TestPthreadKill =
         ]
 
     [<Test>]
-    let ``a signal sent to the process and one sent to a task are held as the probe measured, or refused`` () : unit =
+    let ``a signal sent to the process and one sent to a thread are held as the probe measured, or refused`` () : unit =
         for flavour in flavours do
             let numbering = numberingOf flavour
 
@@ -577,7 +580,7 @@ module TestPthreadKill =
             |> shouldEqual (Error ThreadKillRefusal.InitProcess)
 
     [<Test>]
-    let ``pthread_kill of a task the process does not have fails loudly`` () : unit =
+    let ``pthread_kill of a thread the process does not have fails loudly`` () : unit =
         for flavour in flavours do
             for signo in [ 0 ; -1 ; 15 ] do
                 Assert.Throws<exn> (fun () -> UnixSignal.tryPthreadKill worker signo (systemOn flavour) |> ignore<_>)

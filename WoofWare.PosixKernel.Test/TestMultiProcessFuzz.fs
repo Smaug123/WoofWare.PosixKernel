@@ -8,7 +8,7 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// Random interleavings of several processes' syscalls on one
-/// `SimulatedMachine`, each made by one of its process's tasks in that
+/// `SimulatedMachine`, each made by one of its process's threads in that
 /// process's view, with the machine's own steps between them: a wake pass that
 /// finishes the calls it wakes, each in its own process's view, the clock
 /// moving on, and a process ending.
@@ -25,7 +25,7 @@ open WoofWare.PosixKernel
 /// its process's end, without first accepting the connection.
 ///
 /// Calls block: sockets are blocking or not, `accept`, `epoll_wait`, `kevent`,
-/// `poll`, `flock` and pipe transfers sleep, and a sleeping task makes no call
+/// `poll`, `flock` and pipe transfers sleep, and a sleeping thread makes no call
 /// until a wake pass finishes its own. A connected socket's `read` and `write`
 /// move bytes between processes, through buffers small enough that writes
 /// fill them, and a blocking one sleeps until the other process's transfer,
@@ -112,15 +112,15 @@ module TestMultiProcessFuzz =
         /// socket the process holds seldom picks out.
         | PollListener of port : int * timeout : int
         /// Block `fatal.[signal]`, then `pthread_kill(3)` it to the calling
-        /// task, which leaves it pending there; the task returns to user mode
+        /// thread, which leaves it pending there; the thread returns to user mode
         /// after each.
         | BlockAndRaise of signal : int
         /// Unblock `fatal.[signal]`, and return to user mode: the process
-        /// ends if the signal is pending on the calling task.
+        /// ends if the signal is pending on the calling thread.
         | Unblock of signal : int
         | Exit of status : int
 
-    /// A step of the machine's own, or a call made by a task of a process.
+    /// A step of the machine's own, or a call made by a thread of a process.
     [<RequireQualifiedAccess>]
     type private Step =
         | Call of proc : int * thread : int * op : Op
@@ -129,7 +129,7 @@ module TestMultiProcessFuzz =
         | WakePass of finishing : int
         /// Let `milliseconds` pass on the machine's clock.
         | Advance of milliseconds : int
-        /// Report that a task of a process, not asleep or woken, runs on the
+        /// Report that a thread of a process, not asleep or woken, runs on the
         /// processor `cpu` (`UnixScheduling.dispatch`).
         | Dispatch of proc : int * thread : int * cpu : int
 
@@ -412,7 +412,7 @@ module TestMultiProcessFuzz =
                         // The client end closes with nothing unread, a FIN, and
                         // the server end reads what is left, then end of file.
                         // The client end drains without blocking: a read that
-                        // slept would leave the task asleep, making no close.
+                        // slept would leave the thread asleep, making no close.
                         3,
                         Gen.constant (
                             [
@@ -426,7 +426,7 @@ module TestMultiProcessFuzz =
                         )
                         // The client end, blocking, reads, and sleeps if
                         // nothing has arrived; the server end's process unblocks
-                        // a fatal signal pending on one of its tasks, which ends
+                        // a fatal signal pending on one of its threads, which ends
                         // it, and its end wakes the read.
                         1,
                         Gen.constant
@@ -546,7 +546,7 @@ module TestMultiProcessFuzz =
         | KeventPark
         | Exit
         | ExitRefusal
-        /// A process a fatal signal ended as one of its tasks returned to user
+        /// A process a fatal signal ended as one of its threads returned to user
         /// mode, having unblocked it.
         | SignalDeath
         /// A read that took bytes another process's socket had written.
@@ -825,7 +825,7 @@ module TestMultiProcessFuzz =
     type private Made =
         /// It answered, or changed nothing, and the process carries on as this.
         | Answered of UnixSystem<int, string>
-        /// The calling task sleeps, in this.
+        /// The calling thread sleeps, in this.
         | Sleeps of UnixSystem<int, string>
         /// The call ended the process.
         | Ended of EndedProcess<int, string>
@@ -841,7 +841,7 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
         | Ok (WriteStep.ProcessEnded ended) -> Made.Ended ended
 
-    /// One call by `task` of the process `pid`, in its view `view`, on `machine`
+    /// One call by `thread` of the process `pid`, in its view `view`, on `machine`
     /// as it stood before.
     let private call
         (cover : FuzzLabel -> unit)
@@ -939,10 +939,10 @@ module TestMultiProcessFuzz =
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
 
-        // `task` returns to user mode from a call that left the process as
+        // `thread` returns to user mode from a call that left the process as
         // `after`. The only signals sent are `fatal`'s, at their defaults, and
         // a SIGPIPE nothing blocks, so the process ends exactly when one of
-        // `fatal` is pending on `task` and it does not block it, and then by
+        // `fatal` is pending on `thread` and it does not block it, and then by
         // one of those signals.
         let returnToUser (after : UnixSystem<int, string>) : Made =
             let due =
@@ -964,13 +964,13 @@ module TestMultiProcessFuzz =
                     cover FuzzLabel.SignalDeath
                     Made.Ended ended
                 | termination ->
-                    failwith $"task %d{thread}'s return ended the process with %O{termination}, with %O{due} due"
+                    failwith $"thread %d{thread}'s return ended the process with %O{termination}, with %O{due} due"
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other) ->
                 failwith
-                    $"no handler is installed and only %O{fatal} is held back, but task %d{thread}'s return took %A{other}"
-            | Error refusal -> failwith $"task %d{thread}'s return was refused: %O{refusal}"
+                    $"no handler is installed and only %O{fatal} is held back, but thread %d{thread}'s return took %A{other}"
+            | Error refusal -> failwith $"thread %d{thread}'s return was refused: %O{refusal}"
 
         // `pthread_sigmask(2)` of `signal` alone, and the return from it.
         let mask (change : SignalMaskChange) (signal : Signal) (view : UnixSystem<int, string>) : Made =
@@ -1026,7 +1026,7 @@ module TestMultiProcessFuzz =
                 let port = ports.[port % ports.Length]
                 let owner = listenerOwner port machine
 
-                // As the task the fuzzer chose, which fails the run if it
+                // As the thread the fuzzer chose, which fails the run if it
                 // sleeps: no connect sleeps yet.
                 match
                     CopyIn.connectAs
@@ -1366,7 +1366,7 @@ module TestMultiProcessFuzz =
             |> answered
         | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup thread status view)
 
-    /// The call `task` of the view `view` is asleep in, finished.
+    /// The call `thread` of the view `view` is asleep in, finished.
     let private finish (cover : FuzzLabel -> unit) (thread : int) (view : UnixSystem<int, string>) : Made =
         match UnixThreadTable.parkedFor thread view.Threads with
         | Some (ParkedSyscall.Accept _) ->
@@ -1449,24 +1449,24 @@ module TestMultiProcessFuzz =
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Sleep _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a sleep yet, so there is no finishSleep to finish it with"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a sleep yet, so there is no finishSleep to finish it with"
         | Some (ParkedSyscall.FifoOpen _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a FIFO open yet, so there is no finishOpen to finish it with"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a FIFO open yet, so there is no finishOpen to finish it with"
         | Some (ParkedSyscall.Select _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a select yet, so there is no finishSelect to finish it with"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a select yet, so there is no finishSelect to finish it with"
         | Some (ParkedSyscall.SignalWait _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a signal wait yet, so there is no finishSignalWait to finish it with"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a signal wait yet, so there is no finishSignalWait to finish it with"
         | Some (ParkedSyscall.DatagramReceive _ as parked)
         | Some (ParkedSyscall.DatagramSend _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a datagram transfer yet, so there is no finishing call to finish it with"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a datagram transfer yet, so there is no finishing call to finish it with"
         | Some (ParkedSyscall.Connect _ as parked) ->
             failwith
-                $"task %d{thread} is woken in %A{parked}, but nothing parks a task in a connect yet, so there is no finishConnect to finish it with"
-        | None -> failwith $"task %d{thread} is woken, and parked in nothing"
+                $"thread %d{thread} is woken in %A{parked}, but nothing parks a thread in a connect yet, so there is no finishConnect to finish it with"
+        | None -> failwith $"thread %d{thread} is woken, and parked in nothing"
 
     /// Everything the run tracks besides the machine.
     type private World =
@@ -1474,9 +1474,9 @@ module TestMultiProcessFuzz =
             Machine : SimulatedMachine<int, string>
             /// The processes still on the machine, in launch order.
             Live : ProcessId list
-            /// The tasks held asleep in a call.
+            /// The threads held asleep in a call.
             Asleep : Set<ProcessId * int>
-            /// The tasks a wake pass has woken whose calls have not finished, in
+            /// The threads a wake pass has woken whose calls have not finished, in
             /// the order they woke.
             Woken : (ProcessId * int) list
         }
@@ -1535,8 +1535,8 @@ module TestMultiProcessFuzz =
             if pid <> except then
                 slot |> shouldEqual before.Processes.[pid]
 
-    /// `made`, by `task` of `pid`, written into `world`: a view written back,
-    /// the task asleep, or the process ended.
+    /// `made`, by `thread` of `pid`, written into `world`: a view written back,
+    /// the thread asleep, or the process ended.
     let private settle
         (cover : FuzzLabel -> unit)
         (pid : ProcessId)
@@ -1641,7 +1641,7 @@ module TestMultiProcessFuzz =
              },
              finishing)
             ||> List.fold (fun world (pid, thread) ->
-                // A process an earlier finish ended has taken its tasks with it.
+                // A process an earlier finish ended has taken its threads with it.
                 if not (List.contains pid world.Live) then
                     world
                 else
@@ -1665,7 +1665,7 @@ module TestMultiProcessFuzz =
 
                     let world = settle cover pid thread made world
 
-                    // A finish whose process's end was refused leaves the task
+                    // A finish whose process's end was refused leaves the thread
                     // parked, woken still, for a later pass.
                     let world =
                         match Map.tryFind pid world.Machine.Processes with
@@ -2100,12 +2100,12 @@ module TestMultiProcessFuzz =
         /// The memo did not answer, and the sweep ran.
         | Sweep
         /// The sweep ran because the clock had reached a deadline, though
-        /// nothing else the memo compares had changed, and woke a task.
+        /// nothing else the memo compares had changed, and woke a thread.
         | ClockOnlyWake
-        /// A sweep, after a step whose sweep the memo answered, that woke a task
+        /// A sweep, after a step whose sweep the memo answered, that woke a thread
         /// whose deadline had passed.
         | DeadlineWakeAfterSkip
-        /// A sweep, after a step whose sweep the memo answered, that woke a task
+        /// A sweep, after a step whose sweep the memo answered, that woke a thread
         /// for something besides its deadline.
         | SyscallWakeAfterSkip
 

@@ -61,7 +61,7 @@ module TestSigcontGeneration =
     /// not answer.
     [<RequireQualifiedAccess>]
     type private Stop =
-        /// It will not say which task takes a signal, or what it does.
+        /// It will not say which thread takes a signal, or what it does.
         | Receiver of SignalReceiverRefusal
         /// Any other refusal, which no measured row expects.
         | Other of string
@@ -112,7 +112,7 @@ module TestSigcontGeneration =
                     Phase = n
                 }
 
-    /// `task` returns to user mode: it runs every handler the kernel pushes,
+    /// `thread` returns to user mode: it runs every handler the kernel pushes,
     /// each logged as the probe's handler logs itself, and the return goes on
     /// past a SIGCONT the kernel discards.
     let rec private returns (thread : int) : Step =
@@ -124,7 +124,7 @@ module TestSigcontGeneration =
                 returns thread (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
                 runFrames thread frames (withSystem system r)
-            | Ok other -> failwith $"task %d{thread}'s return to user mode: %A{other}"
+            | Ok other -> failwith $"thread %d{thread}'s return to user mode: %A{other}"
 
     /// Each of `frames`' handlers runs, innermost first; each `sigreturn` is a
     /// return to user mode of its own.
@@ -141,14 +141,14 @@ module TestSigcontGeneration =
 
                 (returns thread >=> runFrames thread outer) r
 
-    /// A call `task` makes that answers at once, then its return to user mode.
+    /// A call `thread` makes that answers at once, then its return to user mode.
     let private call (thread : int) (syscall : UnixSystem<int, string> -> UnixSystem<int, string>) : Step =
         fun r -> returns thread (withSystem (syscall r.System) r)
 
     let private signals (list : Signal list) (r : Replay) : SignalMask =
         SignalMask.ofSignals (numbering r) (Set.ofList list)
 
-    /// `pthread_sigmask(SIG_SETMASK)` by `task`, to block exactly `blocked`.
+    /// `pthread_sigmask(SIG_SETMASK)` by `thread`, to block exactly `blocked`.
     let private setMask (thread : int) (blocked : Signal list) : Step =
         fun r ->
             let setmask =
@@ -160,7 +160,7 @@ module TestSigcontGeneration =
             | Ok (_, system) -> returns thread (withSystem system r)
             | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
 
-    /// `sigaction` by `task`.
+    /// `sigaction` by `thread`.
     let private install (thread : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
         fun r ->
             match UnixSignal.sigaction (signo r signal) (Some disposition) r.System with
@@ -207,7 +207,7 @@ module TestSigcontGeneration =
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> returns sender (withSystem system r)
             | Ok other -> failwith $"sending %O{signal}: %A{other}"
 
-    /// `sigpending` by `task`, printed as the probe prints it.
+    /// `sigpending` by `thread`, printed as the probe prints it.
     let private pending (label : string) (thread : int) : Step =
         fun r ->
             let word = SignalMask.toWord (UnixSignal.sigpending thread r.System)

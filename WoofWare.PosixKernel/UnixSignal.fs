@@ -16,14 +16,14 @@ type internal KillRefusal =
     /// inside its own PID namespace, every signal it has not installed a
     /// handler for, SIGKILL included, and this library does not model that.
     | InitProcess
-    /// The signal is sent to the calling process, and which of its tasks would
+    /// The signal is sent to the calling process, and which of its threads would
     /// receive it is not modelled.
     | Receiver of SignalReceiverRefusal
 
 [<RequireQualifiedAccess>]
 module internal KillRefusal =
     /// What this kernel knows about why it cannot answer. The client supplies
-    /// its own half: which task made the call.
+    /// its own half: which thread made the call.
     let describe (refusal : KillRefusal) : string =
         match refusal with
         | KillRefusal.OtherProcess pid ->
@@ -56,7 +56,7 @@ type internal ThreadKillRefusal =
 [<RequireQualifiedAccess>]
 module internal ThreadKillRefusal =
     /// What this kernel knows about why it cannot answer. The client supplies
-    /// its own half: which task made the call, and at which task it aimed.
+    /// its own half: which thread made the call, and at which thread it aimed.
     let describe (refusal : ThreadKillRefusal) : string =
         match refusal with
         | ThreadKillRefusal.InitProcess ->
@@ -73,28 +73,28 @@ module internal ThreadKillRefusal =
 /// model, rather than an error a kernel would report.
 [<RequireQualifiedAccess>]
 type internal SigprocmaskRefusal<'Thread> =
-    /// Under Darwin, whose `sigprocmask` changes every task's mask, the call
-    /// would unblock `signal` for `task`, which is not the caller, while
-    /// `signal` is pending where `task` would take it: on `task` itself, or,
+    /// Under Darwin, whose `sigprocmask` changes every thread's mask, the call
+    /// would unblock `signal` for `thread`, which is not the caller, while
+    /// `signal` is pending where `thread` would take it: on `thread` itself, or,
     /// for the process's leader, on the process.
     ///
-    /// Darwin was measured not to wake such a task, if it is asleep in a
-    /// system call, and not always to deliver the signal as the task next
-    /// returns to user mode: whether it did depended on the call the task was
-    /// in and on what the task had done since the signal was sent, which this
-    /// library does not record. This library delivers every signal a task's
+    /// Darwin was measured not to wake such a thread, if it is asleep in a
+    /// system call, and not always to deliver the signal as the thread next
+    /// returns to user mode: whether it did depended on the call the thread was
+    /// in and on what the thread had done since the signal was sent, which this
+    /// library does not record. This library delivers every signal a thread's
     /// mask lets through at its next return to user mode, and wakes a sleeping
-    /// task for one, so it cannot express what the task does next.
+    /// thread for one, so it cannot express what the thread does next.
     | DarwinUnblockedForAnotherThread of thread : 'Thread * signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal SigprocmaskRefusal =
     /// What this kernel knows about why it cannot answer. The client supplies
-    /// its own half: which task made the call.
+    /// its own half: which thread made the call.
     let describe<'Thread> (refusal : SigprocmaskRefusal<'Thread>) : string =
         match refusal with
         | SigprocmaskRefusal.DarwinUnblockedForAnotherThread (thread, signal) ->
-            $"under Darwin, sigprocmask changes every task's mask, and this call would unblock %O{signal} for task %O{thread}, which is not the caller, while %O{signal} is pending for that task. Darwin was measured neither to wake that task from a sleep for it nor always to deliver it as the task next returns to user mode, which depended on the call the task was in and on what it had done since the signal was sent, and this kernel does not record that."
+            $"under Darwin, sigprocmask changes every thread's mask, and this call would unblock %O{signal} for thread %O{thread}, which is not the caller, while %O{signal} is pending for that thread. Darwin was measured neither to wake that thread from a sleep for it nor always to deliver it as the thread next returns to user mode, which depended on the call the thread was in and on what it had done since the signal was sent, and this kernel does not record that."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SigprocmaskRefusal<'Thread>) : RefusalKind =
@@ -111,14 +111,14 @@ type KillOutcome =
     /// The signal stops the whole process.
     | ProcessStopped of signal : Signal
 
-/// What a task's return to user mode did, as `UnixSignal.onReturnToUser`
+/// What a thread's return to user mode did, as `UnixSignal.onReturnToUser`
 /// answers it, if it did not end the process (see `ProcessFate`): run the
 /// handlers of the caught signals it took, or apply a signal's kernel default.
 [<RequireQualifiedAccess>]
 type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    /// The task took nothing the client acts on, and runs its own code next.
+    /// The thread took nothing the client acts on, and runs its own code next.
     | Resumes
-    /// A frame for every caught signal the task takes now, pushed all at once,
+    /// A frame for every caught signal the thread takes now, pushed all at once,
     /// innermost first: the head's handler runs first, and
     /// each handler's `UnixSignal.sigreturn` is followed by another
     /// `UnixSignal.onReturnToUser`, which may push more frames before the next
@@ -129,21 +129,21 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
     /// on it.
     | ProcessStopped of signal : Signal
     /// No handler claims the signal, its kernel default is to resume a stopped
-    /// process, and the task does not block it: the kernel discarded it as it
+    /// process, and the thread does not block it: the kernel discarded it as it
     /// was delivered, and the process carries on. A blocked
     /// one stays pending, as any other signal does, and `sigpending` reports
     /// it.
     ///
-    /// Such a signal is pending only if it was generated while the task it was
-    /// aimed at blocked it (for one sent to the process, every task that could
-    /// take it), and the task has since unblocked it. One generated otherwise
+    /// Such a signal is pending only if it was generated while the thread it was
+    /// aimed at blocked it (for one sent to the process, every thread that could
+    /// take it), and the thread has since unblocked it. One generated otherwise
     /// is discarded as it is sent, as an ignored signal is (see
     /// `UnixSignal.kill`).
     ///
-    /// The task's return to user mode is not over: the client asks
-    /// `onReturnToUser` again, and the task may take more signals, under the
+    /// The thread's return to user mode is not over: the client asks
+    /// `onReturnToUser` again, and the thread may take more signals, under the
     /// temporary mask of a `sigsuspend(2)` it is returning from. A client
-    /// that let the task run its own code instead would leave it with that
+    /// that let the thread run its own code instead would leave it with that
     /// temporary mask.
     ///
     /// On a real kernel the resumption itself happens at generation, whatever
@@ -158,19 +158,19 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
 type SigsuspendOutcome =
     /// The call failed with this errno.
     ///
-    /// `EINTR` is how every call that began ends: a signal the task takes under
-    /// the temporary mask has ended it, and the task returns to user mode
+    /// `EINTR` is how every call that began ends: a signal the thread takes under
+    /// the temporary mask has ended it, and the thread returns to user mode
     /// (`UnixSignal.onReturnToUser`) before the call's -1 is seen. That return
     /// runs the handlers, the first of whose frames saves the mask from before
     /// the call, or applies a default that terminates the process, which then
-    /// never sees the -1 at all. Until that return the task's mask is still the
+    /// never sees the -1 at all. Until that return the thread's mask is still the
     /// temporary one, with the mask to restore beside it
     /// (`SignalState.maskToRestore`).
     ///
     /// Linux's `rt_sigsuspend` answers `EINVAL` for a set size other than 8,
     /// having changed nothing.
     | Failed of error : UnixError
-    /// The call did not return. The calling task is parked, with the temporary
+    /// The call did not return. The calling thread is parked, with the temporary
     /// mask in force, and sleeps until `UnixWait.wakes` wakes it for this
     /// condition; then `UnixSignal.finishSigsuspend` finishes the
     /// call.
@@ -254,16 +254,16 @@ module UnixSignal =
     ///
     /// What a signal does as it is generated, here and wherever else this
     /// library generates one (`pthreadKill`, and the `SIGPIPE` a write raises):
-    ///   * at its default disposition, where some task could receive it, it
+    ///   * at its default disposition, where some thread could receive it, it
     ///     takes that default at once: it terminates the process
     ///     (`ProcessFate.ProcessEnded`, with the core flag set if its default
     ///     dumps core and the process's `CoreDumps` allows a dump), stops it
     ///     (`KillOutcome.ProcessStopped`), or, if the default is to discard it
     ///     or to continue the process (SIGCONT, which has no stopped process to
     ///     continue), is discarded;
-    ///   * ignored, where some task could receive it, it is discarded;
-    ///   * otherwise it is pending, including when every task that could
-    ///     receive it blocks it, and a task takes it as it returns to user mode
+    ///   * ignored, where some thread could receive it, it is discarded;
+    ///   * otherwise it is pending, including when every thread that could
+    ///     receive it blocks it, and a thread takes it as it returns to user mode
     ///     (`onReturnToUser`) once it can. A standard signal already pending in
     ///     the same pending set is not added again; a real-time one is.
     ///
@@ -273,16 +273,16 @@ module UnixSignal =
     /// take it (`Signal.blockedIgnoredSignalStaysPendingUnder`, and see
     /// `onReturnToUser`). A stop signal that is not discarded discards any
     /// pending SIGCONT, and SIGCONT discards every pending stop signal, on
-    /// every task and on the process.
+    /// every thread and on the process.
     ///
-    /// For an ignored signal, whether some task "could receive" it is decided
-    /// by a mask: for one sent to a task, that task's; for one sent to the
-    /// process, any task's under Darwin's numbering, and the leader's alone
+    /// For an ignored signal, whether some thread "could receive" it is decided
+    /// by a mask: for one sent to a thread, that thread's; for one sent to the
+    /// process, any thread's under Darwin's numbering, and the leader's alone
     /// under Linux's, which leaves one the leader blocks pending on the
-    /// process until another task takes it and discards it.
+    /// process until another thread takes it and discards it.
     ///
     /// Refuses a signal sent to the process that only
-    /// a task other than the leader could receive, where it is caught, or,
+    /// a thread other than the leader could receive, where it is caught, or,
     /// under Linux's numbering, ignored; and, under
     /// Darwin's numbering, a standard signal it would leave pending on the
     /// process while an instance is pending on the leader alone, or the other
@@ -329,14 +329,14 @@ module UnixSignal =
         : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         // Looked up rather than asked of `UnixThreadTable.parkedFor`, so that a
-        // name that is no task is left to `SignalState.onReturnToUser`'s own
+        // name that is no thread is left to `SignalState.onReturnToUser`'s own
         // check.
         match Map.tryFind thread system.Threads |> Option.bind (fun state -> state.Parked) with
         | Some {
                    Syscall = parked
                } ->
             failwith
-                $"UnixSignal.onReturnToUser: task %O{thread} is asleep in %A{parked}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
+                $"UnixSignal.onReturnToUser: thread %O{thread} is asleep in %A{parked}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
         | None ->
 
         SignalState.onReturnToUser
@@ -365,9 +365,9 @@ module UnixSignal =
                 )
         )
 
-    /// What `task` takes as it returns to user mode: its own signals, and if it
+    /// What `thread` takes as it returns to user mode: its own signals, and if it
     /// is the process's leader, the process's too. A client asks this before
-    /// `task` next runs its own code: after every system call it makes,
+    /// `thread` next runs its own code: after every system call it makes,
     /// `sigreturn` included.
     ///
     /// Returns the possibly-updated system in every case, because an answer can
@@ -375,11 +375,11 @@ module UnixSignal =
     /// below), and a client that dropped the no-action system would replay
     /// those discards forever.
     ///
-    /// The signals are walked in the order a task takes them, skipping any
-    /// that `task`'s mask blocks, and what happens to each is its disposition
+    /// The signals are walked in the order a thread takes them, skipping any
+    /// that `thread`'s mask blocks, and what happens to each is its disposition
     /// *now*, not at generation:
     ///   * caught — a handler frame is pushed for it, and the walk goes on
-    ///     under the mask the frame says, so that every caught signal the task
+    ///     under the mask the frame says, so that every caught signal the thread
     ///     can take gets a frame before any handler runs. Their handlers run
     ///     innermost first, the reverse of the order they were taken in.
     ///     Under `SA_RESETHAND` the disposition returns to the default as the
@@ -398,18 +398,18 @@ module UnixSignal =
     /// and Linux takes SIGILL, SIGTRAP, SIGBUS, SIGFPE, SIGSEGV and SIGSYS
     /// first and then the lowest-numbered; several instances of one real-time
     /// signal come in the order they were generated. Linux takes every signal
-    /// of the task's own set before any of the process's; Darwin takes the two
+    /// of the thread's own set before any of the process's; Darwin takes the two
     /// as one set.
     ///
     /// A pending signal whose default is to continue the process, at its
-    /// default, surfaces as `ReturnToUserOutcome.ContinueDiscarded` if `task`
+    /// default, surfaces as `ReturnToUserOutcome.ContinueDiscarded` if `thread`
     /// does not block it, and stays pending if it does. Only one generated
-    /// while it was blocked is pending at all (see `kill`). The task's return
+    /// while it was blocked is pending at all (see `kill`). The thread's return
     /// is not over:
-    /// the client asks again before the task runs its own code, and that answer
+    /// the client asks again before the thread runs its own code, and that answer
     /// may take more signals.
     ///
-    /// A task returning from `sigsuspend` or `pause` (`SignalState.maskToRestore`
+    /// A thread returning from `sigsuspend` or `pause` (`SignalState.maskToRestore`
     /// is `Some`) takes its signals under the call's temporary mask, and gets
     /// the mask the call replaced back as it returns: the first frame pushed
     /// (the outermost) saves that mask rather than the temporary one, so the
@@ -419,8 +419,8 @@ module UnixSignal =
     /// after the first saves the mask the one before it set, as for any other
     /// return.
     ///
-    /// Refuses, whichever task is asked, while any signal pending on the
-    /// process could be received by a task other than the leader but not by
+    /// Refuses, whichever thread is asked, while any signal pending on the
+    /// process could be received by a thread other than the leader but not by
     /// the leader; the refusal names the first such signal in
     /// `SignalState.pending`'s order. Refuses a stop or continue default
     /// reached after frames were pushed. A refusal changes nothing, a mask to
@@ -436,12 +436,12 @@ module UnixSignal =
     /// that as an exit status. No handler runs, not even one whose frame was
     /// pushed for another signal at the same return.
     ///
-    /// A task asleep in a syscall is not in user mode, and returns to it only
+    /// A thread asleep in a syscall is not in user mode, and returns to it only
     /// once the syscall has answered. A signal ends that sleep through the
     /// syscall's finishing call instead (see `SyscallInterruption`), after which
-    /// the task returns to user mode here.
+    /// the thread returns to user mode here.
     ///
-    /// Fails loudly if `task` names no task, or is asleep in a syscall, each of
+    /// Fails loudly if `thread` names no thread, or is asleep in a syscall, each of
     /// which is a bug in the client.
     let onReturnToUser<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -451,13 +451,13 @@ module UnixSignal =
         tryOnReturnToUser thread system
         |> Refusal.orRaise "UnixSignal.onReturnToUser" SignalReceiverRefusal.kind SignalReceiverRefusal.describe
 
-    /// `sigreturn(2)`: `task`'s handler for the frame `frame` has returned, and
+    /// `sigreturn(2)`: `thread`'s handler for the frame `frame` has returned, and
     /// the frame is popped, restoring the mask that was in force before it was
     /// pushed (`HandlerFrame.SavedMask`), whatever the handler did to the mask
     /// meanwhile. The client then asks `onReturnToUser` again, since signals
     /// the frame blocked may now be deliverable.
     ///
-    /// Fails loudly unless `frame` is `task`'s innermost frame: handlers return
+    /// Fails loudly unless `frame` is `thread`'s innermost frame: handlers return
     /// innermost first, so anything else is a bug in the client.
     let sigreturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -476,7 +476,7 @@ module UnixSignal =
         =
         if not (Map.containsKey target system.Threads) then
             failwith
-                $"UnixSignal.pthreadKill: task %O{target} is not one of the process's tasks (this is a bug in the client)."
+                $"UnixSignal.pthreadKill: thread %O{target} is not one of the process's threads (this is a bug in the client)."
 
         let numbering = SignalState.numbering system.Process.Signals
 
@@ -521,11 +521,11 @@ module UnixSignal =
                 Ok (Ok (ProcessFate.ProcessEnded ended))
 
     /// `pthread_kill(3)`, sent by the calling process to `target`, one of its
-    /// own tasks, with `signo` read under the process's own signal numbering.
-    /// `raise(3)` is this, aimed at the calling task.
+    /// own threads, with `signo` read under the process's own signal numbering.
+    /// `raise(3)` is this, aimed at the calling thread.
     ///
-    /// The signal is pending on `target` alone: no other task takes it, even
-    /// while `target` blocks it and another task does not. See `kill` for what
+    /// The signal is pending on `target` alone: no other thread takes it, even
+    /// while `target` blocks it and another thread does not. See `kill` for what
     /// the signal then does: a caught one that `target` does not block is
     /// delivered as `target` next returns to user mode, which for `raise(3)` is
     /// before the call returns. A signal that
@@ -537,7 +537,7 @@ module UnixSignal =
     /// the C library keeps for its own threads and will not send this way,
     /// though `kill(2)` sends them.
     ///
-    /// Fails loudly if `target` is not one of the process's tasks, which is a
+    /// Fails loudly if `target` is not one of the process's threads, which is a
     /// bug in the client.
     let pthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : 'Thread)
@@ -607,7 +607,7 @@ module UnixSignal =
     /// system as the call leaves it.
     ///
     /// Installing a disposition that ignores the signal discards every pending
-    /// instance of it, on every task and on the process: `SIG_IGN`, and
+    /// instance of it, on every thread and on the process: `SIG_IGN`, and
     /// `SIG_DFL` for a signal whose default is to discard it or to continue the
     /// process. A handler's mask is stored without SIGKILL and SIGSTOP, which
     /// nothing can block.
@@ -636,12 +636,12 @@ module UnixSignal =
         | SignalNumbering.Darwin, 3 -> ValueSome SignalMaskChange.SetMask
         | _, _ -> ValueNone
 
-    /// Which tasks a mask call changes.
+    /// Which threads a mask call changes.
     [<RequireQualifiedAccess>]
     type private MaskScope =
-        /// The calling task alone.
+        /// The calling thread alone.
         | Caller
-        /// Every task of the process: Darwin's `sigprocmask`.
+        /// Every thread of the process: Darwin's `sigprocmask`.
         | EveryThread
 
     /// The mask calls' common answer. `screened` are the signals the C
@@ -659,12 +659,12 @@ module UnixSignal =
         match Map.tryFind thread system.Threads with
         | None ->
             failwith
-                $"UnixSignal.%s{operation}: task %O{thread} is not one of the process's tasks (this is a bug in the client)."
+                $"UnixSignal.%s{operation}: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
         | Some {
                    Parked = Some park
                } ->
             failwith
-                $"UnixSignal.%s{operation}: task %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
+                $"UnixSignal.%s{operation}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
         | Some _ ->
 
         let signals = system.Process.Signals
@@ -703,7 +703,7 @@ module UnixSignal =
         | SignalNumbering.Linux -> Set.ofList [ Signal.RealTime 0 ; Signal.RealTime 1 ]
         | SignalNumbering.Darwin -> Set.empty
 
-    /// `pthread_sigmask(3)`, called by `task`: change its own signal mask as
+    /// `pthread_sigmask(3)`, called by `thread`: change its own signal mask as
     /// `how` says, with `how` read under the process's own signal numbering
     /// (`SIG_BLOCK`, `SIG_UNBLOCK` and `SIG_SETMASK` are 0, 1 and 2 on Linux,
     /// and 1, 2 and 3 on Darwin). `set` is `None` for a NULL set, which asks for
@@ -718,7 +718,7 @@ module UnixSignal =
     /// the raw call can set them (`rtSigprocmask`). Every other bit is kept,
     /// Darwin's bit 31 included, which names no signal (see `SignalMask`).
     ///
-    /// Unblocking can make a pending signal deliverable: to `task` as it
+    /// Unblocking can make a pending signal deliverable: to `thread` as it
     /// returns from this call (`onReturnToUser`), which for several at once
     /// pushes a frame for each before any handler runs.
     ///
@@ -727,7 +727,7 @@ module UnixSignal =
     ///
     /// An unnamed `how` with a set is `EINVAL`, and changes nothing.
     ///
-    /// Fails loudly if `task` names no task, or is asleep in a syscall, each
+    /// Fails loudly if `thread` names no thread, or is asleep in a syscall, each
     /// of which is a bug in the client; and on a set made under another
     /// numbering.
     let pthreadSigmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -745,7 +745,7 @@ module UnixSignal =
         let numbering = SignalState.numbering system.Process.Signals
         changeMaskUnder "pthreadSigmask" MaskScope.Caller (screenedByCLibrary numbering) thread how set system
 
-    /// The first task of `before` other than `caller`, with the first signal
+    /// The first thread of `before` other than `caller`, with the first signal
     /// pending where it would take it, that its mask in `before` blocks and
     /// its mask in `after` does not.
     let private unblockedForAnother<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -809,10 +809,10 @@ module UnixSignal =
             | Some (other, signal) -> Error (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (other, signal))
             | None -> Ok (Ok (old, after))
 
-    /// `sigprocmask(2)`, called by `task`: on Linux exactly `pthreadSigmask`.
+    /// `sigprocmask(2)`, called by `thread`: on Linux exactly `pthreadSigmask`.
     ///
-    /// On Darwin it changes **every** task's mask, each as `how` says, and
-    /// answers the calling task's mask before the call: measured by
+    /// On Darwin it changes **every** thread's mask, each as `how` says, and
+    /// answers the calling thread's mask before the call: measured by
     /// `docs/plans/2026-08-23-posix-kernel-extraction/sigprocmask-ops.c` on
     /// Darwin 27.0.0, with the main thread blocking SIGHUP and a second thread
     /// SIGINT, the main thread's `SIG_BLOCK` of SIGTERM left the second
@@ -823,7 +823,7 @@ module UnixSignal =
     /// both.
     ///
     /// Refuses, on Darwin, a call that would unblock a pending signal for a
-    /// task other than the caller, changing nothing.
+    /// thread other than the caller, changing nothing.
     /// The caller's own pending signals it unblocks are deliverable to it as it
     /// returns from the call, as `pthreadSigmask` describes.
     ///
@@ -839,7 +839,7 @@ module UnixSignal =
         |> Refusal.orRaise "UnixSignal.sigprocmask" SigprocmaskRefusal.kind SigprocmaskRefusal.describe
 
     /// Linux's `rt_sigprocmask(2)`, made as a system call rather than through
-    /// the C library, by `task`: as `pthreadSigmask`, except that it takes
+    /// the C library, by `thread`: as `pthreadSigmask`, except that it takes
     /// `sigsetSize`, the size the caller says its sets are, and screens out
     /// only SIGKILL and SIGSTOP, so it can block the C library's own 32 and 33.
     ///
@@ -873,10 +873,10 @@ module UnixSignal =
         else
             changeMaskUnder "rtSigprocmask" MaskScope.Caller Set.empty thread how set system
 
-    /// `sigpending(2)`, called by `task`: the signals pending that it sees and
+    /// `sigpending(2)`, called by `thread`: the signals pending that it sees and
     /// that its mask blocks (see `SignalState.pendingBlocked`).
     ///
-    /// Fails loudly if `task` names no task, which is a bug in the client.
+    /// Fails loudly if `thread` names no thread, which is a bug in the client.
     let sigpending<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -884,11 +884,11 @@ module UnixSignal =
         =
         if not (Map.containsKey thread system.Threads) then
             failwith
-                $"UnixSignal.sigpending: task %O{thread} is not one of the process's tasks (this is a bug in the client)."
+                $"UnixSignal.sigpending: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
 
         SignalState.pendingBlocked system.Leader thread system.Process.Signals
 
-    /// `sigsuspend` with `temporary`, made by `task`.
+    /// `sigsuspend` with `temporary`, made by `thread`.
     let private suspendWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (thread : 'Thread)
@@ -899,12 +899,12 @@ module UnixSignal =
         match Map.tryFind thread system.Threads with
         | None ->
             failwith
-                $"UnixSignal.%s{operation}: task %O{thread} is not one of the process's tasks (this is a bug in the client)."
+                $"UnixSignal.%s{operation}: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
         | Some {
                    Parked = Some park
                } ->
             failwith
-                $"UnixSignal.%s{operation}: task %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
+                $"UnixSignal.%s{operation}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
         | Some _ ->
 
         let signals =
@@ -932,17 +932,17 @@ module UnixSignal =
         =
         suspendWith "sigsuspend" thread (fun _ -> mask) system
 
-    /// `sigsuspend(2)`, called by `task`: replace its mask with `mask` until a
+    /// `sigsuspend(2)`, called by `thread`: replace its mask with `mask` until a
     /// signal it takes under that mask ends the call, and give it back the mask
     /// it had as it returns.
     ///
     /// `mask` is stored as a kernel stores any mask: without SIGKILL and
     /// SIGSTOP, which are dropped silently, and with every other bit, Linux's
     /// 32 and 33 included, which the C library does not screen out of this
-    /// call as it does out of `pthreadSigmask`. Only `task`'s mask changes, on
+    /// call as it does out of `pthreadSigmask`. Only `thread`'s mask changes, on
     /// both flavours.
     ///
-    /// The call ends, failing with `EINTR`, once `task` would run a handler as
+    /// The call ends, failing with `EINTR`, once `thread` would run a handler as
     /// it returned to user mode, whatever `SA_RESTART` says: at once if a
     /// signal `mask` lets through is already pending, and otherwise from the
     /// sleep it parks in (`WouldBlock`, finished by `finishSigsuspend`). The
@@ -959,14 +959,14 @@ module UnixSignal =
     /// after a stop and continue.
     ///
     /// Refuses: a signal whose default stops the
-    /// process, which the task would take; under Darwin, a SIGCONT the task
+    /// process, which the thread would take; under Darwin, a SIGCONT the thread
     /// could take, ignored or at its default; and whatever `onReturnToUser`
     /// refuses. A refusal changes nothing.
     ///
     /// Measured by `docs/plans/2026-08-23-posix-kernel-extraction/sigsuspend-mask.c`
     /// on Linux 6.18.5 (glibc 2.41) and Darwin 27.0.0.
     ///
-    /// Fails loudly if `task` names no task, is asleep in a syscall, or has a
+    /// Fails loudly if `thread` names no thread, is asleep in a syscall, or has a
     /// mask to restore from an earlier call (it has not returned to user mode
     /// since), each of which is a bug in the client; and on a mask made under
     /// another numbering.
@@ -987,11 +987,11 @@ module UnixSignal =
         =
         suspendWith "pause" thread (SignalState.maskOf thread) system
 
-    /// `pause(2)`, called by `task`: `sigsuspend` with the mask it already has,
+    /// `pause(2)`, called by `thread`: `sigsuspend` with the mask it already has,
     /// which is how Darwin's C library makes it.
     ///
     /// Linux's `pause` is a system call of its own that saves no mask, and
-    /// answers the same, since nothing but the task itself changes its mask on
+    /// answers the same, since nothing but the thread itself changes its mask on
     /// Linux. Darwin's restores the mask it was called with, undoing what a
     /// `sigprocmask` from another thread changed meanwhile, as `sigsuspend`
     /// does: measured by `sigsuspend-mask.c`'s "pause-spread" rows.
@@ -1023,7 +1023,7 @@ module UnixSignal =
             trySigsuspend thread mask system
 
     /// Linux's `rt_sigsuspend(2)`, made as a system call rather than through
-    /// the C library, by `task`: as `sigsuspend`, except that it takes
+    /// the C library, by `thread`: as `sigsuspend`, except that it takes
     /// `sigsetSize`, the size the caller says its set is.
     ///
     /// A `sigsetSize` other than 8 is `EINVAL`, before anything else is looked
@@ -1051,10 +1051,10 @@ module UnixSignal =
         | Some ParkedSyscall.SigSuspend -> ()
         | Some other ->
             failwith
-                $"UnixSignal.finishSigsuspend: task %O{thread} is parked in %A{other}, not in sigsuspend, so there is no sigsuspend to finish (this is a bug in the client)."
+                $"UnixSignal.finishSigsuspend: thread %O{thread} is parked in %A{other}, not in sigsuspend, so there is no sigsuspend to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixSignal.finishSigsuspend: task %O{thread} is not parked, so there is no sigsuspend to finish. Only a task `sigsuspend` or `pause` answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixSignal.finishSigsuspend: thread %O{thread} is not parked, so there is no sigsuspend to finish. Only a thread `sigsuspend` or `pause` answered `WouldBlock` finishes here (this is a bug in the client)."
 
         match SyscallInterruption.suspension thread system system.Process.Signals with
         | Error refusal -> Error refusal
@@ -1066,18 +1066,18 @@ module UnixSignal =
                 UnixWait.park thread ParkedSyscall.SigSuspend (withSignals signals system)
             )
 
-    /// Finish the `sigsuspend(2)` or `pause(2)` `task` is parked in, once
+    /// Finish the `sigsuspend(2)` or `pause(2)` `thread` is parked in, once
     /// `UnixWait.wakes` has woken it: `Failed EINTR` if a signal it takes under
     /// the temporary mask ends the call, as `sigsuspend` describes; and
     /// otherwise it parks again, as the call it was woken from, since what
     /// woke it has gone. Under Linux a SIGCONT at its default that woke it is
     /// discarded first.
     ///
-    /// Until the task returns to user mode its mask is the temporary one, with
+    /// Until the thread returns to user mode its mask is the temporary one, with
     /// the mask to restore beside it: the client asks
-    /// `UnixSignal.onReturnToUser` before anything else runs on the task.
+    /// `UnixSignal.onReturnToUser` before anything else runs on the thread.
     ///
-    /// Refuses as `sigsuspend` does, changing nothing. Fails loudly if `task` is
+    /// Refuses as `sigsuspend` does, changing nothing. Fails loudly if `thread` is
     /// not parked in one of these calls.
     let finishSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)

@@ -197,7 +197,7 @@ module TestCrossProcess =
             Events = events
         }
 
-    /// `task` of `pid` polls `entries` with no timeout, and sleeps.
+    /// `thread` of `pid` polls `entries` with no timeout, and sleeps.
     let private sleepInPoll
         (pid : ProcessId)
         (thread : int)
@@ -214,7 +214,7 @@ module TestCrossProcess =
             )
             machine
 
-    /// The `poll` `task` of `pid` sleeps in, finished.
+    /// The `poll` `thread` of `pid` sleeps in, finished.
     let private finishPoll
         (pid : ProcessId)
         (thread : int)
@@ -307,7 +307,7 @@ module TestCrossProcess =
 
         SimulatedMachine.wakes asleep machine
 
-    /// `task` of `pid` accepts on the blocking listener `listener`, which holds
+    /// `thread` of `pid` accepts on the blocking listener `listener`, which holds
     /// nothing, and sleeps.
     let private sleepInAccept
         (pid : ProcessId)
@@ -644,7 +644,7 @@ module TestCrossProcess =
             let asleep = [ a, 1 ; b, 1 ; b, 2 ]
             woken asleep machine |> shouldEqual []
 
-            // One connection to each, made by the other process's third task.
+            // One connection to each, made by the other process's third thread.
             let _, machine = Machines.inProcess a (KeventWorld.client 8081us) machine
             let _, machine = Machines.inProcess b (KeventWorld.client 8080us) machine
             Machines.assertClean machine
@@ -668,7 +668,7 @@ module TestCrossProcess =
 
     // ------------------------------------------------------- a process's end
 
-    /// `pid`'s task 0 calls `exit_group(status)`, and the machine ends the
+    /// `pid`'s thread 0 calls `exit_group(status)`, and the machine ends the
     /// process.
     let private exitIn
         (pid : ProcessId)
@@ -729,7 +729,7 @@ module TestCrossProcess =
         DeliveryLog.toList machine.Machine.Delivered
         |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
 
-    /// `pid`'s task 0 writes `text` to its descriptor `fd`, which takes all of it.
+    /// `pid`'s thread 0 writes `text` to its descriptor `fd`, which takes all of it.
     let private writeIn
         (pid : ProcessId)
         (fd : int)

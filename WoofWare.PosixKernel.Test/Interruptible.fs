@@ -7,7 +7,7 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module Interruptible =
 
-    /// What a task parked in a syscall that waits for `own` waits for: `own`, or
+    /// What a thread parked in a syscall that waits for `own` waits for: `own`, or
     /// a signal with a handler, which every park here can be ended by.
     let condition (own : WakeCondition) : WakeCondition =
         let signal = WakeCondition.Primitive WakePrimitive.SignalDeliverable
@@ -16,7 +16,7 @@ module Interruptible =
         | WakeCondition.Primitive _ -> WakeCondition.AnyOf (own, [ signal ])
         | WakeCondition.AnyOf (first, rest) -> WakeCondition.AnyOf (first, rest @ [ signal ])
 
-    /// What a task asleep in an `accept`, a pipe `read` or a pipe `write`
+    /// What a thread asleep in an `accept`, a pipe `read` or a pipe `write`
     /// waiting for `own` waits for: `own`, a close ending the call under Darwin
     /// (`WakePrimitive.EndedByClose`), or a signal with a handler.
     let closable (own : WakeCondition list) : WakeCondition =

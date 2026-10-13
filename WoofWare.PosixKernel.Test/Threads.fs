@@ -2,7 +2,7 @@ namespace WoofWare.PosixKernel.Test
 
 open WoofWare.PosixKernel
 
-/// Tasks for a test that needs more than a process's leader.
+/// Threads for a test that needs more than a process's leader.
 [<RequireQualifiedAccess>]
 module Threads =
 
@@ -18,7 +18,7 @@ module Threads =
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"
 
-    /// `system` with a task `name`: itself if `name` is already a task, and
+    /// `system` with a thread `name`: itself if `name` is already a thread, and
     /// otherwise with `name` spawned by the leader.
     let ensure<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (name : 'Thread)

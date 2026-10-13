@@ -541,7 +541,7 @@ module Signal =
         // deaths carried the wait status's core flag, as they did on
         // 2026-09-23 in the signals research's own sweep. Darwin 27.0.0, as
         // an unprivileged user who cannot write the dump into /cores: exactly
-        // these deaths raised EXC_CRASH on the child's task exception port,
+        // these deaths raised EXC_CRASH on the child's thread exception port,
         // which xnu does for a death by a signal whose properties include
         // SA_CORE, the property its core dump is gated on.
         match signal with

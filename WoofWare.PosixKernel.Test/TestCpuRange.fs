@@ -7,9 +7,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Every task is on a processor the machine has, in `[0, ProcessorCount)`:
+/// Every thread is on a processor the machine has, in `[0, ProcessorCount)`:
 /// `UnixThreadLifecycle.spawn` throws for any other, a launch is refused for a
-/// leader on any other, and `checkInvariants` reports a task on any other.
+/// leader on any other, and `checkInvariants` reports a thread on any other.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestCpuRange =
@@ -140,7 +140,7 @@ module TestCpuRange =
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
         |> assertBothSides
 
-    /// `system` with task `task`'s processor overwritten with `cpu`, as no
+    /// `system` with thread `thread`'s processor overwritten with `cpu`, as no
     /// public route can do.
     let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
@@ -154,7 +154,7 @@ module TestCpuRange =
         }
 
     [<Test>]
-    let ``checkInvariants reports exactly a task on a processor the machine does not have`` () : unit =
+    let ``checkInvariants reports exactly a thread on a processor the machine does not have`` () : unit =
         let property (cover : Side -> unit) (platform : SimulatedUnixPlatform, count : int, cpu : int) : unit =
             let system = systemWith platform count |> Threads.spawn 1 |> forgeCpu 1 cpu
 

@@ -42,7 +42,7 @@ module TestPollTimeout =
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
-    /// A Linux-flavoured system with task 1 registered, a listening socket with an
+    /// A Linux-flavoured system with thread 1 registered, a listening socket with an
     /// empty accept queue, and the descriptor onto it.
     let private world : int * UnixSystem<int, string> =
         let system =
@@ -525,7 +525,7 @@ module TestPollTimeout =
         exn.Message |> shouldContainText "a park holds its descriptions"
 
     [<Test>]
-    let ``a parked task cannot poll again, and only a parked poll can be finished`` () : unit =
+    let ``a parked thread cannot poll again, and only a parked poll can be finished`` () : unit =
         let _, parked = parks [ entry listener pollIn ] 10 idle
 
         let exn =
@@ -539,7 +539,7 @@ module TestPollTimeout =
         exn.Message |> shouldContainText "is not parked"
 
     [<Test>]
-    let ``a task parked in a poll cannot be parked in another syscall`` () : unit =
+    let ``a thread parked in a poll cannot be parked in another syscall`` () : unit =
         let _, parked = parks [ entry listener pollIn ] 10 idle
 
         for other in

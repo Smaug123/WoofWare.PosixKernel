@@ -221,8 +221,8 @@ module TestBootImage =
             t.GetConstructors (BindingFlags.Public ||| BindingFlags.Instance)
             |> shouldBeEmpty
 
-    /// Parking a task and releasing its park change a running system without
-    /// being syscalls, so a client parks a task by making a blocking syscall and
+    /// Parking a thread and releasing its park change a running system without
+    /// being syscalls, so a client parks a thread by making a blocking syscall and
     /// releases it by finishing one.
     [<Test>]
     let ``parking and releasing are not public`` () : unit =

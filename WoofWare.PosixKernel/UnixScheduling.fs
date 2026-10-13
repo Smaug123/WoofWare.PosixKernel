@@ -11,10 +11,10 @@ type NumaNode =
         match this with
         | NumaNode.NumaNode i -> $"<numa node #%i{i}>"
 
-/// What `getcpu(2)` answers: where the calling task is running.
+/// What `getcpu(2)` answers: where the calling thread is running.
 type GetCpuAnswer =
     {
-        /// The logical processor the task is running on.
+        /// The logical processor the thread is running on.
         Cpu : CpuId
         /// The NUMA node that processor belongs to. This library models a
         /// machine with one node, so it is always node 0, which is what every
@@ -43,37 +43,37 @@ module internal GetCpuRefusal =
         match refusal with
         | GetCpuRefusal.UnmodelledFlavour _ -> RefusalKind.NotOnPlatform
 
-/// Which task runs on which of the machine's logical processors.
+/// Which thread runs on which of the machine's logical processors.
 ///
-/// The client chooses which task runs where, and reports each choice with
+/// The client chooses which thread runs where, and reports each choice with
 /// `dispatch`; this library records it, and answers `getcpu` from the record.
-/// A task's processor (`UnixThreadState.cpu`) is the one it last ran on, or,
+/// A thread's processor (`UnixThreadState.cpu`) is the one it last ran on, or,
 /// before it first runs, the one its creator named. Each processor of the
-/// machine runs at most one task, whichever process it belongs to, and a task
+/// machine runs at most one thread, whichever process it belongs to, and a thread
 /// is running exactly when it is its processor's (`runningOn`).
 ///
-/// A task stops running when the client dispatches another to its processor,
+/// A thread stops running when the client dispatches another to its processor,
 /// when it parks in a syscall, and when it exits or its process ends. A parked
-/// task may be dispatched: that is how a woken task gets back onto a processor
+/// thread may be dispatched: that is how a woken thread gets back onto a processor
 /// to finish its call.
 [<RequireQualifiedAccess>]
 module UnixScheduling =
 
-    /// `task` is now running on the logical processor `cpu`: the client's
+    /// `thread` is now running on the logical processor `cpu`: the client's
     /// report of a dispatch.
     ///
-    /// `task`'s processor becomes `cpu`. Whichever task `cpu` was running,
+    /// `thread`'s processor becomes `cpu`. Whichever thread `cpu` was running,
     /// in this process or another on the machine, stops running there and
-    /// keeps `cpu` as its processor, as a preempted task does. If `task` was
-    /// running on another processor, that one is now idle. Dispatching a task
+    /// keeps `cpu` as its processor, as a preempted thread does. If `thread` was
+    /// running on another processor, that one is now idle. Dispatching a thread
     /// to the processor it is already running on changes nothing, and answers
     /// `system` itself.
     ///
-    /// A parked task may be dispatched. Whether it was woken is the client's
+    /// A parked thread may be dispatched. Whether it was woken is the client's
     /// record (`UnixWait.wakes`), so this library does not refuse one that was
     /// not.
     ///
-    /// Fails loudly if `task` names no task, or if `cpu` is not one of the
+    /// Fails loudly if `thread` names no thread, or if `cpu` is not one of the
     /// machine's processors (`UnixSystem.processorCount`): each is a bug in
     /// the client.
     let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -119,10 +119,10 @@ module UnixScheduling =
             Threads = threads
         }
 
-    /// The logical processor `task` is running on: `None` if it is not
+    /// The logical processor `thread` is running on: `None` if it is not
     /// running, because the client has not dispatched it since it was created
-    /// or since it last parked, or has dispatched another task to its
-    /// processor since, and `None` if `task` names no task.
+    /// or since it last parked, or has dispatched another thread to its
+    /// processor since, and `None` if `thread` names no thread.
     let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -148,7 +148,7 @@ module UnixScheduling =
         match state.Parked with
         | Some park ->
             failwith
-                $"UnixScheduling.getcpu: task %O{thread} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
+                $"UnixScheduling.getcpu: thread %O{thread} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
         | None ->
 
         match Map.tryFind state.Cpu system.Scheduling.Occupants with
@@ -161,20 +161,20 @@ module UnixScheduling =
         | occupant ->
             let occupied =
                 match occupant with
-                | Some other -> $"%O{state.Cpu} is running the task with thread ID %O{other}"
+                | Some other -> $"%O{state.Cpu} is running the thread with thread ID %O{other}"
                 | None -> $"%O{state.Cpu} is idle"
 
             failwith
-                $"UnixScheduling.getcpu: task %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each task the client runs with UnixScheduling.dispatch (this is a bug in the client)."
+                $"UnixScheduling.getcpu: thread %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each thread the client runs with UnixScheduling.dispatch (this is a bug in the client)."
 
     /// <summary>
-    /// `getcpu(2)`, made by `task`: the processor it is running on, and that
+    /// `getcpu(2)`, made by `thread`: the processor it is running on, and that
     /// processor's NUMA node. glibc's `sched_getcpu(3)` reads the same value.
     ///
     /// Refuses under Darwin, which has no `getcpu`.
     ///
-    /// Fails loudly if `task` names no task, is parked in a syscall, or is not
-    /// running (`runningOn`): a task making a syscall is running, so each
+    /// Fails loudly if `thread` names no thread, is parked in a syscall, or is not
+    /// running (`runningOn`): a thread making a syscall is running, so each
     /// means the client's record of what it runs disagrees with this
     /// library's, which is a bug in the client.
     /// </summary>

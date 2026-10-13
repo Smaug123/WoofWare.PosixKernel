@@ -11,7 +11,7 @@ open WoofWare.PosixKernel
 /// every row of `docs/plans/2026-08-23-posix-kernel-extraction/sigsuspend-mask.c`
 /// (measured 2026-10-08 on Linux 6.18.5 aarch64 with glibc 2.41, and Darwin
 /// 27.0.0 arm64), replayed from its embedded outputs; a reference model of the
-/// masks a task in the call has, over random signal sequences; and the
+/// masks a thread in the call has, over random signal sequences; and the
 /// invariants a mask to restore keeps.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -821,7 +821,7 @@ module TestSigsuspend =
         /// The helper sets a signal's disposition.
         | SetDisposition of Signal * ModelDisposition
         /// The helper calls the C library's `sigprocmask`, which on Darwin
-        /// changes every task's mask, and then blocks every signal again.
+        /// changes every thread's mask, and then blocks every signal again.
         | Spread of SignalMaskChange * Set<Signal>
 
     /// The paths of the model that its walk must reach.
@@ -1228,7 +1228,7 @@ module TestSigsuspend =
         SignalState.suspend thread SignalMask.empty signals
 
     [<Test>]
-    let ``a mask to restore for a task the table does not hold is a defect`` () : unit =
+    let ``a mask to restore for a thread the table does not hold is a defect`` () : unit =
         let system = boot SimulatedUnixFlavour.Linux
 
         system
@@ -1236,7 +1236,7 @@ module TestSigsuspend =
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutThread 42 ]
 
-        // The control: a task between its call's answer and its return to user
+        // The control: a thread between its call's answer and its return to user
         // mode holds one, parked in nothing.
         system
         |> withSignals (suspended main system.Process.Signals)
@@ -1303,7 +1303,7 @@ module TestSigsuspend =
 
             match UnixThreadLifecycle.tryExitThread helper 0 asleep with
             | Error (ThreadExitRefusal.Parked (thread, _)) -> thread |> shouldEqual helper
-            | other -> failwith $"a parked task's exit: %A{other}"
+            | other -> failwith $"a parked thread's exit: %A{other}"
 
             let ended = UnixThreadLifecycle.exitGroup main 0 asleep
 
@@ -1312,7 +1312,7 @@ module TestSigsuspend =
 
             SignalState.threadsWithMasks ended.FinalProcess.Signals |> shouldEqual Set.empty
 
-            // And `forgetThread` alone, on a task whose call has ended and which has
+            // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.
             let forgotten =
                 SignalState.suspend helper usr1 blocking.Process.Signals

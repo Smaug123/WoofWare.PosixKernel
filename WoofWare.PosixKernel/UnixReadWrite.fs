@@ -56,7 +56,7 @@ type internal ReadRefusal =
     /// A read asleep on a pipe or a connected socket has an answer, and the
     /// library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
-    /// A read of `count` bytes of `/dev/urandom`, more than a page, by a task
+    /// A read of `count` bytes of `/dev/urandom`, more than a page, by a thread
     /// with a signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -65,7 +65,7 @@ module internal ReadRefusal =
     /// Shared with `PReadRefusal`, whose case of the same name is the same
     /// fact.
     let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the read is of %d{count} bytes, more than a page, and a signal is pending that the reading task would take on its return to user mode. Linux's read stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short read of a device."
+        $"the descriptor is /dev/urandom, the read is of %d{count} bytes, more than a page, and a signal is pending that the reading thread would take on its return to user mode. Linux's read stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short read of a device."
 
     /// What this kernel knows about why it cannot answer. The client supplies
     /// its own half — which entry point, which descriptor, and which of its own
@@ -128,19 +128,19 @@ module internal PReadRefusal =
         | PReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
-/// "the calling task sleeps".
+/// "the calling thread sleeps".
 [<RequireQualifiedAccess>]
 type ReadOutcome =
     /// The entry point returned.
     | Answered of ReadAnswer
     /// The call did not return: it is a blocking read of a pipe that holds
     /// nothing while a write end is open, of a connected socket with nothing
-    /// to answer, or of an inotify instance holding no record. The calling task is parked, and
+    /// to answer, or of an inotify instance holding no record. The calling thread is parked, and
     /// sleeps until `UnixWait.wakes` wakes it; then `UnixReadWrite.finishRead`
     /// finishes the call.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The task is
+    /// restarts: it never returns. The thread is
     /// no longer parked. Once the handlers have run, the client issues the
     /// `read` again with the arguments it was first made with.
     ///
@@ -263,7 +263,7 @@ type internal WriteRefusal =
     /// the library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
     /// A write into a pipe with no reader, or a Linux stream socket with no
-    /// peer, which answers `EPIPE` and raises `SIGPIPE`, when which task would
+    /// peer, which answers `EPIPE` and raises `SIGPIPE`, when which thread would
     /// receive the signal is not modelled.
     | SignalReceiver of target : BrokenWriteTarget * refusal : SignalReceiverRefusal
     /// A write into a pipe with no reader, or a Linux stream socket with no
@@ -271,7 +271,7 @@ type internal WriteRefusal =
     /// from inside its own PID namespace, every signal it has not installed a
     /// handler for, and this library does not model that.
     | InitProcess of target : BrokenWriteTarget
-    /// A write of `count` bytes to `/dev/urandom`, more than a page, by a task
+    /// A write of `count` bytes to `/dev/urandom`, more than a page, by a thread
     /// with a signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
 
@@ -280,7 +280,7 @@ module internal WriteRefusal =
     /// Shared with `PWriteRefusal`, whose case of the same name is the same
     /// fact.
     let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the write is of %d{count} bytes, more than a page, and a signal is pending that the writing task would take on its return to user mode. Linux's write stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short write to a device."
+        $"the descriptor is /dev/urandom, the write is of %d{count} bytes, more than a page, and a signal is pending that the writing thread would take on its return to user mode. Linux's write stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short write to a device."
 
     // Its own function because `write` and `pwrite` reach the same limit from
     // different offsets and must say the same thing about it.
@@ -315,7 +315,7 @@ module internal WriteRefusal =
         | WriteRefusal.InitProcess target ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE; but the process is process ID 1, and what an init process does with a signal it has no handler for is not modelled."
         | WriteRefusal.SignalReceiver (target, refusal) ->
-            $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which task would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
+            $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which thread would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
         | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
         | WriteRefusal.SignalAtPageBoundary count -> describeSignalAtPageBoundary count
 
@@ -456,13 +456,13 @@ type WriteOutcome<'Thread> =
     /// returns.
     | ReturnsRaising of answer : WriteAnswer * signal : PendingSignal<'Thread>
     /// The call did not return: it is a blocking write into a pipe, or to a
-    /// connected socket, with no room for the rest of it. The calling task is
+    /// connected socket, with no room for the rest of it. The calling thread is
     /// parked in the system that comes with this, and sleeps until
     /// `UnixWait.wakes` wakes it; then `UnixReadWrite.finishWrite` finishes
     /// the call.
     | WouldBlock of condition : WakeCondition
     /// The call was asleep with nothing written, a signal with a handler
-    /// interrupted it, and the call restarts: it never returns. The task is no
+    /// interrupted it, and the call restarts: it never returns. The thread is no
     /// longer parked. Once the handlers have run, the client issues the
     /// `write` or `send` again with the arguments it was first made with.
     ///
@@ -1181,7 +1181,7 @@ module UnixReadWrite =
             // `PipeBuffer.write` is the measured rule.
             PipeWriteStep.Takes taken
 
-    /// A write by `task` into `target`, which has no reader or no peer: it
+    /// A write by `thread` into `target`, which has no reader or no peer: it
     /// answers `answer`, `EPIPE`, and raises `SIGPIPE` before it returns, which
     /// the process's disposition for the signal then decides the fate of.
     let private broken<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1262,7 +1262,7 @@ module UnixReadWrite =
         | TcpSendCall.Send false
         | TcpSendCall.Write -> broken answer thread target system
 
-    /// A write by `task` of `count` bytes to `socketId`, a socket that is not an
+    /// A write by `thread` of `count` bytes to `socketId`, a socket that is not an
     /// end of a connection, past the buffer screen: the socket's own answer, as
     /// `wrap` makes it the caller's. It never reads the buffer, because no such
     /// socket this kernel answers for takes bytes.
@@ -1401,8 +1401,8 @@ module UnixReadWrite =
             else
                 ConnectionWriteStep.Takes (taken, after)
 
-    /// Fails loudly unless `task` is one of `system`'s tasks and is not
-    /// already asleep in a syscall: a task makes one call at a time, and a
+    /// Fails loudly unless `thread` is one of `system`'s threads and is not
+    /// already asleep in a syscall: a thread makes one call at a time, and a
     /// call that sleeps is finished, not issued again.
     let private checkIssuer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
@@ -1413,12 +1413,12 @@ module UnixReadWrite =
         match Map.tryFind thread system.Threads with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} is not one of the process's tasks, so it cannot be making the call (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
         | Some {
                    Parked = Some park
                } ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} is asleep in %A{park.Syscall}, and is issuing a %s{syscall}. A task blocks in one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is asleep in %A{park.Syscall}, and is issuing a %s{syscall}. A thread blocks in one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
         | Some _ -> ()
 
     /// Why a transfer to or from a connected socket has no answer at its copy.
@@ -1429,7 +1429,7 @@ module UnixReadWrite =
         | Fault of socket : SocketId
         | Buffer of BufferRefusal
 
-    /// `call`, made by `task` through the descriptor `fd` and the description
+    /// `call`, made by `thread` through the descriptor `fd` and the description
     /// `descriptionId`, reading up to `count` bytes (one call's worth) from
     /// `connectionEnd` of `connectionId`, which `socketId` is: the bytes, end of
     /// file, a reset's error, or, with nothing to answer, `EAGAIN` if
@@ -1615,7 +1615,7 @@ module UnixReadWrite =
         // gigabytes.
         Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)))
 
-    /// What a device's own write of `count` bytes by `task`, at most one call's
+    /// What a device's own write of `count` bytes by `thread`, at most one call's
     /// worth, answers without the bytes, once everything ahead of the driver
     /// has passed; `None` where it copies them, which it then takes all of.
     /// Neither device in `CharacterDevice.all` changes anything a later call
@@ -2119,12 +2119,12 @@ module UnixReadWrite =
     /// with a datagram peer, or with a refused connection's error, is refused,
     /// except for Linux's zero-length read, which is 0 in every phase.
     ///
-    /// A read by `task` of a pipe that holds nothing while a write end is open,
+    /// A read by `thread` of a pipe that holds nothing while a write end is open,
     /// through a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
     /// without looking at the buffer, and `finishRead` finishes it. Setting
     /// `O_NONBLOCK` on the description while it sleeps does not wake it.
     ///
-    /// A read of `/dev/urandom` longer than a page, by a task with a signal
+    /// A read of `/dev/urandom` longer than a page, by a thread with a signal
     /// pending, is refused.
     ///
     /// A read of an inotify instance takes as many whole queued records as fit
@@ -2135,7 +2135,7 @@ module UnixReadWrite =
     /// count, and otherwise the read sleeps (`ReadOutcome.WouldBlock`) without
     /// looking at the buffer, and `finishRead` finishes it.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     let read<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2148,7 +2148,7 @@ module UnixReadWrite =
         tryRead thread fd buffer count system
         |> Refusal.orRaise "UnixReadWrite.read" ReadRefusal.kind ReadRefusal.describe
 
-    /// The pipe the open file description `description`, which a task parked in
+    /// The pipe the open file description `description`, which a thread parked in
     /// `syscall` holds, names `pipeEnd` of.
     let private parkedPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
@@ -2161,13 +2161,13 @@ module UnixReadWrite =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             match found.Target with
             | OpenFileTarget.Pipe (pipeId, named) when named = pipeEnd -> pipeId
             | target ->
                 failwith
-                    $"UnixReadWrite.%s{syscall}: task %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
+                    $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than the %A{pipeEnd} end of a pipe (this is a bug in the caller that recorded the park)."
 
     /// Whether a transfer asleep on the open file description `description`,
     /// woken and finding nothing to take, gives up rather than sleeping again:
@@ -2189,7 +2189,7 @@ module UnixReadWrite =
         | SimulatedUnixFlavour.Darwin ->
             (OpenFileTable.get "UnixReadWrite" description system.Machine.OpenFiles).NonBlocking
 
-    /// The socket the open file description `description`, which a task
+    /// The socket the open file description `description`, which a thread
     /// parked in `syscall` holds, names, the connection it is an end of, and
     /// which end.
     let private parkedConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2202,7 +2202,7 @@ module UnixReadWrite =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which is not in the table, but a park holds its description until the call returns (this is a bug in this library, or in a caller that ended a park without its finishing call or assembled the state by hand)."
         | Some found ->
             match found.Target with
             | OpenFileTarget.Socket socketId ->
@@ -2212,10 +2212,10 @@ module UnixReadWrite =
                 | Some (connectionId, connectionEnd) -> socketId, connectionId, connectionEnd
                 | None ->
                     failwith
-                        $"UnixReadWrite.%s{syscall}: task %O{thread} sleeps on socket %O{socketId}, which is in %A{phase} rather than an end of a connection. Nothing takes a socket out of a connection while a call holds it (this is a bug in the caller that recorded the park)."
+                        $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on socket %O{socketId}, which is in %A{phase} rather than an end of a connection. Nothing takes a socket out of a connection while a call holds it (this is a bug in the caller that recorded the park)."
             | target ->
                 failwith
-                    $"UnixReadWrite.%s{syscall}: task %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than a connected socket (this is a bug in the caller that recorded the park)."
+                    $"UnixReadWrite.%s{syscall}: thread %O{thread} sleeps on open file description %O{description}, which names %A{target} rather than a connected socket (this is a bug in the caller that recorded the park)."
 
     /// Whether the open file description `description` carries `O_NONBLOCK`.
     let private nonBlockingNow<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2412,10 +2412,10 @@ module UnixReadWrite =
         | Some (ParkedSyscall.InotifyRead parked) -> finishInotifyRead thread parked system
         | Some other ->
             failwith
-                $"UnixReadWrite.finishRead: task %O{thread} is parked in %A{other}, not in a read, so there is no read to finish (this is a bug in the client)."
+                $"UnixReadWrite.finishRead: thread %O{thread} is parked in %A{other}, not in a read, so there is no read to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixReadWrite.finishRead: task %O{thread} is not parked, so there is no read to finish. Only a task `read` answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixReadWrite.finishRead: thread %O{thread} is not parked, so there is no read to finish. Only a thread `read` answered `WouldBlock` finishes here (this is a bug in the client)."
 
     /// `finishRead`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2436,14 +2436,14 @@ module UnixReadWrite =
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixReadWrite.finishRead" held after
         )
 
-    /// Finish the `read` or `recv` `task` is asleep in: look at the pipe, the
+    /// Finish the `read` or `recv` `thread` is asleep in: look at the pipe, the
     /// connection or the inotify instance again, as a woken real read does,
     /// and answer.
     ///
     /// Bytes in the pipe are read, up to the count the call was made with, into
     /// the buffer it was made with: a buffer naming no storage answers `EFAULT`
     /// and leaves them there. A pipe still empty with no write end open is end
-    /// of file. Under Linux either beats a signal pending for the task, whose
+    /// of file. Under Linux either beats a signal pending for the thread, whose
     /// handlers run as the call returns; under Darwin, a kernel answers
     /// whichever reached the sleeper first, which this library does not
     /// record, so both at once is refused.
@@ -2451,7 +2451,7 @@ module UnixReadWrite =
     /// A pipe still empty with a write end open, and a signal with a handler
     /// pending, ends the call: `Restarts` if every handler that runs was
     /// installed with `SA_RESTART`, and `Failed EINTR` if none was. With no such
-    /// signal, the task sleeps again, behind every other park; except that on
+    /// signal, the thread sleeps again, behind every other park; except that on
     /// Darwin, whose every sleeper wakes, one that finds nothing through a
     /// description that has since become non-blocking answers `EAGAIN`. An
     /// answer, `Restarts` included, clears the park.
@@ -2479,7 +2479,7 @@ module UnixReadWrite =
     /// `Restarts` or `Failed EINTR`, as for a pipe; and otherwise it sleeps
     /// again. No close ends it.
     ///
-    /// `task` must be asleep in a `read` or a `recv`.
+    /// `thread` must be asleep in a `read` or a `recv`.
     let finishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -2617,7 +2617,7 @@ module UnixReadWrite =
     /// that is not an end of a connection.
     /// A call that sleeps is finished by `finishRead`, as a `read` is.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     let recv<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2828,7 +2828,7 @@ module UnixReadWrite =
     /// system that comes back is the one that arrived unless the read drew from
     /// the entropy pool (`ReadAnswer.Drawn`).
     ///
-    /// `task` is the task making the call, which must be one of the process's
+    /// `thread` is the thread making the call, which must be one of the process's
     /// and not asleep in another; a read of `/dev/urandom` asks whether it has
     /// a signal pending, and refuses one longer than a page if it does.
     let pread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2906,7 +2906,7 @@ module UnixReadWrite =
             failwith
                 $"UnixReadWrite.write: fd %d{fd} names an inotify instance with an access mode that permits writing. `inotify_init1` opens one for reading only, so FileDescriptorRegistry.checkInvariants reports this as InotifyNotReadOnly (this is a bug in this library)."
 
-    /// `task` asleep in a write of `count` bytes through `writer`, made through
+    /// `thread` asleep in a write of `count` bytes through `writer`, made through
     /// the descriptor `fd`, the first `written` of them in already.
     let private parkWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2939,7 +2939,7 @@ module UnixReadWrite =
 
         WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
 
-    /// `task` asleep in `call`, writing `count` bytes to a connected socket
+    /// `thread` asleep in `call`, writing `count` bytes to a connected socket
     /// through `writer`, made through the descriptor `fd`, the first `written`
     /// of them taken already.
     let private parkConnectionWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2982,7 +2982,7 @@ module UnixReadWrite =
         }
         |> SocketWake.signalTransfer connectionId wakes
 
-    /// What `call` by `task`, through the descriptor `fd` and the description
+    /// What `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `count` bytes (one call's worth) to `connectionEnd`
     /// of `connectionId`, which `socketId` is, answers before it reads the
     /// caller's buffer, and otherwise how many bytes to extract: see
@@ -3040,7 +3040,7 @@ module UnixReadWrite =
             |> parkConnectionWrite thread call descriptionId fd buffer count 0
             |> Ok
 
-    /// `call` by `task`, through the descriptor `fd` and the description
+    /// `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `bytes` to `connectionEnd` of `connectionId`, which
     /// `socketId` is: see `write`.
     let private writeConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -3099,7 +3099,7 @@ module UnixReadWrite =
             |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped bytes.Length 0
             |> Ok
 
-    /// `call` by `task`, a blocking write of `total` bytes to `connectionEnd`
+    /// `call` by `thread`, a blocking write of `total` bytes to `connectionEnd`
     /// of `connectionId` through the descriptor `fd` and the description
     /// `descriptionId`, given the first of them, `bytes`: see
     /// `tryWriteBytesThenSleep`. `mismatch` fails loudly with the caller's account of
@@ -3127,7 +3127,7 @@ module UnixReadWrite =
             |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped total taken
         | step -> mismatch $"is not the blocking write that takes part of it and sleeps (%A{step})"
 
-    /// Every answer `write(2)` by `task` gives *without* reading the caller's
+    /// Every answer `write(2)` by `thread` gives *without* reading the caller's
     /// buffer, and otherwise how many bytes to extract: the step before the
     /// copy, which `write` answers as a `CallProgress`, and which describes
     /// each answer. The system that comes back is the one the copy, or the
@@ -3469,7 +3469,7 @@ module UnixReadWrite =
                     (UnixSystemState.fileDescriptors committed))
                 committed)
 
-    /// A `write` by `task` through `fd`, given the bytes `tryAdmitWrite` said to
+    /// A `write` by `thread` through `fd`, given the bytes `tryAdmitWrite` said to
     /// extract: the step `writeWithBytes` takes for a `write`. It answers the
     /// descriptor questions itself, so it agrees with the admission on its
     /// own.
@@ -3507,7 +3507,7 @@ module UnixReadWrite =
         | WriteStep.Restarts system -> WriteStep.Restarts (release system)
         | WriteStep.ProcessEnded ended -> WriteStep.ProcessEnded ended
 
-    /// The description the write `task` is asleep in was made through, and
+    /// The description the write `thread` is asleep in was made through, and
     /// how many bytes it has moved so far; `None` once a close has ended it,
     /// which marked the description then (`UnixDescriptor.close`), and for a
     /// `send`, which marks none (measured on Darwin, `tcp-recv-send.c`
@@ -3548,7 +3548,7 @@ module UnixReadWrite =
         | Some (ParkedSyscall.Connect _)
         | None -> None
 
-    /// The write `task` is asleep in.
+    /// The write `thread` is asleep in.
     let private parkedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
         (thread : 'Thread)
@@ -3559,10 +3559,10 @@ module UnixReadWrite =
         | Some (ParkedSyscall.PipeWrite parked) -> parked
         | Some other ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} is parked in %A{other}, not in a write, so there is no write to finish (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is parked in %A{other}, not in a write, so there is no write to finish (this is a bug in the client)."
         | None ->
             failwith
-                $"UnixReadWrite.%s{syscall}: task %O{thread} is not parked, so there is no write to finish. Only a task a write answered `WouldBlock` finishes here (this is a bug in the client)."
+                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not parked, so there is no write to finish. Only a thread a write answered `WouldBlock` finishes here (this is a bug in the client)."
 
     /// After a sleeping write has put bytes in, its count `parked.Count` not
     /// all in yet: whether it sleeps on, or ends with the count it has put in,
@@ -3629,7 +3629,7 @@ module UnixReadWrite =
             | TcpEndState.Open _ -> TcpTransfer.sendShut connectionEnd transfer
             | TcpEndState.Closed _ ->
                 failwith
-                    $"UnixReadWrite.finishWrite: task %O{thread} sleeps on socket %O{socketId}, whose end of the connection is closed, but the call holds the socket (this is a bug in this library)."
+                    $"UnixReadWrite.finishWrite: thread %O{thread} sleeps on socket %O{socketId}, whose end of the connection is closed, but the call holds the socket (this is a bug in this library)."
 
         if cannotSend then
             // Linux's `sk_stream_wait_memory` looks for the error, and for
@@ -3708,7 +3708,7 @@ module UnixReadWrite =
             | Ok (Some SyscallInterruption.Restart) -> Ok (WriteStep.Restarts finished)
             | Ok None ->
                 failwith
-                    $"UnixReadWrite.finishWrite: a signal interrupts task %O{thread}'s write, and SyscallInterruption.ofPark says none does (this is a bug in this library)."
+                    $"UnixReadWrite.finishWrite: a signal interrupts thread %O{thread}'s write, and SyscallInterruption.ofPark says none does (this is a bug in this library)."
         | Ok false ->
 
         match room with
@@ -3754,7 +3754,7 @@ module UnixReadWrite =
             | SleepTarget.Waiting (writer, fd) -> writer, fd
             | SleepTarget.EndedByClose socketId ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{thread}'s write to socket %O{socketId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
 
         let socketId, connectionId, connectionEnd =
             parkedConnection "writeWithBytes" thread writer system
@@ -3767,7 +3767,7 @@ module UnixReadWrite =
             | ConnectionWriteStep.TakesThenSleeps (taken, after) when taken = bytes.Length -> taken, after
             | step ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{thread}'s write to socket %O{socketId} was given %d{bytes.Length} bytes, and a write there now comes to %A{step}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} was given %d{bytes.Length} bytes, and a write there now comes to %A{step}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
 
         let system = intoConnection connectionId connectionEnd bytes transfer system
         let written = parked.Written + taking
@@ -3889,7 +3889,7 @@ module UnixReadWrite =
             // no room again sleeps at the back of the queue.
             Ok (parkWrite thread writer fd parked.Buffer parked.Count parked.Written system)
 
-    /// Every answer the `write` or `send` `task` is asleep in gives without
+    /// Every answer the `write` or `send` `thread` is asleep in gives without
     /// reading more of the caller's buffer, and otherwise which of its bytes to
     /// extract next: the step before the copy, which `finishWrite` answers as a
     /// `CallProgress`, and which describes each answer.
@@ -3940,7 +3940,7 @@ module UnixReadWrite =
             | SleepTarget.Waiting (writer, fd) -> writer, fd
             | SleepTarget.EndedByClose pipeId ->
                 failwith
-                    $"UnixReadWrite.writeWithBytes: task %O{thread}'s write into pipe %O{pipeId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
+                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
 
         let pipeId = parkedPipe "writeWithBytes" thread writer PipeEnd.Write system
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -3948,7 +3948,7 @@ module UnixReadWrite =
 
         if taking = 0 || bytes.Length <> taking then
             failwith
-                $"UnixReadWrite.writeWithBytes: task %O{thread}'s write into pipe %O{pipeId} takes %d{taking} bytes now and was given %d{bytes.Length}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
+                $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} takes %d{taking} bytes now and was given %d{bytes.Length}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
 
         let system =
             withPipe
@@ -3979,7 +3979,7 @@ module UnixReadWrite =
 
             afterPartWritten thread pipeId writer fd parked nonBlocking id system
 
-    /// The `write` or `send` `task` is asleep in, given the bytes
+    /// The `write` or `send` `thread` is asleep in, given the bytes
     /// `tryAdmitFinishWrite` said to extract: the step `writeWithBytes` takes
     /// for a woken call. `bytes` must be exactly those, against the system the
     /// admission answered with.
@@ -4004,7 +4004,7 @@ module UnixReadWrite =
         )
         |> Result.map (releasedAfterWrite "UnixReadWrite.writeWithBytes" held)
 
-    /// A blocking `write` of `total` bytes by `task`, given the first of them,
+    /// A blocking `write` of `total` bytes by `thread`, given the first of them,
     /// which `WriteAdmission.TransferThenSleep` named: they go into the pipe or
     /// the connection, and the call sleeps for the rest. `bytes` must be
     /// exactly those, against the system the admission answered with.
@@ -4109,7 +4109,7 @@ module UnixReadWrite =
 
         Ok (Ok (descriptionId, description.NonBlocking || dontWait, socketId, connectionId, connectionEnd))
 
-    /// Every answer `send(2)` by `task` gives without reading the caller's
+    /// Every answer `send(2)` by `thread` gives without reading the caller's
     /// buffer, and otherwise how many bytes to extract, as `tryAdmitWrite` is
     /// for `write`: the step before the copy, which `send` answers as a
     /// `CallProgress`.
@@ -4162,7 +4162,7 @@ module UnixReadWrite =
             system
         |> Result.mapError sendRefusalOf
 
-    /// A `send` by `task` through `fd`, given the bytes `tryAdmitSend` said to
+    /// A `send` by `thread` through `fd`, given the bytes `tryAdmitSend` said to
     /// extract: the step `sendWithBytes` takes, as `tryWriteBytes` is for a
     /// `write`.
     let internal trySendBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4202,7 +4202,7 @@ module UnixReadWrite =
             system
         |> Result.mapError sendRefusalOf
 
-    /// A blocking `send` of `total` bytes by `task`, given the first of them
+    /// A blocking `send` of `total` bytes by `thread`, given the first of them
     /// that `WriteAdmission.TransferThenSleep` named, as `tryWriteBytesThenSleep`
     /// is for `write`: they go to the connection, and the call sleeps for the
     /// rest.
@@ -4512,7 +4512,7 @@ module UnixReadWrite =
             }
         )
 
-    /// A `pwrite` by `task` through `fd` at `offset`, given the bytes
+    /// A `pwrite` by `thread` through `fd` at `offset`, given the bytes
     /// `tryAdmitPWrite` said to extract: the step `pwriteWithBytes` takes. It
     /// answers the descriptor questions itself, so it agrees with the
     /// admission on its own.
@@ -4617,7 +4617,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `write(2)` by `task`: write `count` bytes of `buffer` to `fd`.
+    /// `write(2)` by `thread`: write `count` bytes of `buffer` to `fd`.
     /// </summary>
     /// <remarks>
     /// Every answer the call gives *without* reading the buffer comes first, as
@@ -4635,7 +4635,7 @@ module UnixReadWrite =
     /// A write into a pipe with no reader answers `EPIPE` without the buffer,
     /// ahead of `EAGAIN`, `EFAULT` and a short count, and raises `SIGPIPE`
     /// before it returns. That is a zero-length write too, except on Linux,
-    /// where one answers 0 and raises nothing. The signal is `task`'s own on
+    /// where one answers 0 and raises nothing. The signal is `thread`'s own on
     /// Linux and the process's on Darwin; what it does is then what any
     /// generated signal does (see `UnixSignal.kill`), and if its disposition
     /// is the default, it ends the process.
@@ -4661,7 +4661,7 @@ module UnixReadWrite =
     /// refused. A socket with a datagram peer, or with a refused connection's
     /// error, is refused.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     /// </remarks>
     let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4708,7 +4708,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// The `write` or `send` `task` is asleep in, woken: every answer it gives
+    /// The `write` or `send` `thread` is asleep in, woken: every answer it gives
     /// without reading more of the caller's buffer, as `CallProgress.Answered`,
     /// or the call stopped where it copies the next of its bytes, which
     /// `writeWithBytes` takes.
@@ -4724,11 +4724,11 @@ module UnixReadWrite =
     ///   `PausedWrite.copyRange` names the bytes, which start past those
     ///   already in the pipe. A buffer naming no storage answers `EFAULT`, the
     ///   write having put nothing in.
-    /// - **Neither**, and a signal with a handler is pending for the task: a
+    /// - **Neither**, and a signal with a handler is pending for the thread: a
     ///   write that had put bytes in returns their count, whatever the
     ///   handlers' flags; one that had not ends as `read` does,
     ///   `WriteOutcome.Restarts` or `Failed EINTR`.
-    /// - **Neither, and no signal**: the task sleeps again, behind every other
+    /// - **Neither, and no signal**: the thread sleeps again, behind every other
     ///   park; except that on Darwin, whose every sleeper wakes, one whose
     ///   description has since become non-blocking gives up, answering the
     ///   count it had put in, or `EAGAIN` if none.
@@ -4759,12 +4759,12 @@ module UnixReadWrite =
     ///   beats room; under Darwin, room beside it is refused.
     /// - **There is room**, as a write made now would take: the call stops at
     ///   the copy, as for a pipe. A buffer naming no storage is refused.
-    /// - **Neither**: the task sleeps again, refused instead if its
+    /// - **Neither**: the thread sleeps again, refused instead if its
     ///   description has become non-blocking.
     /// - **A close has ended it**, under Darwin: `EBADF`, whatever it had
     ///   taken.
     ///
-    /// `task` must be asleep in a `write` or a `send`.
+    /// `thread` must be asleep in a `write` or a `send`.
     /// </remarks>
     let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -4802,7 +4802,7 @@ module UnixReadWrite =
     ///
     /// A woken write or `send` (`finishWrite`) returns its whole count if
     /// that was the last of it. Otherwise a signal with a handler pending for
-    /// the task, or `O_NONBLOCK` set on the description while the call slept,
+    /// the thread, or `O_NONBLOCK` set on the description while the call slept,
     /// ends it with the count it has put in by now, and with neither, it
     /// sleeps again for the rest. A write to a connected socket sleeps again
     /// for the rest, or is refused if its description has become
@@ -4865,7 +4865,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `send(2)` by `task`: send `count` bytes of `buffer` through `fd`, with
+    /// `send(2)` by `thread`: send `count` bytes of `buffer` through `fd`, with
     /// the flag word `flags`, raw, in the flavour's numbering
     /// (`MessageFlag.number`).
     /// </summary>
@@ -4890,7 +4890,7 @@ module UnixReadWrite =
     /// that is not an end of a connection. A call that sleeps is woken by
     /// `finishWrite`, as a `write` is.
     ///
-    /// Fails loudly if `task` is not one of the process's tasks, or is already
+    /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
     /// </remarks>
     let send<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4973,7 +4973,7 @@ module UnixReadWrite =
         )
 
     /// <summary>
-    /// `pwrite(2)` by `task`: write `count` bytes of `buffer` at `offset` in
+    /// `pwrite(2)` by `thread`: write `count` bytes of `buffer` at `offset` in
     /// the file `fd` names, without consulting or moving the description's own
     /// file offset.
     /// </summary>
@@ -4992,10 +4992,10 @@ module UnixReadWrite =
     ///
     /// Never short and never `EINTR`: this kernel has nothing that could push
     /// back on a write, and its filesystem cannot run out of space. A write of
-    /// more than a page to `/dev/urandom` by a task with a signal pending,
+    /// more than a page to `/dev/urandom` by a thread with a signal pending,
     /// which a real kernel would cut short, is refused.
     ///
-    /// `task` is the task making the call, which must be one of the process's
+    /// `thread` is the thread making the call, which must be one of the process's
     /// and not asleep in another; a write to `/dev/urandom` asks whether it
     /// has a signal pending.
     /// </remarks>

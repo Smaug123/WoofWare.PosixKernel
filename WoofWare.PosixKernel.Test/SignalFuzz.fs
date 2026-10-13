@@ -233,7 +233,7 @@ module SignalFuzz =
     exception private Died of signo : int
     exception private Refusal of string
 
-    /// Run `sequence` on this library, as a one-task process of `platform`, and
+    /// Run `sequence` on this library, as a one-thread process of `platform`, and
     /// render what happened as the harness would.
     let executeEmulated (platform : SimulatedUnixPlatform) (sequence : SignalFuzzSequence) : SignalFuzzRun =
         let numbering = SimulatedUnixPlatform.signalNumbering platform
@@ -293,7 +293,7 @@ module SignalFuzz =
                     | SignalDisposition.Ignore -> "i"
                     | SignalDisposition.Catch _ -> "c"
 
-                // The mask the handler starts under: the task's mask as it
+                // The mask the handler starts under: the thread's mask as it
                 // begins to run, which the frames inside it have restored.
                 let mask = SignalState.maskOf leader (signals ())
 

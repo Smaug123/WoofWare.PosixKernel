@@ -9,13 +9,13 @@ open WoofWare.PosixKernel
 module internal Machines =
 
     /// A launch of a process on `platform` with the three piped standard
-    /// streams and one task, 0, on processor 0.
+    /// streams and one thread, 0, on processor 0.
     let launchOn (platform : SimulatedUnixPlatform) : ProcessLaunch<int> =
         Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     /// A machine of `platform`, booted from an image `configure` configured,
     /// with `count` processes, the first booted and the rest launched, each
-    /// with tasks 0 to `tasks - 1`, and their process IDs in that order.
+    /// with threads 0 to `threads - 1`, and their process IDs in that order.
     let withThreadsOn
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (platform : SimulatedUnixPlatform)
@@ -60,7 +60,7 @@ module internal Machines =
         =
         withThreadsOn id platform count threads
 
-    /// `withThreads` with tasks 0 to 4 in each process, as `KeventWorld`'s
+    /// `withThreads` with threads 0 to 4 in each process, as `KeventWorld`'s
     /// helpers expect.
     let ofCount (platform : SimulatedUnixPlatform) (count : int) : ProcessId list * SimulatedMachine<int, string> =
         withThreads platform count 5

@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.FifoOpen` and `WakePrimitive.FifoPartnerOpened`, which are
-/// reserved: nothing parks a task in a FIFO open yet. What every reader of a
+/// reserved: nothing parks a thread in a FIFO open yet. What every reader of a
 /// park already answers for it (its wake condition, the description it holds,
-/// how a signal ends it), and the invariant that reports a task parked in it,
-/// which is what makes "nothing parks a task in it" checked wherever a fuzzer
+/// how a signal ends it), and the invariant that reports a thread parked in it,
+/// which is what makes "nothing parks a thread in it" checked wherever a fuzzer
 /// checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -70,7 +70,7 @@ module TestFifoOpenPark =
     let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a FIFO open is a ReservedPark defect, and its description outlives its last descriptor``
+    let ``a thread parked in a FIFO open is a ReservedPark defect, and its description outlives its last descriptor``
         ()
         : unit
         =

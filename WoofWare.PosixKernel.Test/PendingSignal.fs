@@ -4,19 +4,19 @@ open FsCheck
 open FsCheck.FSharp
 open WoofWare.PosixKernel
 
-/// What is pending when a task starts a transfer whose real kernel checks
+/// What is pending when a thread starts a transfer whose real kernel checks
 /// `signal_pending` partway through: a read or write of `/dev/urandom`, or
 /// `getrandom(2)`.
 [<RequireQualifiedAccess>]
 type PendingSignal =
     | Nothing
-    /// SIGUSR1, caught, sent to the transferring task.
+    /// SIGUSR1, caught, sent to the transferring thread.
     | CaughtForTransferrer
-    /// SIGUSR1, caught, sent to another task.
+    /// SIGUSR1, caught, sent to another thread.
     | CaughtForAnother
-    /// SIGUSR1, ignored, sent to the transferring task, which discards it.
+    /// SIGUSR1, ignored, sent to the transferring thread, which discards it.
     | IgnoredForTransferrer
-    /// SIGCONT at its default, sent to the transferring task, which does not
+    /// SIGCONT at its default, sent to the transferring thread, which does not
     /// block it: the kernel discards it as it is sent.
     | DefaultForTransferrer
 
@@ -33,7 +33,7 @@ module PendingSignal =
                 PendingSignal.DefaultForTransferrer
             ]
 
-    /// Whether `pending` leaves a signal the transferring task takes as it
+    /// Whether `pending` leaves a signal the transferring thread takes as it
     /// returns to user mode, which is what Linux's `signal_pending` asks.
     let transferrerHasSignal (pending : PendingSignal) : bool =
         match pending with
@@ -43,7 +43,7 @@ module PendingSignal =
         | PendingSignal.IgnoredForTransferrer
         | PendingSignal.DefaultForTransferrer -> false
 
-    /// `system` with task 1 beside `transferrer`, which must not be 1, and
+    /// `system` with thread 1 beside `transferrer`, which must not be 1, and
     /// `pending` made so through `sigaction` and `pthread_kill`.
     let make
         (transferrer : int)
@@ -52,7 +52,7 @@ module PendingSignal =
         : UnixSystem<int, string>
         =
         if transferrer = 1 then
-            failwith "PendingSignal.make: task 1 is the other task"
+            failwith "PendingSignal.make: thread 1 is the other thread"
 
         let system = Threads.ensure 1 system
 

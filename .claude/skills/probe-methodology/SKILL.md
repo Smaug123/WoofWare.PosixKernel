@@ -22,7 +22,7 @@ from the top (`ReadOutcome.Restarts`); a call that stops to copy bytes in
 completed by its family's finishing function once `UnixWait` says it is woken.
 So a branch that reads like a once-per-call early return can run twice for what
 the process sees as one call, and code after a park runs against a state that
-other tasks have changed in between. None of this is visible at the point you
+other threads have changed in between. None of this is visible at the point you
 read the code.
 
 **How to apply:** before writing any claim about ordering, "runs once", or that a

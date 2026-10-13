@@ -8,10 +8,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.SignalWait` and `WakePrimitive.AwaitedSignalPending`, which
-/// are reserved: nothing parks a task in a signal wait yet. What every reader
+/// are reserved: nothing parks a thread in a signal wait yet. What every reader
 /// of a park already answers for it (its wake condition, its deadline, the
 /// descriptions it holds, how a signal ends it), and the invariant that reports
-/// a task parked in it, which is what makes "nothing parks a task in it"
+/// a thread parked in it, which is what makes "nothing parks a thread in it"
 /// checked wherever a fuzzer checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -98,7 +98,10 @@ module TestSignalWaitPark =
     let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a signal wait is a ReservedPark defect, whose deadline the wait machinery reads`` () : unit =
+    let ``a thread parked in a signal wait is a ReservedPark defect, whose deadline the wait machinery reads``
+        ()
+        : unit
+        =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let numbering =
                 SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)

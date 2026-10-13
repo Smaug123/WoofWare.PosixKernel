@@ -7,10 +7,10 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `ParkedSyscall.DatagramReceive` and `ParkedSyscall.DatagramSend`, which are
-/// reserved: nothing parks a task in either yet. What every reader of a park
+/// reserved: nothing parks a thread in either yet. What every reader of a park
 /// already answers for them (the wake condition, the description each holds,
-/// how a signal ends each), and the invariant that reports a task parked in
-/// one, which is what makes "nothing parks a task in it" checked wherever a
+/// how a signal ends each), and the invariant that reports a thread parked in
+/// one, which is what makes "nothing parks a thread in it" checked wherever a
 /// fuzzer checks invariants.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -73,7 +73,7 @@ module TestDatagramPark =
     let private thread : int = 1
 
     [<Test>]
-    let ``a task parked in a datagram transfer is a ReservedPark defect`` () : unit =
+    let ``a thread parked in a datagram transfer is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []

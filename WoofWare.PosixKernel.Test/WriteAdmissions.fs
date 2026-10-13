@@ -26,7 +26,7 @@ module internal WriteOutcomes =
             | WriteStep.Restarts _ -> failwith $"expected a write that returns and raises no signal, got %A{outcome}"
         )
 
-    /// A whole `write(2)` by `task`, made a step at a time through the
+    /// A whole `write(2)` by `thread`, made a step at a time through the
     /// library's internal steps: `UnixReadWrite.tryAdmitWrite`, and if it says
     /// to transfer, `tryWriteBytes` or `tryWriteBytesThenSleep` of the first
     /// that many of `bytes`. An admission's answer is reported as the write's.
@@ -61,7 +61,7 @@ module internal WriteOutcomes =
         | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _), signal, _)) ->
             failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
 
-    /// A whole `send(2)` by `task` with the raw flag word `flags`, made a step
+    /// A whole `send(2)` by `thread` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
     /// `admitThenSend` holds the public protocol to.
     let private stepsThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -137,7 +137,7 @@ module internal WriteOutcomes =
 
         actual
 
-    /// A whole `write(2)` by `task` of `bytes` from `buffer`, through the
+    /// A whole `write(2)` by `thread` of `bytes` from `buffer`, through the
     /// library's public protocol (`UnixReadWrite.write`, and if it stops at the
     /// copy, `writeWithBytes` of the bytes `PausedWrite.copyRange` names),
     /// held to `stepsThenWrite`, which makes the same write a step at a time.
@@ -159,7 +159,7 @@ module internal WriteOutcomes =
 
         agreeing "write" (stepsThenWrite thread fd buffer bytes system) actual
 
-    /// A whole `send(2)` by `task` with the raw flag word `flags`, through the
+    /// A whole `send(2)` by `thread` with the raw flag word `flags`, through the
     /// library's public protocol, as `admitThenWrite` makes a `write(2)`, held
     /// to `stepsThenSend`.
     let admitThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -181,7 +181,7 @@ module internal WriteOutcomes =
 
         agreeing "send" (stepsThenSend thread fd buffer bytes flags system) actual
 
-    /// The woken `write` or `send` of `task`, finished a step at a time:
+    /// The woken `write` or `send` of `thread`, finished a step at a time:
     /// `UnixReadWrite.tryAdmitFinishWrite`, and if it says to transfer,
     /// `tryFinishWriteBytes` of `bytesAt offset count`. The oracle
     /// `finishWrite` holds the public protocol to.
@@ -204,7 +204,7 @@ module internal WriteOutcomes =
         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
         | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
 
-    /// The woken `write` or `send` of `task`, finished through the library's
+    /// The woken `write` or `send` of `thread`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
     /// copy, `writeWithBytes` of `bytesAt offset count` for the range
     /// `PausedWrite.copyRange` names), held to `stepsThenFinishWrite`.

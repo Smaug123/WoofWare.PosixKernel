@@ -52,7 +52,7 @@ module TestListenerTeardown =
         |> Array.filter (fun line -> line <> "")
         |> Array.toList
 
-    /// A booted system of `platform`, with tasks 1 to 4.
+    /// A booted system of `platform`, with threads 1 to 4.
     let private systemOn (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> platform
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)

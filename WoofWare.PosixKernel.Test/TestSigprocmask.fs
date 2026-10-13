@@ -89,7 +89,7 @@ module TestSigprocmask =
         | Ok (_, system) -> system
         | Error errno -> failwith $"the mask call failed with %O{errno}"
 
-    /// `task` with exactly `word` blocked, set through `pthread_sigmask`.
+    /// `thread` with exactly `word` blocked, set through `pthread_sigmask`.
     let private withMask
         (flavour : SimulatedUnixFlavour)
         (thread : int)
@@ -234,7 +234,7 @@ module TestSigprocmask =
         |> ignore
 
     [<Test>]
-    let ``Darwin's sigprocmask changes every task's mask, and every other call the caller's alone`` () : unit =
+    let ``Darwin's sigprocmask changes every thread's mask, and every other call the caller's alone`` () : unit =
         // The probe's "spread" rows: the main thread blocks HUP (1) and a
         // second thread INT (2), then the main thread calls.
         let measured (flavour : SimulatedUnixFlavour) (route : Route) (how : int) : uint64 * uint64 =
@@ -343,7 +343,7 @@ module TestSigprocmask =
                 | other -> failwith $"%O{flavour}: expected three frames, got %A{other}"
 
     [<Test>]
-    let ``sigpending sees the process's signals from every task on Linux, and from the main thread alone on Darwin``
+    let ``sigpending sees the process's signals from every thread on Linux, and from the main thread alone on Darwin``
         ()
         : unit
         =
@@ -514,8 +514,11 @@ module TestSigprocmask =
             UnixSignal.sigpending 0 after |> shouldEqual SignalMask.empty
 
     [<Test>]
-    let ``a caught signal the leader blocks and another task does not is refused, with no handler involved`` () : unit =
-        // Which task takes it is the receiver rule this library does not
+    let ``a caught signal the leader blocks and another thread does not is refused, with no handler involved``
+        ()
+        : unit
+        =
+        // Which thread takes it is the receiver rule this library does not
         // model (`SignalReceiverRefusal.LeaderBlocks`).
         for flavour in flavours do
             let usr1 =
@@ -534,7 +537,7 @@ module TestSigprocmask =
             |> Result.map (fun _ -> ())
             |> shouldEqual (Error (KillRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)))
 
-            // Once the other task blocks it too, it is simply pending.
+            // Once the other thread blocks it too, it is simply pending.
             let both = system |> withMask flavour 1 usr1
 
             let pending =
@@ -543,7 +546,7 @@ module TestSigprocmask =
             UnixSignal.sigpending 0 pending |> SignalMask.toWord |> shouldEqual usr1
 
     [<Test>]
-    let ``a sigprocmask that unblocks a signal pending for a task asleep in poll is refused on Darwin, and wakes nothing on Linux``
+    let ``a sigprocmask that unblocks a signal pending for a thread asleep in poll is refused on Darwin, and wakes nothing on Linux``
         ()
         : unit
         =
@@ -590,7 +593,7 @@ module TestSigprocmask =
             Size : uint64
         }
 
-    /// The reference: each task's mask as a word, and the mask calls' rules
+    /// The reference: each thread's mask as a word, and the mask calls' rules
     /// written out from the probe's rows rather than read from the library.
     let private referenceCall
         (flavour : SimulatedUnixFlavour)

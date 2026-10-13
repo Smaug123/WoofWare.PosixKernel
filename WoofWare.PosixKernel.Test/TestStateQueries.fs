@@ -181,7 +181,7 @@ module TestStateQueries =
             |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
 
     [<Test>]
-    let ``park is absent until a task sleeps, and then names the syscall it sleeps in`` () : unit =
+    let ``park is absent until a thread sleeps, and then names the syscall it sleeps in`` () : unit =
         for platform in platforms do
             let system = initialOn platform
 

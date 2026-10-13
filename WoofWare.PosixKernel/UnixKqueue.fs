@@ -132,8 +132,8 @@ type KeventOutcome =
     /// Empty for a wait that timed out, for a timeout of zero with nothing to
     /// report, and for an `nevents` of zero or less.
     | Answered of events : Kevent list
-    /// `kevent` did not return. The calling task is parked, and sleeps until
-    /// `UnixWait.satisfied` of the task is non-empty and
+    /// `kevent` did not return. The calling thread is parked, and sleeps until
+    /// `UnixWait.satisfied` of the thread is non-empty and
     /// `UnixWait.wakes` wakes it; then `UnixKqueue.finishKevent` finishes the
     /// call.
     | WouldBlock of WakeCondition
@@ -178,17 +178,17 @@ type internal KeventRefusal =
     | DeadlineBeyondClock of nanosecondsSinceBoot : int64 * seconds : int64 * nanoseconds : int64
     /// The wait was asleep, and both a close has drained the kqueue and the
     /// wait's deadline has passed. Darwin answers whichever of the two reached
-    /// the sleeping task first, which this library does not record.
+    /// the sleeping thread first, which this library does not record.
     | DrainBesideDeadline of kqueue : OpenFileDescriptionId
     /// The wait was asleep, and both a close has drained the kqueue and it has
     /// an event to report. Darwin answers whichever of the two reached the
-    /// sleeping task first, which this library does not record.
+    /// sleeping thread first, which this library does not record.
     | DrainBesideEvents of kqueue : OpenFileDescriptionId
     /// The wait was asleep, and both its deadline has passed and the kqueue has
     /// an event to report. Darwin answers whichever of the two reached the
-    /// sleeping task first, which this library does not record.
+    /// sleeping thread first, which this library does not record.
     | EventsBesideDeadline of kqueue : OpenFileDescriptionId
-    /// The wait was asleep and a signal is pending for the task, and this
+    /// The wait was asleep and a signal is pending for the thread, and this
     /// library will not say how the signal ends it.
     | Interruption of SyscallInterruptionRefusal
 
@@ -216,11 +216,11 @@ module internal KeventRefusal =
         | KeventRefusal.DeadlineBeyondClock (now, seconds, nanoseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{seconds} s and %d{nanoseconds} ns, which ends past the last nanosecond the monotonic clock can represent."
         | KeventRefusal.DrainBesideDeadline kqueue ->
-            $"a task asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and reached its deadline (0 events). Darwin answers whichever of the two reached the sleeping task first, and this kernel does not record which did."
+            $"a thread asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and reached its deadline (0 events). Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
         | KeventRefusal.DrainBesideEvents kqueue ->
-            $"a task asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and an event to report. Darwin answers whichever of the two reached the sleeping task first, and this kernel does not record which did."
+            $"a thread asleep in kevent on kqueue %O{kqueue} has both had the kqueue drained by a close (EBADF) and an event to report. Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
         | KeventRefusal.EventsBesideDeadline kqueue ->
-            $"a task asleep in kevent on kqueue %O{kqueue} has both reached its deadline (0 events) and an event to report. Darwin answers whichever of the two reached the sleeping task first, and this kernel does not record which did."
+            $"a thread asleep in kevent on kqueue %O{kqueue} has both reached its deadline (0 events) and an event to report. Darwin answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
         | KeventRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -611,7 +611,7 @@ module UnixKqueue =
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some parked ->
             failwith
-                $"UnixKqueue.kevent: task %O{thread} is parked in %A{parked}, and is issuing a kevent. A task blocks in one syscall at a time; a parked wait is finished with `finishKevent` (this is a bug in the client)."
+                $"UnixKqueue.kevent: thread %O{thread} is parked in %A{parked}, and is issuing a kevent. A thread blocks in one syscall at a time; a parked wait is finished with `finishKevent` (this is a bug in the client)."
         | None ->
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -707,7 +707,7 @@ module UnixKqueue =
             park (Some (now + duration))
 
     /// <summary>
-    /// `kevent(2)`, made by `task` through the descriptor `kq`, with a
+    /// `kevent(2)`, made by `thread` through the descriptor `kq`, with a
     /// changelist of `nchanges` entries and room for `nevents` events in
     /// `eventlist`.
     ///
@@ -742,7 +742,7 @@ module UnixKqueue =
     /// reports leaves it if it was added with `EV_CLEAR` and otherwise goes
     /// back to the tail; entries the walk did not reach stay queued in order.
     /// With nothing to report, a timeout of zero returns
-    /// no events at once; a positive one parks `task` until an event is
+    /// no events at once; a positive one parks `thread` until an event is
     /// reportable or that much time has passed on the machine's monotonic
     /// clock, and a null one parks it until an event is reportable. A parked
     /// wait is finished with `finishKevent`.
@@ -753,7 +753,7 @@ module UnixKqueue =
     /// Refused are a change this library does not apply,
     /// a copy of events to an eventlist that is not `Mapped`, and an echo into
     /// an `Opaque` or `Addressless` one.
-    /// `task` must not already be parked. Under the Linux flavour every call
+    /// `thread` must not already be parked. Under the Linux flavour every call
     /// is refused: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
@@ -781,10 +781,10 @@ module UnixKqueue =
             | Some (ParkedSyscall.Kevent parked) -> parked
             | Some other ->
                 failwith
-                    $"UnixKqueue.finishKevent: task %O{thread} is parked in %A{other}, not in a kevent, so there is no wait to finish (this is a bug in the client)."
+                    $"UnixKqueue.finishKevent: thread %O{thread} is parked in %A{other}, not in a kevent, so there is no wait to finish (this is a bug in the client)."
             | None ->
                 failwith
-                    $"UnixKqueue.finishKevent: task %O{thread} is not parked, so there is no wait to finish. Only a task `kevent` answered `WouldBlock` finishes here (this is a bug in the client)."
+                    $"UnixKqueue.finishKevent: thread %O{thread} is not parked, so there is no wait to finish. Only a thread `kevent` answered `WouldBlock` finishes here (this is a bug in the client)."
 
         let isDrained = drained thread parked.Kqueue system
 
@@ -832,8 +832,8 @@ module UnixKqueue =
             failwith
                 "UnixKqueue.finishKevent: a kevent restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
         | Ok None ->
-            // Whatever woke the task has gone again: another waiter took it, or
-            // its filter is no longer ready. The task walks the queue as a woken
+            // Whatever woke the thread has gone again: another waiter took it, or
+            // its filter is no longer ready. The thread walks the queue as a woken
             // real wait does, which reports nothing and drops each entry whose
             // filter is no longer ready, and sleeps again.
             let _, swept = KqueueQueue.drain parked.Kqueue parked.MaxEvents system
@@ -860,14 +860,14 @@ module UnixKqueue =
         )
 
     /// <summary>
-    /// Finish the `kevent` wait `task` is parked in, as a woken real wait does.
+    /// Finish the `kevent` wait `thread` is parked in, as a woken real wait does.
     ///
     /// Answers `EBADF` when a close has drained the kqueue; the events it has to
     /// report (as `kevent` reports them), up to the call's `nevents`; no events
     /// when the deadline has passed; `EINTR` when a signal with a handler
-    /// interrupts the wait; and otherwise re-parks the task on the same kqueue
+    /// interrupts the wait; and otherwise re-parks the thread on the same kqueue
     /// and deadline. Refused, since Darwin answers whichever reached the
-    /// sleeping task first and this library does not record which did: a
+    /// sleeping thread first and this library does not record which did: a
     /// drain beside an expired deadline or an event, an event beside an
     /// expired deadline, and a signal pending beside any answer but `EINTR`.
     /// An answer clears the park, and with it the call's hold on the kqueue,
@@ -876,7 +876,7 @@ module UnixKqueue =
     /// Reporting events copies them out to the eventlist the call was made
     /// with; see `kevent` for the eventlists that refuses.
     ///
-    /// `task` must be parked in a `kevent`.
+    /// `thread` must be parked in a `kevent`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let finishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

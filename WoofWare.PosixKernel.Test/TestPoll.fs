@@ -59,7 +59,7 @@ module TestPoll =
             Events = events
         }
 
-    /// The task every poll here is made by.
+    /// The thread every poll here is made by.
     let private poller : int = 1
 
     /// `UnixPoll.poll` by `poller`, registering it first if `system` does not

@@ -262,8 +262,8 @@ module TestPipe =
                 }
         }
 
-    /// The `SIGPIPE` a write by `task` into a pipe with no reader raises: the
-    /// writing task's own on Linux, and the process's on Darwin.
+    /// The `SIGPIPE` a write by `thread` into a pipe with no reader raises: the
+    /// writing thread's own on Linux, and the process's on Darwin.
     let private sigPipeFrom (flavour : SimulatedUnixFlavour) (thread : int) : PendingSignal<int> =
         {
             Signal = Signal.SIGPIPE
@@ -448,7 +448,7 @@ module TestPipe =
                     match expected, actual with
                     | Error (), Ok (WriteStep.WouldBlock (condition, after)) when readerOpen ->
                         // The write sleeps, having put in what fits. The
-                        // property's one task is then asleep, so the call is
+                        // property's one thread is then asleep, so the call is
                         // checked here and not kept: the sequence carries on
                         // from the system it was made in.
                         let writer =

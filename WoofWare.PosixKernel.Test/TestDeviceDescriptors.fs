@@ -24,7 +24,7 @@ module TestDeviceDescriptors =
 
     let private linux : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
-    /// The one task `UnixSystem.initial` registers.
+    /// The one thread `UnixSystem.initial` registers.
     let private thread : int = 0
 
     let private rootOwner : InodeOwner =

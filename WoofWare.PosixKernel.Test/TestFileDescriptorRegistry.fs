@@ -212,7 +212,7 @@ module TestFileDescriptorRegistry =
     /// and find the other excluded — so this test exists for the description
     /// half, which is not: nothing a process can call tells two instances
     /// apart. That half matters for the wait rather than for `flock`.
-    /// `ParkedEpollWait` keys a parked task on the epoll instance's
+    /// `ParkedEpollWait` keys a parked thread on the epoll instance's
     /// `OpenFileDescriptionId`, so two epoll instances sharing one description
     /// identity would wake the wrong waiter.
     [<Test>]

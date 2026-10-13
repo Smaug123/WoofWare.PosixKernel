@@ -8,13 +8,13 @@ open WoofWare.PosixKernel
 
 /// The holds a syscall in flight has on open file descriptions, which the
 /// machine's open file table records (`OpenFileTable.holdCount`), and the thread
-/// IDs live tasks hold, which the machine's thread ID allocator records: each a
-/// fact a process's view cannot derive, since another process's tasks hold some.
+/// IDs live threads hold, which the machine's thread ID allocator records: each a
+/// fact a process's view cannot derive, since another process's threads hold some.
 ///
 /// The property drives parks of every shape, re-parks, the ends of calls,
 /// closes, dups, spawns and exits through a process, and holds the recorded
-/// facts to a reference the test keeps itself: for each task, the descriptions
-/// the call it parked holds, and for each task, the thread ID it was given.
+/// facts to a reference the test keeps itself: for each thread, the descriptions
+/// the call it parked holds, and for each thread, the thread ID it was given.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestCallHolds =
@@ -50,8 +50,8 @@ module TestCallHolds =
             ]
 
     /// What the test knows independently of the library: the descriptions each
-    /// parked task's call holds, as the test built its park, and the thread ID
-    /// each live task was given.
+    /// parked thread's call holds, as the test built its park, and the thread ID
+    /// each live thread was given.
     type private Model =
         {
             Holds : Map<int, OpenFileDescriptionId list>
@@ -273,9 +273,9 @@ module TestCallHolds =
                     [ id ]
                 )
 
-    /// `task` parked in `parked`, as `UnixWait.park` parks it; a Darwin poll
+    /// `thread` parked in `parked`, as `UnixWait.park` parks it; a Darwin poll
     /// first makes the kqueue it holds, empty, as the call does before it
-    /// sleeps, unless the task is already asleep in one, whose it keeps.
+    /// sleeps, unless the thread is already asleep in one, whose it keeps.
     let private park
         (thread : int)
         (parked : ParkedSyscall)
@@ -522,7 +522,7 @@ module TestCallHolds =
                         system, model
                     else
 
-                    // Every task goes, with the holds its call had and its thread
+                    // Every thread goes, with the holds its call had and its thread
                     // ID; descriptors are not closed, so what they name stays.
                     let ended = UnixThreadLifecycle.exitGroup thread 0 system
 
@@ -547,7 +547,7 @@ module TestCallHolds =
         List.fold step (initial, model) ops |> ignore
 
     [<TestCaseSource(nameof platforms)>]
-    let ``every description records the holds the parks name, and the allocator the IDs the tasks hold``
+    let ``every description records the holds the parks name, and the allocator the IDs the threads hold``
         (platform : SimulatedUnixPlatform)
         : unit
         =
@@ -635,7 +635,7 @@ module TestCallHolds =
         )
 
     [<Test>]
-    let ``checkInvariants reports exactly the thread IDs the allocator records live and no task holds, and the reverse``
+    let ``checkInvariants reports exactly the thread IDs the allocator records live and no thread holds, and the reverse``
         ()
         : unit
         =
@@ -643,7 +643,7 @@ module TestCallHolds =
             let system = world platform |> Threads.spawn 1 |> Threads.spawn 2
             let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Threads)
 
-            // Task 1's ID freed behind its back: the allocator could hand it out again.
+            // Thread 1's ID freed behind its back: the allocator could hand it out again.
             let freed =
                 { system with
                     Machine =
@@ -655,7 +655,7 @@ module TestCallHolds =
             UnixSystem.checkInvariants freed
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.empty, Set.singleton one) ]
 
-            // Task 1 gone without its ID: the allocator never hands it out again.
+            // Thread 1 gone without its ID: the allocator never hands it out again.
             let leaked =
                 { system with
                     Threads = Map.remove 1 system.Threads

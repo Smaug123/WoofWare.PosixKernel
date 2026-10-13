@@ -5,9 +5,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// A signal with a handler, delivered to a task asleep in a syscall: whether it
-/// wakes the task, how the syscall's finishing call then answers, and what is
-/// left for the task's return to user mode.
+/// A signal with a handler, delivered to a thread asleep in a syscall: whether it
+/// wakes the thread, how the syscall's finishing call then answers, and what is
+/// left for the thread's return to user mode.
 ///
 /// The oracle is a table stated here, from the measurements rather than from
 /// `SyscallInterruption.ruleOf`: `flock` and `accept` restart under SA_RESTART
@@ -20,7 +20,7 @@ open WoofWare.PosixKernel
 ///
 /// Every world is built through the syscalls themselves: a listener the
 /// `accept`, `poll` and `epoll_wait` sleep on, made ready by a `connect`; and a
-/// file two descriptions lock, the sleeper's waiting for another task's lock
+/// file two descriptions lock, the sleeper's waiting for another thread's lock
 /// to be released.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -35,10 +35,10 @@ module TestSyscallInterruption =
     let private loopback (port : uint16) : Ipv4Endpoint =
         Ipv4Endpoint.ofParts Ipv4Address.loopback port
 
-    /// The task that holds the lock the sleeper waits for. Never the sleeper.
+    /// The thread that holds the lock the sleeper waits for. Never the sleeper.
     let private holder : int = 3
 
-    /// The syscalls a task can be asleep in, with what each was asked.
+    /// The syscalls a thread can be asleep in, with what each was asked.
     [<RequireQualifiedAccess>]
     type Sleep =
         | Flock
@@ -97,7 +97,7 @@ module TestSyscallInterruption =
         =
         UnixSystemState.withFileDescriptors registry system
 
-    /// A system on `platform` with tasks 1 to 3, a blocking listener at
+    /// A system on `platform` with threads 1 to 3, a blocking listener at
     /// loopback port 5000, on Linux an epoll instance holding it edge-triggered,
     /// and a file opened twice, the first description locked exclusively by
     /// `holder`.
@@ -198,7 +198,7 @@ module TestSyscallInterruption =
     let private linuxWorld : World = worldOn SimulatedUnixPlatform.linuxX64
     let private darwinWorld : World = worldOn SimulatedUnixPlatform.macOsArm64
 
-    /// `world` with `task` asleep in `sleep`.
+    /// `world` with `thread` asleep in `sleep`.
     let private asleep (world : World) (thread : int) (sleep : Sleep) : UnixSystem<int, string> =
         let parked
             (what : string)
@@ -284,7 +284,7 @@ module TestSyscallInterruption =
             let client, system =
                 NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-            // The holder connects: the leader may be the sleeper, and a task
+            // The holder connects: the leader may be the sleeper, and a thread
             // asleep in one call makes no other.
             match
                 CopyIn.connectAs
@@ -298,7 +298,7 @@ module TestSyscallInterruption =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"connecting: %A{other}"
 
-    /// `task`'s sleeping call, finished.
+    /// `thread`'s sleeping call, finished.
     let private finish
         (thread : int)
         (sleep : Sleep)
@@ -356,7 +356,7 @@ module TestSyscallInterruption =
         | Sent.Caught (signal, _)
         | Sent.Ignored signal -> signal
 
-    /// `sent`, installed and then generated for `task` alone: the system's
+    /// `sent`, installed and then generated for `thread` alone: the system's
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let signals =
@@ -512,7 +512,7 @@ module TestSyscallInterruption =
             [
                 for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
                     for sleep in sleepsOn flavour do
-                        // The leader as well as other tasks: a thread-directed
+                        // The leader as well as other threads: a thread-directed
                         // signal reaches either.
                         for thread in 0..2 do
                             for sent in everySent do
@@ -857,8 +857,8 @@ module TestSyscallInterruption =
                 |> shouldEqual (flavour, caseName parked, measuredRule flavour parked)
 
     [<Test>]
-    let ``a task parked in one syscall may be parked again in it, and in no other`` () : unit =
-        // `UnixThreadTable.withPark` refuses to park a task in a second syscall
+    let ``a thread parked in one syscall may be parked again in it, and in no other`` () : unit =
+        // `UnixThreadTable.withPark` refuses to park a thread in a second syscall
         // over the first; it must tell every pair of cases apart, and no two
         // parks of one case.
         let caseName (parked : ParkedSyscall) : string =
@@ -926,7 +926,7 @@ module TestSyscallInterruption =
             fst (finish 0 Sleep.Accept system) |> shouldEqual expected
 
     [<Test>]
-    let ``a task asleep in a syscall is not returning to user mode`` () : unit =
+    let ``a thread asleep in a syscall is not returning to user mode`` () : unit =
         let system =
             asleep linuxWorld 0 Sleep.Accept
             |> send 0 [ Sent.Caught (Signal.SIGUSR1, true) ]

@@ -141,7 +141,7 @@ type internal SyscallRefusal<'Thread> =
 [<RequireQualifiedAccess>]
 module internal SyscallRefusal =
     /// What this kernel knows about why it cannot answer, after the name of
-    /// the syscall it refused. The client supplies its own half: which task
+    /// the syscall it refused. The client supplies its own half: which thread
     /// made the call.
     let describe<'Thread> (refusal : SyscallRefusal<'Thread>) : string =
         match refusal with
@@ -320,7 +320,7 @@ type UnixSystemDefect<'Thread> =
     /// were stamped with one mint — and a same-signal tie between the pair
     /// would have no measured order.
     | DuplicateEventRegistrationOrdinal of registeredAt : int64
-    /// A task is parked on an open file description the table does not hold,
+    /// A thread is parked on an open file description the table does not hold,
     /// so its wait can never be satisfied, and asking `UnixWait.wakes` about
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
@@ -332,7 +332,7 @@ type UnixSystemDefect<'Thread> =
     /// or the return of a call that held it, failed to release it.
     | UnreferencedDescription of description : OpenFileDescriptionId
     /// A description records `recorded` holds by syscalls in flight, where the
-    /// parks of every process's tasks name it `parks` times
+    /// parks of every process's threads name it `parks` times
     /// (`ParkedSyscall.descriptions`). The holds are what keep a description
     /// alive once no descriptor names it, so one too few lets a close destroy
     /// what a sleeping call still waits on, and one too many leaks it.
@@ -345,14 +345,14 @@ type UnixSystemDefect<'Thread> =
     /// no way to answer. `close` refuses the close that would leave the socket
     /// so (`CloseRefusal.LingeringCloseDeferredToCall`).
     | LingeringSocketHeldOnlyByCalls of description : OpenFileDescriptionId * socket : SocketId
-    /// A task is parked in an `epoll_wait` on a description that is not an
+    /// A thread is parked in an `epoll_wait` on a description that is not an
     /// epoll instance, which no wait could have produced.
     | ParkedEpollWaitOnNonEpoll of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
-    /// A task is parked in a `kevent` on a description that is not a kqueue,
+    /// A thread is parked in a `kevent` on a description that is not a kqueue,
     /// which no wait could have produced and on which `UnixWait.wakes`
     /// crashes.
     | ParkedKeventOnNonKqueue of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
-    /// A task is parked in a `kevent` on a kqueue that has not been drained,
+    /// A thread is parked in a `kevent` on a kqueue that has not been drained,
     /// and the descriptor the call was made through no longer names that
     /// kqueue (`current` is what it names now). Closing that descriptor drains
     /// the kqueue, so this is a park recorded without `kevent` or a descriptor
@@ -362,11 +362,11 @@ type UnixSystemDefect<'Thread> =
         fd : int *
         kqueue : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
-    /// A task is parked in a `kevent` for `maxEvents` events, which is not
+    /// A thread is parked in a `kevent` for `maxEvents` events, which is not
     /// positive: such a call returns at once.
     | ParkedKeventCountNotPositive of thread : 'Thread * maxEvents : int
     /// The process's descriptor `fd` names, or a `kevent` wait of one of its
-    /// tasks made through `fd` sleeps on, the kqueue `kqueue`, which the
+    /// threads made through `fd` sleeps on, the kqueue `kqueue`, which the
     /// process `owner` owns (`KqueueState.Owner`). A kqueue's registrations
     /// name descriptors in its owner's table, so this process's view would
     /// read them against the wrong one; and only the process that created a
@@ -399,10 +399,10 @@ type UnixSystemDefect<'Thread> =
     /// Under the Darwin flavour, a description holds an `flock` lock and its
     /// status does not record that one was granted (`OpenFileStatus.Flocked`).
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
-    /// A task is parked in a `poll` watching an event queue, which `poll`
+    /// A thread is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
     | ParkedPollOnEventQueue of thread : 'Thread * description : OpenFileDescriptionId
-    /// A task's parked `poll` watches `fd` on the description it named when
+    /// A thread's parked `poll` watches `fd` on the description it named when
     /// the call went to sleep, and `fd` now names `current` instead. `close`
     /// refuses to close a descriptor a parked poll watches, so this is a park
     /// recorded without `poll` or a descriptor closed around it.
@@ -411,24 +411,24 @@ type UnixSystemDefect<'Thread> =
         fd : int *
         watched : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
-    /// A task's parked Darwin `poll` registers a filter through `fd`, which is
+    /// A thread's parked Darwin `poll` registers a filter through `fd`, which is
     /// not open (`target` is `None`) or names something other than a socket
     /// whose filters are modelled or a pipe. Closing a descriptor removes its
     /// registrations, a poll registers on nothing else, and a regular file's
     /// filters are always ready, so they report before the call can sleep.
     | ParkedKqueuePollRegistrationTarget of thread : 'Thread * fd : int * target : OpenFileTarget option
-    /// A task's parked Darwin `poll` attributes the registration `key` to
+    /// A thread's parked Darwin `poll` attributes the registration `key` to
     /// entry `entry`, which the call does not have.
     | ParkedKqueuePollEntryOutOfRange of thread : 'Thread * key : (int * KqueueFilter) * entry : int
-    /// A task's parked Darwin `poll` lists `key` as activated where the list
+    /// A thread's parked Darwin `poll` lists `key` as activated where the list
     /// may not hold it: `key` is not registered, is listed twice, or is not a
     /// socket's filter (see `PollQueue.Active`).
     | ParkedKqueuePollActiveMalformed of thread : 'Thread * key : (int * KqueueFilter)
-    /// A task's parked Darwin `poll` registers the socket filter `key`, which is
+    /// A thread's parked Darwin `poll` registers the socket filter `key`, which is
     /// ready, and does not list it as activated: whatever made it ready did not
     /// activate it, so the call would sleep through what a real one wakes for.
     | ParkedKqueuePollActivationMissed of thread : 'Thread * key : (int * KqueueFilter)
-    /// A task's parked Darwin `poll` registers the filter `key` as attached to
+    /// A thread's parked Darwin `poll` registers the filter `key` as attached to
     /// the socket `attached` (`None`: to none), through a descriptor naming the
     /// socket `named` (`None`: something other than a socket). A poll attaches
     /// a socket's filter, and only a socket's, to the socket its descriptor
@@ -439,10 +439,10 @@ type UnixSystemDefect<'Thread> =
         key : (int * KqueueFilter) *
         attached : SocketId option *
         named : SocketId option
-    /// A task is parked in a Darwin `poll` whose kqueue (`ParkedKqueuePoll.Queue`)
+    /// A thread is parked in a Darwin `poll` whose kqueue (`ParkedKqueuePoll.Queue`)
     /// is not on the machine. The park holds it until the park ends.
     | ParkedOnAbsentPollQueue of thread : 'Thread * queue : PollQueueId
-    /// A task is parked in a Darwin `poll` whose kqueue another process,
+    /// A thread is parked in a Darwin `poll` whose kqueue another process,
     /// `owner`, made. A poll's kqueue is its own call's.
     | PollQueueOfAnotherProcess of thread : 'Thread * queue : PollQueueId * owner : ProcessId
     /// The machine holds a sleeping Darwin poll's kqueue that `parks` parks
@@ -452,15 +452,15 @@ type UnixSystemDefect<'Thread> =
     /// The machine holds a sleeping Darwin poll's kqueue whose identity is not
     /// below the counter it is minted from.
     | PollQueueIdNotFresh of next : PollQueueId * existing : PollQueueId
-    /// A task is parked in an `accept` on a description that is not a listening
+    /// A thread is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wakes` crashes.
     | ParkedAcceptOnNonListener of thread : 'Thread * description : OpenFileDescriptionId
-    /// A task is asleep in an `accept` on a listener a close has drained
+    /// A thread is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
     /// accept asleep on it, and `accept` refuses to sleep on one.
     | ParkedAcceptOnDrainedListener of thread : 'Thread * description : OpenFileDescriptionId
-    /// Under Darwin, a task is asleep in an `accept`, or a pipe or connection
+    /// Under Darwin, a thread is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
     /// (`current` is what it names now). Closing that descriptor ends the call,
@@ -471,41 +471,41 @@ type UnixSystemDefect<'Thread> =
         fd : int *
         description : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
-    /// Under Linux, a task's `accept`, or pipe or connection transfer, records
+    /// Under Linux, a thread's `accept`, or pipe or connection transfer, records
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
     | ParkedCallEndedByCloseUnderLinux of thread : 'Thread
     /// Under Linux, a listener records that a close has drained it
     /// (`ListenState.Drained`), which only Darwin's close does.
     | ListenerDrainedUnderLinux of socket : SocketId
-    /// A task is asleep in a pipe `read` or `write` through a description that
+    /// A thread is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wakes` crashes.
     | ParkedPipeTransferOnWrongTarget of
         thread : 'Thread *
         description : OpenFileDescriptionId *
         target : OpenFileTarget
-    /// A task is asleep in a pipe transfer whose progress no call could have
+    /// A thread is asleep in a pipe transfer whose progress no call could have
     /// made: a read of nothing, or a write of `count` bytes with `written` of
     /// them in, where a sleeping write has put in at least none and fewer than
     /// all.
     | ParkedPipeTransferProgress of thread : 'Thread * count : int * written : int
-    /// A task is asleep in a `read`, `recv`, `write` or `send` of a connected
+    /// A thread is asleep in a `read`, `recv`, `write` or `send` of a connected
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
     /// `UnixWait.wakes` crashes.
     | ParkedConnectionTransferOnNonConnection of thread : 'Thread * description : OpenFileDescriptionId
-    /// A task is asleep in a connection transfer whose progress no call could
+    /// A thread is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`
     /// bytes with `written` of them taken, where a sleeping write has taken at
     /// least none and fewer than all.
     | ParkedConnectionTransferProgress of thread : 'Thread * count : int * written : int
-    /// A task's park records an ordinal at or above the next one to mint, so
+    /// A thread's park records an ordinal at or above the next one to mint, so
     /// some future park would repeat it, and the two waiters' order would be
     /// unspecified.
     | ParkOrdinalNotFresh of next : ParkOrdinal * thread : 'Thread * ordinal : ParkOrdinal
-    /// Two tasks' parks record the same ordinal. Ordinals are minted from one
+    /// Two threads' parks record the same ordinal. Ordinals are minted from one
     /// monotonic counter, so a duplicate means two parks were stamped with one
     /// mint.
     | DuplicateParkOrdinal of ordinal : ParkOrdinal
@@ -534,22 +534,22 @@ type UnixSystemDefect<'Thread> =
     /// an unlocked port is half-bound at `address:0`, which is measured and
     /// is what a later `bind` or `connect` completes.
     | BoundToPortZero of socket : SocketId
-    /// A task the table does not hold has handler frames.
+    /// A thread the table does not hold has handler frames.
     | HandlerFramesWithoutThread of thread : 'Thread
-    /// A task the table does not hold has a signal mask.
+    /// A thread the table does not hold has a signal mask.
     | MaskWithoutThread of thread : 'Thread
-    /// A task the table does not hold has a mask for a `sigsuspend(2)` to
+    /// A thread the table does not hold has a mask for a `sigsuspend(2)` to
     /// restore.
     | MaskToRestoreWithoutThread of thread : 'Thread
-    /// A task asleep in a syscall other than `sigsuspend(2)` has a mask for a
-    /// `sigsuspend` to restore. A task has one only while it is in that call or
-    /// returning from it, and a task returns to user mode before it makes
+    /// A thread asleep in a syscall other than `sigsuspend(2)` has a mask for a
+    /// `sigsuspend` to restore. A thread has one only while it is in that call or
+    /// returning from it, and a thread returns to user mode before it makes
     /// another call.
     | MaskToRestoreOutsideSigsuspend of thread : 'Thread * parked : ParkedSyscall
-    /// A task asleep in `sigsuspend(2)` has no mask to restore, so its return
+    /// A thread asleep in `sigsuspend(2)` has no mask to restore, so its return
     /// would leave it with the call's temporary mask.
     | SigsuspendWithoutMaskToRestore of thread : 'Thread
-    /// A pending signal is directed at a task the table does not hold, so it
+    /// A pending signal is directed at a thread the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
     | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
     /// The process's signal state reads signals under a numbering other than
@@ -573,15 +573,15 @@ type UnixSystemDefect<'Thread> =
     /// platform's `umask(2)` never stores (`SimulatedUnixPlatform.umaskStoredBits`),
     /// so every creation would clear a bit no kernel of that flavour clears.
     | UmaskNotOfPlatform of umask : PermissionBits * platform : SimulatedUnixPlatform
-    /// The process's leader is not one of its tasks. A running process always has
-    /// its leader, since the leader cannot exit while another task lives.
+    /// The process's leader is not one of its threads. A running process always has
+    /// its leader, since the leader cannot exit while another thread lives.
     | LeaderWithoutThread of leader : 'Thread
-    /// Two live tasks report the same thread ID, so a lock that records its owner
+    /// Two live threads report the same thread ID, so a lock that records its owner
     /// by thread ID would take either for the other.
     | DuplicateOsThreadId of id : OsThreadId * threads : 'Thread list
     /// On Linux, the leader's thread ID is not the process ID, which it always is.
     | LeaderThreadIdNotProcessId of leader : 'Thread * id : OsThreadId * pid : ProcessId
-    /// A task's thread ID is one the machine's counter could not have handed out:
+    /// A thread's ID is one the machine's counter could not have handed out:
     /// at or above the greatest `pid_max` Linux takes
     /// (`ThreadIdAllocator.linuxPidMaxCeiling`), or not yet reached on Darwin,
     /// where a later thread could be given the same ID.
@@ -590,10 +590,10 @@ type UnixSystemDefect<'Thread> =
     /// Darwin machine, or the other way about.
     | ThreadIdAllocatorNotOfFlavour of flavour : SimulatedUnixFlavour * allocator : ThreadIdAllocator
     /// The machine's thread ID allocator records as live the IDs in
-    /// `withoutThread`, which no task holds, and does not record those in
-    /// `notRecorded`, which tasks hold. The allocator hands out only IDs it
+    /// `withoutThread`, which no thread holds, and does not record those in
+    /// `notRecorded`, which threads hold. The allocator hands out only IDs it
     /// does not record as live, so one it fails to record could be handed to a
-    /// second task, and one it records for no task is never handed out again.
+    /// second thread, and one it records for no thread is never handed out again.
     | LiveThreadIdsMismatch of withoutThread : Set<OsThreadId> * notRecorded : Set<OsThreadId>
     /// The machine records as live the process IDs in `withoutProcess`, which
     /// no process on it has, and does not record those in `notRecorded`, which
@@ -657,29 +657,29 @@ type UnixSystemDefect<'Thread> =
         inode : InodeNumber *
         permissions : PermissionBits *
         flavour : SimulatedUnixFlavour
-    /// The task `task` is on the logical processor `cpu`, which is not one of
+    /// The thread `thread` is on the logical processor `cpu`, which is not one of
     /// the machine's `processorCount`, numbered from 0. See
     /// `UnixThreadState.cpu`.
     | CpuBeyondMachine of thread : 'Thread * cpu : CpuId * processorCount : int
-    /// The machine records the task with thread ID `occupant` as running on
+    /// The machine records the thread with thread ID `occupant` as running on
     /// the logical processor `cpu`, which is not one of its `processorCount`,
     /// numbered from 0. See `UnixScheduling`.
     | OccupiedCpuBeyondMachine of cpu : CpuId * occupant : OsThreadId * processorCount : int
-    /// The machine records the task with thread ID `occupant` as running on
-    /// the logical processor `cpu`, and no live task has that thread ID: a
-    /// task left the processor without the machine recording it.
+    /// The machine records the thread with thread ID `occupant` as running on
+    /// the logical processor `cpu`, and no live thread has that thread ID: a
+    /// thread left the processor without the machine recording it.
     | OccupantWithoutThread of cpu : CpuId * occupant : OsThreadId
-    /// The machine records `task` as running on the logical processor
-    /// `occupied`, and the task's own processor is `cpu`: a running task's
+    /// The machine records `thread` as running on the logical processor
+    /// `occupied`, and the thread's own processor is `cpu`: a running thread's
     /// processor is the one it runs on (`UnixThreadState.cpu`).
     | OccupantOnAnotherCpu of thread : 'Thread * occupied : CpuId * cpu : CpuId
-    /// A task is parked in a syscall that nothing in this version parks a task
+    /// A thread is parked in a syscall that nothing in this version parks a thread
     /// in, such as `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`,
     /// `ParkedSyscall.Select` or `ParkedSyscall.SignalWait`: a case reserved
     /// for behaviour not yet modelled, which no call produces and no finishing
     /// call answers.
     | ReservedPark of thread : 'Thread * parked : ParkedSyscall
-    /// A task is parked in a read of an inotify instance through the open file
+    /// A thread is parked in a read of an inotify instance through the open file
     /// description `description`, which names `target` rather than an
     /// inotify instance.
     | ParkedInotifyReadOnNonInotify of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
@@ -872,7 +872,7 @@ module UnixSystem =
             bootTime
             filesystem
 
-    /// The process's first task, which it started with: its thread-group
+    /// The process's first thread, which it started with: its thread-group
     /// leader.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
@@ -880,9 +880,9 @@ module UnixSystem =
         =
         system.Leader
 
-    /// Every task the process has, by the client's name for it, which
-    /// `UnixThreadState`'s readers read. A name the process has no task by,
-    /// because the task was never created or has exited, has no entry.
+    /// Every thread the process has, by the client's name for it, which
+    /// `UnixThreadState`'s readers read. A name the process has no thread by,
+    /// because the thread was never created or has exited, has no entry.
     let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
@@ -1323,9 +1323,9 @@ module UnixSystem =
             |> Result.mapError SyscallRefusal.Inotify
 
     /// <summary>
-    /// Answer one syscall, made by `task`.
+    /// Answer one syscall, made by `thread`.
     ///
-    /// The task is what a blocking answer is recorded against: `FLock` that
+    /// The thread is what a blocking answer is recorded against: `FLock` that
     /// would block parks it, and the returned system carries that park.
     ///
     /// Sugar over the per-syscall functions above, for a client that wants one
@@ -1365,11 +1365,11 @@ module UnixSystem =
     /// descriptors and calls that reference it and its holds against every
     /// process's parks, the park and event registration ordinals against the
     /// machine's counters, the thread ID allocator against every process's
-    /// tasks, each processor's occupant against the tasks, and the machine's
+    /// threads, each processor's occupant against the threads, and the machine's
     /// filesystem type, buffer check and symbolic links against its platform.
     ///
     /// When `complete`, `processes` is every process on the machine, each with
-    /// its tasks, and every clause is checked. Otherwise `processes` is some of
+    /// its threads, and every clause is checked. Otherwise `processes` is some of
     /// them, and only the clauses those can check truthfully are: every clause
     /// that counts or collects across every process (the holds on
     /// descriptions, the live thread and process IDs, the current directory
@@ -1935,7 +1935,7 @@ module UnixSystem =
                 | OpenFileTarget.Pipe _ -> None
             )
 
-        // Each description's holds against the parks of every process's tasks:
+        // Each description's holds against the parks of every process's threads:
         // one for each time a park names it. A park naming a description the
         // table does not hold is `ParkedOnAbsentDescription`'s.
         let holdCounts =
@@ -1965,7 +1965,7 @@ module UnixSystem =
                 )
 
         // Each sleeping Darwin poll's kqueue against the parks of every
-        // process's tasks: exactly one names it. A park naming one the machine
+        // process's threads: exactly one names it. A park naming one the machine
         // does not hold is `ParkedOnAbsentPollQueue`'s.
         let pollQueueParks =
             onlyIfComplete
@@ -2173,11 +2173,11 @@ module UnixSystem =
                 | InodeContent.CharacterDevice _ -> None
             )
 
-        // The machine's thread ID allocator against the tasks of every process
-        // on it: the allocator is its flavour's, no two tasks share an ID, every
+        // The machine's thread ID allocator against the threads of every process
+        // on it: the allocator is its flavour's, no two threads share an ID, every
         // ID is one the counter could have handed out, and the IDs the
-        // allocator records as live are exactly the tasks', so none can be
-        // handed out again while its task lives.
+        // allocator records as live are exactly the threads', so none can be
+        // handed out again while its thread lives.
         let threadIds =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
             let allocator = machine.ThreadIds
@@ -2226,11 +2226,11 @@ module UnixSystem =
 
             allocatorFlavour @ duplicates @ unmintable @ live
 
-        // Each processor's occupant against the machine and the tasks: the
-        // processor is the machine's, the occupant is a live task, and that
-        // task's processor is the one it occupies. Short of every process, an
+        // Each processor's occupant against the machine and the threads: the
+        // processor is the machine's, the occupant is a live thread, and that
+        // thread's processor is the one it occupies. Short of every process, an
         // occupant of no process given is checked against the thread IDs the
-        // machine records as live, which every process's tasks contribute to.
+        // machine records as live, which every process's threads contribute to.
         let occupants =
             let byThreadId =
                 allThreads
@@ -2527,9 +2527,9 @@ module UnixSystem =
     /// clauses of `checkInvariants` that concern the process `system` is, read
     /// against the machine. The current directory against the filesystem, each
     /// descriptor against the bound and the flavour's descriptor flags, each
-    /// task's park against the descriptor table and the machine, each kqueue
+    /// thread's park against the descriptor table and the machine, each kqueue
     /// a descriptor or a `kevent` wait names against its owner, the signal
-    /// state against the task table, the leader against the tasks, each task's
+    /// state against the thread table, the leader against the threads, each thread's
     /// processor against the machine's, and the process's supplementary groups
     /// and file-mode creation mask against its platform.
     let checkViewInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2574,8 +2574,8 @@ module UnixSystem =
                 |> List.map (fun (fd, _) -> UnixSystemDefect.CloseOnForkUnderLinux fd)
 
 
-        // Each task's park against the descriptor table. A park names what the
-        // task waits on, and the wake reads the description back; the park
+        // Each thread's park against the descriptor table. A park names what the
+        // thread waits on, and the wake reads the description back; the park
         // holds it until the call returns, so an absent one was parked on
         // without going through the syscall or destroyed around it.
         let parks =
@@ -2970,7 +2970,7 @@ module UnixSystem =
 
 
         // Every kqueue a descriptor of this process names, or a `kevent` wait of
-        // one of its tasks sleeps on, is one this process owns, since its
+        // one of its threads sleeps on, is one this process owns, since its
         // registrations' descriptor numbers are read in its owner's table.
         let kqueueOwners =
             let ownedElsewhere (kqueue : OpenFileDescriptionId) : ProcessId option =
@@ -3008,7 +3008,7 @@ module UnixSystem =
             List.distinct (named @ waited)
 
 
-        // The signal state against the task table: every task it names must
+        // The signal state against the thread table: every thread it names must
         // be one, or the delivery that reads it has nowhere to go. And against
         // the machine's platform: the state checks every signal against
         // the numbering it was built with, so a state built under the wrong
@@ -3039,11 +3039,11 @@ module UnixSystem =
                 |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
                 |> List.map UnixSystemDefect.MaskWithoutThread
 
-            // A mask to restore exists from a `sigsuspend` until its task
-            // returns to user mode, so exactly while the task is parked in the
+            // A mask to restore exists from a `sigsuspend` until its thread
+            // returns to user mode, so exactly while the thread is parked in the
             // call or has been answered and not yet returned; which of those
-            // two is true is the client's, so what is checked is that no task
-            // parked in anything else has one, and every task parked in it does.
+            // two is true is the client's, so what is checked is that no thread
+            // parked in anything else has one, and every thread parked in it does.
             let toRestore =
                 let restoring = SignalState.threadsWithMasksToRestore signals
 
@@ -3105,7 +3105,7 @@ module UnixSystem =
             else
                 []
 
-        // The process's leader against its tasks: it is one, and on Linux its
+        // The process's leader against its threads: it is one, and on Linux its
         // thread ID is the process ID.
         let leader =
             match Map.tryFind system.Leader system.Threads with
@@ -3490,7 +3490,7 @@ module UnixSystem =
     /// once they reach it they start again from 300, skipping those still in use.
     ///
     /// Any value from 301 to 4194304 is accepted, including one at or below a live
-    /// task's thread ID: as on Linux, that task keeps its ID, and the next thread
+    /// thread's ID: as on Linux, that thread keeps its ID, and the next thread
     /// takes its ID from 300 up.
     ///
     /// Not configuration, which is `UnixBootImage`'s, but the outside world

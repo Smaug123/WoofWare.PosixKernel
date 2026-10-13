@@ -89,7 +89,7 @@ module SocketFuzz =
     /// refusal from a defect without reading text.
     exception private ModelRefusal of string
 
-    /// The task the fuzzer's `poll`s are made by. The sequences are otherwise
+    /// The thread the fuzzer's `poll`s are made by. The sequences are otherwise
     /// threadless, so it is registered for each call rather than kept in the state.
     let private pollThread : int = 1
 
@@ -552,7 +552,7 @@ module SocketFuzz =
                     Events = int16 (uint16 events)
                 }
 
-            // `poll` is made by a task; a timeout of 0 never parks, so the one
+            // `poll` is made by a thread; a timeout of 0 never parks, so the one
             // registered here for the call is never left behind in the state.
             let polling = Threads.ensure pollThread state.Kernel
 

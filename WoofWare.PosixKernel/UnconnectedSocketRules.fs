@@ -17,7 +17,7 @@ type internal UnconnectedSocketRead =
 type internal UnconnectedSocketWrite =
     /// The call fails with `error`, and raises no signal.
     | Fails of error : UnixError
-    /// The call fails with `EPIPE` and raises `SIGPIPE`, at the writing task, as
+    /// The call fails with `EPIPE` and raises `SIGPIPE`, at the writing thread, as
     /// a write into a pipe with no reader does on Linux.
     | Breaks
     /// The call fails with `EMSGSIZE` if it is for more bytes than the socket's

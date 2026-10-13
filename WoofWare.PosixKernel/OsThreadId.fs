@@ -8,7 +8,7 @@ open System
 /// </summary>
 /// <remarks>
 /// Only this library mints one: <c>UnixSystem.initial</c> for a process's first
-/// task, and <c>UnixThreadLifecycle.spawn</c> for every later one.
+/// thread, and <c>UnixThreadLifecycle.spawn</c> for every later one.
 /// </remarks>
 /// <example>
 /// This is what <c>gettid(2)</c> returns on Linux, and what
@@ -39,7 +39,7 @@ module OsThreadId =
 /// Each flavour's own counter a machine hands out thread ids from.
 ///
 /// Linux takes a thread's id from the counter it takes process ids from; the
-/// process's first task's id is the process id. Darwin takes it from one 64-bit
+/// process's first thread's id is the process id. Darwin takes it from one 64-bit
 /// counter shared by every process on the machine, unrelated to the process id.
 [<RequireQualifiedAccess>]
 type internal ThreadIdCounter =
@@ -52,16 +52,16 @@ type internal ThreadIdCounter =
     | Darwin of next : uint64
 
 /// How a machine hands out thread ids: its flavour's counter, and the ids of
-/// every live task on the machine, in every process, which it never hands out
+/// every live thread on the machine, in every process, which it never hands out
 /// again while they live.
 ///
 /// The machine's rather than a process's, as a real kernel's pid allocator is,
-/// so that no process can be handed an id another process's task holds.
+/// so that no process can be handed an id another process's thread holds.
 type internal ThreadIdAllocator =
     {
         Counter : ThreadIdCounter
-        /// The ids of every live task on the machine. `spawn` adds the new
-        /// task's, and a task's exit removes its own.
+        /// The ids of every live thread on the machine. `spawn` adds the new
+        /// thread's, and a thread's exit removes its own.
         Live : Set<OsThreadId>
     }
 
@@ -102,7 +102,7 @@ module ThreadIdAllocator =
                 $"%s{context}: %d{pidMax} is not a pid_max Linux accepts; it must be between %d{linuxPidMaxFloor} and %d{linuxPidMaxCeiling} (the sysctl answers EINVAL outside that range)."
 
     /// A Linux allocator whose process has id `pid`, below `pidMax`, and has
-    /// just been started: the process's first task's id, which is `pid`, and the
+    /// just been started: the process's first thread's id, which is `pid`, and the
     /// allocator after it, with that id its one live id.
     let internal startLinux (context : string) (pidMax : int32) (pid : ProcessId) : OsThreadId * ThreadIdAllocator =
         assertPidMax context pidMax
@@ -120,7 +120,7 @@ module ThreadIdAllocator =
             Live = Set.singleton leader
         }
 
-    /// A Darwin allocator whose first id is `first`: the process's first task's
+    /// A Darwin allocator whose first id is `first`: the process's first thread's
     /// id, and the allocator after it, with that id its one live id.
     let internal startDarwin (context : string) (first : uint64) : OsThreadId * ThreadIdAllocator =
         // Neither end has been observed. 0 is not refused because a kernel was
@@ -166,12 +166,12 @@ module ThreadIdAllocator =
         | ThreadIdCounter.Linux _ -> id >= 1UL && id < uint64 linuxPidMaxCeiling
         | ThreadIdCounter.Darwin next -> id >= 1UL && id < next
 
-    /// The ids of every live task on the machine, which `allocate` will not
+    /// The ids of every live thread on the machine, which `allocate` will not
     /// hand out.
     let internal live (allocator : ThreadIdAllocator) : Set<OsThreadId> = allocator.Live
 
     /// Hand out the next id, which is live from then on, skipping every id a
-    /// live task holds; or EAGAIN if every id Linux would hand out is held; or
+    /// live thread holds; or EAGAIN if every id Linux would hand out is held; or
     /// nothing, if Darwin's counter has reached the top of its range.
     let internal allocate (allocator : ThreadIdAllocator) : ThreadIdAllocation =
         let held = allocator.Live
@@ -223,12 +223,12 @@ module ThreadIdAllocator =
             else
                 issued (OsThreadId next) (ThreadIdCounter.Darwin (next + 1UL))
 
-    /// The task holding `id` has exited, so `id` is no longer live. Loudly
-    /// partial on an id that is not live: every live task's id is.
+    /// The thread holding `id` has exited, so `id` is no longer live. Loudly
+    /// partial on an id that is not live: every live thread's id is.
     let internal release (id : OsThreadId) (allocator : ThreadIdAllocator) : ThreadIdAllocator =
         if not (Set.contains id allocator.Live) then
             failwith
-                $"ThreadIdAllocator.release: %O{id} is not a live task's thread ID, so no task holding it can exit (this is a bug in this library)."
+                $"ThreadIdAllocator.release: %O{id} is not a live thread's ID, so no thread holding it can exit (this is a bug in this library)."
 
         { allocator with
             Live = Set.remove id allocator.Live

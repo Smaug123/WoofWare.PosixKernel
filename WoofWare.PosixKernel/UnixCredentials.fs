@@ -109,7 +109,7 @@ module internal GetIdsRefusal =
 /// The calls by which a process reads and changes who it is: `getresuid(2)`,
 /// `getresgid(2)`, `setresuid(2)`, `setresgid(2)` and `setgroups(2)`.
 ///
-/// Each changes the whole process, every task alike, as the C library's
+/// Each changes the whole process, every thread alike, as the C library's
 /// wrappers do. (Linux's own system calls change only the calling thread, and
 /// the C library makes every other thread repeat the call.)
 [<RequireQualifiedAccess>]

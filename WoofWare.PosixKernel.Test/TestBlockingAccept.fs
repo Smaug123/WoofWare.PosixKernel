@@ -59,7 +59,7 @@ module TestBlockingAccept =
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | other -> failwith $"listening at port %d{port}: %A{other}"
 
-    /// A system on `platform` with tasks 1 to 6, and a blocking listener at
+    /// A system on `platform` with threads 1 to 6, and a blocking listener at
     /// port 5000: its descriptor.
     let private world (platform : SimulatedUnixPlatform) : int * UnixSystem<int, string> =
         let system =
@@ -97,17 +97,17 @@ module TestBlockingAccept =
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         UnixDescriptor.setNonBlocking fd value system |> snd
 
-    /// `task` parks in an accept through `fd`, whose queue must be empty.
+    /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.WouldBlock _, system) -> system
-        | other -> failwith $"expected task %d{thread} to park, got %A{other}"
+        | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
-    /// `task` finishes its accept, which must hand a connection over.
+    /// `thread` finishes its accept, which must hand a connection over.
     let private finishWithConnection (thread : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixConnection.tryFinishAccept thread system with
         | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
-        | other -> failwith $"expected task %d{thread}'s accept to finish with a connection, got %A{other}"
+        | other -> failwith $"expected thread %d{thread}'s accept to finish with a connection, got %A{other}"
 
     let private awake (threads : int list) (system : UnixSystem<int, string>) : int list =
         UnixWait.wakes (Set.ofList threads) system |> List.map fst
@@ -224,7 +224,7 @@ module TestBlockingAccept =
         UnixWait.deadlines (Set.singleton 1) system |> shouldEqual []
 
     [<TestCaseSource(nameof platforms)>]
-    let ``a parked task cannot accept again, and an unparked one cannot finish``
+    let ``a parked thread cannot accept again, and an unparked one cannot finish``
         (platform : SimulatedUnixPlatform)
         : unit
         =
@@ -248,7 +248,7 @@ module TestBlockingAccept =
         | Connect
         /// The listener's description is made blocking or non-blocking.
         | SetNonBlocking of bool
-        /// Another task takes the oldest queued connection, if there is one.
+        /// Another thread takes the oldest queued connection, if there is one.
         | Steal
 
     /// The reference: a parked accept that finds a connection answers exactly
@@ -422,12 +422,12 @@ module TestBlockingAccept =
         let system =
             match UnixConnection.tryAccept 3 fd UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted _, system) -> system
-            | other -> failwith $"expected task 3 to take the connection, got %A{other}"
+            | other -> failwith $"expected thread 3 to take the connection, got %A{other}"
 
         let system =
             match UnixConnection.tryFinishAccept 1 system with
             | Ok (AcceptOutcome.WouldBlock _, system) -> system
-            | other -> failwith $"expected task 1 to park again, got %A{other}"
+            | other -> failwith $"expected thread 1 to park again, got %A{other}"
 
         let system = connectTo 5000us system
         awake [ 1 ; 2 ] system |> shouldEqual [ 2 ]
@@ -472,9 +472,9 @@ module TestBlockingAccept =
         ()
         : unit
         =
-        // Up to three listeners, each with or without a queued connection; tasks parking on
-        // them in a generated order, some more than once; and which parked tasks the client
-        // holds asleep. The oracle states the rule per task, where `UnixWait.wakes` groups by
+        // Up to three listeners, each with or without a queued connection; threads parking on
+        // them in a generated order, some more than once; and which parked threads the client
+        // holds asleep. The oracle states the rule per thread, where `UnixWait.wakes` groups by
         // listener.
         let gen =
             gen {
@@ -726,7 +726,7 @@ module TestBlockingAccept =
             awake [ 1 ] system |> shouldEqual [ 1 ]
             finishWithConnection 1 system |> ignore<_>
 
-    /// `system` with a caught `SIGUSR1` pending for `task`.
+    /// `system` with a caught `SIGUSR1` pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
@@ -752,7 +752,7 @@ module TestBlockingAccept =
     let private finishAborted (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixConnection.tryFinishAccept thread system with
         | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, system) -> system
-        | other -> failwith $"expected task %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
+        | other -> failwith $"expected thread %d{thread}'s accept to answer ECONNABORTED, got %A{other}"
 
     let private acceptAnswer (fd : int) (system : UnixSystem<int, string>) =
         UnixConnection.tryAccept 6 fd UserBuffer.Mapped 16u system
@@ -994,7 +994,7 @@ module TestBlockingAccept =
         else
             held
 
-    /// One step of the closing property. A task is named by its index, modulo
+    /// One step of the closing property. A thread is named by its index, modulo
     /// their number, among those that can take the step: those making no call,
     /// for an accept; those in one, for a signal; those woken, for a finish.
     [<RequireQualifiedAccess>]
@@ -1124,7 +1124,7 @@ module TestBlockingAccept =
             (system, frames)
             ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
             |> returnToUser thread
-        | other -> failwith $"returning task %d{thread} to user mode: %A{other}"
+        | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
     let private optionChangeGen : Gen<OptionChange> =
         let flag = ArbMap.defaults |> ArbMap.generate<bool>
@@ -1165,7 +1165,7 @@ module TestBlockingAccept =
         acceptOpGenWeighted 6 (8, 1, 4, 5, 1, 4, 5, 1)
 
     /// Measured on Darwin (`close-ends-call.c`) and Linux (`blocking-accept.c`,
-    /// `open-file-references.c`): several tasks accepting on one listener
+    /// `open-file-references.c`): several threads accepting on one listener
     /// through several descriptors onto it, with connections, closes, `dup`s,
     /// signals and changes to the listener's options between, against a
     /// reference that states each rule again. Under Linux no close ends an
@@ -1639,11 +1639,11 @@ module TestBlockingAccept =
                             | ParkedSyscall.Accept {
                                                        Listener = SleepTarget.EndedByClose _
                                                    } -> None
-                            | other -> failwith $"%s{where}: task %d{thread} parked in %A{other}"
+                            | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
                         )
 
                     if expected <> actual then
-                        failwith $"%s{where}: task %d{thread} parked as %A{actual}, expected %A{expected}"
+                        failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
                     system.Machine.Sockets
@@ -1785,7 +1785,7 @@ module TestBlockingAccept =
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (1, absent) ]
 
-    /// `system` with the park of `task` passed through `rewrite`.
+    /// `system` with the park of `thread` passed through `rewrite`.
     let private reparked
         (thread : int)
         (rewrite : ParkedAccept -> ParkedAccept)
@@ -1804,7 +1804,7 @@ module TestBlockingAccept =
                     Syscall = ParkedSyscall.Accept (rewrite accept)
                 }
                 system
-        | other -> failwith $"task %d{thread} is parked in %A{other}"
+        | other -> failwith $"thread %d{thread} is parked in %A{other}"
 
     /// `system` with the listener `fd` names marked drained, as only a Darwin
     /// close marks one.

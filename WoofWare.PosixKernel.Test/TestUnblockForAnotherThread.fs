@@ -5,21 +5,21 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// A mask call by one task that unblocks a signal pending for another, which
-/// on Darwin is any `sigprocmask(2)` (it changes every task's mask).
+/// A mask call by one thread that unblocks a signal pending for another, which
+/// on Darwin is any `sigprocmask(2)` (it changes every thread's mask).
 ///
 /// Held to `docs/plans/2026-08-23-posix-kernel-extraction/unblock-wakes-sleeper.c`,
-/// measured on Darwin 27.0.0 and Linux 6.18.5: on Darwin the other task, asleep
+/// measured on Darwin 27.0.0 and Linux 6.18.5: on Darwin the other thread, asleep
 /// in any of the calls this library parks in, slept on until its own condition
 /// ended the call, and whether the signal was then delivered depended on the
-/// task's history, which this library does not record. So a Darwin
-/// `sigprocmask` that would leave a pending signal deliverable to a task other
+/// thread's history, which this library does not record. So a Darwin
+/// `sigprocmask` that would leave a pending signal deliverable to a thread other
 /// than the caller refuses. On Linux every mask call changes the caller's
-/// mask alone, so no other task's sleep changes.
+/// mask alone, so no other thread's sleep changes.
 ///
 /// The search is exhaustive over the call the sleeper is asleep in, the
-/// signal's disposition, which task it is pending on (or the process), which
-/// tasks sleep and unblock, whether the signal is generated before or during
+/// signal's disposition, which thread it is pending on (or the process), which
+/// threads sleep and unblock, whether the signal is generated before or during
 /// the sleep, and the mask call, on both flavours.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
@@ -44,14 +44,14 @@ module TestUnblockForAnotherThread =
 
     let private setmaskHow (flavour : SimulatedUnixFlavour) : int = unblockHow flavour + 1
 
-    /// The process's tasks: 0 is the leader.
+    /// The process's threads: 0 is the leader.
     let private threads : int list = [ 0 ; 1 ; 2 ]
 
-    /// The task holding the lock a sleeper in `flock` waits for. A lock is
-    /// the open file description's, so this task may sleep or unblock too.
+    /// The thread holding the lock a sleeper in `flock` waits for. A lock is
+    /// the open file description's, so this thread may sleep or unblock too.
     let private holder : int = 2
 
-    /// The calls a task can be asleep in.
+    /// The calls a thread can be asleep in.
     [<RequireQualifiedAccess>]
     type Sleep =
         | PollOfNothing
@@ -115,7 +115,7 @@ module TestUnblockForAnotherThread =
     type Target =
         /// `kill(2)` of the process.
         | Process
-        /// `pthread_kill(3)` of this task.
+        /// `pthread_kill(3)` of this thread.
         | Thread of int
 
     let private targets : Target list =
@@ -190,7 +190,7 @@ module TestUnblockForAnotherThread =
     let private loopback (port : uint16) : Ipv4Endpoint =
         Ipv4Endpoint.ofParts Ipv4Address.loopback port
 
-    /// A system with tasks 0 to 2; a blocking listener at loopback port 5000;
+    /// A system with threads 0 to 2; a blocking listener at loopback port 5000;
     /// an event port (on Linux an epoll instance holding the listener, on
     /// Darwin an empty kqueue); a file opened twice, the first description
     /// locked by `holder`; an empty pipe; and a full one, its write end
@@ -324,7 +324,7 @@ module TestUnblockForAnotherThread =
     let private worlds : Map<SimulatedUnixFlavour, World> =
         flavours |> List.map (fun flavour -> flavour, worldOn flavour) |> Map.ofList
 
-    /// `world` with `task` asleep in `sleep`, or `None` if the call answered
+    /// `world` with `thread` asleep in `sleep`, or `None` if the call answered
     /// at once.
     let private asleep (world : World) (thread : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
         let parkedOrNot (what : string) (result : Result<'outcome * UnixSystem<int, string>, 'refusal>) =
@@ -445,7 +445,7 @@ module TestUnblockForAnotherThread =
             | Ok answer -> answered answer
             | Error refusal -> Unblocked.Refused refusal
 
-    /// The system just before the unblocker's call: every task blocks the
+    /// The system just before the unblocker's call: every thread blocks the
     /// signal, its disposition is installed, the sleeper is asleep and the
     /// signal has been generated, in the case's order. `None` where the
     /// sleeper's call answered at once.
@@ -488,7 +488,7 @@ module TestUnblockForAnotherThread =
         else
             asleep world case.Sleeper case.Sleep system |> Option.map (generate case)
 
-    /// Whether the signal is pending once generated with every task blocking
+    /// Whether the signal is pending once generated with every thread blocking
     /// it: on Linux always (a blocked ignored signal stays pending,
     /// `sigpending-scope.c`); on Darwin unless it is discarded at generation,
     /// which an ignored one is, SIGCONT apart (the same probe's "ignored"
@@ -502,9 +502,9 @@ module TestUnblockForAnotherThread =
         | SimulatedUnixFlavour.Darwin, Disposition.DefaultTerminate
         | SimulatedUnixFlavour.Darwin, Disposition.DefaultContinue -> true
 
-    /// The task other than the unblocker for which the call would leave the
+    /// The thread other than the unblocker for which the call would leave the
     /// signal pending and no longer blocked, if any: Darwin's `sigprocmask`
-    /// unblocks it for every task, and holds a signal sent to the process
+    /// unblocks it for every thread, and holds a signal sent to the process
     /// on the main thread (`sigpending-scope.c`, the "proc" rows).
     let private leftDeliverableTo (case : Case) : int option =
         match case.Flavour, case.Route with
@@ -572,14 +572,14 @@ module TestUnblockForAnotherThread =
                 None
             else
                 Some $"refused with %A{refusal}"
-        | Unblocked.Refused refusal, None -> Some $"refused with %A{refusal} where Darwin leaves no task deliverable"
+        | Unblocked.Refused refusal, None -> Some $"refused with %A{refusal} where Darwin leaves no thread deliverable"
         | Unblocked.Answered after, Some thread ->
             let woken =
                 match wokenInto case after with
                 | Some taken -> $", and woke the sleeper into %s{taken}"
                 | None -> ""
 
-            Some $"answered, leaving the signal deliverable to task %d{thread}%s{woken}"
+            Some $"answered, leaving the signal deliverable to thread %d{thread}%s{woken}"
         | Unblocked.Answered after, None ->
             // Darwin's sleeper slept on, and Linux's mask call does not touch
             // the sleeper's mask. A wake is right only into a refusal.
@@ -587,7 +587,7 @@ module TestUnblockForAnotherThread =
             |> Option.map (fun taken -> $"woke the sleeper into %s{taken}")
 
     [<Test>]
-    let ``a mask call never leaves a signal deliverable to another task, nor wakes one into an answer`` () : unit =
+    let ``a mask call never leaves a signal deliverable to another thread, nor wakes one into an answer`` () : unit =
         let failures =
             cases
             |> List.choose (fun case -> check case |> Option.map (fun failure -> case, failure))
@@ -602,7 +602,7 @@ module TestUnblockForAnotherThread =
             Assert.Fail $"%d{List.length failures} of %d{List.length cases} cases failed; the first:\n%s{shown}"
 
     [<Test>]
-    let ``the search puts a task to sleep in every call on both flavours, and reaches both answers on Darwin``
+    let ``the search puts a thread to sleep in every call on both flavours, and reaches both answers on Darwin``
         ()
         : unit
         =

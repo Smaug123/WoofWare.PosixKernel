@@ -51,8 +51,8 @@ module TestDarwinPoll =
             Events = events
         }
 
-    /// The task every poll here is made by; `KeventWorld.darwin` has it, and
-    /// its helpers make their own calls as other tasks.
+    /// The thread every poll here is made by; `KeventWorld.darwin` has it, and
+    /// its helpers make their own calls as other threads.
     let private poller : int = 2
 
     let private sound (system : UnixSystem<int, string>) : unit =

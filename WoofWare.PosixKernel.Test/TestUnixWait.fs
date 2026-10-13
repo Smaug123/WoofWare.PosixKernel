@@ -6,7 +6,7 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Park order, and which parked tasks a system wakes.
+/// Park order, and which parked threads a system wakes.
 ///
 /// The epoll half of `UnixWait.wakes` lives in `TestUnixSystemStep` and
 /// `TestEpollWait`, beside the epoll fixtures that can make an epoll instance
@@ -31,7 +31,7 @@ module TestUnixWait =
         Threads.ensure name system
 
     /// Two epoll instances, which contend under `flock` because they share one
-    /// anonymous inode, with an exclusive lock held through `locker`; and tasks 1 to 4.
+    /// anonymous inode, with an exclusive lock held through `locker`; and threads 1 to 4.
     let private world : UnixSystem<int, string> * int * OpenFileDescriptionId * OpenFileDescriptionId =
         let system =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
@@ -72,7 +72,7 @@ module TestUnixWait =
         let _, _, _, blocked = world
         blocked
 
-    /// The park each task makes: 1 and 2 wait on an epoll instance, 3 and 4 for a
+    /// The park each thread makes: 1 and 2 wait on an epoll instance, 3 and 4 for a
     /// lock, so that both kinds of park are in the table at once.
     let private parkOfThread (thread : int) : ParkedSyscall =
         if thread <= 2 then
@@ -137,7 +137,7 @@ module TestUnixWait =
     /// The parks a walk must make.
     [<RequireQualifiedAccess>]
     type private ParkLabel =
-        /// A park by a task already parked.
+        /// A park by a thread already parked.
         | Repark
 
     [<Test>]
@@ -155,7 +155,7 @@ module TestUnixWait =
                     | Op.CreateEpoll
                     | Op.Register _ -> None
 
-                // Every other task keeps its park, ordinal and all.
+                // Every other thread keeps its park, ordinal and all.
                 for thread in Map.keys before.Threads do
                     if Some thread <> subject then
                         UnixThreadTable.parkOf thread after.Threads
@@ -216,8 +216,8 @@ module TestUnixWait =
         |> shouldEqual [ 3, fired ; 4, fired ]
 
     [<Test>]
-    let ``only the tasks the client holds asleep are woken`` () : unit =
-        // A woken task keeps its park until its call finishes, so the park alone would wake
+    let ``only the threads the client holds asleep are woken`` () : unit =
+        // A woken thread keeps its park until its call finishes, so the park alone would wake
         // it a second time.
         let released =
             system
@@ -233,7 +233,7 @@ module TestUnixWait =
         )
 
     [<Test>]
-    let ``a task held asleep with no park is a client bug`` () : unit =
+    let ``a thread held asleep with no park is a client bug`` () : unit =
         let exn =
             Assert.Throws<exn> (fun () -> UnixWait.wakes (Set.singleton 1) system |> ignore)
 
@@ -254,8 +254,8 @@ module TestUnixWait =
 
     [<Test>]
     let ``clearing a park lets another syscall park`` () : unit =
-        // The refusal below is about an *unclosed* park, not about a task's history: a
-        // completion that clears its record leaves the task free to block in anything.
+        // The refusal below is about an *unclosed* park, not about a thread's history: a
+        // completion that clears its record leaves the thread free to block in anything.
         let cleared =
             let parked = system |> UnixWait.park 1 (parkOfThread 1)
 

@@ -6,8 +6,8 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
     internal
         {
             Process : UnixProcessState<'Thread, 'Handler>
-            /// The process's tasks. A task is named by the client, separately in
-            /// each process: two processes may each have a task the client calls
+            /// The process's threads. A thread is named by the client, separately in
+            /// each process: two processes may each have a thread the client calls
             /// by the same name.
             Threads : Map<'Thread, UnixThreadState>
             /// See `UnixSystem.Leader`.
@@ -28,28 +28,28 @@ type SimulatedMachine<'Thread, 'Handler when 'Thread : comparison and 'Handler :
     internal
         {
             Machine : UnixMachineState
-            /// How long the machine has been up, and which task each of its
+            /// How long the machine has been up, and which thread each of its
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
             /// Every process on the machine, by its process ID.
             Processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>
         }
 
-/// What a sweep of a machine's sleeping tasks that woke none of them read:
+/// What a sweep of a machine's sleeping threads that woke none of them read:
 /// everything a wake condition is asked of but the clock, and the earliest
-/// deadline any of those tasks waits for.
+/// deadline any of those threads waits for.
 type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     {
         Machine : UnixMachineState
         Processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>
         Asleep : Map<ProcessId, Set<'Thread>>
         /// The earliest `WakePrimitive.DeadlinePassed` among the wake
-        /// conditions of the tasks in `Asleep`, if any has one.
+        /// conditions of the threads in `Asleep`, if any has one.
         EarliestDeadline : int64 voption
     }
 
 /// What `SimulatedMachine.wakesRemembering` remembers between calls, so that it
-/// can tell, without asking any wake condition, that a machine wakes no task:
+/// can tell, without asking any wake condition, that a machine wakes no thread:
 /// the last sweep it made, if that sweep woke none.
 ///
 /// Opaque. A client starts from `WakeSweepMemo.empty`, and passes each call the
@@ -100,8 +100,8 @@ module WakeSweepMemo =
         hits < CrossCheckedFirst || hits % CrossCheckedEvery = 0
 
     /// Whether `machine` holds the machine state and every process's state
-    /// and tasks that `remembered` read, the same values rather than equal
-    /// ones, and `asleep` is the tasks `remembered` was asked about: whether
+    /// and threads that `remembered` read, the same values rather than equal
+    /// ones, and `asleep` is the threads `remembered` was asked about: whether
     /// everything a wake condition reads but the clock is as `remembered`
     /// found it.
     let internal readsSame<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -130,9 +130,9 @@ module WakeSweepMemo =
         && (LanguagePrimitives.PhysicalEquality remembered.Asleep asleep
             || remembered.Asleep = asleep)
 
-    /// Whether a sweep of a machine would wake no task because `remembered`
+    /// Whether a sweep of a machine would wake no thread because `remembered`
     /// woke none: whether it `readsSame` as `remembered`, and the clock has not
-    /// reached the earliest deadline any task in `asleep` waits for.
+    /// reached the earliest deadline any thread in `asleep` waits for.
     ///
     /// The clock is the one input a wake condition reads that changes between
     /// syscalls, and only `WakePrimitive.DeadlinePassed` reads it; so with
@@ -400,7 +400,7 @@ module SimulatedMachine =
     /// Refuses a launch `UnixBootImage.boot` would refuse, and a machine with
     /// no process ID left to hand out.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a task on a processor it does not have.</exception>
+    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have.</exception>
     /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
     let launch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (launch : ProcessLaunch<'Thread>)
@@ -432,7 +432,7 @@ module SimulatedMachine =
         =
         Map.tryFind processId machine.Processes |> Option.map (viewOf machine)
 
-    /// Whether `machine` holds `view`'s process and its tasks exactly as `view`
+    /// Whether `machine` holds `view`'s process and its threads exactly as `view`
     /// has them, by identity, whatever machine `view` itself holds. A client
     /// that keeps the view of a process making no calls while another
     /// process's view is written back asks this to know that only the machine
@@ -563,7 +563,7 @@ module SimulatedMachine =
         )
 
     /// <summary>
-    /// `UnixSystem.step` of `call`, made by `task` of the process `processId`:
+    /// `UnixSystem.step` of `call`, made by `thread` of the process `processId`:
     /// what the call did, and the machine after it. `None` if no process on the
     /// machine has that ID.
     /// </summary>
@@ -592,7 +592,7 @@ module SimulatedMachine =
         assertCurrent "SimulatedMachine.endProcess" view machine
         let processId = view.Process.ProcessId
 
-        // The process with no task left. Releasing a description reads and
+        // The process with no thread left. Releasing a description reads and
         // writes the machine alone, and dropping a descriptor the process's
         // table.
         let dead =
@@ -605,9 +605,9 @@ module SimulatedMachine =
             }
 
         // First what nothing references any more: what the process's calls in
-        // flight held, whose holds went with its tasks, and what the call that
+        // flight held, whose holds went with its threads, and what the call that
         // ended the process let go of as it returned. These go as the calls
-        // return when their tasks die, before the process's files are closed;
+        // return when their threads die, before the process's files are closed;
         // the order between the two has not been measured. On a machine no
         // process's end has left so, no description is unreferenced.
         let unreferenced =
@@ -741,7 +741,7 @@ module SimulatedMachine =
     /// it.
     ///
     /// What a real kernel does at exit, where another process can see it.
-    /// The process's tasks are gone already, and with
+    /// The process's threads are gone already, and with
     /// them the holds their calls in flight had; any description only those
     /// calls held, or that the call which ended the process let go of as it
     /// returned, is released now. Then every descriptor of the process is
@@ -756,7 +756,7 @@ module SimulatedMachine =
     /// goes, a listener goes and resets each client still in its accept
     /// queue, whichever process holds it, and every registration made through
     /// the descriptor goes with it. The process ID, thread IDs and current
-    /// directory are let go of with the tasks.
+    /// directory are let go of with the threads.
     ///
     /// Refuses where a close would be refused.
     ///
@@ -770,22 +770,22 @@ module SimulatedMachine =
         tryEndProcess ended machine
         |> Refusal.orRaise "SimulatedMachine.endProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe
 
-    /// The tasks `asleep` names that the machine wakes now, each with its
+    /// The threads `asleep` names that the machine wakes now, each with its
     /// process and the primitives of its wake condition which hold, in the
     /// order they parked: `UnixWait.wakes` of every process at once.
     ///
-    /// `asleep` holds, for each process, the tasks of it the client is holding
-    /// asleep in a syscall. A parked task it leaves out, in a process it names
+    /// `asleep` holds, for each process, the threads of it the client is holding
+    /// asleep in a syscall. A parked thread it leaves out, in a process it names
     /// or one it does not, is one the client has woken and whose call has not
     /// yet finished.
     ///
-    /// Each task's condition is asked of its own process's view, so a
+    /// Each thread's condition is asked of its own process's view, so a
     /// condition another process's call has made true (a connection queued on
     /// a listener, a peer's FIN, a lock let go of) wakes it here. Where a
     /// kernel wakes one waiter of a queue at a time (`UnixWait.wakes` says
     /// which queues, and which waiter), the choice is made across every
     /// process, by the order of the machine's parks, which every process's
-    /// parks share. A woken task's call is finished in its own process's view
+    /// parks share. A woken thread's call is finished in its own process's view
     /// (`inView`), by the finishing call of the syscall it is asleep in.
     ///
     /// Fails loudly if `asleep` names a process the machine does not hold.
@@ -797,7 +797,7 @@ module SimulatedMachine =
         for KeyValue (processId, _) in asleep do
             if not (Map.containsKey processId machine.Processes) then
                 failwith
-                    $"SimulatedMachine.wakes: no process on the machine has ID %O{processId}, but the client holds tasks of it asleep (this is a bug in the client)."
+                    $"SimulatedMachine.wakes: no process on the machine has ID %O{processId}, but the client holds threads of it asleep (this is a bug in the client)."
 
         let views =
             machine.Processes
@@ -810,17 +810,17 @@ module SimulatedMachine =
         |> List.map (fun (processId, thread, fired) -> (processId, thread), fired)
 
     /// `wakes`, which a client asks of every state it reaches, made cheap for
-    /// the states in which nothing it reads has changed: the tasks it wakes,
+    /// the states in which nothing it reads has changed: the threads it wakes,
     /// and the memo to pass the next call.
     ///
-    /// Answers that no task wakes, without asking any wake condition, when
+    /// Answers that no thread wakes, without asking any wake condition, when
     /// `memo` remembers a sweep that woke none, and nothing that sweep read has
     /// changed since but the clock, which has not reached the earliest
-    /// deadline any task in `asleep` waits for. Nothing a syscall can change
+    /// deadline any thread in `asleep` waits for. Nothing a syscall can change
     /// counts as unchanged unless it is the same value, so a client that makes
     /// a syscall, or writes back a view that made one, is swept afresh; a
     /// client that only moves the clock (`UnixSystem.advanceClock`) or reports
-    /// which task runs where (`UnixScheduling.dispatch`, to a processor the task
+    /// which thread runs where (`UnixScheduling.dispatch`, to a processor the thread
     /// is already on) is not. Otherwise sweeps as `wakes` does, and remembers
     /// the sweep if it woke nobody.
     ///
@@ -846,7 +846,7 @@ module SimulatedMachine =
                 | [] -> ()
                 | woken ->
                     failwith
-                        $"SimulatedMachine.wakesRemembering: the memo says the machine wakes no task, but a sweep wakes %A{woken}, at answer %d{memo.HitsSinceSweep} since the memo's sweep (this is a bug in this library)."
+                        $"SimulatedMachine.wakesRemembering: the memo says the machine wakes no thread, but a sweep wakes %A{woken}, at answer %d{memo.HitsSinceSweep} since the memo's sweep (this is a bug in this library)."
 
             [],
             { memo with
@@ -861,7 +861,7 @@ module SimulatedMachine =
         match wakes asleep machine with
         | _ :: _ as woken -> woken, WakeSweepMemo.empty
         | [] ->
-            // `wakes` has failed loudly already for a task asleep in no park.
+            // `wakes` has failed loudly already for a thread asleep in no park.
             let deadlines =
                 asleep
                 |> Seq.collect (fun (KeyValue (processId, threads)) ->

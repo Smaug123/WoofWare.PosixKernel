@@ -628,7 +628,7 @@ module TestInotifyInvariants =
             // Each slot: a descriptor of the process's leader, or none.
             let slots = Array.create 4 None
             let mutable system = start
-            // The reader, task 1, asleep in a read if it is.
+            // The reader, thread 1, asleep in a read if it is.
             let mutable asleep = false
 
             let check (op : Op) =
@@ -701,7 +701,7 @@ module TestInotifyInvariants =
                             UserBuffer.Mapped
                         else
                             UserBuffer.Unmapped 0UL
-                    // The reader, task 1, reads, and sleeps if it must; while
+                    // The reader, thread 1, reads, and sleeps if it must; while
                     // it sleeps, the leader reads only what it need not sleep
                     // for.
                     let leaderWouldSleep =

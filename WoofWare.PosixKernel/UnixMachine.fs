@@ -54,25 +54,25 @@ type internal UnixMachineState =
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
             NextPollQueueId : PollQueueId
-            /// The ordinal the next park of any task records as its
+            /// The ordinal the next park of any thread records as its
             /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `UnixWait.park`.
             ///
             /// The machine's rather than a process's, because what a kernel orders
             /// by park is a wait queue on a kernel object, and processes can share
             /// one.
             NextParkOrdinal : ParkOrdinal
-            /// Where the next thread's id comes from, and which ids live tasks
+            /// Where the next thread's id comes from, and which ids live threads
             /// hold: see `ThreadIdAllocator`.
             ///
             /// The machine's rather than a process's, because on both flavours the
             /// counter is shared by every process on the machine, and an id one
-            /// process's task holds is not handed to another's. Set by
+            /// process's thread holds is not handed to another's. Set by
             /// `UnixSystem.initial`, `UnixBootImage.withProcessId`,
             /// `UnixBootImage.withLeaderThreadId` and `UnixSystem.writePidMaxSysctl`;
             /// advanced only by `UnixThreadLifecycle.spawn`, and an id is freed by its
-            /// task's exit (`UnixThreadLifecycle.exitThread`, and the end of the
+            /// thread's exit (`UnixThreadLifecycle.exitThread`, and the end of the
             /// process). `UnixSystem.checkInvariants` holds the live ids to the
-            /// tasks'.
+            /// threads'.
             ThreadIds : ThreadIdAllocator
             /// Where the next process's ID comes from, and the ID of every
             /// process on the machine: see `ProcessIdTable`. A process joins it

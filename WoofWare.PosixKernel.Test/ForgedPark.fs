@@ -7,7 +7,7 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module ForgedPark =
 
-    /// `system` with the unparked task `task` parked in `parked`, at the next
+    /// `system` with the unparked thread `thread` parked in `parked`, at the next
     /// park ordinal, holding those of the descriptions it names that the open
     /// file table holds. `UnixWait.park` refuses a park on a description the
     /// table does not hold, which is exactly the park a test of
@@ -19,7 +19,7 @@ module ForgedPark =
         : UnixSystem<'Thread, 'Handler>
         =
         if (UnixThreadTable.parkOf thread system.Threads).IsSome then
-            failwith $"ForgedPark.onAbsent: task %O{thread} is parked already"
+            failwith $"ForgedPark.onAbsent: thread %O{thread} is parked already"
 
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
 

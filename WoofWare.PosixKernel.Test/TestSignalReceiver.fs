@@ -10,7 +10,7 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Which task receives a signal sent to the whole process, held to the rows of
+/// Which thread receives a signal sent to the whole process, held to the rows of
 /// `docs/plans/2026-08-23-posix-kernel-extraction/signal-receiver.c`, checked in
 /// as `signalReceiver/linux.txt` (Linux 6.18.5, aarch64) and
 /// `signalReceiver/darwin.txt` (Darwin 27.0.0).
@@ -29,8 +29,8 @@ module TestSignalReceiver =
     let private flavours : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
 
-    /// A system of four tasks, 0 its leader, under `flavour`, with SIGUSR1
-    /// at `disposition`, and every task in `blocking` inside a handler that
+    /// A system of four threads, 0 its leader, under `flavour`, with SIGUSR1
+    /// at `disposition`, and every thread in `blocking` inside a handler that
     /// blocks it.
     let private systemWith
         (flavour : SimulatedUnixFlavour)
@@ -62,8 +62,8 @@ module TestSignalReceiver =
     let private self (system : UnixSystem<int, string>) : int32 =
         ProcessId.toInt32 (UnixSystem.processId system)
 
-    /// The handler frames each of the four tasks takes next, in task order:
-    /// `None` for a task that takes nothing.
+    /// The handler frames each of the four threads takes next, in thread order:
+    /// `None` for a thread that takes nothing.
     let private takenBy (system : UnixSystem<int, string>) : HandlerFrame<int, string> list option list =
         [ 0..3 ]
         |> List.map (fun thread ->
@@ -72,11 +72,11 @@ module TestSignalReceiver =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) -> Some frames
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other)
-            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"task %d{thread} took %A{other}"
-            | Error refusal -> failwith $"task %d{thread} was refused: %O{refusal}"
+            | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"thread %d{thread} took %A{other}"
+            | Error refusal -> failwith $"thread %d{thread} was refused: %O{refusal}"
         )
 
-    /// Send SIGUSR1 to the process, and say which tasks take it.
+    /// Send SIGUSR1 to the process, and say which threads take it.
     let private receivers (flavour : SimulatedUnixFlavour) (blocking : Set<int>) : Result<int list, KillRefusal> =
         let system =
             systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) blocking
@@ -89,7 +89,7 @@ module TestSignalReceiver =
                 match delivery with
                 | Some [ frame ] when frame.Entry.Signal = Signal.SIGUSR1 && frame.Action.Handler = "h" -> Some thread
                 | None -> None
-                | Some other -> failwith $"task %d{thread} took %A{other}"
+                | Some other -> failwith $"thread %d{thread} took %A{other}"
             )
             |> Ok
         | Ok other -> failwith $"kill did not leave the signal to be taken: %A{other}"
@@ -164,7 +164,7 @@ module TestSignalReceiver =
         replay SimulatedUnixFlavour.Darwin "darwin" |> shouldEqual (192, 168)
 
     [<Test>]
-    let ``a caught signal sent to the process goes to the leader whatever the other tasks block`` () : unit =
+    let ``a caught signal sent to the process goes to the leader whatever the other threads block`` () : unit =
         let property (flavour : SimulatedUnixFlavour) (others : bool list) : unit =
             let blocking =
                 others
@@ -178,7 +178,7 @@ module TestSignalReceiver =
         Check.One (propertyConfig, property)
 
     [<Test>]
-    let ``a signal every task blocks is left pending on the process`` () : unit =
+    let ``a signal every thread blocks is left pending on the process`` () : unit =
         for flavour in flavours do
             let system =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
@@ -199,7 +199,7 @@ module TestSignalReceiver =
 
     [<Test>]
     let ``a signal whose default ends the process is answered when the leader blocks it`` () : unit =
-        // Which task receives it does not matter: SIGUSR1 at its default ends the
+        // Which thread receives it does not matter: SIGUSR1 at its default ends the
         // process.
         for flavour in flavours do
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0 ; 2 ])
@@ -228,12 +228,12 @@ module TestSignalReceiver =
             | _, other -> failwith $"%O{flavour}: %A{other}"
 
     [<Test>]
-    let ``every task is refused while a pending caught signal could reach only a task other than the leader``
+    let ``every thread is refused while a pending caught signal could reach only a thread other than the leader``
         ()
         : unit
         =
-        // Pending while every task blocks it; then task 2 unblocks it, so a real
-        // kernel gives it to task 2 at once.
+        // Pending while every thread blocks it; then thread 2 unblocks it, so a real
+        // kernel gives it to thread 2 at once.
         for flavour in flavours do
             let system =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
@@ -251,11 +251,11 @@ module TestSignalReceiver =
                 for thread in 0..3 do
                     match UnixSignal.tryOnReturnToUser thread after with
                     | Error refusal -> refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
-                    | Ok answer -> failwith $"%O{flavour}: task %d{thread} was answered %A{answer}"
+                    | Ok answer -> failwith $"%O{flavour}: thread %d{thread} was answered %A{answer}"
             | other -> failwith $"%O{flavour}: %A{other}"
 
     [<Test>]
-    let ``a signal pending on one task alone is taken by that task only`` () : unit =
+    let ``a signal pending on one thread alone is taken by that thread only`` () : unit =
         for flavour in flavours do
             let system =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) Set.empty
@@ -286,14 +286,14 @@ module TestSignalReceiver =
                     }
 
                 frame.Action.Handler |> shouldEqual "h"
-            | other -> failwith $"%O{flavour}: expected task 2 alone to take it, got %A{other}"
+            | other -> failwith $"%O{flavour}: expected thread 2 alone to take it, got %A{other}"
 
     [<Test>]
-    let ``asking for a task that does not exist fails loudly`` () : unit =
+    let ``asking for a thread that does not exist fails loudly`` () : unit =
         let system =
             systemWith SimulatedUnixFlavour.Linux (SignalDisposition.Catch (SignalCatch.ofHandler "h")) Set.empty
 
         let exn =
             Assert.Throws<exn> (fun () -> UnixSignal.tryOnReturnToUser 7 system |> ignore)
 
-        exn.Message |> shouldContainText "not one of the process's tasks"
+        exn.Message |> shouldContainText "not one of the process's threads"

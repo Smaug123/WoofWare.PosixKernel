@@ -13,7 +13,7 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module KeventWorld =
 
-    /// A Darwin system with tasks 1 to 4, booted from an image `configure`
+    /// A Darwin system with threads 1 to 4, booted from an image `configure`
     /// configured.
     let darwinWith (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>) : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
@@ -21,7 +21,7 @@ module KeventWorld =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
         |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
-    /// A Darwin system with tasks 1 to 4.
+    /// A Darwin system with threads 1 to 4.
     let darwin : UnixSystem<int, string> = darwinWith id
 
     let private inet : int option = Some SimulatedUnixPlatform.internetAddressFamily
@@ -69,7 +69,7 @@ module KeventWorld =
         let fd, system = stream false system
         fd, system |> bind fd port |> listen fd
 
-    /// A connect of `fd` to `port`, made by `task`, which must be awake.
+    /// A connect of `fd` to `port`, made by `thread`, which must be awake.
     let connectAs
         (thread : int)
         (fd : int)
@@ -99,7 +99,7 @@ module KeventWorld =
         connectAs system.Leader fd port system
 
     /// A new non-blocking socket connecting to `port`, as the probe's `client`
-    /// makes, connected by `task`, which must be awake.
+    /// makes, connected by `thread`, which must be awake.
     let clientAs (thread : int) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, system = stream true system
         let _, system = connectAs thread fd port system
@@ -152,7 +152,7 @@ module KeventWorld =
             UserData = userData
         }
 
-    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by task 4, which no test
+    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by thread 4, which no test
     /// parks.
     let apply
         (kq : int)

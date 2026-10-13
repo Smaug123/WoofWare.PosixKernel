@@ -257,11 +257,11 @@ module internal KqueuePoll =
 
         List.ofArray revents, remaining, []
 
-    /// Whether the Darwin `poll` `task` is asleep in would report something were
+    /// Whether the Darwin `poll` `thread` is asleep in would report something were
     /// it to scan its kqueue now: what `WakePrimitive.KqueuePollReportable`
     /// asks.
     ///
-    /// Loudly partial: `task` must be asleep in a Darwin `poll`.
+    /// Loudly partial: `thread` must be asleep in a Darwin `poll`.
     let reportable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -275,7 +275,7 @@ module internal KqueuePoll =
             revents |> List.exists (fun revents -> revents <> 0s)
         | other ->
             failwith
-                $"KqueuePoll.reportable: task %O{thread} is parked in %A{other}, not in a Darwin poll (this is a bug in the caller that recorded the park)."
+                $"KqueuePoll.reportable: thread %O{thread} is parked in %A{other}, not in a Darwin poll (this is a bug in the caller that recorded the park)."
 
     /// What the process `owner` closing its descriptor `fd` does to the kqueue
     /// of every Darwin `poll` of its own asleep on `machine`: each filter

@@ -1057,7 +1057,7 @@ module TestFcntlMeasured =
             // bytes (it models no peer to take them) or `send(2)`, Darwin's
             // conversion of a lock (which `flock` refuses), a Darwin pipe's flock
             // (likewise), and the rows the tests below replay on their own, with a
-            // task asleep.
+            // thread asleep.
             let expectedSkips =
                 [
                     "socket write"
