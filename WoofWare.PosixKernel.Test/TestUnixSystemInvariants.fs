@@ -943,6 +943,34 @@ module TestUnixSystemInvariants =
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
+    [<Test>]
+    let ``a mounted filesystem the machine's device mount does not name is a defect`` () : unit =
+        // Reachable only by assembling the record by hand: `UnixSystem.initial`
+        // derives the device mount from the flavour, and mounts what it says.
+        let linux =
+            UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        let devRoot =
+            VirtualFileSystem.mounts linux.Machine.FileSystem
+            |> Map.toList
+            |> List.exactlyOne
+            |> fst
+
+        UnixSystem.checkInvariants linux |> shouldEqual []
+
+        { linux with
+            Machine =
+                { linux.Machine with
+                    DeviceMount = DeviceFileSystemMount.Devfs
+                }
+        }
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.MountNotDeviceMount (devRoot, MountedFileSystem.Devtmpfs, MountedFileSystem.Devfs)
+            ]
+
     // ------------------------------------------------------------------
     // Thread IDs. Every one of these is reachable only by a record copy past
     // `UnixSystem.initial`, `UnixThreadLifecycle.spawn` and the identity setters.

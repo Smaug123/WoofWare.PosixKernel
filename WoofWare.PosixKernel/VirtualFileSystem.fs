@@ -590,6 +590,9 @@ module VirtualFileSystem =
     /// a mounted filesystem.
     let mountOf (inode : InodeNumber) (vfs : VirtualFileSystem) : Mount option = Map.tryFind inode vfs.Mounts
 
+    /// Every filesystem mounted in this one, by the inode of its root.
+    let internal mounts (vfs : VirtualFileSystem) : Map<InodeNumber, Mount> = vfs.Mounts
+
     /// The root of the mounted filesystem `inode` is on, or `None` if it is on
     /// the root filesystem (or is not in the graph at all).
     let mountedRootOf (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeNumber option =
