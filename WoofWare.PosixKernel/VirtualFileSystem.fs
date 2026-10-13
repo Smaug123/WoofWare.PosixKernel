@@ -2524,6 +2524,28 @@ module VirtualFileSystem =
             )
             Map.empty
 
+    /// The name the directory `parent` binds `inode` under, if it binds it:
+    /// in a well-formed graph, a directory's one name in its parent.
+    let internal nameIn
+        (parent : InodeNumber)
+        (inode : InodeNumber)
+        (vfs : VirtualFileSystem)
+        : DirectoryEntryName option
+        =
+        // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
+        // first. That matters because this runs on every `getcwd`, which a
+        // client may call for every relative path it resolves, and the copy
+        // made the cost scale with how many *siblings* the directory has,
+        // not with the depth of its path. Measured over one directory of 100,000 entries:
+        // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
+        // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
+        // measures *worse* than `Map.toList` on both counts.)
+        tryGetDirectory parent vfs
+        |> Option.bind (fun content ->
+            content.Entries
+            |> Map.tryPick (fun name target -> if target = inode then Some name else None)
+        )
+
     /// The absolute path of a directory, by walking `Parent` links to the root.
     ///
     /// Directories only: a regular file may be hard-linked under several names,
@@ -2546,22 +2568,7 @@ module VirtualFileSystem =
 
             // The name is not stored on the inode, so recover it from the
             // parent's own entries. A well-formed graph has exactly one.
-            //
-            // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
-            // first. That matters because this runs on every `getcwd`, which a
-            // client may call for every relative path it resolves, and the copy
-            // made the cost scale with how many *siblings* the directory has,
-            // not with the depth of its path. Measured over one directory of 100,000 entries:
-            // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
-            // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
-            // measures *worse* than `Map.toList` on both counts.)
-            match
-                tryGetDirectory content.Parent vfs
-                |> Option.bind (fun parent ->
-                    parent.Entries
-                    |> Map.tryPick (fun name target -> if target = current then Some name else None)
-                )
-            with
+            match nameIn content.Parent current vfs with
             | None -> None
             | Some name -> climb content.Parent (name :: acc) (Set.add current visited)
 
