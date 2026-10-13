@@ -71,7 +71,7 @@ module TestPoll =
         (system : UnixSystem<int, string>)
         : Result<int16 list * int, PollRefusal>
         =
-        let system = Tasks.ensure poller system
+        let system = Threads.ensure poller system
 
         match UnixPoll.tryPoll poller entries milliseconds system with
         | Error refusal -> Error refusal
@@ -503,7 +503,7 @@ module TestPoll =
                 match NewSocket.tryCreate domain kind protocol (systemOn platform) with
                 | None -> ()
                 | Some (fd, system) ->
-                    let system = Tasks.ensure poller system
+                    let system = Threads.ensure poller system
 
                     for events in masks do
                         match UnixPoll.tryPoll poller [ entry fd events ] 0 system with

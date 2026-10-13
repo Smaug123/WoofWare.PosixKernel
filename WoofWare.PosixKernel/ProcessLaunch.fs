@@ -457,7 +457,7 @@ module ProcessLaunch =
         (pid : ProcessId)
         (leaderThreadId : OsThreadId)
         (machine : UnixMachineState)
-        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixTaskState>, LaunchRefusal>
+        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>, LaunchRefusal>
         =
         let platform = machine.UnixPlatform
 
@@ -526,4 +526,4 @@ module ProcessLaunch =
                 CoreDumps = launch.CoreDumps
             }
 
-        Ok (machine, proc, UnixTaskTable.add launch.Leader launch.LeaderCpu leaderThreadId Map.empty)
+        Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId Map.empty)

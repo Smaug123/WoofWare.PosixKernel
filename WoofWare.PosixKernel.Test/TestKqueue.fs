@@ -29,12 +29,12 @@ module TestKqueue =
     let private darwin : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
     let private linux : UnixSystem<int, string> =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> Tasks.ensure 1
+        |> Threads.ensure 1
 
     let private withRegistry
         (registry : FileDescriptorRegistry)
@@ -86,7 +86,7 @@ module TestKqueue =
     let private finishes (task : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
         match UnixKqueue.tryFinishKevent task system with
         | Ok (outcome, finished) ->
-            UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
             outcome, finished
         | Error refusal -> failwith $"expected task %d{task}'s wait to finish, got %s{KeventRefusal.describe refusal}"
 
@@ -295,13 +295,13 @@ module TestKqueue =
             after |> shouldEqual before
         | "rv=0", "-", "slept=0", KeventOutcome.Answered [] -> after |> shouldEqual before
         | "rv=0", "-", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixTaskTable.parkedFor task after.Tasks with
+            match UnixThreadTable.parkedFor task after.Tasks with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = Some deadline
                                          }) -> deadline - now |> shouldBeSmallerThan probeTimer
             | other -> failwith $"expected a park with a deadline, got %A{other}"
         | "rv=-1", "EINTR", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixTaskTable.parkedFor task after.Tasks with
+            match UnixThreadTable.parkedFor task after.Tasks with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = None
                                          }) -> ()
@@ -600,7 +600,7 @@ module TestKqueue =
             | Error expected, actual -> actual |> shouldEqual (Error expected)
             | Ok (Some expected), actual -> actual |> shouldEqual (Ok (expected, system))
             | Ok None, Ok (KeventOutcome.WouldBlock _, parked) ->
-                match UnixTaskTable.parkedFor 1 parked.Tasks with
+                match UnixThreadTable.parkedFor 1 parked.Tasks with
                 | Some (ParkedSyscall.Kevent wait) ->
                     wait.Kqueue |> shouldEqual (idOf fd system)
                     wait.Fd |> shouldEqual fd
@@ -672,13 +672,13 @@ module TestKqueue =
             let short = after (deadline - 1L - now) parked
             woken [ 1 ] short |> shouldEqual []
 
-            let ordinalBefore = (UnixTaskTable.parkOf 1 parked.Tasks).Value.Ordinal
+            let ordinalBefore = (UnixThreadTable.parkOf 1 parked.Tasks).Value.Ordinal
 
             match UnixKqueue.tryFinishKevent 1 short with
             | Ok (KeventOutcome.WouldBlock _, reparked) ->
                 UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
 
-                (UnixTaskTable.parkOf 1 reparked.Tasks).Value.Ordinal
+                (UnixThreadTable.parkOf 1 reparked.Tasks).Value.Ordinal
                 |> shouldBeGreaterThan ordinalBefore
             | other -> failwith $"expected a re-park, got %A{other}"
 
@@ -716,7 +716,7 @@ module TestKqueue =
             )
         )
 
-        match UnixTaskTable.parkedFor 1 parked.Tasks with
+        match UnixThreadTable.parkedFor 1 parked.Tasks with
         | Some (ParkedSyscall.Kevent wait) ->
             wait
             |> shouldEqual
@@ -859,8 +859,8 @@ module TestKqueue =
                         KeventTimeout.Readable (0L, 0L)
                         KeventTimeout.Readable (1L, 0L)
                     ] do
-                    waits 9 surviving timeout (Tasks.ensure 9 finished)
-                    |> shouldEqual (Ok (KeventOutcome.Failed UnixError.EBADF, Tasks.ensure 9 finished))
+                    waits 9 surviving timeout (Threads.ensure 9 finished)
+                    |> shouldEqual (Ok (KeventOutcome.Failed UnixError.EBADF, Threads.ensure 9 finished))
             else
                 woken tasks closed |> shouldEqual []
 

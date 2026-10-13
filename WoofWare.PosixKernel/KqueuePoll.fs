@@ -267,7 +267,7 @@ module internal KqueuePoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.KqueuePoll poll) ->
             let zero = poll.Entries |> List.map (fun _ -> 0s)
             let queue = UnixMachineState.pollQueue poll.Queue system.Machine

@@ -205,7 +205,7 @@ module TestBootImage =
                 typeof<ProcessLaunch<int>>
                 typeof<UnixMachineState>
                 typeof<UnixProcessState<int, string>>
-                typeof<UnixTaskState>
+                typeof<UnixThreadState>
             ]
 
         for t in records do
@@ -243,7 +243,7 @@ module TestBootImage =
         for declaring, name in
             [
                 "WoofWare.PosixKernel.UnixWait", "park"
-                "WoofWare.PosixKernel.UnixTaskTable", "unpark"
+                "WoofWare.PosixKernel.UnixThreadTable", "unpark"
             ] do
             match named declaring name with
             | [ m ] -> (describe m, m.IsPublic) |> shouldEqual (describe m, false)

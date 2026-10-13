@@ -58,7 +58,7 @@ module TestStreamReaderGone =
         =
         UnixSystem.initial platform
         |> Launched.boot (launch gone) 0 (CpuId 0)
-        |> Tasks.spawn 1
+        |> Threads.spawn 1
         |> withSigPipe disposition
 
     let private sigPipeFrom (flavour : SimulatedUnixFlavour) (task : int) : PendingSignal<int> =

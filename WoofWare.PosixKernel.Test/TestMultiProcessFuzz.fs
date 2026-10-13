@@ -283,18 +283,18 @@ module TestMultiProcessFuzz =
             let! first = Gen.choose (0, processes - 1)
             let! offset = Gen.choose (1, processes - 1)
             let second = (first + offset) % processes
-            let! firstTask = Gen.choose (0, tasks - 1)
-            let! secondTask = Gen.choose (0, tasks - 1)
+            let! firstThread = Gen.choose (0, tasks - 1)
+            let! secondThread = Gen.choose (0, tasks - 1)
             let! dir = small
 
-            let byFirst (op : Op) : Step = Step.Call (first, firstTask, op)
+            let byFirst (op : Op) : Step = Step.Call (first, firstThread, op)
             let! closeListener = Gen.elements [ true ; false ]
             let! status = Gen.choose (0, 3)
-            let bySecond (op : Op) : Step = Step.Call (second, secondTask, op)
+            let bySecond (op : Op) : Step = Step.Call (second, secondThread, op)
             // A prepared process holds the server end of the connection through
             // `ports.[first]`, and the process before it the client end.
             let byClient (op : Op) : Step =
-                Step.Call ((first + processes - 1) % processes, secondTask, op)
+                Step.Call ((first + processes - 1) % processes, secondThread, op)
 
             // The server end closes the connection the client end has closed,
             // and the client end connects to `ports.[first]` afresh, blocking as
@@ -1364,11 +1364,11 @@ module TestMultiProcessFuzz =
         | Op.Unlink path ->
             UnixNamespace.tryUnlink (PathArg.ofText files.[path % files.Length]) view
             |> answered
-        | Op.Exit status -> Made.Ended (UnixTaskLifecycle.exitGroup task status view)
+        | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup task status view)
 
     /// The call `task` of the view `view` is asleep in, finished.
     let private finish (cover : FuzzLabel -> unit) (task : int) (view : UnixSystem<int, string>) : Made =
-        match UnixTaskTable.parkedFor task view.Tasks with
+        match UnixThreadTable.parkedFor task view.Tasks with
         | Some (ParkedSyscall.Accept _) ->
             match UnixConnection.tryFinishAccept task view with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
@@ -1418,7 +1418,7 @@ module TestMultiProcessFuzz =
         | Some (ParkedSyscall.PipeWrite _)
         | Some (ParkedSyscall.ConnectionWrite _) ->
             let connection =
-                match UnixTaskTable.parkedFor task view.Tasks with
+                match UnixThreadTable.parkedFor task view.Tasks with
                 | Some (ParkedSyscall.ConnectionWrite _) -> true
                 | _ -> false
 
@@ -1667,7 +1667,7 @@ module TestMultiProcessFuzz =
                     let world =
                         match Map.tryFind pid world.Machine.Processes with
                         | Some slot when
-                            (UnixTaskTable.parkedFor task slot.Tasks).IsSome
+                            (UnixThreadTable.parkedFor task slot.Tasks).IsSome
                             && not (Set.contains (pid, task) world.Asleep)
                             ->
                             { world with
@@ -1936,7 +1936,7 @@ module TestMultiProcessFuzz =
         : unit
         =
         let pids, machine =
-            Machines.withTasksOn configure case.Platform case.Processes tasks
+            Machines.withThreadsOn configure case.Platform case.Processes tasks
 
         let machine =
             if case.Prepared then

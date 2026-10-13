@@ -1310,7 +1310,7 @@ module UnixDescriptor =
         // Loudly partial in an unregistered task, before anything is answered:
         // a non-blocking call by one would otherwise be served and only a
         // blocking one refused.
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixDescriptor.flock: task %O{task} is parked in %A{parked}, and is issuing an flock. A task blocks in one syscall at a time; a parked flock is finished with `flockAcquire`, and any other parked call's completion must clear its record first (this is a bug in the client)."
@@ -1500,7 +1500,7 @@ module UnixDescriptor =
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
         =
         let requester, mode =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some (ParkedSyscall.Flock parked) -> parked.Requester, parked.Mode
             | Some (ParkedSyscall.EpollWait wait) ->
                 failwith
@@ -2250,7 +2250,7 @@ module UnixDescriptor =
              },
              endedCalls)
             ||> List.fold (fun system (task, ended) ->
-                match UnixTaskTable.parkOf task system.Tasks with
+                match UnixThreadTable.parkOf task system.Tasks with
                 | Some park ->
                     UnixParkState.setPark
                         task

@@ -113,7 +113,7 @@ module TestSignalWaitPark =
                         Destination = Some UserBuffer.Mapped
                     }
 
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure task
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let asleep = UnixWait.park task parked awake

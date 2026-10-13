@@ -35,7 +35,7 @@ module TestConnectedTransfer =
             UnixSystem.initial<int, string> platform
             |> configure
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> ([ 1..4 ], system) ||> List.foldBack Tasks.ensure
+            |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
         { system with
             Process =
@@ -1785,7 +1785,7 @@ module TestConnectedTransfer =
                         Machines.doIn a (fun view -> receivedCount client 4096 view |> snd) machine
 
                 let ended =
-                    Machines.inProcess a (fun view -> UnixTaskLifecycle.exitGroup 0 0 view, view) machine
+                    Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
                     |> fst
 
                 let machine =

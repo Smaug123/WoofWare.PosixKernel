@@ -31,16 +31,16 @@ module TestThreadIds =
     let private pid (value : int32) : ProcessId = ProcessId.parseOrFail "test" value
 
     let private idOf (task : int) (system : UnixSystem<int, string>) : uint64 =
-        OsThreadId.toUInt64 (UnixTaskState.osThreadId (UnixTaskTable.get task system.Tasks))
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get task system.Tasks))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
-        match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned id, system) -> OsThreadId.toUInt64 id, system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
 
     let private exitOrFail (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixTaskLifecycle.tryExitThread task 0 system with
+        match UnixThreadLifecycle.tryExitThread task 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
         | other -> failwith $"expected task %d{task}'s exit to leave the process running, got %A{other}"
 
@@ -59,7 +59,9 @@ module TestThreadIds =
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
 
-            UnixTaskState.cpu (UnixTaskTable.get 0 system.Tasks) |> shouldEqual (CpuId 0)
+            UnixThreadState.cpu (UnixThreadTable.get 0 system.Tasks)
+            |> shouldEqual (CpuId 0)
+
             UnixSystem.checkInvariants system |> shouldEqual []
 
     [<Test>]
@@ -72,7 +74,7 @@ module TestThreadIds =
 
         system.Leader |> shouldEqual "main"
 
-        UnixTaskState.cpu (UnixTaskTable.get "main" system.Tasks)
+        UnixThreadState.cpu (UnixThreadTable.get "main" system.Tasks)
         |> shouldEqual (CpuId 3)
 
     [<Test>]
@@ -206,7 +208,7 @@ module TestThreadIds =
         let system = system |> UnixSystem.writePidMaxSysctl "test" 400
 
         let rec fill (child : int) (started : uint64 list) (system : UnixSystem<int, string>) =
-            match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
+            match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
             | Ok (SpawnAnswer.Spawned id, system) -> fill (child + 1) (OsThreadId.toUInt64 id :: started) system
             | Ok (SpawnAnswer.Failed error, after) ->
                 // A failed creation hands out no thread ID and adds no task.
@@ -405,7 +407,7 @@ module TestThreadIds =
             exn.Message |> shouldContainText text
 
         let spawn (parent : int) (child : int) (system : UnixSystem<int, string>) () : unit =
-            UnixTaskLifecycle.trySpawn parent child (CpuId 0) system
+            UnixThreadLifecycle.trySpawn parent child (CpuId 0) system
             |> ignore<Result<SpawnAnswer * UnixSystem<int, string>, SpawnRefusal<int>>>
 
         fails (spawn 7 2 system) "names no task"
@@ -543,7 +545,7 @@ module TestThreadIds =
             |> Launched.leaderThreadId (System.UInt64.MaxValue - 1UL)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixTaskLifecycle.trySpawn 0 1 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // The refusal carries no system, and the one before it is as it was:
@@ -552,7 +554,7 @@ module TestThreadIds =
         |> Set.map OsThreadId.toUInt64
         |> shouldEqual (Set.singleton (System.UInt64.MaxValue - 1UL))
 
-        UnixTaskLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // One below, the counter hands out its last ID.
@@ -564,7 +566,7 @@ module TestThreadIds =
         let id, system = spawnOrFail 1 system
         id |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
-        UnixTaskLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
     // ------------------------------------------------------------------
@@ -747,7 +749,7 @@ module TestThreadIds =
             | Op.Spawn index ->
                 let parent = live.[index % live.Length]
                 let held = liveIds system
-                let actual = UnixTaskLifecycle.trySpawn parent nextName (CpuId 0) system
+                let actual = UnixThreadLifecycle.trySpawn parent nextName (CpuId 0) system
 
                 match modelNext held model, actual with
                 | Expected.Exhausted, Ok (SpawnAnswer.Failed error, after) ->
@@ -800,7 +802,7 @@ module TestThreadIds =
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
                 let task = live.[index % live.Length]
-                let ended = UnixTaskLifecycle.exitGroup task 0 system
+                let ended = UnixThreadLifecycle.exitGroup task 0 system
 
                 // Every task's ID is freed with it, the process leaves the
                 // machine, and nothing else on the machine moves.

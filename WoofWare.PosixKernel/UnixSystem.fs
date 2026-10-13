@@ -532,12 +532,12 @@ type UnixSystemDefect<'Thread> =
     /// is what a later `bind` or `connect` completes.
     | BoundToPortZero of socket : SocketId
     /// A task the table does not hold has handler frames.
-    | HandlerFramesWithoutTask of task : 'Thread
+    | HandlerFramesWithoutThread of task : 'Thread
     /// A task the table does not hold has a signal mask.
-    | MaskWithoutTask of task : 'Thread
+    | MaskWithoutThread of task : 'Thread
     /// A task the table does not hold has a mask for a `sigsuspend(2)` to
     /// restore.
-    | MaskToRestoreWithoutTask of task : 'Thread
+    | MaskToRestoreWithoutThread of task : 'Thread
     /// A task asleep in a syscall other than `sigsuspend(2)` has a mask for a
     /// `sigsuspend` to restore. A task has one only while it is in that call or
     /// returning from it, and a task returns to user mode before it makes
@@ -548,7 +548,7 @@ type UnixSystemDefect<'Thread> =
     | SigsuspendWithoutMaskToRestore of task : 'Thread
     /// A pending signal is directed at a task the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
-    | PendingSignalTargetWithoutTask of task : 'Thread * signal : Signal
+    | PendingSignalTargetWithoutThread of task : 'Thread * signal : Signal
     /// The process's signal state reads signals under a numbering other than
     /// its machine's platform assigns, so a signal in the signal tables may
     /// have a different number, or none, under the kernel's numbering.
@@ -572,7 +572,7 @@ type UnixSystemDefect<'Thread> =
     | UmaskNotOfPlatform of umask : PermissionBits * platform : SimulatedUnixPlatform
     /// The process's leader is not one of its tasks. A running process always has
     /// its leader, since the leader cannot exit while another task lives.
-    | LeaderWithoutTask of leader : 'Thread
+    | LeaderWithoutThread of leader : 'Thread
     /// Two live tasks report the same thread ID, so a lock that records its owner
     /// by thread ID would take either for the other.
     | DuplicateOsThreadId of id : OsThreadId * tasks : 'Thread list
@@ -587,11 +587,11 @@ type UnixSystemDefect<'Thread> =
     /// Darwin machine, or the other way about.
     | ThreadIdAllocatorNotOfFlavour of flavour : SimulatedUnixFlavour * allocator : ThreadIdAllocator
     /// The machine's thread ID allocator records as live the IDs in
-    /// `withoutTask`, which no task holds, and does not record those in
+    /// `withoutThread`, which no task holds, and does not record those in
     /// `notRecorded`, which tasks hold. The allocator hands out only IDs it
     /// does not record as live, so one it fails to record could be handed to a
     /// second task, and one it records for no task is never handed out again.
-    | LiveThreadIdsMismatch of withoutTask : Set<OsThreadId> * notRecorded : Set<OsThreadId>
+    | LiveThreadIdsMismatch of withoutThread : Set<OsThreadId> * notRecorded : Set<OsThreadId>
     /// The machine records as live the process IDs in `withoutProcess`, which
     /// no process on it has, and does not record those in `notRecorded`, which
     /// processes on it have. A new process is never given an ID the machine
@@ -656,7 +656,7 @@ type UnixSystemDefect<'Thread> =
         flavour : SimulatedUnixFlavour
     /// The task `task` is on the logical processor `cpu`, which is not one of
     /// the machine's `processorCount`, numbered from 0. See
-    /// `UnixTaskState.cpu`.
+    /// `UnixThreadState.cpu`.
     | CpuBeyondMachine of task : 'Thread * cpu : CpuId * processorCount : int
     /// The machine records the task with thread ID `occupant` as running on
     /// the logical processor `cpu`, which is not one of its `processorCount`,
@@ -665,10 +665,10 @@ type UnixSystemDefect<'Thread> =
     /// The machine records the task with thread ID `occupant` as running on
     /// the logical processor `cpu`, and no live task has that thread ID: a
     /// task left the processor without the machine recording it.
-    | OccupantWithoutTask of cpu : CpuId * occupant : OsThreadId
+    | OccupantWithoutThread of cpu : CpuId * occupant : OsThreadId
     /// The machine records `task` as running on the logical processor
     /// `occupied`, and the task's own processor is `cpu`: a running task's
-    /// processor is the one it runs on (`UnixTaskState.cpu`).
+    /// processor is the one it runs on (`UnixThreadState.cpu`).
     | OccupantOnAnotherCpu of task : 'Thread * occupied : CpuId * cpu : CpuId
     /// A task is parked in a syscall that nothing in this version parks a task
     /// in, such as `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`,
@@ -878,11 +878,11 @@ module UnixSystem =
         system.Leader
 
     /// Every task the process has, by the client's name for it, which
-    /// `UnixTaskState`'s readers read. A name the process has no task by,
+    /// `UnixThreadState`'s readers read. A name the process has no task by,
     /// because the task was never created or has exited, has no entry.
-    let tasks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
-        : Map<'Thread, UnixTaskState>
+        : Map<'Thread, UnixThreadState>
         =
         system.Tasks
 
@@ -1373,7 +1373,7 @@ module UnixSystem =
     /// holds) is skipped.
     let internal machineDefects<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (complete : bool)
-        (processes : (UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixTaskState>) list)
+        (processes : (UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>) list)
         (scheduling : UnixSchedulingState)
         (machine : UnixMachineState)
         : UnixSystemDefect<'Thread> list
@@ -1381,7 +1381,7 @@ module UnixSystem =
         let onlyIfComplete (defects : unit -> UnixSystemDefect<'Thread> list) : UnixSystemDefect<'Thread> list =
             if complete then defects () else []
 
-        let allTasks : ('Thread * UnixTaskState) list =
+        let allThreads : ('Thread * UnixThreadState) list =
             processes |> List.collect (fun (_, tasks) -> Map.toList tasks)
 
 
@@ -1940,7 +1940,7 @@ module UnixSystem =
             <| fun () ->
 
                 let implied =
-                    allTasks
+                    allThreads
                     |> List.collect (fun (_, state) ->
                         match state.Parked with
                         | None -> []
@@ -1969,7 +1969,7 @@ module UnixSystem =
             <| fun () ->
 
                 let parks =
-                    allTasks
+                    allThreads
                     |> List.choose (fun (_, state) ->
                         match state.Parked with
                         | Some {
@@ -1997,7 +1997,7 @@ module UnixSystem =
 
 
         let parkOrdinals =
-            allTasks
+            allThreads
             |> List.choose (fun (task, state) -> state.Parked |> Option.map (fun park -> task, park.Ordinal))
 
         let parkOrdinalFreshness =
@@ -2188,7 +2188,7 @@ module UnixSystem =
                     [ UnixSystemDefect.ThreadIdAllocatorNotOfFlavour (flavour, allocator) ]
 
             let duplicates =
-                allTasks
+                allThreads
                 |> List.groupBy (fun (_, state) -> state.OsThreadId)
                 |> List.choose (fun (id, holders) ->
                     match holders with
@@ -2198,7 +2198,7 @@ module UnixSystem =
                 )
 
             let unmintable =
-                allTasks
+                allThreads
                 |> List.filter (fun (_, state) -> not (ThreadIdAllocator.couldHaveMinted state.OsThreadId allocator))
                 |> List.map (fun (task, state) ->
                     UnixSystemDefect.OsThreadIdNotMintable (task, state.OsThreadId, allocator)
@@ -2208,7 +2208,7 @@ module UnixSystem =
                 onlyIfComplete
                 <| fun () ->
 
-                    let held = allTasks |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
+                    let held = allThreads |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
                     let recorded = ThreadIdAllocator.live allocator
 
                     if held = recorded then
@@ -2230,7 +2230,7 @@ module UnixSystem =
         // machine records as live, which every process's tasks contribute to.
         let occupants =
             let byThreadId =
-                allTasks
+                allThreads
                 |> List.map (fun (task, state) -> state.OsThreadId, (task, state))
                 |> Map.ofList
 
@@ -2257,7 +2257,7 @@ module UnixSystem =
                             complete
                             || not (Set.contains occupant (ThreadIdAllocator.live machine.ThreadIds))
                         then
-                            [ UnixSystemDefect.OccupantWithoutTask (cpu, occupant) ]
+                            [ UnixSystemDefect.OccupantWithoutThread (cpu, occupant) ]
                         else
                             []
 
@@ -3015,16 +3015,16 @@ module UnixSystem =
                     [ UnixSystemDefect.SignalNumberingMismatch (stateNumbering, platformNumbering) ]
 
             let frames =
-                SignalState.tasksWithFrames signals
+                SignalState.threadsWithFrames signals
                 |> Set.toList
                 |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
-                |> List.map UnixSystemDefect.HandlerFramesWithoutTask
+                |> List.map UnixSystemDefect.HandlerFramesWithoutThread
 
             let masks =
-                SignalState.tasksWithMasks signals
+                SignalState.threadsWithMasks signals
                 |> Set.toList
                 |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
-                |> List.map UnixSystemDefect.MaskWithoutTask
+                |> List.map UnixSystemDefect.MaskWithoutThread
 
             // A mask to restore exists from a `sigsuspend` until its task
             // returns to user mode, so exactly while the task is parked in the
@@ -3032,19 +3032,19 @@ module UnixSystem =
             // two is true is the client's, so what is checked is that no task
             // parked in anything else has one, and every task parked in it does.
             let toRestore =
-                let restoring = SignalState.tasksWithMasksToRestore signals
+                let restoring = SignalState.threadsWithMasksToRestore signals
 
                 let orphaned =
                     restoring
                     |> Set.toList
                     |> List.filter (fun task -> not (Map.containsKey task system.Tasks))
-                    |> List.map UnixSystemDefect.MaskToRestoreWithoutTask
+                    |> List.map UnixSystemDefect.MaskToRestoreWithoutThread
 
                 let parked =
                     system.Tasks
                     |> Map.toList
                     |> List.choose (fun (task, state) ->
-                        match UnixTaskState.park state with
+                        match UnixThreadState.park state with
                         | Some {
                                    Syscall = ParkedSyscall.SigSuspend
                                } when not (Set.contains task restoring) ->
@@ -3065,7 +3065,7 @@ module UnixSystem =
                 |> List.choose (fun entry ->
                     match entry.Target with
                     | ValueSome task when not (Map.containsKey task system.Tasks) ->
-                        Some (UnixSystemDefect.PendingSignalTargetWithoutTask (task, entry.Signal))
+                        Some (UnixSystemDefect.PendingSignalTargetWithoutThread (task, entry.Signal))
                     | ValueSome _
                     | ValueNone -> None
                 )
@@ -3096,7 +3096,7 @@ module UnixSystem =
         // thread ID is the process ID.
         let leader =
             match Map.tryFind system.Leader system.Tasks with
-            | None -> [ UnixSystemDefect.LeaderWithoutTask system.Leader ]
+            | None -> [ UnixSystemDefect.LeaderWithoutThread system.Leader ]
             | Some state ->
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux when

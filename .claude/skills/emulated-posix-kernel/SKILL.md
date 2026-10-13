@@ -1,6 +1,6 @@
 ---
 name: emulated-posix-kernel
-description: Deciding how the emulated kernel should answer a syscall — whether a fact belongs to the platform, to boot or process configuration, or to the client; whose encoding a value is stated in; where per-task state lives; which test tier can observe the answer. Use when adding or changing anything in WoofWare.PosixKernel (the Unix* syscall files — UnixSocket.fs, UnixConnection.fs, UnixPoll.fs, UnixKqueue.fs, UnixInotify.fs, UnixDescriptor.fs, UnixPathResolution.fs, UnixReadWrite.fs, UnixNamespace.fs, UnixPipe.fs, UnixSignal.fs, UnixClock.fs, UnixEntropy.fs, UnixCredentials.fs, UnixTaskLifecycle.fs, UnixWait.fs, UnixSystem.fs, UnixBootImage.fs — as well as the platform profile and the per-syscall divergence rules it selects between — SimulatedUnixPlatform.fs, SimulatedUnixFlavour.fs, StartingPointRules.fs, CreatingOpenRules.fs, MkDirRules.fs, MkNodRules.fs, RemovalRules.fs, RenameRules.fs, AccessRules.fs, StatRules.fs, AttributeChangeRules.fs, TimestampChangeRules.fs, OwnerChangeRules.fs, ProtectedFiles.fs, Sockaddr.fs, UserBuffer.fs, EmulatedFileSystemType.fs — and ProcessLaunch.fs, VirtualFileSystem.fs, PathWalk.fs, FileDescriptorRegistry.fs, Signal.fs, SignalState.fs). Carries measured Linux/Darwin divergence tables — consult them rather than re-measuring.
+description: Deciding how the emulated kernel should answer a syscall — whether a fact belongs to the platform, to boot or process configuration, or to the client; whose encoding a value is stated in; where per-task state lives; which test tier can observe the answer. Use when adding or changing anything in WoofWare.PosixKernel (the Unix* syscall files — UnixSocket.fs, UnixConnection.fs, UnixPoll.fs, UnixKqueue.fs, UnixInotify.fs, UnixDescriptor.fs, UnixPathResolution.fs, UnixReadWrite.fs, UnixNamespace.fs, UnixPipe.fs, UnixSignal.fs, UnixClock.fs, UnixEntropy.fs, UnixCredentials.fs, UnixThreadLifecycle.fs, UnixWait.fs, UnixSystem.fs, UnixBootImage.fs — as well as the platform profile and the per-syscall divergence rules it selects between — SimulatedUnixPlatform.fs, SimulatedUnixFlavour.fs, StartingPointRules.fs, CreatingOpenRules.fs, MkDirRules.fs, MkNodRules.fs, RemovalRules.fs, RenameRules.fs, AccessRules.fs, StatRules.fs, AttributeChangeRules.fs, TimestampChangeRules.fs, OwnerChangeRules.fs, ProtectedFiles.fs, Sockaddr.fs, UserBuffer.fs, EmulatedFileSystemType.fs — and ProcessLaunch.fs, VirtualFileSystem.fs, PathWalk.fs, FileDescriptorRegistry.fs, Signal.fs, SignalState.fs). Carries measured Linux/Darwin divergence tables — consult them rather than re-measuring.
 ---
 
 # Deciding what the emulated kernel says
@@ -74,14 +74,14 @@ Two rules for adding a configuration knob:
 
 The criterion is **whether an absent key has a truthful reading**:
 
-- **Field on `UnixTaskState`** when it does not — `Cpu`, `OsThreadId`. There is
+- **Field on `UnixThreadState`** when it does not — `Cpu`, `OsThreadId`. There is
   no honest default processor index or thread ID, and an arbitrary one aliases
   two tasks. As a field, the compiler asks every future task-creation site which
   value it wants.
 - **`Map<'Thread, _>` on the kernel** when it does — `SignalState`'s handler
   frames (no frame, so an empty mask).
 
-CPU placement has both, as Linux does. A task's processor (`UnixTaskState.Cpu`,
+CPU placement has both, as Linux does. A task's processor (`UnixThreadState.Cpu`,
 the one it last ran on) is a field, because every task has one. Which task each
 processor is running (`UnixSchedulingState.Occupants`) is a `Map<CpuId, OsThreadId>`
 on the *machine*, because an idle processor is a truthful reading of an absent

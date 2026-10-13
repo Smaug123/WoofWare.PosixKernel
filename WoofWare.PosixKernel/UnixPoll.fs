@@ -1361,7 +1361,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixPoll.poll: task %O{task} is parked in %A{parked}, and is issuing a poll. A task blocks in one syscall at a time; a parked poll is finished with `finishPoll` (this is a bug in the client)."
@@ -1432,7 +1432,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.Poll parked as held) ->
             // `close` refuses to close a descriptor a parked Linux poll
             // watches, so each description the call held is still named by its
@@ -1597,7 +1597,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixPoll.epollWait: task %O{task} is parked in %A{parked}, and is issuing an epoll_wait. A task blocks in one syscall at a time; a parked wait is finished with `finishEpollWait` (this is a bug in the client)."
@@ -1682,7 +1682,7 @@ module UnixPoll =
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let parked =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some (ParkedSyscall.EpollWait parked) -> parked
             | Some other ->
                 failwith
@@ -1726,7 +1726,7 @@ module UnixPoll =
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 

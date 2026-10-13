@@ -75,7 +75,7 @@ module TestFifoOpenPark =
         : unit
         =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure task
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             // A real sleeping open holds a description no descriptor names. One

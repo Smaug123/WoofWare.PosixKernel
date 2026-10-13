@@ -123,7 +123,7 @@ module TestXmlDocumentation =
 
     /// The names `text` mentions that the library has but a client cannot reach.
     /// A dotted name is read as the longest prefix of it that names something,
-    /// so `UnixSystem.tasks` is the function and not the module.
+    /// so `UnixSystem.threads` is the function and not the module.
     let private unreachableNames (names : Map<string, bool>) (text : string) : string list =
         [
             for span in dottedIdentifier.Matches (text.Replace ("WoofWare.PosixKernel.", "")) do

@@ -67,7 +67,7 @@ module TestWakeCondition =
             | registry, None -> registry
             | _, Some error -> failwith $"expected the lock to be granted, got %O{error}"
 
-        let system = withRegistry registry system |> Tasks.spawn 1
+        let system = withRegistry registry system |> Threads.spawn 1
 
         // A listener holding a connection, registered for EVFILT_READ with the first
         // kqueue and queued there, for `KqueueEventDeliverable`'s true answer. The

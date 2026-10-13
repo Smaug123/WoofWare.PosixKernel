@@ -149,7 +149,7 @@ type internal SignalMaskChange =
 ///
 /// One instance of this type belongs to each simulated process. A client reads
 /// it out of a system (`UnixSystem.signals`), and changes it only through the
-/// signal calls (`UnixSignal`) and a task's leaving (`UnixTaskLifecycle`);
+/// signal calls (`UnixSignal`) and a task's leaving (`UnixThreadLifecycle`);
 /// the data shape is exercised by property tests against a
 /// structurally-different reference oracle.
 ///
@@ -483,7 +483,8 @@ module SignalState =
         | None -> []
 
     /// Every task with a handler frame.
-    let tasksWithFrames (state : SignalState<'Thread, 'Handler>) : Set<'Thread> = state.Frames |> Map.keys |> Set.ofSeq
+    let threadsWithFrames (state : SignalState<'Thread, 'Handler>) : Set<'Thread> =
+        state.Frames |> Map.keys |> Set.ofSeq
 
     /// `task`'s signal mask: what `sigprocmask(2)` would answer as its old
     /// mask.
@@ -493,7 +494,8 @@ module SignalState =
         | None -> SignalMask.empty
 
     /// Every task whose mask blocks anything.
-    let tasksWithMasks (state : SignalState<'Thread, 'Handler>) : Set<'Thread> = state.Blocked |> Map.keys |> Set.ofSeq
+    let threadsWithMasks (state : SignalState<'Thread, 'Handler>) : Set<'Thread> =
+        state.Blocked |> Map.keys |> Set.ofSeq
 
     /// `state` with `task`'s mask `mask`, already screened by `maskable`.
     let private withMask
@@ -554,7 +556,7 @@ module SignalState =
     /// Every task with a mask to restore: those in `sigsuspend(2)` or
     /// `pause(2)`, and those whose call has ended and which have not yet
     /// returned to user mode.
-    let tasksWithMasksToRestore (state : SignalState<'Thread, 'Handler>) : Set<'Thread> =
+    let threadsWithMasksToRestore (state : SignalState<'Thread, 'Handler>) : Set<'Thread> =
         state.MasksToRestore |> Map.keys |> Set.ofSeq
 
     /// `sigsuspend(2)`'s change to `task`'s mask: `temporary` replaces it, SIGKILL
@@ -589,7 +591,7 @@ module SignalState =
     /// Signals pending on the process stay for another thread to take.
     ///
     /// For a thread that has exited.
-    let internal forgetTask
+    let internal forgetThread
         (thread : 'Thread)
         (state : SignalState<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
@@ -785,7 +787,7 @@ module SignalState =
 
     /// Fails loudly unless `leader` and `task` are both among `tasks`: each is a
     /// bug in the client.
-    let private checkTask (operation : string) (tasks : Set<'Thread>) (role : string) (task : 'Thread) : unit =
+    let private checkThread (operation : string) (tasks : Set<'Thread>) (role : string) (task : 'Thread) : unit =
         if not (Set.contains task tasks) then
             failwith $"SignalState.%s{operation}: the %s{role} %O{task} is not one of the process's tasks %O{tasks}."
 
@@ -806,7 +808,7 @@ module SignalState =
         | ValueSome target ->
             if not (Set.contains target tasks) then
                 failwith
-                    $"SignalState: %O{entry.Signal} is pending on %O{target} alone, which is not one of the process's tasks %O{tasks}; a task's own signals should have left with it (forgetTask)."
+                    $"SignalState: %O{entry.Signal} is pending on %O{target} alone, which is not one of the process's tasks %O{tasks}; a task's own signals should have left with it (forgetThread)."
 
             if blocks target then
                 Receiver.Nobody
@@ -856,7 +858,7 @@ module SignalState =
         (state : SignalState<'Thread, 'Handler>)
         : Result<SignalGeneration<'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        checkTask "generate" tasks "leader" leader
+        checkThread "generate" tasks "leader" leader
 
         let entry =
             { entry with
@@ -1064,8 +1066,8 @@ module SignalState =
         (state : SignalState<'Thread, 'Handler>)
         : Result<SignalDelivery<'Thread, 'Handler> option * SignalState<'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        checkTask "onReturnToUser" tasks "leader" leader
-        checkTask "onReturnToUser" tasks "task asked" task
+        checkThread "onReturnToUser" tasks "leader" leader
+        checkThread "onReturnToUser" tasks "task asked" task
 
         let beyondLeader =
             state.Pending

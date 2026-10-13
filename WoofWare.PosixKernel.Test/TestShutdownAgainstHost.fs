@@ -1491,7 +1491,7 @@ module TestShutdownAgainstHost =
         let system =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.ensure 1
+            |> Threads.ensure 1
 
         { system with
             Process =

@@ -877,7 +877,7 @@ module TestKeventRegistration =
                 match UnixKqueue.tryFinishKevent 2 system with
                 | Ok (KeventOutcome.Answered [ event ], finished) ->
                     event |> shouldEqual expected
-                    UnixTaskTable.parkedFor 2 finished.Tasks |> shouldEqual None
+                    UnixThreadTable.parkedFor 2 finished.Tasks |> shouldEqual None
                     finished
                 | other -> failwith $"expected task 2 to take the event, got %A{other}"
 

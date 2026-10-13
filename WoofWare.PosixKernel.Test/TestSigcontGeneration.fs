@@ -24,7 +24,7 @@ module TestSigcontGeneration =
     /// The probe's second thread: "s" in its rows.
     let private second : int = 1
 
-    let private taskName (task : int) : string = if task = main then "m" else "s"
+    let private threadName (task : int) : string = if task = main then "m" else "s"
 
     /// The probe's names for the signals its rows name.
     let private probeName (signal : Signal) : string =
@@ -169,7 +169,7 @@ module TestSigcontGeneration =
 
     let private spawnSecond : Step =
         fun r ->
-            match UnixTaskLifecycle.trySpawn main second (CpuId 0) r.System with
+            match UnixThreadLifecycle.trySpawn main second (CpuId 0) r.System with
             | Ok (SpawnAnswer.Spawned _, system) -> (returns main >=> returns second) (withSystem system r)
             | other -> failwith $"spawn: %A{other}"
 
@@ -182,7 +182,7 @@ module TestSigcontGeneration =
     let private routeName (route : Route) : string =
         match route with
         | Route.Process -> "proc"
-        | Route.Task task -> taskName task
+        | Route.Task task -> threadName task
 
     /// `kill(getpid())` or `pthread_kill` by `sender`.
     let private send (sender : int) (route : Route) (signal : Signal) : Step =
@@ -221,7 +221,7 @@ module TestSigcontGeneration =
                 | [] -> "-"
                 | runs ->
                     runs
-                    |> List.map (fun (signal, task, phase) -> $"%s{probeName signal}:%s{taskName task}@%d{phase}")
+                    |> List.map (fun (signal, task, phase) -> $"%s{probeName signal}:%s{threadName task}@%d{phase}")
                     |> String.concat ","
 
             print $" runs=%s{runs}" r
@@ -289,7 +289,7 @@ module TestSigcontGeneration =
             | false, true -> "s"
             | true, true -> "both"
 
-        $"gen %s{probeName row.Signal} %s{dispositionName row.Disposition} to=%s{routeName row.Route} from=%s{taskName row.Sender} blk=%s{blk}"
+        $"gen %s{probeName row.Signal} %s{dispositionName row.Disposition} to=%s{routeName row.Route} from=%s{threadName row.Sender} blk=%s{blk}"
 
     let private genRows : GenRow list =
         let shapes (signal : Signal) (disposition : Disposition) (routes : Route list) =
@@ -336,7 +336,7 @@ module TestSigcontGeneration =
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
-            match UnixTaskTable.parkedFor row.Sleeper r.System.Tasks with
+            match UnixThreadTable.parkedFor row.Sleeper r.System.Tasks with
             | None -> Ok r
             | Some _ ->
 
@@ -443,7 +443,7 @@ module TestSigcontGeneration =
     let private sleepTag (row : SleepRow) : string =
         let call = if row.InSigsuspend then "sigsuspend" else "poll"
         let route = if row.ToProcess then "proc" else "sleeper"
-        $"sleep in=%s{call} %s{dispositionName row.Disposition} sleeper=%s{taskName row.Sleeper} to=%s{route}"
+        $"sleep in=%s{call} %s{dispositionName row.Disposition} sleeper=%s{threadName row.Sleeper} to=%s{route}"
 
     let private sleepRows : SleepRow list =
         [

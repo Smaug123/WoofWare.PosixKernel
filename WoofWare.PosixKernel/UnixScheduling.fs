@@ -47,7 +47,7 @@ module internal GetCpuRefusal =
 ///
 /// The client chooses which task runs where, and reports each choice with
 /// `dispatch`; this library records it, and answers `getcpu` from the record.
-/// A task's processor (`UnixTaskState.cpu`) is the one it last ran on, or,
+/// A task's processor (`UnixThreadState.cpu`) is the one it last ran on, or,
 /// before it first runs, the one its creator named. Each processor of the
 /// machine runs at most one task, whichever process it belongs to, and a task
 /// is running exactly when it is its processor's (`runningOn`).
@@ -82,7 +82,7 @@ module UnixScheduling =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get task system.Tasks
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
             failwith
@@ -143,7 +143,7 @@ module UnixScheduling =
         | SimulatedUnixFlavour.Darwin -> Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get task system.Tasks
 
         match state.Parked with
         | Some park ->

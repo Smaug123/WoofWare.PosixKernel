@@ -7,17 +7,17 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// Tasks joining and leaving a process, and the process ending:
-/// `UnixTaskLifecycle.spawn`, `UnixTaskLifecycle.exitThread` and
-/// `UnixTaskLifecycle.exitGroup`. Every system here has task 0 as its leader.
+/// `UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread` and
+/// `UnixThreadLifecycle.exitGroup`. Every system here has task 0 as its leader.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
-module TestUnixTaskLifecycle =
+module TestUnixThreadLifecycle =
 
     let private platforms : SimulatedUnixPlatform list =
         [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ]
 
-    let private withTask (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Tasks.ensure name system
+    let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        Threads.ensure name system
 
     let private mapSignals
         (f : SignalState<int, string> -> SignalState<int, string>)
@@ -60,21 +60,21 @@ module TestUnixTaskLifecycle =
             }
 
     let private exitOrFail (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixTaskLifecycle.tryExitThread task 0 system with
+        match UnixThreadLifecycle.tryExitThread task 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
         | Ok (ProcessFate.ProcessEnded ended) ->
             failwith $"expected the process to carry on, but it ended: %O{ended.Termination}"
         | Error refusal -> failwith $"expected the exit to be answered, got: %s{ThreadExitRefusal.describe refusal}"
 
     /// The per-task entries the process holds, each of which must name a live task.
-    let private perTaskEntries (proc : UnixProcessState<int, string>) : string list =
+    let private perThreadEntries (proc : UnixProcessState<int, string>) : string list =
         let frames =
-            SignalState.tasksWithFrames proc.Signals
+            SignalState.threadsWithFrames proc.Signals
             |> Set.toList
             |> List.map (fun t -> $"frames of %d{t}")
 
         let masks =
-            SignalState.tasksWithMasks proc.Signals
+            SignalState.threadsWithMasks proc.Signals
             |> Set.toList
             |> List.map (fun t -> $"mask of %d{t}")
 
@@ -99,8 +99,8 @@ module TestUnixTaskLifecycle =
 
             let system =
                 system
-                |> withTask 1
-                |> withTask 2
+                |> withThread 1
+                |> withThread 2
                 |> HandlerFrames.enterIn "h" 1 (Set.ofList [ Signal.SIGUSR1 ; Signal.SIGUSR2 ])
                 |> HandlerFrames.enterIn "h" 2 (Set.singleton Signal.SIGUSR2)
                 |> mapSignals (
@@ -142,7 +142,7 @@ module TestUnixTaskLifecycle =
                     }
                 ]
 
-            SignalState.tasksWithFrames after.Process.Signals
+            SignalState.threadsWithFrames after.Process.Signals
             |> shouldEqual (Set.singleton 2)
 
             SignalState.maskOf 2 after.Process.Signals
@@ -156,24 +156,25 @@ module TestUnixTaskLifecycle =
         for platform in platforms do
             let system, queue = world platform
 
-            let system = system |> withTask 1 |> withTask 2 |> UnixWait.park 2 (flockOn queue)
+            let system =
+                system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
 
             let park =
-                match UnixTaskTable.parkOf 2 system.Tasks with
+                match UnixThreadTable.parkOf 2 system.Tasks with
                 | Some park -> park
                 | None -> failwith "expected task 2 to be parked"
 
-            UnixTaskLifecycle.tryExitThread 2 0 system
+            UnixThreadLifecycle.tryExitThread 2 0 system
             |> shouldEqual (Error (ThreadExitRefusal.Parked (2, park)))
 
     /// The leader and one other task, which leaves, so that what follows is about
     /// being *last* rather than about being alone from the start. The leader, which
     /// stays, blocks a signal and has one pending on it alone.
-    let private lastTaskStanding (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
+    let private lastThreadStanding (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         let system, _ = world platform
 
         system
-        |> withTask 1
+        |> withThread 1
         |> exitOrFail 1
         |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGUSR1)
         |> mapSignals (
@@ -192,18 +193,18 @@ module TestUnixTaskLifecycle =
         // argument's low 8 bits. The last thread here is the leader, since a leader
         // cannot exit before the others.
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.linuxArm64 ] do
-            let system = lastTaskStanding platform
+            let system = lastThreadStanding platform
 
             for status, kept in [ 0, 0 ; 5, 5 ; 256, 0 ; 263, 7 ; -1, 255 ; System.Int32.MinValue, 0 ] do
-                match UnixTaskLifecycle.tryExitThread 0 status system with
+                match UnixThreadLifecycle.tryExitThread 0 status system with
                 | Ok (ProcessFate.ProcessEnded ended) ->
                     match ended.Termination with
                     | ProcessTermination.Exited exitStatus ->
                         (status, ExitStatus.waitidStatus exitStatus) |> shouldEqual (status, kept)
                     | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
 
-                    EndedMachine.assertTasksGone system ended
-                    perTaskEntries ended.FinalProcess |> shouldEqual []
+                    EndedMachine.assertThreadsGone system ended
+                    perThreadEntries ended.FinalProcess |> shouldEqual []
 
                     { ended.FinalProcess with
                         Signals = system.Process.Signals
@@ -213,8 +214,8 @@ module TestUnixTaskLifecycle =
 
     [<Test>]
     let ``on Darwin the last task's exit is refused`` () : unit =
-        UnixTaskLifecycle.tryExitThread 0 0 (lastTaskStanding SimulatedUnixPlatform.macOsArm64)
-        |> shouldEqual (Error (ThreadExitRefusal.LastTaskOnDarwin 0))
+        UnixThreadLifecycle.tryExitThread 0 0 (lastThreadStanding SimulatedUnixPlatform.macOsArm64)
+        |> shouldEqual (Error (ThreadExitRefusal.LastThreadOnDarwin 0))
 
     [<Test>]
     let ``the leader's exit is refused while another task lives, and answered once it is last`` () : unit =
@@ -223,21 +224,21 @@ module TestUnixTaskLifecycle =
         // process carries on without its leader, which this library does not model.
         for platform in platforms do
             let system, _ = world platform
-            let system = system |> withTask 1 |> withTask 2
+            let system = system |> withThread 1 |> withThread 2
 
-            UnixTaskLifecycle.tryExitThread 0 0 system
+            UnixThreadLifecycle.tryExitThread 0 0 system
             |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers 0))
 
             let system = system |> exitOrFail 1
 
-            UnixTaskLifecycle.tryExitThread 0 0 system
+            UnixThreadLifecycle.tryExitThread 0 0 system
             |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers 0))
 
             let system = system |> exitOrFail 2
 
-            match SimulatedUnixPlatform.flavour platform, UnixTaskLifecycle.tryExitThread 0 0 system with
+            match SimulatedUnixPlatform.flavour platform, UnixThreadLifecycle.tryExitThread 0 0 system with
             | SimulatedUnixFlavour.Linux, Ok (ProcessFate.ProcessEnded _) -> ()
-            | SimulatedUnixFlavour.Darwin, Error (ThreadExitRefusal.LastTaskOnDarwin 0) -> ()
+            | SimulatedUnixFlavour.Darwin, Error (ThreadExitRefusal.LastThreadOnDarwin 0) -> ()
             | flavour, other ->
                 failwith $"%O{flavour}: expected the lone leader's exit to be the last task's, got %A{other}"
 
@@ -246,10 +247,10 @@ module TestUnixTaskLifecycle =
         // The park is the first thing a task in a syscall is refused for, whoever it is.
         for platform in platforms do
             let system, queue = world platform
-            let system = system |> withTask 1 |> UnixWait.park 0 (flockOn queue)
-            let park = UnixTaskTable.parkOf 0 system.Tasks |> Option.get
+            let system = system |> withThread 1 |> UnixWait.park 0 (flockOn queue)
+            let park = UnixThreadTable.parkOf 0 system.Tasks |> Option.get
 
-            UnixTaskLifecycle.tryExitThread 0 0 system
+            UnixThreadLifecycle.tryExitThread 0 0 system
             |> shouldEqual (Error (ThreadExitRefusal.Parked (0, park)))
 
     [<Test>]
@@ -259,9 +260,9 @@ module TestUnixTaskLifecycle =
 
             let system =
                 system
-                |> withTask 1
-                |> withTask 2
-                |> withTask 3
+                |> withThread 1
+                |> withThread 2
+                |> withThread 3
                 |> UnixWait.park 3 (flockOn queue)
                 |> HandlerFrames.enterIn "h" 2 (Set.singleton Signal.SIGUSR2)
                 |> mapSignals (
@@ -279,7 +280,7 @@ module TestUnixTaskLifecycle =
                         }
                 )
 
-            let ended = UnixTaskLifecycle.exitGroup 1 257 system
+            let ended = UnixThreadLifecycle.exitGroup 1 257 system
 
             let expected =
                 match SimulatedUnixPlatform.flavour platform with
@@ -290,8 +291,8 @@ module TestUnixTaskLifecycle =
             | ProcessTermination.Exited status -> ExitStatus.waitidStatus status |> shouldEqual expected
             | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
 
-            EndedMachine.assertTasksGone system ended
-            perTaskEntries ended.FinalProcess |> shouldEqual []
+            EndedMachine.assertThreadsGone system ended
+            perThreadEntries ended.FinalProcess |> shouldEqual []
 
             // The process-directed signal is the process's, not a task's.
             SignalState.pending ended.FinalProcess.Signals
@@ -306,26 +307,28 @@ module TestUnixTaskLifecycle =
     [<Test>]
     let ``exit_group from a parked task, or one that was never registered, fails loudly`` () : unit =
         let system, queue = world SimulatedUnixPlatform.linuxX64
-        let system = system |> withTask 1 |> withTask 2 |> UnixWait.park 2 (flockOn queue)
+
+        let system =
+            system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
 
         let parked =
-            Assert.Throws<exn> (fun () -> UnixTaskLifecycle.exitGroup 2 0 system |> ignore<EndedProcess<int, string>>)
+            Assert.Throws<exn> (fun () -> UnixThreadLifecycle.exitGroup 2 0 system |> ignore<EndedProcess<int, string>>)
 
         parked.Message |> shouldContainText "parked"
 
         let unknown =
-            Assert.Throws<exn> (fun () -> UnixTaskLifecycle.exitGroup 3 0 system |> ignore<EndedProcess<int, string>>)
+            Assert.Throws<exn> (fun () -> UnixThreadLifecycle.exitGroup 3 0 system |> ignore<EndedProcess<int, string>>)
 
         unknown.Message |> shouldContainText "names no task"
 
     [<Test>]
     let ``exiting a task that was never registered fails loudly`` () : unit =
         let system, _ = world SimulatedUnixPlatform.linuxX64
-        let system = system |> withTask 1 |> withTask 2
+        let system = system |> withThread 1 |> withThread 2
 
         let exn =
             Assert.Throws<exn> (fun () ->
-                UnixTaskLifecycle.tryExitThread 3 0 system
+                UnixThreadLifecycle.tryExitThread 3 0 system
                 |> ignore<Result<ProcessFate<unit, int, string>, ThreadExitRefusal<int>>>
             )
 
@@ -338,7 +341,7 @@ module TestUnixTaskLifecycle =
         | Unblock of task : int * Signal
         /// `pthread_sigmask(SIG_BLOCK)` of the signal, by the task.
         | Mask of task : int * Signal
-        | EnqueueOnTask of task : int * Signal
+        | EnqueueOnThread of task : int * Signal
         | EnqueueOnProcess of Signal
         | Park of task : int
         | Unpark of task : int
@@ -382,7 +385,7 @@ module TestUnixTaskLifecycle =
                 3, Gen.zip task signal |> Gen.map Op.Block
                 1, Gen.zip task signal |> Gen.map Op.Unblock
                 2, Gen.zip task signal |> Gen.map Op.Mask
-                3, Gen.zip task signal |> Gen.map Op.EnqueueOnTask
+                3, Gen.zip task signal |> Gen.map Op.EnqueueOnThread
                 1, signal |> Gen.map Op.EnqueueOnProcess
                 1, task |> Gen.map Op.Park
                 1, task |> Gen.map Op.Unpark
@@ -412,19 +415,19 @@ module TestUnixTaskLifecycle =
         | RefusedLast
         | EndedByLastExit
         | EndedByExitGroup
-        | EndedWithParkedTask
+        | EndedWithParkedThread
 
     /// The per-task entries the system holds, each of which must name a task.
     let private orphans (system : UnixSystem<int, string>) : string list =
         let tasks = system.Tasks |> Map.keys |> Set.ofSeq
 
         let frames =
-            Set.difference (SignalState.tasksWithFrames system.Process.Signals) tasks
+            Set.difference (SignalState.threadsWithFrames system.Process.Signals) tasks
             |> Set.toList
             |> List.map (fun t -> $"frames of %d{t}")
 
         let masks =
-            Set.difference (SignalState.tasksWithMasks system.Process.Signals) tasks
+            Set.difference (SignalState.threadsWithMasks system.Process.Signals) tasks
             |> Set.toList
             |> List.map (fun t -> $"mask of %d{t}")
 
@@ -460,8 +463,8 @@ module TestUnixTaskLifecycle =
             ExitStatus.waitidStatus exitStatus |> shouldEqual (kept platform status)
         | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
 
-        EndedMachine.assertTasksGone before ended
-        perTaskEntries ended.FinalProcess |> shouldEqual []
+        EndedMachine.assertThreadsGone before ended
+        perThreadEntries ended.FinalProcess |> shouldEqual []
 
         SignalState.pending ended.FinalProcess.Signals
         |> shouldEqual (
@@ -494,7 +497,7 @@ module TestUnixTaskLifecycle =
                     live parent && not (Set.contains parent model.Parked) && not (live child)
                     ->
                     let after =
-                        match UnixTaskLifecycle.trySpawn parent child (CpuId 0) system with
+                        match UnixThreadLifecycle.trySpawn parent child (CpuId 0) system with
                         | Ok (SpawnAnswer.Spawned _, after) -> after
                         | Ok (SpawnAnswer.Failed error, _) ->
                             failwith $"spawning %d{child} from %d{parent} failed with %O{error}"
@@ -556,7 +559,7 @@ module TestUnixTaskLifecycle =
                     with
                     | Ok (_, after) -> after, model
                     | Error errno -> failwith $"pthread_sigmask(SIG_BLOCK) failed with %O{errno}"
-                | Op.EnqueueOnTask (task, signal) when live task ->
+                | Op.EnqueueOnThread (task, signal) when live task ->
                     mapSignals
                         (SignalState.enqueue
                             {
@@ -587,19 +590,19 @@ module TestUnixTaskLifecycle =
                 | Op.ExitGroup (task, status) when live task && not (Set.contains task model.Parked) ->
                     // An ended process has no state to carry on with, so the run goes on
                     // from the one it ended in, as if the call had not been made.
-                    let ended = UnixTaskLifecycle.exitGroup task status system
+                    let ended = UnixThreadLifecycle.exitGroup task status system
                     assertExited platform status system ended
                     cover LifecycleLabel.EndedByExitGroup
 
                     if not model.Parked.IsEmpty then
-                        cover LifecycleLabel.EndedWithParkedTask
+                        cover LifecycleLabel.EndedWithParkedThread
 
                     system, model
                 | Op.Exit (task, status) when live task ->
-                    let result = UnixTaskLifecycle.tryExitThread task status system
+                    let result = UnixThreadLifecycle.tryExitThread task status system
 
                     if Set.contains task model.Parked then
-                        let park = UnixTaskTable.parkOf task system.Tasks |> Option.get
+                        let park = UnixThreadTable.parkOf task system.Tasks |> Option.get
                         result |> shouldEqual (Error (ThreadExitRefusal.Parked (task, park)))
                         cover LifecycleLabel.RefusedParked
                         system, model
@@ -616,7 +619,7 @@ module TestUnixTaskLifecycle =
 
                             cover LifecycleLabel.EndedByLastExit
                         | SimulatedUnixFlavour.Darwin ->
-                            result |> shouldEqual (Error (ThreadExitRefusal.LastTaskOnDarwin task))
+                            result |> shouldEqual (Error (ThreadExitRefusal.LastThreadOnDarwin task))
                             cover LifecycleLabel.RefusedLast
 
                         // As for `ExitGroup`: the run goes on from the state before.
@@ -642,11 +645,11 @@ module TestUnixTaskLifecycle =
                             |> List.filter (fun entry -> entry.Target <> ValueSome task)
                         )
 
-                        SignalState.tasksWithFrames signalsAfter
-                        |> shouldEqual (Set.remove task (SignalState.tasksWithFrames signalsBefore))
+                        SignalState.threadsWithFrames signalsAfter
+                        |> shouldEqual (Set.remove task (SignalState.threadsWithFrames signalsBefore))
 
-                        SignalState.tasksWithMasks signalsAfter
-                        |> shouldEqual (Set.remove task (SignalState.tasksWithMasks signalsBefore))
+                        SignalState.threadsWithMasks signalsAfter
+                        |> shouldEqual (Set.remove task (SignalState.threadsWithMasks signalsBefore))
 
                         for other in Set.remove task model.Live do
                             SignalState.framesOf other signalsAfter
@@ -665,7 +668,7 @@ module TestUnixTaskLifecycle =
                         ThreadIdAllocator.live after.Machine.ThreadIds
                         |> shouldEqual (
                             Set.remove
-                                (UnixTaskState.osThreadId (UnixTaskTable.get task system.Tasks))
+                                (UnixThreadState.osThreadId (UnixThreadTable.get task system.Tasks))
                                 (ThreadIdAllocator.live system.Machine.ThreadIds)
                         )
 
@@ -704,7 +707,7 @@ module TestUnixTaskLifecycle =
                 | Op.Block _
                 | Op.Unblock _
                 | Op.Mask _
-                | Op.EnqueueOnTask _
+                | Op.EnqueueOnThread _
                 | Op.Park _
                 | Op.Unpark _
                 | Op.Exit _
@@ -739,7 +742,7 @@ module TestUnixTaskLifecycle =
         // Counted over the fixed sample, so a floor fails when a generator change
         // stops reaching the path, not by chance. Each sits at least four
         // standard deviations below the count that 1000 cases reach: measured
-        // over 30 runs per flavour, the rarest is `EndedWithParkedTask`, at a
+        // over 30 runs per flavour, the rarest is `EndedWithParkedThread`, at a
         // mean of 30 and a standard deviation of 7.
         coverage.Count LifecycleLabel.ExitsDroppingAMask |> shouldBeGreaterThan 20
         coverage.Count LifecycleLabel.ExitsDroppingOwnPending |> shouldBeGreaterThan 20
@@ -751,7 +754,7 @@ module TestUnixTaskLifecycle =
         coverage.Count LifecycleLabel.RefusedLeaderFirst |> shouldBeGreaterThan 20
         coverage.Count LifecycleLabel.SpawnsInheritingAMask |> shouldBeGreaterThan 20
         coverage.Count LifecycleLabel.EndedByExitGroup |> shouldBeGreaterThan 50
-        coverage.Count LifecycleLabel.EndedWithParkedTask |> shouldBeGreaterThan 3
+        coverage.Count LifecycleLabel.EndedWithParkedThread |> shouldBeGreaterThan 3
 
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->

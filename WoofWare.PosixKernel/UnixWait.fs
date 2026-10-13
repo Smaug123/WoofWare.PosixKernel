@@ -36,9 +36,9 @@ module UnixWait =
         : UnixSystem<'Thread, 'Handler>
         =
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get task system.Tasks
 
-        let taskPark =
+        let threadPark =
             {
                 Syscall = parked
                 Ordinal = system.Machine.NextParkOrdinal
@@ -51,7 +51,7 @@ module UnixWait =
                 }
             Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
         }
-        |> UnixParkState.setPark task taskPark
+        |> UnixParkState.setPark task threadPark
 
     /// The primitives of the wake condition of the call `task` is parked in
     /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `task` is
@@ -73,7 +73,7 @@ module UnixWait =
         : Set<WakePrimitive> option
         =
         Map.tryFind task system.Tasks
-        |> Option.bind UnixTaskState.parkedIn
+        |> Option.bind UnixThreadState.parkedIn
         |> Option.map (fun parked -> WakeCondition.satisfied task (WakeCondition.ofPark parked) system)
 
     /// The tasks of `asleep` that `system` wakes now, in the order they parked,
@@ -132,7 +132,7 @@ module UnixWait =
                 asleep
                 |> Set.toList
                 |> List.choose (fun task ->
-                    match UnixTaskTable.parkOf task system.Tasks with
+                    match UnixThreadTable.parkOf task system.Tasks with
                     | None ->
                         failwith
                             $"UnixWait.wakes: task %O{task} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the task goes to sleep (this is a bug in the client)."
@@ -402,7 +402,7 @@ module UnixWait =
         asleep
         |> Set.toList
         |> List.collect (fun task ->
-            match UnixTaskTable.parkOf task system.Tasks with
+            match UnixThreadTable.parkOf task system.Tasks with
             | None ->
                 failwith
                     $"UnixWait.deadlines: task %O{task} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the task goes to sleep (this is a bug in the client)."

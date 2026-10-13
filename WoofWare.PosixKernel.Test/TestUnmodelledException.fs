@@ -583,8 +583,8 @@ module TestUnmodelledException =
                 | None -> failwith $"fd %d{fd} names no description"
 
             UnixSystemState.withFileDescriptors registry system
-            |> Tasks.ensure 1
-            |> Tasks.ensure 2
+            |> Threads.ensure 1
+            |> Threads.ensure 2
             |> UnixWait.park
                 2
                 (ParkedSyscall.Flock
@@ -602,8 +602,8 @@ module TestUnmodelledException =
                 agrees
                     ThreadExitRefusal.kind
                     ThreadExitRefusal.describe
-                    (fun () -> UnixTaskLifecycle.tryExitThread task 0 system)
-                    (fun () -> UnixTaskLifecycle.exitThread task 0 system)
+                    (fun () -> UnixThreadLifecycle.tryExitThread task 0 system)
+                    (fun () -> UnixThreadLifecycle.exitThread task 0 system)
             )
             [
                 Observed.Answered

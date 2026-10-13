@@ -62,7 +62,7 @@ module TestConnectPark =
     [<Test>]
     let ``a task parked in a connect is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure task
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =
@@ -110,7 +110,7 @@ module TestConnectPark =
 
         // And asking whether it holds fails loudly, naming it, rather than
         // guessing: a task waits for it only if its park was recorded by hand.
-        let awake = boot SimulatedUnixFlavour.Linux |> Tasks.ensure task
+        let awake = boot SimulatedUnixFlavour.Linux |> Threads.ensure task
 
         let error =
             Assert.Throws<Exception> (fun () ->

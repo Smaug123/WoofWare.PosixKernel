@@ -111,10 +111,10 @@ module TestSocketWait =
     /// The flavour's wait for socket events, for ever: `epoll_wait` with a
     /// timeout of -1, or `kevent` with no changes and a null timeout.
     let private wait (fd : int) (maxEvents : int) (buffer : UserBuffer) (system : UnixSystem<int, string>) : Waited =
-        let system = Tasks.ensure task system
+        let system = Threads.ensure task system
 
         let parkedOn (system : UnixSystem<int, string>) : Waited =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some (ParkedSyscall.EpollWait wait) -> Waited.Parked (wait.Epoll, wait.MaxEvents)
             | Some (ParkedSyscall.Kevent wait) -> Waited.Parked (wait.Kqueue, wait.MaxEvents)
             | other -> failwith $"expected a wait's park, got %A{other}"
@@ -343,7 +343,7 @@ module TestSocketWait =
     let ``an addressless buffer is refused only where the flavour screens`` () : unit =
         let linuxFd, linux = withEventQueue (systemOn SimulatedUnixPlatform.linuxX64)
 
-        UnixPoll.tryEpollWait task linuxFd 8 UserBuffer.Addressless -1 (Tasks.ensure task linux)
+        UnixPoll.tryEpollWait task linuxFd 8 UserBuffer.Addressless -1 (Threads.ensure task linux)
         |> shouldEqual (Error (EpollWaitRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
         let darwinFd, darwin = withEventQueue (systemOn SimulatedUnixPlatform.macOsArm64)

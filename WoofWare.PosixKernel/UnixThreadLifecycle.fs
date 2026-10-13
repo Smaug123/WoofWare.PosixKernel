@@ -85,14 +85,14 @@ type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Hand
 [<RequireQualifiedAccess>]
 type internal ThreadExitRefusal<'Thread> =
     /// The task is blocked in a syscall, so it cannot be making another one.
-    | Parked of task : 'Thread * park : TaskPark
+    | Parked of task : 'Thread * park : ThreadPark
     /// The task is the process's leader, and other tasks live. On both flavours
     /// the process carries on, with a leader that has gone (a zombie task on
     /// Linux); this library keeps the leader until the process ends.
     | LeaderBeforeOthers of task : 'Thread
     /// The task is the last one on Darwin, where what its thread exit does has not
     /// been measured.
-    | LastTaskOnDarwin of task : 'Thread
+    | LastThreadOnDarwin of task : 'Thread
 
 [<RequireQualifiedAccess>]
 module internal ThreadExitRefusal =
@@ -104,7 +104,7 @@ module internal ThreadExitRefusal =
             $"task %O{task} is parked in %A{park.Syscall}, so it cannot be making the thread-exit syscall; whatever ended the thread skipped finishing or abandoning its park"
         | ThreadExitRefusal.LeaderBeforeOthers task ->
             $"task %O{task} is the process's leader, and other tasks are still running; this library does not model a process whose leader has exited before them"
-        | ThreadExitRefusal.LastTaskOnDarwin task ->
+        | ThreadExitRefusal.LastThreadOnDarwin task ->
             $"task %O{task} is the process's last task, and what Darwin does when the last task makes the thread-exit syscall has not been measured"
 
     /// Which exception a public entry point raises this refusal as.
@@ -112,7 +112,7 @@ module internal ThreadExitRefusal =
         match refusal with
         | ThreadExitRefusal.Parked _ -> RefusalKind.Misuse
         | ThreadExitRefusal.LeaderBeforeOthers _ -> RefusalKind.Unmodelled
-        | ThreadExitRefusal.LastTaskOnDarwin _ -> RefusalKind.Unmodelled
+        | ThreadExitRefusal.LastThreadOnDarwin _ -> RefusalKind.Unmodelled
 
 /// What `clone(2)` with `CLONE_THREAD` answered, for a request this library
 /// could answer.
@@ -150,7 +150,7 @@ module internal SpawnRefusal =
 
 /// How tasks join and leave a process, and how a process ends.
 [<RequireQualifiedAccess>]
-module UnixTaskLifecycle =
+module UnixThreadLifecycle =
 
     /// End the process `system` is, as `termination` says: every task goes, and
     /// with each everything the process and the machine held for that task
@@ -165,7 +165,7 @@ module UnixTaskLifecycle =
         =
         let signals =
             (system.Process.Signals, Map.keys system.Tasks)
-            ||> Seq.fold (fun signals task -> SignalState.forgetTask task signals)
+            ||> Seq.fold (fun signals task -> SignalState.forgetThread task signals)
 
         let unparked =
             (system, Map.keys system.Tasks)
@@ -213,7 +213,7 @@ module UnixTaskLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get task system.Tasks
 
         match state.Parked with
         | Some park -> Error (ThreadExitRefusal.Parked (task, park))
@@ -237,7 +237,7 @@ module UnixTaskLifecycle =
                     ProcessTermination.Exited (ExitStatus.ofExitArgument SimulatedUnixFlavour.Linux status)
 
                 Ok (ProcessFate.ProcessEnded (endProcess termination system))
-            | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastTaskOnDarwin task)
+            | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastThreadOnDarwin task)
         else
 
         Ok (
@@ -251,7 +251,7 @@ module UnixTaskLifecycle =
                     Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
                     Process =
                         { system.Process with
-                            Signals = SignalState.forgetTask task system.Process.Signals
+                            Signals = SignalState.forgetThread task system.Process.Signals
                         }
                     Tasks = Map.remove task system.Tasks
                 }
@@ -284,7 +284,7 @@ module UnixTaskLifecycle =
         : ProcessFate<unit, 'Thread, 'Handler>
         =
         tryExitThread task status system
-        |> Refusal.orRaise "UnixTaskLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
+        |> Refusal.orRaise "UnixThreadLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
 
     /// `spawn`, with a refusal answered as the `Error` rather than raised.
     let internal trySpawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -294,19 +294,19 @@ module UnixTaskLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
-        match (UnixTaskTable.get parent system.Tasks).Parked with
+        match (UnixThreadTable.get parent system.Tasks).Parked with
         | Some park ->
             failwith
-                $"UnixTaskLifecycle.spawn: task %O{parent} is parked in %A{park.Syscall}, so it cannot be making the clone syscall"
+                $"UnixThreadLifecycle.spawn: task %O{parent} is parked in %A{park.Syscall}, so it cannot be making the clone syscall"
         | None ->
 
         if Map.containsKey child system.Tasks then
             failwith
-                $"UnixTaskLifecycle.spawn: %O{child} already names a task. A task is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
+                $"UnixThreadLifecycle.spawn: %O{child} already names a task. A task is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
             failwith
-                $"UnixTaskLifecycle.spawn: %O{child} would be created on %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
+                $"UnixThreadLifecycle.spawn: %O{child} would be created on %O{cpu}, but the machine has %d{system.Machine.ProcessorCount} logical processors, numbered from 0 (this is a bug in the client)."
 
         match ThreadIdAllocator.allocate system.Machine.ThreadIds with
         | ThreadIdAllocation.Failed error -> Ok (SpawnAnswer.Failed error, system)
@@ -329,7 +329,7 @@ module UnixTaskLifecycle =
                     { system.Process with
                         Signals = SignalState.inheritMask parent child system.Process.Signals
                     }
-                Tasks = UnixTaskTable.add child cpu id system.Tasks
+                Tasks = UnixThreadTable.add child cpu id system.Tasks
             }
         )
 
@@ -357,7 +357,7 @@ module UnixTaskLifecycle =
         : SpawnAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySpawn parent child cpu system
-        |> Refusal.orRaise "UnixTaskLifecycle.spawn" SpawnRefusal.kind SpawnRefusal.describe
+        |> Refusal.orRaise "UnixThreadLifecycle.spawn" SpawnRefusal.kind SpawnRefusal.describe
 
     /// `exit_group(2)`, made by `task`: every task ends at once, parked ones
     /// included, and the process exits with `status`. This is what `exit(3)` and
@@ -371,10 +371,10 @@ module UnixTaskLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
-        match (UnixTaskTable.get task system.Tasks).Parked with
+        match (UnixThreadTable.get task system.Tasks).Parked with
         | Some park ->
             failwith
-                $"UnixTaskLifecycle.exitGroup: task %O{task} is parked in %A{park.Syscall}, so it cannot be making the exit_group syscall"
+                $"UnixThreadLifecycle.exitGroup: task %O{task} is parked in %A{park.Syscall}, so it cannot be making the exit_group syscall"
         | None ->
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform

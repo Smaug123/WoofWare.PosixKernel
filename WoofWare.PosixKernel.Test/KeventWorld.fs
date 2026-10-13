@@ -19,7 +19,7 @@ module KeventWorld =
         UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
         |> configure
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
     /// A Darwin system with tasks 1 to 4.
     let darwin : UnixSystem<int, string> = darwinWith id

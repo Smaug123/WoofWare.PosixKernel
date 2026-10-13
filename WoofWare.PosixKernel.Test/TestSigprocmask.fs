@@ -238,19 +238,19 @@ module TestSigprocmask =
         // The probe's "spread" rows: the main thread blocks HUP (1) and a
         // second thread INT (2), then the main thread calls.
         let measured (flavour : SimulatedUnixFlavour) (route : Route) (how : int) : uint64 * uint64 =
-            let everyTask = flavour = SimulatedUnixFlavour.Darwin && route = Route.Libc
+            let everyThread = flavour = SimulatedUnixFlavour.Darwin && route = Route.Libc
 
             if how = block flavour then
-                0x4001UL, (if everyTask then 0x4002UL else 0x2UL)
+                0x4001UL, (if everyThread then 0x4002UL else 0x2UL)
             elif how = unblock flavour then
-                0x0UL, (if everyTask then 0x0UL else 0x2UL)
+                0x0UL, (if everyThread then 0x0UL else 0x2UL)
             else
-                0x4000UL, (if everyTask then 0x4000UL else 0x2UL)
+                0x4000UL, (if everyThread then 0x4000UL else 0x2UL)
 
         for flavour in flavours do
             let start =
                 systemOn flavour
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 hup
                 |> withMask flavour 1 int'
 
@@ -356,7 +356,7 @@ module TestSigprocmask =
                 let mask = SignalMask.ofSignals numbering (Set.singleton signal)
 
                 systemOn flavour
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 (SignalMask.toWord mask)
                 |> withMask flavour 1 (SignalMask.toWord mask)
 
@@ -525,7 +525,7 @@ module TestSigprocmask =
             let system =
                 systemOn flavour
                 |> catching flavour Signal.SIGUSR1
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 0 usr1
 
             SignalState.framesOf 0 system.Process.Signals |> shouldEqual []
@@ -549,14 +549,14 @@ module TestSigprocmask =
         =
         // `unblock-wakes-sleeper.c`: on Darwin the sleeper slept on until its
         // own condition ended the call, which this library cannot express
-        // (`TestUnblockForAnotherTask` searches every call and signal).
+        // (`TestUnblockForAnotherThread` searches every call and signal).
         for flavour in flavours do
             let usr1 = SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGUSR1)
 
             let system =
                 systemOn flavour
                 |> catching flavour Signal.SIGUSR1
-                |> Tasks.spawn 1
+                |> Threads.spawn 1
                 |> withMask flavour 1 (SignalMask.toWord usr1)
 
             let system =
@@ -566,7 +566,7 @@ module TestSigprocmask =
             // it.
             let parked =
                 match UnixPoll.tryPoll 1 [] -1 system with
-                | Ok (_, system) when UnixTaskTable.parkOf 1 system.Tasks |> Option.isSome -> system
+                | Ok (_, system) when UnixThreadTable.parkOf 1 system.Tasks |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
             UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
@@ -574,7 +574,7 @@ module TestSigprocmask =
             match flavour, UnixSignal.trySigprocmask 0 (unblock flavour) (Some usr1) parked with
             | SimulatedUnixFlavour.Darwin, Error refusal ->
                 refusal
-                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherTask (1, Signal.SIGUSR1))
+                |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (1, Signal.SIGUSR1))
             | SimulatedUnixFlavour.Linux, Ok (Ok (_, unblocked)) ->
                 UnixWait.wakes (Set.singleton 1) unblocked |> shouldEqual []
             | _, other -> failwith $"%O{flavour}: the sigprocmask answered %A{other}"
@@ -703,7 +703,7 @@ module TestSigprocmask =
             }
 
         let property (flavour : SimulatedUnixFlavour, calls : MaskCall list) : unit =
-            let start = systemOn flavour |> Tasks.spawn 1
+            let start = systemOn flavour |> Threads.spawn 1
 
             ((start, Map.ofList [ 0, 0UL ; 1, 0UL ]), calls)
             ||> List.fold (fun (system, masks) c ->
@@ -723,7 +723,7 @@ module TestSigprocmask =
                     for task in [ 0 ; 1 ] do
                         (c, task, wordOf task system') |> shouldEqual (c, task, Map.find task masks')
 
-                    SignalState.tasksWithMasks system'.Process.Signals
+                    SignalState.threadsWithMasks system'.Process.Signals
                     |> shouldEqual (masks' |> Map.filter (fun _ w -> w <> 0UL) |> Map.keys |> Set.ofSeq)
 
                     UnixSystem.checkInvariants system' |> shouldEqual []

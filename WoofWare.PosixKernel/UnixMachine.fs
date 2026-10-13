@@ -55,7 +55,7 @@ type internal UnixMachineState =
             /// `NextSocketId` gives.
             NextPollQueueId : PollQueueId
             /// The ordinal the next park of any task records as its
-            /// `TaskPark.Ordinal`. Monotonic, and bumped only by `UnixWait.park`.
+            /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `UnixWait.park`.
             ///
             /// The machine's rather than a process's, because what a kernel orders
             /// by park is a wait queue on a kernel object, and processes can share
@@ -69,8 +69,8 @@ type internal UnixMachineState =
             /// process's task holds is not handed to another's. Set by
             /// `UnixSystem.initial`, `UnixBootImage.withProcessId`,
             /// `UnixBootImage.withLeaderThreadId` and `UnixSystem.writePidMaxSysctl`;
-            /// advanced only by `UnixTaskLifecycle.spawn`, and an id is freed by its
-            /// task's exit (`UnixTaskLifecycle.exitThread`, and the end of the
+            /// advanced only by `UnixThreadLifecycle.spawn`, and an id is freed by its
+            /// task's exit (`UnixThreadLifecycle.exitThread`, and the end of the
             /// process). `UnixSystem.checkInvariants` holds the live ids to the
             /// tasks'.
             ThreadIds : ThreadIdAllocator

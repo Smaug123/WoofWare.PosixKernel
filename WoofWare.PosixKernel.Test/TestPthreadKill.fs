@@ -41,7 +41,7 @@ module TestPthreadKill =
 
     let private systemOn (flavour : SimulatedUnixFlavour) : UnixSystem<int, string> = systemOnWith id flavour
 
-    let private withWorker (system : UnixSystem<int, string>) : UnixSystem<int, string> = Tasks.spawn worker system
+    let private withWorker (system : UnixSystem<int, string>) : UnixSystem<int, string> = Threads.spawn worker system
 
     let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
         SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
@@ -215,7 +215,7 @@ module TestPthreadKill =
                     ended.Termination
                     |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                    EndedMachine.assertTasksGone system ended
+                    EndedMachine.assertThreadsGone system ended
                 | _ ->
                     failwith
                         $"pthread_kill(%d{target}, %d{signo}) under %O{flavour} answered %O{outcome}, but generating it is %O{expected}"

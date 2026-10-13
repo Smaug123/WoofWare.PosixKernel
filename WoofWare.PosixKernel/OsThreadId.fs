@@ -8,7 +8,7 @@ open System
 /// </summary>
 /// <remarks>
 /// Only this library mints one: <c>UnixSystem.initial</c> for a process's first
-/// task, and <c>UnixTaskLifecycle.spawn</c> for every later one.
+/// task, and <c>UnixThreadLifecycle.spawn</c> for every later one.
 /// </remarks>
 /// <example>
 /// This is what <c>gettid(2)</c> returns on Linux, and what

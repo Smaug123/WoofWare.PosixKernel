@@ -1700,7 +1700,7 @@ module UnixConnection =
         // Loudly partial in an unregistered or parked task, before anything is
         // answered, as every call that can sleep is. The paused call holds the
         // system it was made in, so the task is still unparked when it resumes.
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixConnection.connect: task %O{task} is parked in %A{parked}, and is issuing a connect. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."
@@ -2095,7 +2095,7 @@ module UnixConnection =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixConnection.accept: task %O{task} is parked in %A{parked}, and is issuing an accept. A task blocks in one syscall at a time; a parked accept is finished with `finishAccept` (this is a bug in the client)."
@@ -2255,7 +2255,7 @@ module UnixConnection =
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let parked =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some (ParkedSyscall.Accept parked) -> parked
             | Some other ->
                 failwith
@@ -2336,7 +2336,7 @@ module UnixConnection =
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 

@@ -401,7 +401,7 @@ module TestReadme =
             "UnixClock"
             "UnixEntropy"
             "UnixCredentials"
-            "UnixTaskLifecycle"
+            "UnixThreadLifecycle"
             "UnixScheduling"
             "UnixWait"
             "SimulatedMachine"

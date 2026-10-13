@@ -90,8 +90,8 @@ module SocketFuzz =
     exception private ModelRefusal of string
 
     /// The task the fuzzer's `poll`s are made by. The sequences are otherwise
-    /// taskless, so it is registered for each call rather than kept in the state.
-    let private pollTask : int = 1
+    /// threadless, so it is registered for each call rather than kept in the state.
+    let private pollThread : int = 1
 
     /// `close(2)`. A refusal is the model's, and is reported as one; an errno
     /// comes back, because that is an answer.
@@ -554,9 +554,9 @@ module SocketFuzz =
 
             // `poll` is made by a task; a timeout of 0 never parks, so the one
             // registered here for the call is never left behind in the state.
-            let polling = Tasks.ensure pollTask state.Kernel
+            let polling = Threads.ensure pollThread state.Kernel
 
-            match UnixPoll.tryPoll pollTask [ entry ] 0 polling with
+            match UnixPoll.tryPoll pollThread [ entry ] 0 polling with
             | Error refusal -> raise (ModelRefusal $"poll of fd %d{fd} refused: %s{PollRefusal.describe refusal}")
             | Ok (PollOutcome.WouldBlock condition, _) ->
                 failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 parked on %A{condition}."

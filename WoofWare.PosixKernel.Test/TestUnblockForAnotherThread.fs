@@ -23,9 +23,9 @@ open WoofWare.PosixKernel
 /// the sleep, and the mask call, on both flavours.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
-module TestUnblockForAnotherTask =
+module TestUnblockForAnotherThread =
 
-    let private context : string = "TestUnblockForAnotherTask"
+    let private context : string = "TestUnblockForAnotherThread"
 
     let private flavours : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
@@ -200,7 +200,7 @@ module TestUnblockForAnotherTask =
             (UnixSystem.initial<int, string> (HostPlatform.platformOf flavour)
              |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0),
              tasks)
-            ||> List.fold (fun system name -> Tasks.ensure name system)
+            ||> List.fold (fun system name -> Threads.ensure name system)
 
         let listener, system =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
@@ -329,7 +329,7 @@ module TestUnblockForAnotherTask =
     let private asleep (world : World) (task : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
         let parkedOrNot (what : string) (result : Result<'outcome * UnixSystem<int, string>, 'refusal>) =
             match result with
-            | Ok (_, system) when (UnixTaskTable.parkOf task system.Tasks).IsSome -> Some system
+            | Ok (_, system) when (UnixThreadTable.parkOf task system.Tasks).IsSome -> Some system
             | Ok _ -> None
             | Error refusal -> failwith $"%s{what} was refused: %A{refusal}"
 
@@ -563,7 +563,7 @@ module TestUnblockForAnotherTask =
 
         match unblock case system, leftDeliverableTo case with
         | Unblocked.Refused refusal, Some task ->
-            if refusal = SigprocmaskRefusal.DarwinUnblockedForAnotherTask (task, signalOf case.Disposition) then
+            if refusal = SigprocmaskRefusal.DarwinUnblockedForAnotherThread (task, signalOf case.Disposition) then
                 None
             else
                 Some $"refused with %A{refusal}"

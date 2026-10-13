@@ -608,7 +608,7 @@ module UnixKqueue =
             failwith
                 $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
 
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixKqueue.kevent: task %O{task} is parked in %A{parked}, and is issuing a kevent. A task blocks in one syscall at a time; a parked wait is finished with `finishKevent` (this is a bug in the client)."
@@ -777,7 +777,7 @@ module UnixKqueue =
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some (ParkedSyscall.Kevent parked) -> parked
             | Some other ->
                 failwith
@@ -847,7 +847,7 @@ module UnixKqueue =
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 

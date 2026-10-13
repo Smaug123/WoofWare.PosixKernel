@@ -18,7 +18,7 @@ module ForgedPark =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if (UnixTaskTable.parkOf task system.Tasks).IsSome then
+        if (UnixThreadTable.parkOf task system.Tasks).IsSome then
             failwith $"ForgedPark.onAbsent: task %O{task} is parked already"
 
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
@@ -35,7 +35,7 @@ module ForgedPark =
                     NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
                 }
             Tasks =
-                UnixTaskTable.withPark
+                UnixThreadTable.withPark
                     task
                     {
                         Syscall = parked

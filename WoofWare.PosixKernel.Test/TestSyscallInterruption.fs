@@ -106,7 +106,7 @@ module TestSyscallInterruption =
             (UnixSystem.initial<int, string> platform
              |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)),
              [ 1..3 ])
-            ||> List.fold (fun system name -> Tasks.ensure name system)
+            ||> List.fold (fun system name -> Threads.ensure name system)
 
         let listener, system =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
@@ -601,7 +601,7 @@ module TestSyscallInterruption =
             | Ending.TimedOut
             | Ending.Eintr
             | Ending.Restart ->
-                UnixTaskTable.parkedFor task after.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task after.Tasks |> shouldEqual None
 
                 // The signals are still pending, for the return to user mode
                 // that follows: every caught one gets a frame there.
@@ -653,7 +653,7 @@ module TestSyscallInterruption =
     [<Test>]
     let ``the rule each sleeping call follows is the measured one`` () : unit =
         let parked (sleep : Sleep) : ParkedSyscall =
-            match UnixTaskTable.parkedFor 1 (asleep linuxWorld 1 sleep).Tasks with
+            match UnixThreadTable.parkedFor 1 (asleep linuxWorld 1 sleep).Tasks with
             | Some parked -> parked
             | None -> failwith $"%O{sleep} did not park"
 
@@ -851,7 +851,7 @@ module TestSyscallInterruption =
 
     [<Test>]
     let ``a task parked in one syscall may be parked again in it, and in no other`` () : unit =
-        // `UnixTaskTable.withPark` refuses to park a task in a second syscall
+        // `UnixThreadTable.withPark` refuses to park a task in a second syscall
         // over the first; it must tell every pair of cases apart, and no two
         // parks of one case.
         let caseName (parked : ParkedSyscall) : string =
@@ -862,8 +862,8 @@ module TestSyscallInterruption =
 
         let tasks = (worldOn SimulatedUnixPlatform.linuxX64).System.Tasks
 
-        let park (parked : ParkedSyscall) (tasks : Map<int, UnixTaskState>) : Map<int, UnixTaskState> =
-            UnixTaskTable.withPark
+        let park (parked : ParkedSyscall) (tasks : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
+            UnixThreadTable.withPark
                 1
                 {
                     Syscall = parked
@@ -877,7 +877,7 @@ module TestSyscallInterruption =
             for second in oneParkOfEach do
                 let accepted =
                     try
-                        park second parkedOnce |> ignore<Map<int, UnixTaskState>>
+                        park second parkedOnce |> ignore<Map<int, UnixThreadState>>
                         true
                     with e when e.Message.Contains "without clearing the first" ->
                         false

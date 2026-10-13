@@ -1162,7 +1162,7 @@ module UnixNamespace =
         =
         // Loudly partial in an unregistered or parked task, before anything is
         // answered, as every call that can sleep is.
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some parked ->
             failwith
                 $"UnixNamespace.%s{operation}: task %O{task} is parked in %A{parked}, and is issuing an open. A task blocks in one syscall at a time, so that call's completion must clear its record first (this is a bug in the client)."

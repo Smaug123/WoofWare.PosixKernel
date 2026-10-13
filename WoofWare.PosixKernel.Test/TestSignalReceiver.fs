@@ -41,9 +41,9 @@ module TestSignalReceiver =
         let system =
             UnixSystem.initial (HostPlatform.platformOf flavour)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn 1
-            |> Tasks.spawn 2
-            |> Tasks.spawn 3
+            |> Threads.spawn 1
+            |> Threads.spawn 2
+            |> Threads.spawn 3
 
         let system =
             { system with
@@ -126,13 +126,13 @@ module TestSignalReceiver =
             if not row.Success then
                 failwith $"%s{file}: unrecognised row: %s{line}"
 
-            let tasksIn (text : string) : int list =
+            let threadsIn (text : string) : int list =
                 Regex.Matches (text, @"T(\d)")
                 |> Seq.map (fun m -> Int32.Parse m.Groups.[1].Value)
                 |> Seq.toList
 
-            let blocking = tasksIn row.Groups.[2].Value |> Set.ofList
-            let measured = tasksIn row.Groups.[4].Value |> List.distinct
+            let blocking = threadsIn row.Groups.[2].Value |> Set.ofList
+            let measured = threadsIn row.Groups.[4].Value |> List.distinct
 
             match receivers flavour blocking with
             | Ok taken ->

@@ -949,7 +949,7 @@ module TestBlockingConnection =
             UnixSystem.initial<int, string> platform
             |> small
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> (tasks, system) ||> List.foldBack Tasks.ensure
+            |> fun system -> (tasks, system) ||> List.foldBack Threads.ensure
 
         { system with
             Process =
@@ -1589,7 +1589,7 @@ module TestBlockingConnection =
                         asleep
                         |> Seq.map (fun task ->
                             let (ParkOrdinal.ParkOrdinal ordinal) =
-                                (UnixTaskTable.parkOf task system.Tasks |> Option.get).Ordinal
+                                (UnixThreadTable.parkOf task system.Tasks |> Option.get).Ordinal
 
                             task, ordinal
                         )
@@ -1733,7 +1733,7 @@ module TestBlockingConnection =
                             )
 
                         let actual =
-                            UnixTaskTable.parkedFor task system.Tasks
+                            UnixThreadTable.parkedFor task system.Tasks
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.ConnectionRead read -> 0, read.Count, 0, $"%A{read.Call}"
@@ -2075,7 +2075,7 @@ module TestBlockingConnection =
                 match UnixReadWrite.tryFinishRead 1 system with
                 | Ok (ReadOutcome.Answered answer, after) ->
                     answer |> shouldEqual expected
-                    UnixTaskTable.parkOf 1 after.Tasks |> shouldEqual None
+                    UnixThreadTable.parkOf 1 after.Tasks |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
 
                     // Measured: after the reset's error, end of file.
@@ -2099,7 +2099,7 @@ module TestBlockingConnection =
                 match UnixReadWrite.tryFinishRead 1 system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
                 | Ok (ReadOutcome.Restarts, after) when restart ->
-                    UnixTaskTable.parkOf 1 after.Tasks |> shouldEqual None
+                    UnixThreadTable.parkOf 1 after.Tasks |> shouldEqual None
                 | other -> failwith $"%O{platform} restart %b{restart}: the read came to %A{other}"
 
                 // The server's end full, so a write by it takes nothing.
@@ -2125,7 +2125,7 @@ module TestBlockingConnection =
 
                 match finishedWrite 2 (payload 2 1000) system with
                 | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EINTR, _)) when not restart -> ()
-                | Ok (WriteStep.Restarts after) when restart -> UnixTaskTable.parkOf 2 after.Tasks |> shouldEqual None
+                | Ok (WriteStep.Restarts after) when restart -> UnixThreadTable.parkOf 2 after.Tasks |> shouldEqual None
                 | other -> failwith $"%O{platform} restart %b{restart}: the write came to %A{other}"
 
     /// A signal the sleeping task blocks neither wakes a sleeping transfer nor
@@ -2253,7 +2253,7 @@ module TestBlockingConnection =
                             sendCapacity - queued + flow.ReceiveCapacity - ByteQueue.length flow.Receiving
 
                         let remaining =
-                            match UnixTaskTable.parkedFor 1 system.Tasks with
+                            match UnixThreadTable.parkedFor 1 system.Tasks with
                             | Some (ParkedSyscall.ConnectionWrite write) -> write.Count - write.Written
                             | other -> failwith $"%A{other}"
 
@@ -2323,7 +2323,7 @@ module TestBlockingConnection =
                 let system = asleepWriting 1 client (payload 3 600000) system
 
                 let taken =
-                    match UnixTaskTable.parkedFor 1 system.Tasks with
+                    match UnixThreadTable.parkedFor 1 system.Tasks with
                     | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                     | other -> failwith $"%A{other}"
 
@@ -2348,7 +2348,7 @@ module TestBlockingConnection =
             let system = asleepWriting 1 client bytes system
 
             let taken =
-                match UnixTaskTable.parkedFor 1 system.Tasks with
+                match UnixThreadTable.parkedFor 1 system.Tasks with
                 | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                 | other -> failwith $"%A{other}"
 
@@ -2415,7 +2415,7 @@ module TestBlockingConnection =
                 let system = asleepWriting 1 client bytes system
 
                 let taken =
-                    match UnixTaskTable.parkedFor 1 system.Tasks with
+                    match UnixThreadTable.parkedFor 1 system.Tasks with
                     | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                     | other -> failwith $"%A{other}"
 
@@ -2527,7 +2527,7 @@ module TestBlockingConnection =
                     let system = asleepWriting 1 client bytes system
 
                     let taken =
-                        match UnixTaskTable.parkedFor 1 system.Tasks with
+                        match UnixThreadTable.parkedFor 1 system.Tasks with
                         | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                         | other -> failwith $"%s{where}: %A{other}"
 
@@ -3052,7 +3052,7 @@ module TestBlockingConnection =
     [<Test>]
     let ``transfers asleep in one process wake for another's`` () : unit =
         for platform in Machines.platforms do
-            let pids, machine = Machines.withTasksOn small platform 2 5
+            let pids, machine = Machines.withThreadsOn small platform 2 5
             let a, b = pids.[0], pids.[1]
             let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
 
@@ -3243,7 +3243,7 @@ module TestBlockingConnection =
         written |> shouldBeGreaterThan 0L
         let system = asleepWriting 1 client (payload 12 1000) system
 
-        match UnixTaskTable.parkedFor 1 system.Tasks with
+        match UnixThreadTable.parkedFor 1 system.Tasks with
         | Some (ParkedSyscall.ConnectionWrite write) -> write.Written |> shouldEqual 0
         | other -> failwith $"%A{other}"
 
@@ -3272,7 +3272,7 @@ module TestBlockingConnection =
         let room = toServer.SendCapacity + toServer.ReceiveCapacity
         let system = asleepWriting 1 client (payload 13 (room + 100)) system
 
-        match UnixTaskTable.parkedFor 1 system.Tasks with
+        match UnixThreadTable.parkedFor 1 system.Tasks with
         | Some (ParkedSyscall.ConnectionWrite write) -> write.Count - write.Written |> shouldEqual 100
         | other -> failwith $"%A{other}"
 
@@ -3302,7 +3302,7 @@ module TestBlockingConnection =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
             |> tiny
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> (tasks, system) ||> List.foldBack Tasks.ensure
+            |> fun system -> (tasks, system) ||> List.foldBack Threads.ensure
 
         let client, server, system = pair system
         let connection = connectionOf client system
@@ -3400,7 +3400,7 @@ module TestBlockingConnection =
                 | ReadOutcome.WouldBlock _, system -> system
                 | other -> failwith $"%O{platform}: the peek came to %A{other}"
 
-            match UnixTaskTable.parkedFor 1 system.Tasks with
+            match UnixThreadTable.parkedFor 1 system.Tasks with
             | Some (ParkedSyscall.ConnectionRead read) -> read.Call |> shouldEqual TcpReceiveCall.Peek
             | other -> failwith $"%O{platform}: parked as %A{other}"
 
@@ -3651,7 +3651,7 @@ module TestBlockingConnection =
                         | other -> failwith $"%s{where}: %A{other}"
 
                     let written =
-                        match UnixTaskTable.parkedFor 1 system.Tasks with
+                        match UnixThreadTable.parkedFor 1 system.Tasks with
                         | Some (ParkedSyscall.ConnectionWrite write) ->
                             write.Call |> shouldEqual (TcpSendCall.Send noSignal)
                             write.Written

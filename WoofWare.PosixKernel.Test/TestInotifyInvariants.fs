@@ -51,7 +51,7 @@ module TestInotifyInvariants =
             }
             seed
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Threads.ensure
 
     let private linux : UnixSystem<int, string> =
         bootWith id SimulatedUnixPlatform.linuxX64
@@ -445,7 +445,7 @@ module TestInotifyInvariants =
     [<Test>]
     let ``a user's instances and watches count against the limits in every process on the machine`` () : unit =
         let pids, machine =
-            Machines.withTasksOn
+            Machines.withThreadsOn
                 (withLimits
                     {
                         MaxUserInstances = 3
@@ -580,7 +580,7 @@ module TestInotifyInvariants =
                 }
                 seed
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.ensure 1
+            |> Threads.ensure 1
             |> fun system ->
                 { system with
                     Process =

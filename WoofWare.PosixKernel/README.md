@@ -51,10 +51,10 @@ The whole kernel is one value, a `UnixSystem<'Thread, 'Handler>`, made of three 
 
 * the machine: the filesystem, the open file descriptions (with the state of each epoll instance, kqueue and inotify instance, and how many descriptors and calls in flight reference each), sockets, connections and pipes, the thread IDs live tasks hold, the processes on it and the directories they stand in, the clock, the entropy pool, and the platform being simulated;
 * the process: the descriptor table, which says only which open file description each descriptor names, and the process's credentials, umask, current directory, environment and signal state;
-* the tasks (`UnixTaskState`): the process's tasks, and what each is blocked in, if anything. A client looks a task up in `UnixSystem.tasks` by its own name for it, which has no entry for a task that was never created or has exited, and reads what it finds with `UnixTaskState`'s readers: `UnixTaskState.parkedIn` (the syscall it sleeps in), `UnixTaskState.cpu` and `UnixTaskState.osThreadId` (what `gettid(2)` answers).
+* the tasks (`UnixThreadState`): the process's tasks, and what each is blocked in, if anything. A client looks a task up in `UnixSystem.threads` by its own name for it, which has no entry for a task that was never created or has exited, and reads what it finds with `UnixThreadState`'s readers: `UnixThreadState.parkedIn` (the syscall it sleeps in), `UnixThreadState.cpu` and `UnixThreadState.osThreadId` (what `gettid(2)` answers).
 
 Those records are opaque outside the library.
-A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.leader`, `UnixSystem.tasks`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles`, `UnixSystem.delivered` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
+A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.leader`, `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles`, `UnixSystem.delivered` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
 `UnixSystem.descriptorTarget` answers what a descriptor's description refers to, an `OpenFileTarget`, of which `OpenFileTarget.Fifo` (a FIFO's inode and an opaque `FifoAttachment`) is reserved: nothing opens a FIFO yet, `FileDescriptorRegistry.checkInvariants` reports a description naming one as a defect, and the case exists so that a client's matches already handle it when FIFOs arrive.
 `OpenFileTarget.CharacterDevice` carries, besides the device and its node, an opaque `CharacterDeviceState`: the description's own state, which holds nothing in this version, because Linux keeps no position for a device and Darwin's devices, which keep one per description, are refused.
 
@@ -67,8 +67,8 @@ Besides the syscalls, a client calls these between them (the system argument is 
 
 | Operation | Function | Answers |
 | --- | --- | --- |
-| a task, by the client's name for it | `UnixSystem.tasks` | `Map<'Thread, UnixTaskState>` |
-| which syscall a task sleeps in | `UnixTaskState.parkedIn (task : UnixTaskState)` | `ParkedSyscall option` |
+| a task, by the client's name for it | `UnixSystem.threads` | `Map<'Thread, UnixThreadState>` |
+| which syscall a task sleeps in | `UnixThreadState.parkedIn (task : UnixThreadState)` | `ParkedSyscall option` |
 | the platform, and its flavour | `UnixSystem.platform` | `SimulatedUnixPlatform` |
 | the time since boot | `UnixSystem.nanosecondsSinceBoot` | `int64` |
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
@@ -201,7 +201,7 @@ It takes its arguments as the kernel does, raw where the kernel validates them (
 It gives back its answer with the system as the call left it, or the answer alone for a call that cannot change anything.
 
 A function takes the calling task, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
-The thread calls (`UnixTaskLifecycle.spawn`, `UnixTaskLifecycle.exitThread`, `UnixTaskLifecycle.exitGroup`) and the scheduling calls take it too.
+The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the task the signal is sent to, not the caller.
 Every other call answers the same whichever task makes it, and takes no task.
 
@@ -537,15 +537,15 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | `setresuid(2)` | `UnixCredentials.setresuid (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
 | `setresgid(2)` | `UnixCredentials.setresgid (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
 | `setgroups(2)` | `UnixCredentials.setgroups (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
-| `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixTaskLifecycle.spawn (parent : 'Thread) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
-| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixTaskLifecycle.exitThread (task : 'Thread) (status : int)` | `ProcessFate<unit>` |
-| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixTaskLifecycle.exitGroup (task : 'Thread) (status : int)` | `EndedProcess` |
+| `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (parent : 'Thread) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
+| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (task : 'Thread) (status : int)` | `ProcessFate<unit>` |
+| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (task : 'Thread) (status : int)` | `EndedProcess` |
 | the client's report that a task runs on a processor | `UnixScheduling.dispatch (task : 'Thread) (cpu : CpuId)` | `UnixSystem` |
 | where a task is running | `UnixScheduling.runningOn (task : 'Thread)` | `CpuId option` |
 | Linux's `getcpu(2)` | `UnixScheduling.getcpu (task : 'Thread)` | `GetCpuAnswer` |
 
 `UnixEntropy.getRandomMaxTransfer` is the most one `getrandom` moves.
-`gettid(2)` is `UnixTaskState.osThreadId` of the task, and `getuid(2)` and `getgid(2)` are fields of `UnixSystem.credentials` (`Credentials.RealUser`, `Credentials.RealGroup`).
+`gettid(2)` is `UnixThreadState.osThreadId` of the task, and `getuid(2)` and `getgid(2)` are fields of `UnixSystem.credentials` (`Credentials.RealUser`, `Credentials.RealGroup`).
 `uname(2)` reports the platform: `SimulatedUnixPlatform.unixRelease` and `SimulatedUnixPlatform.architecture` of `UnixSystem.platform`.
 
 #### What is not modelled
@@ -614,7 +614,7 @@ The other two cases, `UserBuffer.Opaque` and `UserBuffer.Addressless`, are for a
 ## Sleeping and waking
 
 A call that would block does not block.
-It answers `WouldBlock` with a `WakeCondition`, and the system that comes with it records the calling task as parked in that call (`UnixTaskState.parkedIn`).
+It answers `WouldBlock` with a `WakeCondition`, and the system that comes with it records the calling task as parked in that call (`UnixThreadState.parkedIn`).
 That is the state the kernel sleeps in, which can differ from the one the call arrived with: `flock` gives up the caller's old lock before it waits for the new one.
 
 The library has no scheduler, and does not want one.
@@ -678,7 +678,7 @@ let readFd, writeFd, piped =
 
 // Task 0 starts a thread, which this client names 1, on processor 0.
 let spawned =
-    match UnixTaskLifecycle.spawn 0 1 (CpuId 0) piped with
+    match UnixThreadLifecycle.spawn 0 1 (CpuId 0) piped with
     | SpawnAnswer.Spawned _, system -> resume 0 system
     | answer, _ -> failwith $"unexpected from spawn: %A{answer}"
 
@@ -717,8 +717,8 @@ let woken =
 
 // Task 1 exits, and then task 0 calls exit_group(3), which ends the process.
 let ended =
-    match UnixTaskLifecycle.exitThread 1 0 woken with
-    | ProcessFate.Continues ((), system) -> UnixTaskLifecycle.exitGroup 0 3 system
+    match UnixThreadLifecycle.exitThread 1 0 woken with
+    | ProcessFate.Continues ((), system) -> UnixThreadLifecycle.exitGroup 0 3 system
     | other -> failwith $"task 0 is still running, so expected the process to continue: %A{other}"
 
 // The client ends the process on its machine, which closes its descriptors.
@@ -822,10 +822,10 @@ match pending |> mask 1 |> returnToUser with
 
 ## Threads, and the end of the process
 
-`UnixTaskLifecycle.spawn parent child cpu` starts a task the client names `child`, on processor `cpu`, with a copy of `parent`'s signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
-`UnixTaskLifecycle.exitThread task status` ends one task, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
+`UnixThreadLifecycle.spawn parent child cpu` starts a task the client names `child`, on processor `cpu`, with a copy of `parent`'s signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
+`UnixThreadLifecycle.exitThread task status` ends one task, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
 It throws `InvalidOperationException` for a task parked in a syscall, and refuses the process's leader while any other task lives and, on Darwin, the process's last task: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
-`UnixTaskLifecycle.exitGroup task status` ends every task at once, parked ones included.
+`UnixThreadLifecycle.exitGroup task status` ends every task at once, parked ones included.
 
 A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last task, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
@@ -913,12 +913,12 @@ When nothing can run, the client advances the clock to the earlier of its own de
 It answers which tasks could run (not parked in the kernel; the client subtracts its own blocked threads), and records what the client says happened.
 Choosing is policy, and a client that explores schedules, or a harness that steers one from outside, must own it; the kernel keeps only the facts a choice is made from.
 
-**Where they meet.** `UnixSystem.tasks` lists the process's tasks, and `UnixTaskState.parkedIn` says which are parked in a syscall.
+**Where they meet.** `UnixSystem.threads` lists the process's tasks, and `UnixThreadState.parkedIn` says which are parked in a syscall.
 The client keeps the set of tasks it holds asleep and passes it to `UnixWait.wakes`, which says which may wake now; it decides when a woken task finishes its call.
 Which processor a task belongs on is the client's policy too.
 The client reports each task it runs with `UnixScheduling.dispatch task cpu`: "task T is now running on processor c".
 The kernel keeps what Linux keeps.
-Each task has a processor, the one it last ran on, or before it first runs, the one its creator named (`ProcessLaunch.create`, `UnixTaskLifecycle.spawn`); `UnixTaskState.cpu` reports it, for a task found in `UnixSystem.tasks`.
+Each task has a processor, the one it last ran on, or before it first runs, the one its creator named (`ProcessLaunch.create`, `UnixThreadLifecycle.spawn`); `UnixThreadState.cpu` reports it, for a task found in `UnixSystem.threads`.
 Each processor runs at most one task, so a dispatch displaces whichever task the processor ran before, whatever process it belongs to; that task keeps the processor as its own, as a preempted task does.
 A task stops running when it parks in a syscall, and when it exits or its process ends; a parked task may still be dispatched, which is how a woken task gets back onto a processor to finish its call.
 `UnixScheduling.runningOn` says where a task is running, and `UnixScheduling.getcpu` answers only for a running task, failing loudly for any other: a task making a syscall is running, so a client whose records say otherwise has a bug.

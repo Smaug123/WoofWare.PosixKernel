@@ -85,7 +85,7 @@ type internal SigprocmaskRefusal<'Thread> =
     /// library does not record. This library delivers every signal a task's
     /// mask lets through at its next return to user mode, and wakes a sleeping
     /// task for one, so it cannot express what the task does next.
-    | DarwinUnblockedForAnotherTask of task : 'Thread * signal : Signal
+    | DarwinUnblockedForAnotherThread of task : 'Thread * signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal SigprocmaskRefusal =
@@ -93,13 +93,13 @@ module internal SigprocmaskRefusal =
     /// its own half: which task made the call.
     let describe<'Thread> (refusal : SigprocmaskRefusal<'Thread>) : string =
         match refusal with
-        | SigprocmaskRefusal.DarwinUnblockedForAnotherTask (task, signal) ->
+        | SigprocmaskRefusal.DarwinUnblockedForAnotherThread (task, signal) ->
             $"under Darwin, sigprocmask changes every task's mask, and this call would unblock %O{signal} for task %O{task}, which is not the caller, while %O{signal} is pending for that task. Darwin was measured neither to wake that task from a sleep for it nor always to deliver it as the task next returns to user mode, which depended on the call the task was in and on what it had done since the signal was sent, and this kernel does not record that."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SigprocmaskRefusal<'Thread>) : RefusalKind =
         match refusal with
-        | SigprocmaskRefusal.DarwinUnblockedForAnotherTask _ -> RefusalKind.Unmodelled
+        | SigprocmaskRefusal.DarwinUnblockedForAnotherThread _ -> RefusalKind.Unmodelled
 
 /// What a `kill(2)` or `pthread_kill(3)` the kernel answered did to the
 /// calling process, if it did not end it (see `ProcessFate`).
@@ -179,7 +179,7 @@ type SigsuspendOutcome =
 [<RequireQualifiedAccess>]
 module UnixSignal =
 
-    let private tasksOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let private threadsOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<'Thread>
         =
@@ -225,7 +225,7 @@ module UnixSignal =
                 SignalState.generate
                     system.Process.CoreDumps
                     system.Leader
-                    (tasksOf system)
+                    (threadsOf system)
                     {
                         Signal = signal
                         Target = ValueNone
@@ -240,7 +240,7 @@ module UnixSignal =
                 Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, withSignals signals)))
             | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
                 let ended =
-                    UnixTaskLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
+                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
 
                 Ok (Ok (ProcessFate.ProcessEnded ended))
 
@@ -328,7 +328,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        // Looked up rather than asked of `UnixTaskTable.parkedFor`, so that a
+        // Looked up rather than asked of `UnixThreadTable.parkedFor`, so that a
         // name that is no task is left to `SignalState.onReturnToUser`'s own
         // check.
         match Map.tryFind task system.Tasks |> Option.bind (fun state -> state.Parked) with
@@ -339,7 +339,7 @@ module UnixSignal =
                 $"UnixSignal.onReturnToUser: task %O{task} is asleep in %A{parked}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
         | None ->
 
-        SignalState.onReturnToUser system.Process.CoreDumps system.Leader (tasksOf system) task system.Process.Signals
+        SignalState.onReturnToUser system.Process.CoreDumps system.Leader (threadsOf system) task system.Process.Signals
         |> Result.map (fun (delivery, signals) ->
             let after = withSignals signals system
 
@@ -356,7 +356,7 @@ module UnixSignal =
                 // so it is not pending in the process's final state, as one
                 // `kill` applies at once never is.
                 ProcessFate.ProcessEnded (
-                    UnixTaskLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) after
+                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) after
                 )
         )
 
@@ -496,7 +496,7 @@ module UnixSignal =
                 SignalState.generate
                     system.Process.CoreDumps
                     system.Leader
-                    (tasksOf system)
+                    (threadsOf system)
                     {
                         Signal = signal
                         Target = ValueSome target
@@ -511,7 +511,7 @@ module UnixSignal =
                 Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, withSignals signals system)))
             | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
                 let ended =
-                    UnixTaskLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
+                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
 
                 Ok (Ok (ProcessFate.ProcessEnded ended))
 
@@ -637,7 +637,7 @@ module UnixSignal =
         /// The calling task alone.
         | Caller
         /// Every task of the process: Darwin's `sigprocmask`.
-        | EveryTask
+        | EveryThread
 
     /// The mask calls' common answer. `screened` are the signals the C
     /// library takes out of `set` before the kernel sees it.
@@ -683,7 +683,7 @@ module UnixSignal =
             let targets =
                 match scope with
                 | MaskScope.Caller -> [ task ]
-                | MaskScope.EveryTask -> system.Tasks |> Map.keys |> List.ofSeq
+                | MaskScope.EveryThread -> system.Tasks |> Map.keys |> List.ofSeq
 
             let signals =
                 (signals, targets)
@@ -783,7 +783,9 @@ module UnixSignal =
             |> Ok
         | SignalNumbering.Darwin ->
 
-        match changeMaskUnder "sigprocmask" MaskScope.EveryTask (screenedByCLibrary numbering) task how set system with
+        match
+            changeMaskUnder "sigprocmask" MaskScope.EveryThread (screenedByCLibrary numbering) task how set system
+        with
         | Error error -> Ok (Error error)
         | Ok (old, after) ->
             // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/unblock-wakes-sleeper.c`
@@ -799,7 +801,7 @@ module UnixSignal =
             // sent itself before it slept. A thread running user code, with a
             // system call every 100 us, never took it at all.
             match unblockedForAnother task system after with
-            | Some (other, signal) -> Error (SigprocmaskRefusal.DarwinUnblockedForAnotherTask (other, signal))
+            | Some (other, signal) -> Error (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (other, signal))
             | None -> Ok (Ok (old, after))
 
     /// `sigprocmask(2)`, called by `task`: on Linux exactly `pthreadSigmask`.
@@ -1040,7 +1042,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some ParkedSyscall.SigSuspend -> ()
         | Some other ->
             failwith

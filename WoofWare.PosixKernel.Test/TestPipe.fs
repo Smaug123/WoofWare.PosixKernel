@@ -407,7 +407,7 @@ module TestPipe =
                             endedProcess.Termination
                             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
 
-                            EndedMachine.assertTasksGone system endedProcess
+                            EndedMachine.assertThreadsGone system endedProcess
                             ended <- true
                         | SignalDisposition.Ignore,
                           Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
@@ -464,7 +464,7 @@ module TestPipe =
                                 ReadsSeen = reads
                             }
 
-                        UnixTaskTable.parkedFor system.Leader after.Tasks
+                        UnixThreadTable.parkedFor system.Leader after.Tasks
                         |> shouldEqual (Some (ParkedSyscall.PipeWrite parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeWrite parked))
@@ -556,7 +556,7 @@ module TestPipe =
                                 Count = count
                             }
 
-                        UnixTaskTable.parkedFor system.Leader after.Tasks
+                        UnixThreadTable.parkedFor system.Leader after.Tasks
                         |> shouldEqual (Some (ParkedSyscall.PipeRead parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeRead parked))
@@ -1067,7 +1067,7 @@ module TestPipe =
 
             match WriteOutcomes.admitThenWrite system.Leader w UserBuffer.Mapped (payload 0 70000) system with
             | Ok (WriteStep.WouldBlock (_, after)) ->
-                match UnixTaskTable.parkedFor system.Leader after.Tasks with
+                match UnixThreadTable.parkedFor system.Leader after.Tasks with
                 | Some (ParkedSyscall.PipeWrite parked) -> (parked.Count, parked.Written) |> shouldEqual (70000, 65536)
                 | other -> failwith $"%O{platform}: %A{other}"
             | other -> failwith $"%O{platform}: %A{other}"
@@ -1304,7 +1304,7 @@ module TestPipe =
             | Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, _) -> ()
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Tasks.ensure 1 system) with
+            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Threads.ensure 1 system) with
             | Ok (EpollWaitOutcome.Failed UnixError.EINVAL, _) -> ()
             | other -> failwith $"%A{other}"
 

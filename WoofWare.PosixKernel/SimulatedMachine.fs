@@ -9,7 +9,7 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
             /// The process's tasks. A task is named by the client, separately in
             /// each process: two processes may each have a task the client calls
             /// by the same name.
-            Tasks : Map<'Thread, UnixTaskState>
+            Tasks : Map<'Thread, UnixThreadState>
             /// See `UnixSystem.Leader`.
             Leader : 'Thread
         }
@@ -469,7 +469,7 @@ module SimulatedMachine =
             (machineState : UnixMachineState)
             (scheduling : UnixSchedulingState)
             (proc : UnixProcessState<'Thread, 'Handler>)
-            (tasks : Map<'Thread, UnixTaskState>)
+            (tasks : Map<'Thread, UnixThreadState>)
             : bool
             =
             obj.ReferenceEquals (machineState, machine.Machine)
@@ -484,8 +484,8 @@ module SimulatedMachine =
 
         let current =
             match view.Origin with
-            | FocusOrigin.FocusedFrom (originMachine, originScheduling, originProcess, originTasks) ->
-                unchanged || holds originMachine originScheduling originProcess originTasks
+            | FocusOrigin.FocusedFrom (originMachine, originScheduling, originProcess, originThreads) ->
+                unchanged || holds originMachine originScheduling originProcess originThreads
             | FocusOrigin.NotFocused -> unchanged
 
         if not current then
@@ -736,7 +736,7 @@ module SimulatedMachine =
             )
 
     /// End the process `ended` is on `machine`, as the call that ended it left
-    /// it (`UnixTaskLifecycle.exitGroup`, the last thread's exit, or a signal
+    /// it (`UnixThreadLifecycle.exitGroup`, the last thread's exit, or a signal
     /// whose default ends the process): how it ended, and the machine without
     /// it.
     ///
@@ -869,7 +869,7 @@ module SimulatedMachine =
 
                     tasks
                     |> Seq.collect (fun task ->
-                        match UnixTaskTable.parkOf task slot.Tasks with
+                        match UnixThreadTable.parkOf task slot.Tasks with
                         | Some park -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
                         | None -> []
                     )

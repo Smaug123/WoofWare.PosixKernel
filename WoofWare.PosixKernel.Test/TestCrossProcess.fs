@@ -676,7 +676,7 @@ module TestCrossProcess =
         (machine : SimulatedMachine<int, string>)
         : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
         =
-        let ended = UnixTaskLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
+        let ended = UnixThreadLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
         SimulatedMachine.tryEndProcess ended machine
 
     let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
@@ -716,7 +716,7 @@ module TestCrossProcess =
         let machine =
             Machines.doIn b (fun view -> KeventWorld.stream true view |> snd) machine
 
-        let ended = UnixTaskLifecycle.exitGroup 0 0 stale
+        let ended = UnixThreadLifecycle.exitGroup 0 0 stale
 
         let error =
             Assert.Throws<exn> (fun () -> SimulatedMachine.tryEndProcess ended machine |> ignore)

@@ -306,7 +306,7 @@ module SyscallInterruption =
             false
         else
 
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         // A sigsuspend decides for itself what a signal it could take does to
         // it: a woken one finishes, parks again having discarded what Linux
         // discards, or refuses what this library cannot say. Only a call that
@@ -397,7 +397,7 @@ module SyscallInterruption =
         : Result<SyscallInterruption option, SyscallInterruptionRefusal>
         =
         let parked =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> parked
             | None ->
                 failwith

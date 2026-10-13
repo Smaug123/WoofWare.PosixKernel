@@ -117,7 +117,7 @@ module internal InotifyReplay =
             (owner 0u)
             (seed |> List.map (fun (n, e) -> name n, e) |> Map.ofList)
         |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Threads.ensure
 
     /// `IN_NONBLOCK`.
     let nonblock : int = 0x800

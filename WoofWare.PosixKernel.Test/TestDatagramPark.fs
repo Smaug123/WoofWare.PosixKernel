@@ -75,7 +75,7 @@ module TestDatagramPark =
     [<Test>]
     let ``a task parked in a datagram transfer is a ReservedPark defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let awake = boot flavour |> Tasks.ensure task
+            let awake = boot flavour |> Threads.ensure task
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =

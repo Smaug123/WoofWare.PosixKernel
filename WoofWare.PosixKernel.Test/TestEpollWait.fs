@@ -43,8 +43,8 @@ module TestEpollWait =
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
-    let private withTask (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Tasks.ensure name system
+    let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        Threads.ensure name system
 
     let private createEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixPoll.tryEpollCreate1 0 system with
@@ -60,7 +60,7 @@ module TestEpollWait =
             (UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
              |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)),
              [ 1..6 ])
-            ||> List.fold (fun system name -> withTask name system)
+            ||> List.fold (fun system name -> withThread name system)
 
         let socketId = system.Machine.NextSocketId
         let (SocketId raw) = socketId
@@ -346,7 +346,7 @@ module TestEpollWait =
         let darwin =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> withTask task
+            |> withThread task
 
         UnixPoll.tryEpollWait task 3 8 UserBuffer.Mapped -1 darwin
         |> shouldEqual (Error (EpollWaitRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
@@ -363,7 +363,7 @@ module TestEpollWait =
             match waits milliseconds ready with
             | Ok (EpollWaitOutcome.Answered events, answered) ->
                 events |> shouldEqual delivered
-                UnixTaskTable.parkedFor task answered.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task answered.Tasks |> shouldEqual None
                 pendingEntries answered |> shouldEqual 0
             | other -> failwith $"expected the event, got %A{other}"
 
@@ -377,7 +377,7 @@ module TestEpollWait =
 
             match waits 0 stale with
             | Ok (EpollWaitOutcome.Answered [], answered) ->
-                UnixTaskTable.parkedFor task answered.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task answered.Tasks |> shouldEqual None
                 // The walk consumed the stale entry even though it delivered nothing.
                 pendingEntries answered |> shouldEqual 0
                 answered |> shouldEqual (snd (EpollReadyList.drain queueId 8 stale))
@@ -423,7 +423,7 @@ module TestEpollWait =
 
             let events, finished = finishes expired
             events |> shouldEqual []
-            UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
 
         let bounded =
             Gen.zip positiveTimeout start
@@ -443,7 +443,7 @@ module TestEpollWait =
 
             UnixWait.deadlines (Set.singleton task) parked |> shouldEqual []
 
-            match UnixTaskTable.parkedFor task parked.Tasks with
+            match UnixThreadTable.parkedFor task parked.Tasks with
             | Some (ParkedSyscall.EpollWait wait) ->
                 wait
                 |> shouldEqual
@@ -472,7 +472,7 @@ module TestEpollWait =
 
             let events, finished = finishes ready
             events |> shouldEqual delivered
-            UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+            UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip positiveTimeout start)) property)
 
@@ -506,7 +506,7 @@ module TestEpollWait =
     [<Test>]
     let ``a wake whose event goes stale parks again on the same deadline, behind every other park`` () : unit =
         let _, parked = parks 5 idle
-        let ordinalBefore = (UnixTaskTable.parkOf task parked.Tasks).Value.Ordinal
+        let ordinalBefore = (UnixThreadTable.parkOf task parked.Tasks).Value.Ordinal
         let ready = parked |> after 1L |> signal
 
         woken ready
@@ -521,7 +521,7 @@ module TestEpollWait =
         UnixWait.deadlines (Set.singleton task) reparked
         |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
-        let ordinalAfter = (UnixTaskTable.parkOf task reparked.Tasks).Value.Ordinal
+        let ordinalAfter = (UnixThreadTable.parkOf task reparked.Tasks).Value.Ordinal
         ordinalAfter |> shouldBeGreaterThan ordinalBefore
 
     [<Test>]
@@ -589,7 +589,7 @@ module TestEpollWait =
                 | Ok (EpollWaitOutcome.WouldBlock condition, parked) -> condition, parked
                 | other -> failwith $"expected a park, got %A{other}"
 
-            match UnixTaskTable.parkedFor task parked.Tasks with
+            match UnixThreadTable.parkedFor task parked.Tasks with
             | Some (ParkedSyscall.EpollWait wait) -> wait.Buffer |> shouldEqual buffer
             | other -> failwith $"expected an epoll_wait, got %A{other}"
 
@@ -598,7 +598,7 @@ module TestEpollWait =
             // Timing out copies nothing, so it answers.
             match UnixPoll.tryFinishEpollWait task (after (5L * nanosecondsPerMillisecond) parked) with
             | Ok (EpollWaitOutcome.Answered [], finished) ->
-                UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
             | other -> failwith $"expected the wait to time out, got %A{other}"
 
     // ------------------------------------------------------------------
@@ -696,7 +696,7 @@ module TestEpollWait =
                 )
                 |> after clock
 
-            let parkedTasks =
+            let parkedThreads =
                 system.Tasks
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
@@ -709,7 +709,7 @@ module TestEpollWait =
                 )
 
             let asleep =
-                parkedTasks
+                parkedThreads
                 |> List.map (fun (name, _, _) -> name)
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
@@ -718,17 +718,17 @@ module TestEpollWait =
                 pending.[List.findIndex ((=) queueId) epolls]
 
             let finishingOn (queueId : OpenFileDescriptionId) : bool =
-                parkedTasks
+                parkedThreads
                 |> List.exists (fun (name, wait, _) -> not (Set.contains name asleep) && wait.Epoll = queueId)
 
             let lastAsleepOn (queueId : OpenFileDescriptionId) : int =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, wait, _) -> Set.contains name asleep && wait.Epoll = queueId)
                 |> List.maxBy (fun (_, _, ordinal) -> ordinal)
                 |> fun (name, _, _) -> name
 
             let expected =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, _, _) -> Set.contains name asleep)
                 |> List.sortBy (fun (_, _, ordinal) -> ordinal)
                 |> List.choose (fun (name, wait, _) ->

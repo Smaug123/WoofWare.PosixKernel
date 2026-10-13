@@ -114,7 +114,7 @@ module TestInotifyMeasured =
             rootOwner
             (seed |> List.map (fun (n, e) -> name n, e) |> Map.ofList)
         |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
-        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Tasks.ensure
+        |> fun system -> ([ 1 ; 2 ], system) ||> List.foldBack Threads.ensure
 
     /// `IN_CLOEXEC` and `IN_NONBLOCK`.
     let private cloexec : int = 0x80000
@@ -772,7 +772,7 @@ module TestInotifyMeasured =
                 }
         }
 
-    let private signalTask (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    let private signalThread (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         { system with
             Process =
                 { system.Process with
@@ -842,7 +842,7 @@ module TestInotifyMeasured =
             $"close=%s{rc closed}; thread returned after 150 ms=%d{(if returned reader system then 1 else 0)}"
         )
 
-        system <- signalTask reader system
+        system <- signalThread reader system
         let woken = returned reader system
         let answer, s = finish reader system
         system <- s
@@ -852,7 +852,7 @@ module TestInotifyMeasured =
         system <- catching true system
         let fd, s = init1 cloexec system
         let _, s = addWatch fd "b" create s
-        system <- sleeps reader fd s |> signalTask reader
+        system <- sleeps reader fd s |> signalThread reader
 
         let restarted, s = finish reader system
         restarted |> shouldEqual "restarts"

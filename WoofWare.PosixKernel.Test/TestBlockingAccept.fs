@@ -66,7 +66,7 @@ module TestBlockingAccept =
             (UnixSystem.initial<int, string> platform
              |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)),
              [ 1..6 ])
-            ||> List.fold (fun system name -> Tasks.ensure name system)
+            ||> List.fold (fun system name -> Threads.ensure name system)
 
         listenerAt 5000us system
 
@@ -166,7 +166,7 @@ module TestBlockingAccept =
                     Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                 )
 
-                UnixTaskTable.parkOf task parked.Tasks
+                UnixThreadTable.parkOf task parked.Tasks
                 |> shouldEqual (
                     Some
                         {
@@ -288,7 +288,7 @@ module TestBlockingAccept =
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected the accept to park, got %A{other}"
 
-            let parkedRecord = UnixTaskTable.parkedFor 1 system.Tasks
+            let parkedRecord = UnixThreadTable.parkedFor 1 system.Tasks
 
             let system =
                 (system, actions)
@@ -315,7 +315,7 @@ module TestBlockingAccept =
                         Interruptible.closable [ WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener) ]
                     )
 
-                    UnixTaskTable.parkOf 1 parkedAgain.Tasks
+                    UnixThreadTable.parkOf 1 parkedAgain.Tasks
                     |> shouldEqual (
                         parkedRecord
                         |> Option.map (fun syscall ->
@@ -531,7 +531,7 @@ module TestBlockingAccept =
                         system
                 )
 
-            let parkedTasks =
+            let parkedThreads =
                 system.Tasks
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
@@ -544,7 +544,7 @@ module TestBlockingAccept =
                 )
 
             let asleep =
-                parkedTasks
+                parkedThreads
                 |> List.map (fun (name, _, _) -> name)
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
@@ -553,17 +553,17 @@ module TestBlockingAccept =
                 queued.[List.findIndex (fst >> (=) listener) listeners]
 
             let finishingOn (listener : OpenFileDescriptionId) : bool =
-                parkedTasks
+                parkedThreads
                 |> List.exists (fun (name, on, _) -> not (Set.contains name asleep) && on = listener)
 
             let firstAsleepOn (listener : OpenFileDescriptionId) : int =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, on, _) -> Set.contains name asleep && on = listener)
                 |> List.minBy (fun (_, _, ordinal) -> ordinal)
                 |> fun (name, _, _) -> name
 
             let expected =
-                parkedTasks
+                parkedThreads
                 |> List.filter (fun (name, _, _) -> Set.contains name asleep)
                 |> List.sortBy (fun (_, _, ordinal) -> ordinal)
                 |> List.choose (fun (name, listener, _) ->
@@ -1114,7 +1114,7 @@ module TestBlockingAccept =
 
         queue |> List.map (fun queued -> clientOf queued.Connection)
 
-    let private acceptTasks : int list = [ 1 ; 2 ; 3 ; 4 ]
+    let private acceptThreads : int list = [ 1 ; 2 ; 3 ; 4 ]
 
     let rec private returnToUser (task : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryOnReturnToUser task system with
@@ -1140,7 +1140,7 @@ module TestBlockingAccept =
     /// from 3 to `highestFd`.
     let private acceptOpGenWeighted (highestFd : int) (weights : int * int * int * int * int * int * int * int) =
         let accepts, connects, closes, dups, signals, wakes, finishes, sets = weights
-        let task = Gen.elements acceptTasks
+        let task = Gen.elements acceptThreads
         let fd = Gen.choose (3, highestFd)
 
         Gen.frequency
@@ -1306,7 +1306,7 @@ module TestBlockingAccept =
 
             for i, op in List.indexed ops do
                 let pick (eligible : int -> bool) (index : int) : int option =
-                    match List.filter eligible acceptTasks with
+                    match List.filter eligible acceptThreads with
                     | [] -> None
                     | candidates -> Some candidates.[index % List.length candidates]
 
@@ -1624,12 +1624,12 @@ module TestBlockingAccept =
                 | defects -> failwith $"%s{where}: %A{defects}"
 
                 // Every park agrees with the reference's.
-                for task in acceptTasks do
+                for task in acceptThreads do
                     let expected =
                         Map.tryFind task reference.Parks |> Option.map (fun park -> park.Through)
 
                     let actual =
-                        UnixTaskTable.parkedFor task system.Tasks
+                        UnixThreadTable.parkedFor task system.Tasks
                         |> Option.map (fun parked ->
                             match parked with
                             | ParkedSyscall.Accept {
@@ -1791,7 +1791,7 @@ module TestBlockingAccept =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let state = UnixTaskTable.get task system.Tasks
+        let state = UnixThreadTable.get task system.Tasks
 
         match state.Parked with
         | Some ({

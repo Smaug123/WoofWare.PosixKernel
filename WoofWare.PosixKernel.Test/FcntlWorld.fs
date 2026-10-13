@@ -151,7 +151,7 @@ module internal FcntlWorld =
                 0
                 (CpuId 0))
                 image
-            |> fun system -> ([ 1..3 ], system) ||> List.foldBack Tasks.ensure
+            |> fun system -> ([ 1..3 ], system) ||> List.foldBack Threads.ensure
         | Error fault -> failwith $"could not build the system: %A{fault}"
 
     /// `fcntl`, which must not be refused.

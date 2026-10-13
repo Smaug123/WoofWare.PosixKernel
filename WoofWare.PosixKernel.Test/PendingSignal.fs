@@ -54,7 +54,7 @@ module PendingSignal =
         if transferrer = 1 then
             failwith "PendingSignal.make: task 1 is the other task"
 
-        let system = Tasks.ensure 1 system
+        let system = Threads.ensure 1 system
 
         let install (disposition : SignalDisposition<string>) (system : UnixSystem<int, string>) =
             match UnixSignal.sigaction 10 (Some disposition) system with

@@ -359,7 +359,7 @@ module TestUnconnectedSocketTransfer =
         let system : UnixSystem<int, string> =
             UnixSystem.initial (platformOf flavour)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn 1
+            |> Threads.spawn 1
 
         { system with
             Process =

@@ -17,7 +17,7 @@ type internal FocusOrigin<'Thread, 'Handler when 'Thread : comparison and 'Handl
         machine : UnixMachineState *
         scheduling : UnixSchedulingState *
         proc : UnixProcessState<'Thread, 'Handler> *
-        tasks : Map<'Thread, UnixTaskState>
+        tasks : Map<'Thread, UnixThreadState>
 
     override this.Equals (other : obj) : bool =
         match other with
@@ -60,12 +60,12 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
             Process : UnixProcessState<'Thread, 'Handler>
-            Tasks : Map<'Thread, UnixTaskState>
+            Tasks : Map<'Thread, UnixThreadState>
             /// The process's first task, which it started with: its thread-group
             /// leader.
             ///
             /// Always in `Tasks`. It cannot exit while another task lives
-            /// (`UnixTaskLifecycle.exitThread` refuses that), so it is a task for as
+            /// (`UnixThreadLifecycle.exitThread` refuses that), so it is a task for as
             /// long as the process is running. On Linux its thread ID is the process ID.
             Leader : 'Thread
             /// Where this view was taken from, if a `SimulatedMachine` focused
@@ -138,12 +138,12 @@ module internal UnixParkState =
     /// those of `taken` taken: one per time a park names a description
     /// (`ParkedSyscall.descriptions`).
     let private moveHolds
-        (released : TaskPark option)
-        (taken : TaskPark option)
+        (released : ThreadPark option)
+        (taken : ThreadPark option)
         (openFiles : OpenFileTable)
         : OpenFileTable
         =
-        let descriptions (park : TaskPark option) : OpenFileDescriptionId list =
+        let descriptions (park : ThreadPark option) : OpenFileDescriptionId list =
             match park with
             | None -> []
             | Some park -> ParkedSyscall.descriptions park.Syscall
@@ -159,12 +159,12 @@ module internal UnixParkState =
     /// names destroyed, unless `taken` names it too: a Darwin poll's park holds
     /// its kqueue, and a re-park of the call keeps it.
     let private moveQueue
-        (released : TaskPark option)
-        (taken : TaskPark option)
+        (released : ThreadPark option)
+        (taken : ThreadPark option)
         (queues : Map<PollQueueId, PollQueue>)
         : Map<PollQueueId, PollQueue>
         =
-        let queueOf (park : TaskPark option) : PollQueueId option =
+        let queueOf (park : ThreadPark option) : PollQueueId option =
             match park with
             | Some {
                        Syscall = ParkedSyscall.KqueuePoll poll
@@ -186,15 +186,15 @@ module internal UnixParkState =
     /// kqueue of exactly the Darwin polls asleep.
     ///
     /// Refuses to replace a park of one syscall with a park of another, as
-    /// `UnixTaskTable.withPark` does. Writes `park` as it stands, ordinal and
+    /// `UnixThreadTable.withPark` does. Writes `park` as it stands, ordinal and
     /// all: `UnixWait.park` is what mints a fresh ordinal.
     let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (task : 'Thread)
-        (park : TaskPark)
+        (park : ThreadPark)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let previous = UnixTaskTable.parkOf task system.Tasks
+        let previous = UnixThreadTable.parkOf task system.Tasks
 
         { system with
             Machine =
@@ -202,7 +202,7 @@ module internal UnixParkState =
                     OpenFiles = moveHolds previous (Some park) system.Machine.OpenFiles
                     PollQueues = moveQueue previous (Some park) system.Machine.PollQueues
                 }
-            Tasks = UnixTaskTable.withPark task park system.Tasks
+            Tasks = UnixThreadTable.withPark task park system.Tasks
         }
 
     /// `system` with `task` no longer parked, its call having returned or been
@@ -215,7 +215,7 @@ module internal UnixParkState =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let previous = UnixTaskTable.parkOf task system.Tasks
+        let previous = UnixThreadTable.parkOf task system.Tasks
 
         { system with
             Machine =
@@ -223,7 +223,7 @@ module internal UnixParkState =
                     OpenFiles = moveHolds previous None system.Machine.OpenFiles
                     PollQueues = moveQueue previous None system.Machine.PollQueues
                 }
-            Tasks = UnixTaskTable.unpark task system.Tasks
+            Tasks = UnixThreadTable.unpark task system.Tasks
         }
 
 /// A simulated machine before it has booted, with the ID its first process

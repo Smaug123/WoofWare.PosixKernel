@@ -281,7 +281,7 @@ module WakeCondition =
         =
         match
             Map.tryFind task system.Tasks
-            |> Option.bind UnixTaskState.park
+            |> Option.bind UnixThreadState.park
             |> Option.map (fun park -> park.Syscall)
         with
         | Some (ParkedSyscall.Accept {

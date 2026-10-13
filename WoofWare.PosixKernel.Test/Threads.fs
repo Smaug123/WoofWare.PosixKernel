@@ -4,7 +4,7 @@ open WoofWare.PosixKernel
 
 /// Tasks for a test that needs more than a process's leader.
 [<RequireQualifiedAccess>]
-module Tasks =
+module Threads =
 
     /// `child`, created by the process's leader on processor 0, failing the test if
     /// the creation is refused.
@@ -13,7 +13,7 @@ module Tasks =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"

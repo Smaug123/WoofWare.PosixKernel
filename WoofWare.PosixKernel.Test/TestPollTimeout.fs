@@ -49,7 +49,7 @@ module TestPollTimeout =
             UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let system = Tasks.spawn task system
+        let system = Threads.spawn task system
 
         let socketId = system.Machine.NextSocketId
         let (SocketId raw) = socketId
@@ -210,7 +210,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes atDeadline
                 reported |> shouldEqual [ 0s ]
                 count |> shouldEqual 0
-                UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
                 UnixSystem.checkInvariants finished |> shouldEqual []
 
         Check.One (config, property)
@@ -240,7 +240,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes becameReady
                 reported |> shouldEqual [ 0s ; events &&& (pollIn ||| pollRdNorm) ]
                 count |> shouldEqual 1
-                UnixTaskTable.parkedFor task finished.Tasks |> shouldEqual None
+                UnixThreadTable.parkedFor task finished.Tasks |> shouldEqual None
 
         Check.One (config, property)
 
@@ -366,8 +366,8 @@ module TestPollTimeout =
         UnixWait.deadlines (Set.singleton task) parkedAgain
         |> shouldEqual [ 10_000_000L ]
 
-        (UnixTaskTable.parkOf task parkedAgain.Tasks |> Option.get).Ordinal
-        |> shouldBeGreaterThan (UnixTaskTable.parkOf task parked.Tasks |> Option.get).Ordinal
+        (UnixThreadTable.parkOf task parkedAgain.Tasks |> Option.get).Ordinal
+        |> shouldBeGreaterThan (UnixThreadTable.parkOf task parked.Tasks |> Option.get).Ordinal
 
         let reported, count, _ = parkedAgain |> after 9_000_000L |> finishes
         reported |> shouldEqual [ 0s ]
@@ -377,7 +377,7 @@ module TestPollTimeout =
     let ``the park records each entry with the description it named`` () : unit =
         let _, parked = parks [ entry listener pollIn ; entry -3 pollOut ] 7 idle
 
-        UnixTaskTable.parkedFor task parked.Tasks
+        UnixThreadTable.parkedFor task parked.Tasks
         |> shouldEqual (
             Some (
                 ParkedSyscall.Poll

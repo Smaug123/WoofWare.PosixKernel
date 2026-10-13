@@ -27,8 +27,8 @@ module TestUnixWait =
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
-    let private withTask (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Tasks.ensure name system
+    let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        Threads.ensure name system
 
     /// Two epoll instances, which contend under `flock` because they share one
     /// anonymous inode, with an exclusive lock held through `locker`; and tasks 1 to 4.
@@ -49,10 +49,10 @@ module TestUnixWait =
 
         let system =
             withRegistry registry system
-            |> withTask 1
-            |> withTask 2
-            |> withTask 3
-            |> withTask 4
+            |> withThread 1
+            |> withThread 2
+            |> withThread 3
+            |> withThread 4
 
         system, lockerFd, idOf lockerFd system, idOf blockedFd system
 
@@ -74,7 +74,7 @@ module TestUnixWait =
 
     /// The park each task makes: 1 and 2 wait on an epoll instance, 3 and 4 for a
     /// lock, so that both kinds of park are in the table at once.
-    let private parkOfTask (task : int) : ParkedSyscall =
+    let private parkOfThread (task : int) : ParkedSyscall =
         if task <= 2 then
             ParkedSyscall.EpollWait
                 {
@@ -117,7 +117,7 @@ module TestUnixWait =
 
     let private apply (op : Op) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match op with
-        | Op.Park task -> UnixWait.park task (parkOfTask task) system
+        | Op.Park task -> UnixWait.park task (parkOfThread task) system
         | Op.Unpark task -> UnixParkState.unpark task system
         | Op.AdvanceClock nanoseconds ->
             { system with
@@ -132,7 +132,7 @@ module TestUnixWait =
             if Map.containsKey task system.Tasks then
                 system
             else
-                withTask task system
+                withThread task system
 
     /// The parks a walk must make.
     [<RequireQualifiedAccess>]
@@ -158,20 +158,20 @@ module TestUnixWait =
                 // Every other task keeps its park, ordinal and all.
                 for task in Map.keys before.Tasks do
                     if Some task <> subject then
-                        UnixTaskTable.parkOf task after.Tasks
-                        |> shouldEqual (UnixTaskTable.parkOf task before.Tasks)
+                        UnixThreadTable.parkOf task after.Tasks
+                        |> shouldEqual (UnixThreadTable.parkOf task before.Tasks)
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
                 match op with
                 | Op.Park task ->
-                    if (UnixTaskTable.parkOf task before.Tasks).IsSome then
+                    if (UnixThreadTable.parkOf task before.Tasks).IsSome then
                         cover ParkLabel.Repark
 
-                    match UnixTaskTable.parkOf task after.Tasks with
+                    match UnixThreadTable.parkOf task after.Tasks with
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
-                        park.Syscall |> shouldEqual (parkOfTask task)
+                        park.Syscall |> shouldEqual (parkOfThread task)
 
                         match lastMinted with
                         | Some last -> park.Ordinal |> shouldBeGreaterThan last
@@ -179,7 +179,7 @@ module TestUnixWait =
 
                         after, Some park.Ordinal
                 | Op.Unpark task ->
-                    UnixTaskTable.parkOf task after.Tasks |> shouldEqual None
+                    UnixThreadTable.parkOf task after.Tasks |> shouldEqual None
                     after, lastMinted
                 | Op.AdvanceClock _
                 | Op.CreateEpoll
@@ -197,7 +197,7 @@ module TestUnixWait =
     let ``a released lock wakes every waiter, in the order they parked`` () : unit =
         // Parked against the table's own key order, so that park order is told apart from it.
         let parked =
-            system |> UnixWait.park 4 (parkOfTask 4) |> UnixWait.park 3 (parkOfTask 3)
+            system |> UnixWait.park 4 (parkOfThread 4) |> UnixWait.park 3 (parkOfThread 3)
 
         let asleep = Set.ofList [ 3 ; 4 ]
 
@@ -210,7 +210,7 @@ module TestUnixWait =
         |> shouldEqual [ 4, fired ; 3, fired ]
 
         // A re-park moves the waiter behind every park already made.
-        let reparked = parked |> UnixWait.park 4 (parkOfTask 4)
+        let reparked = parked |> UnixWait.park 4 (parkOfThread 4)
 
         UnixWait.wakes asleep (releaseLock reparked)
         |> shouldEqual [ 3, fired ; 4, fired ]
@@ -221,8 +221,8 @@ module TestUnixWait =
         // it a second time.
         let released =
             system
-            |> UnixWait.park 3 (parkOfTask 3)
-            |> UnixWait.park 4 (parkOfTask 4)
+            |> UnixWait.park 3 (parkOfThread 3)
+            |> UnixWait.park 4 (parkOfThread 4)
             |> releaseLock
 
         UnixWait.wakes (Set.singleton 4) released
@@ -248,7 +248,7 @@ module TestUnixWait =
     let ``a quiet epoll instance wakes none of its waiters, however many there are`` () : unit =
         // An exclusive wake is about a deliverable event, not about sharing an epoll instance.
         let parked =
-            system |> UnixWait.park 1 (parkOfTask 1) |> UnixWait.park 2 (parkOfTask 2)
+            system |> UnixWait.park 1 (parkOfThread 1) |> UnixWait.park 2 (parkOfThread 2)
 
         UnixWait.wakes (Set.ofList [ 1 ; 2 ]) parked |> shouldEqual []
 
@@ -257,19 +257,19 @@ module TestUnixWait =
         // The refusal below is about an *unclosed* park, not about a task's history: a
         // completion that clears its record leaves the task free to block in anything.
         let cleared =
-            let parked = system |> UnixWait.park 1 (parkOfTask 1)
+            let parked = system |> UnixWait.park 1 (parkOfThread 1)
 
             UnixParkState.unpark 1 parked
 
-        UnixWait.park 1 (parkOfTask 3) cleared
-        |> fun system -> UnixTaskTable.parkedFor 1 system.Tasks
-        |> shouldEqual (Some (parkOfTask 3))
+        UnixWait.park 1 (parkOfThread 3) cleared
+        |> fun system -> UnixThreadTable.parkedFor 1 system.Tasks
+        |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]
     let ``a park of a different syscall over an existing one is refused`` () : unit =
-        let parked = system |> UnixWait.park 1 (parkOfTask 1)
+        let parked = system |> UnixWait.park 1 (parkOfThread 1)
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.park 1 (parkOfTask 3) parked |> ignore)
+            Assert.Throws<exn> (fun () -> UnixWait.park 1 (parkOfThread 3) parked |> ignore)
 
         exn.Message |> shouldContainText "without clearing the first"

@@ -1237,7 +1237,7 @@ module UnixReadWrite =
                 )
             )
         | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-            UnixTaskLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
+            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
             |> WriteStep.ProcessEnded
             |> Ok
         | Ok (SignalGeneration.ProcessStopped (signal, _)) ->
@@ -2406,7 +2406,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.PipeRead parked) -> finishPipeRead task parked system
         | Some (ParkedSyscall.ConnectionRead parked) -> finishConnectionRead task parked system
         | Some (ParkedSyscall.InotifyRead parked) -> finishInotifyRead task parked system
@@ -2424,7 +2424,7 @@ module UnixReadWrite =
         : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
@@ -3517,7 +3517,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : (OpenFileDescriptionId * int) option
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.PipeWrite {
                                             Writer = SleepTarget.Waiting (description, _)
                                             Written = written
@@ -3555,7 +3555,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : ParkedPipeWrite
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.PipeWrite parked) -> parked
         | Some other ->
             failwith
@@ -3787,7 +3787,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.ConnectionWrite parked) -> admitFinishConnectionWrite task parked system
         | _ ->
 
@@ -3899,7 +3899,7 @@ module UnixReadWrite =
         : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 
@@ -3929,7 +3929,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        match UnixTaskTable.parkedFor task system.Tasks with
+        match UnixThreadTable.parkedFor task system.Tasks with
         | Some (ParkedSyscall.ConnectionWrite parked) -> finishConnectionWrite task parked bytes system
         | _ ->
 
@@ -3990,7 +3990,7 @@ module UnixReadWrite =
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let held =
-            match UnixTaskTable.parkedFor task system.Tasks with
+            match UnixThreadTable.parkedFor task system.Tasks with
             | Some parked -> ParkedSyscall.descriptions parked
             | None -> []
 

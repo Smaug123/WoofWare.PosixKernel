@@ -690,7 +690,7 @@ module TestBlockingPipe =
 
             let bare =
                 (bare, List.tail tasks)
-                ||> List.fold (fun system task -> Tasks.spawn task system)
+                ||> List.fold (fun system task -> Threads.spawn task system)
 
             let bare =
                 { bare with
@@ -1154,7 +1154,7 @@ module TestBlockingPipe =
                             )
 
                         let actual =
-                            UnixTaskTable.parkedFor task system.Tasks
+                            UnixThreadTable.parkedFor task system.Tasks
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.PipeRead read -> 0, read.Count, 0
@@ -1289,7 +1289,7 @@ module TestBlockingPipe =
         let system =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Tasks.spawn sleeper
+            |> Threads.spawn sleeper
 
         let system =
             { system with
@@ -1525,8 +1525,8 @@ module TestBlockingPipe =
                 for writing in [ false ; true ] do
                     let system =
                         pipeHolding platform false (if writing then 65536 else 0)
-                        |> Tasks.spawn 2
-                        |> Tasks.spawn 3
+                        |> Threads.spawn 2
+                        |> Threads.spawn 3
 
                     let system =
                         (system, order)
@@ -1571,7 +1571,7 @@ module TestBlockingPipe =
     let ``a sleeper that finds nothing to take sleeps again behind the others`` () : unit =
         // Section A3: two readers, the first woken; another read takes the
         // byte first.
-        let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> Tasks.spawn 2
+        let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> Threads.spawn 2
 
         let system =
             match UnixReadWrite.tryRead 2 3 UserBuffer.Mapped 1UL (readerAsleep system) with
@@ -1815,7 +1815,7 @@ module TestBlockingPipe =
             // Two readers through the read end.
             let system =
                 pipeHolding platform false 0
-                |> Tasks.spawn 2
+                |> Threads.spawn 2
                 |> readerAsleep
                 |> readerAsleepThrough 2 3
 
@@ -2007,7 +2007,7 @@ module TestBlockingPipe =
     let ``Darwin: a transfer asleep through a dup of the descriptor closed sleeps on`` () : unit =
         let system =
             pipeHolding SimulatedUnixPlatform.macOsArm64 false 0
-            |> Tasks.spawn 2
+            |> Threads.spawn 2
             |> readerAsleep
 
         let duplicate, system = dupped 3 system
@@ -2261,7 +2261,7 @@ module TestBlockingPipe =
                         admitted
                 with
                 | Ok (WriteStep.WouldBlock (_, asleep)) ->
-                    match UnixTaskTable.parkedFor sleeper asleep.Tasks with
+                    match UnixThreadTable.parkedFor sleeper asleep.Tasks with
                     | Some (ParkedSyscall.PipeWrite parked) ->
                         (parked.Count, parked.Written) |> shouldEqual (200000, 65536)
                     | other -> failwith $"%O{platform}: %A{other}"
@@ -2331,7 +2331,7 @@ module TestBlockingPipe =
 
             for writing in [ false ; true ] do
                 let system =
-                    pipeHolding platform false (if writing then 65536 else 0) |> Tasks.spawn 2
+                    pipeHolding platform false (if writing then 65536 else 0) |> Threads.spawn 2
 
                 let sleep (task : int) (system : UnixSystem<int, string>) =
                     if writing then

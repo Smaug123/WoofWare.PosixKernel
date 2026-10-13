@@ -786,7 +786,7 @@ type ParkOrdinal =
 
 /// One task's park: the syscall it is blocked in, and where the park stands in
 /// the order parks were made in.
-type TaskPark =
+type ThreadPark =
     {
         /// The syscall the task is blocked in, with the state it was entered with.
         Syscall : ParkedSyscall
@@ -802,8 +802,8 @@ type TaskPark =
 /// `gettid(2)` names.
 ///
 /// A process starts with one, its leader (`ProcessLaunch.create`), every thread it creates adds
-/// one (`UnixTaskLifecycle.spawn`), and the thread's exit removes it
-/// (`UnixTaskLifecycle.exitThread`), so the table holds a task for each thread
+/// one (`UnixThreadLifecycle.spawn`), and the thread's exit removes it
+/// (`UnixThreadLifecycle.exitThread`), so the table holds a task for each thread
 /// from its creation until its exit. That is what makes the record total:
 /// `Cpu` and `OsThreadId` have no truthful default, so a `Map` of each would
 /// have no honest answer for an absent key, and the answer is that there is
@@ -812,12 +812,12 @@ type TaskPark =
 /// The per-thread errno is *not* here. On a real Unix errno lives in libc, not
 /// in the kernel: the kernel returns an error code and the syscall wrapper
 /// stores it, so the slot belongs to the client.
-type UnixTaskState =
+type UnixThreadState =
     internal
         {
             /// The simulated logical processor this task last ran on, or, before
             /// the client first dispatches it, the one its creator named to
-            /// `UnixTaskLifecycle.spawn`, or to `ProcessLaunch.create` for a
+            /// `UnixThreadLifecycle.spawn`, or to `ProcessLaunch.create` for a
             /// process's leader: Linux's `task_cpu`. Always one the machine has,
             /// in `[0, UnixMachineState.ProcessorCount)`.
             ///
@@ -854,36 +854,36 @@ type UnixTaskState =
             /// Every payload holds kernel objects by *identity*, never by descriptor
             /// number: a sleeping task keeps the object rather than the number, and
             /// descriptor numbers are reused as soon as they are free.
-            Parked : TaskPark option
+            Parked : ThreadPark option
         }
 
 /// Reading one task.
 ///
-/// A client gets a task's state by looking its name up in `UnixSystem.tasks`,
+/// A client gets a task's state by looking its name up in `UnixSystem.threads`,
 /// which holds no entry for a name the process has no task by, so each reader
 /// here answers for every state it can be given.
 [<RequireQualifiedAccess>]
-module UnixTaskState =
+module UnixThreadState =
 
     /// The logical processor `task` last ran on, or, before the client first
     /// dispatched it (`UnixScheduling.dispatch`), the one its creator named.
     /// Whether it is running there now is `UnixScheduling.runningOn`'s answer.
-    let cpu (task : UnixTaskState) : CpuId = task.Cpu
+    let cpu (task : UnixThreadState) : CpuId = task.Cpu
 
     /// The OS thread ID `task` reports, as `gettid(2)` does: fixed when the
     /// task is created, and held by no other live task on the machine.
-    let osThreadId (task : UnixTaskState) : OsThreadId = task.OsThreadId
+    let osThreadId (task : UnixThreadState) : OsThreadId = task.OsThreadId
 
     /// The syscall `task` is blocked in, and where that park stands in park
     /// order, if it is blocked in one. The park holds kernel objects by
     /// identity, never by descriptor number: a sleeping task keeps the object
     /// rather than the number, and descriptor numbers are reused as soon as
     /// they are free.
-    let park (task : UnixTaskState) : TaskPark option = task.Parked
+    let park (task : UnixThreadState) : ThreadPark option = task.Parked
 
     /// The syscall `task` is blocked in, if it is blocked in one: `park`
     /// without its place in park order.
-    let parkedIn (task : UnixTaskState) : ParkedSyscall option =
+    let parkedIn (task : UnixThreadState) : ParkedSyscall option =
         task.Parked |> Option.map (fun park -> park.Syscall)
 
 /// The tasks a simulated process owns, by whatever a client uses to name one.
@@ -891,7 +891,7 @@ module UnixTaskState =
 /// Generic in the task name for the same reason `SignalState` is: the identity
 /// of a scheduling entity is the client's, not this library's.
 [<RequireQualifiedAccess>]
-module UnixTaskTable =
+module UnixThreadTable =
 
     /// The task `name` is.
     ///
@@ -900,33 +900,33 @@ module UnixTaskTable =
     /// resolves to nothing is a client bug rather than anything a process did.
     let internal get<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixTaskState>)
-        : UnixTaskState
+        (tasks : Map<'Thread, UnixThreadState>)
+        : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
-        let mutable task = Unchecked.defaultof<UnixTaskState>
+        let mutable task = Unchecked.defaultof<UnixThreadState>
 
         if tasks.TryGetValue (name, &task) then
             task
         else
             failwith
-                $"UnixTaskTable.get: %O{name} names no task. Every task enters the table when its thread is created, as its process's leader or by `UnixTaskLifecycle.spawn`, and leaves it when the thread exits, so this one was never created or has already exited (this is a bug in the client)."
+                $"UnixThreadTable.get: %O{name} names no task. Every task enters the table when its thread is created, as its process's leader or by `UnixThreadLifecycle.spawn`, and leaves it when the thread exits, so this one was never created or has already exited (this is a bug in the client)."
 
     /// Add the task for a newly-created scheduling entity.
     ///
     /// Internal so that the only routes by which a task enters the table are
-    /// a process's launch and `UnixTaskLifecycle.spawn`, which mint its id.
+    /// a process's launch and `UnixThreadLifecycle.spawn`, which mint its id.
     let internal add<'Thread when 'Thread : comparison>
         (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (tasks : Map<'Thread, UnixTaskState>)
-        : Map<'Thread, UnixTaskState>
+        (tasks : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
         if Map.containsKey name tasks then
             failwith
-                $"UnixTaskTable.add: %O{name} already names a task. A task is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
+                $"UnixThreadTable.add: %O{name} already names a task. A task is created once, and adding it again would silently discard whatever the first creation recorded (this is a bug in the client)."
 
         Map.add
             name
@@ -938,20 +938,20 @@ module UnixTaskTable =
             tasks
 
     /// The syscall `name` is blocked in, if any. Fails loudly, as `get` does,
-    /// for a name that is not a task; a client reads `UnixTaskState.parkedIn`
+    /// for a name that is not a task; a client reads `UnixThreadState.parkedIn`
     /// of the state it looked up instead.
     let internal parkedFor<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixTaskState>)
+        (tasks : Map<'Thread, UnixThreadState>)
         : ParkedSyscall option
         =
-        UnixTaskState.parkedIn (get name tasks)
+        UnixThreadState.parkedIn (get name tasks)
 
     /// The park `name` is in, with its place in park order, if it is parked.
     let internal parkOf<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixTaskState>)
-        : TaskPark option
+        (tasks : Map<'Thread, UnixThreadState>)
+        : ThreadPark option
         =
         (get name tasks).Parked
 
@@ -975,9 +975,9 @@ module UnixTaskTable =
     /// which moves the holds, are the ways a park is written.
     let internal withPark<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (park : TaskPark)
-        (tasks : Map<'Thread, UnixTaskState>)
-        : Map<'Thread, UnixTaskState>
+        (park : ThreadPark)
+        (tasks : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
         let existing = get name tasks
 
@@ -1011,7 +1011,7 @@ module UnixTaskTable =
 
         if not sameSyscall then
             failwith
-                $"UnixTaskTable.withPark: task %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A task blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
+                $"UnixThreadTable.withPark: task %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A task blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
 
         Map.add
             name
@@ -1028,8 +1028,8 @@ module UnixTaskTable =
     /// its holds.
     let internal unpark<'Thread when 'Thread : comparison>
         (name : 'Thread)
-        (tasks : Map<'Thread, UnixTaskState>)
-        : Map<'Thread, UnixTaskState>
+        (tasks : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
         =
         let existing = get name tasks
 
@@ -1048,7 +1048,7 @@ module UnixTaskTable =
     /// own vocabulary: this library has no opinion on what a defect is called.
     let reconcile<'Thread when 'Thread : comparison>
         (live : Set<'Thread>)
-        (tasks : Map<'Thread, UnixTaskState>)
+        (tasks : Map<'Thread, UnixThreadState>)
         : 'Thread list * 'Thread list
         =
         let named = tasks |> Map.toList |> List.map fst |> Set.ofList

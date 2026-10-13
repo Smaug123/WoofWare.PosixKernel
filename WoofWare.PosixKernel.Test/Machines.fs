@@ -16,7 +16,7 @@ module internal Machines =
     /// A machine of `platform`, booted from an image `configure` configured,
     /// with `count` processes, the first booted and the rest launched, each
     /// with tasks 0 to `tasks - 1`, and their process IDs in that order.
-    let withTasksOn
+    let withThreadsOn
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (platform : SimulatedUnixPlatform)
         (count : int)
@@ -42,7 +42,7 @@ module internal Machines =
                 match
                     SimulatedMachine.inView
                         pid
-                        (fun view -> (), ([ 1 .. tasks - 1 ], view) ||> List.foldBack Tasks.ensure)
+                        (fun view -> (), ([ 1 .. tasks - 1 ], view) ||> List.foldBack Threads.ensure)
                         machine
                 with
                 | Some ((), machine) -> machine
@@ -51,19 +51,19 @@ module internal Machines =
 
         pids, machine
 
-    /// `withTasksOn` with the image as `UnixSystem.initial` makes it.
-    let withTasks
+    /// `withThreadsOn` with the image as `UnixSystem.initial` makes it.
+    let withThreads
         (platform : SimulatedUnixPlatform)
         (count : int)
         (tasks : int)
         : ProcessId list * SimulatedMachine<int, string>
         =
-        withTasksOn id platform count tasks
+        withThreadsOn id platform count tasks
 
-    /// `withTasks` with tasks 0 to 4 in each process, as `KeventWorld`'s
+    /// `withThreads` with tasks 0 to 4 in each process, as `KeventWorld`'s
     /// helpers expect.
     let ofCount (platform : SimulatedUnixPlatform) (count : int) : ProcessId list * SimulatedMachine<int, string> =
-        withTasks platform count 5
+        withThreads platform count 5
 
     /// The view of `pid`, which must be on `machine`.
     let viewOf (pid : ProcessId) (machine : SimulatedMachine<int, string>) : UnixSystem<int, string> =

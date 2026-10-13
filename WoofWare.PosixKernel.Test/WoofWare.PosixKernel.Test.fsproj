@@ -37,7 +37,7 @@
     <Compile Include="Become.fs" />
     <Compile Include="LaunchedStreams.fs" />
     <Compile Include="BindingProbes.fs" />
-    <Compile Include="Tasks.fs" />
+    <Compile Include="Threads.fs" />
     <Compile Include="EndedMachine.fs" />
     <Compile Include="ForgedPark.fs" />
     <Compile Include="Machines.fs" />
@@ -46,7 +46,7 @@
     <Compile Include="PendingSignal.fs" />
     <Compile Include="HandlerFrames.fs" />
     <Compile Include="Interruptible.fs" />
-    <Compile Include="TestUnixTaskTable.fs" />
+    <Compile Include="TestUnixThreadTable.fs" />
     <Compile Include="CredentialsGen.fs" />
     <Compile Include="TestCredentials.fs" />
     <Compile Include="TestInodeOwner.fs" />
@@ -69,7 +69,7 @@
     <Compile Include="TestWakeCondition.fs" />
     <Compile Include="TestUnixWait.fs" />
     <Compile Include="TestSyscallInterruption.fs" />
-    <Compile Include="TestUnixTaskLifecycle.fs" />
+    <Compile Include="TestUnixThreadLifecycle.fs" />
     <Compile Include="TestThreadIds.fs" />
     <Compile Include="TestCpuRange.fs" />
     <Compile Include="TestUnixScheduling.fs" />
@@ -154,7 +154,7 @@
     <Compile Include="TestDatagramPark.fs" />
     <Compile Include="TestConnectPark.fs" />
     <Compile Include="TestSigcontGeneration.fs" />
-    <Compile Include="TestUnblockForAnotherTask.fs" />
+    <Compile Include="TestUnblockForAnotherThread.fs" />
     <Compile Include="TestSignalPickOrder.fs" />
     <Compile Include="TestSignalReceiver.fs" />
     <Compile Include="SignalFuzz.fs" />

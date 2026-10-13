@@ -54,7 +54,7 @@ module TestWakeSweepMemo =
 
     [<Test>]
     let ``a signal for a sleeping task wakes it, though only the process's own state changed`` () : unit =
-        let pids, machine = Machines.withTasks linux 1 2
+        let pids, machine = Machines.withThreads linux 1 2
         let pid = pids.[0]
 
         let listener, machine =
@@ -103,7 +103,7 @@ module TestWakeSweepMemo =
     /// holds a connection; the sweep has woken task 0, whose call has not yet
     /// finished, so task 1 waits behind it. The process's ID, and the machine.
     let private behindAWokenAccepter () : ProcessId * SimulatedMachine<int, string> =
-        let pids, machine = Machines.withTasks linux 1 3
+        let pids, machine = Machines.withThreads linux 1 3
         let pid = pids.[0]
 
         let listener, machine =
@@ -126,7 +126,7 @@ module TestWakeSweepMemo =
     /// `machine` with task 0 of `pid` unparked in the task table alone, as its
     /// finished `accept` leaves it: a forged state, whose open file table still
     /// counts the park's hold.
-    let private finishedInTasksAlone
+    let private finishedInThreadsAlone
         (pid : ProcessId)
         (machine : SimulatedMachine<int, string>)
         : SimulatedMachine<int, string>
@@ -138,7 +138,7 @@ module TestWakeSweepMemo =
                 Map.add
                     pid
                     { slot with
-                        Tasks = UnixTaskTable.unpark 0 slot.Tasks
+                        Tasks = UnixThreadTable.unpark 0 slot.Tasks
                     }
                     machine.Processes
         }
@@ -151,7 +151,7 @@ module TestWakeSweepMemo =
         let woken, memo = remembering WakeSweepMemo.empty asleep machine
         woken |> shouldEqual []
 
-        remembering memo asleep (finishedInTasksAlone pid machine)
+        remembering memo asleep (finishedInThreadsAlone pid machine)
         |> fst
         |> List.map fst
         |> shouldEqual [ pid, 1 ]
@@ -160,7 +160,7 @@ module TestWakeSweepMemo =
     let ``a process gone, or another in its place, is swept again, though nothing else changed`` () : unit =
         let pid, machine = behindAWokenAccepter ()
         let asleep = Map.ofList [ pid, Set.singleton 1 ]
-        let finished = finishedInTasksAlone pid machine
+        let finished = finishedInThreadsAlone pid machine
         let other = ProcessId.parseOrFail "TestWakeSweepMemo" 9999
 
         // A second process holding a copy of the first's tasks, task 0 among
@@ -216,7 +216,7 @@ module TestWakeSweepMemo =
 
     [<Test>]
     let ``the earliest of several deadlines ends the memo's answer, not the latest`` () : unit =
-        let pids, machine = Machines.withTasks linux 1 2
+        let pids, machine = Machines.withThreads linux 1 2
         let pid = pids.[0]
 
         let listener, machine =

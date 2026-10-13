@@ -70,9 +70,9 @@ module TestUnixSignal =
             ended.Termination
             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGKILL, false))
 
-            EndedMachine.assertTasksGone system ended
+            EndedMachine.assertThreadsGone system ended
             // The process's end takes its tasks' per-task entries with them.
-            SignalState.tasksWithFrames ended.FinalProcess.Signals |> shouldBeEmpty
+            SignalState.threadsWithFrames ended.FinalProcess.Signals |> shouldBeEmpty
 
             { ended.FinalProcess with
                 Signals = system.Process.Signals
@@ -242,7 +242,7 @@ module TestUnixSignal =
                     ended.Termination
                     |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                    EndedMachine.assertTasksGone system ended
+                    EndedMachine.assertThreadsGone system ended
                     ended.FinalProcess |> shouldEqual system.Process
                 | _ ->
                     failwith
@@ -481,7 +481,7 @@ module TestUnixSignal =
             systemLaunchedWith (ProcessLaunch.withCoreDumps case.CoreDumps) case.Flavour
             |> fun system ->
                 (system, [ 1 .. case.Tasks - 1 ])
-                ||> List.fold (fun system task -> Tasks.spawn task system)
+                ||> List.fold (fun system task -> Threads.spawn task system)
 
         let configured =
             (booted, case.Dispositions)
@@ -590,8 +590,8 @@ module TestUnixSignal =
                 EndedProcess.termination death
                 |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                EndedMachine.assertTasksGone system death
-                SignalState.tasksWithFrames death.FinalProcess.Signals |> shouldBeEmpty
+                EndedMachine.assertThreadsGone system death
+                SignalState.threadsWithFrames death.FinalProcess.Signals |> shouldBeEmpty
 
                 // The process as it stood once it had taken the signal, less
                 // what it held for its tasks.
