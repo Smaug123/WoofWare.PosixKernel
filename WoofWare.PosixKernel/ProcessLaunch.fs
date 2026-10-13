@@ -136,7 +136,7 @@ module internal LaunchRefusal =
 /// Opaque: made by `create`, and configured by the setters in
 /// `ProcessLaunch`, each of which checks its value against the platform the
 /// launch was made for.
-type ProcessLaunch<'Task when 'Task : comparison> =
+type ProcessLaunch<'Thread when 'Thread : comparison> =
     internal
         {
             Platform : SimulatedUnixPlatform
@@ -144,7 +144,7 @@ type ProcessLaunch<'Task when 'Task : comparison> =
             /// whose other end is the client's.
             Streams : Map<int, LaunchDescriptor>
             /// The process's first task, its thread-group leader.
-            Leader : 'Task
+            Leader : 'Thread
             /// The logical processor the leader starts on.
             LeaderCpu : CpuId
             Credentials : Credentials
@@ -161,12 +161,12 @@ type ProcessLaunch<'Task when 'Task : comparison> =
 module ProcessLaunch =
 
     /// `create`, with a refusal answered as the `Error` rather than raised.
-    let internal tryCreate<'Task when 'Task : comparison>
+    let internal tryCreate<'Thread when 'Thread : comparison>
         (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
-        (leader : 'Task)
+        (leader : 'Thread)
         (leaderCpu : CpuId)
-        : Result<ProcessLaunch<'Task>, LaunchTableRefusal>
+        : Result<ProcessLaunch<'Thread>, LaunchTableRefusal>
         =
         let platform = SimulatedUnixPlatform.assertValid "ProcessLaunch.create" platform
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -225,29 +225,29 @@ module ProcessLaunch =
     /// bound (`SimulatedUnixPlatform.descriptorBound`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The table names a negative descriptor, which no process has. Contradictory.</exception>
-    let create<'Task when 'Task : comparison>
+    let create<'Thread when 'Thread : comparison>
         (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
-        (leader : 'Task)
+        (leader : 'Thread)
         (leaderCpu : CpuId)
-        : ProcessLaunch<'Task>
+        : ProcessLaunch<'Thread>
         =
         tryCreate platform streams leader leaderCpu
         |> Refusal.orRaise "ProcessLaunch.create" LaunchTableRefusal.kind LaunchTableRefusal.describe
 
     /// The platform the launch was described for, whose rules its setters
     /// check against.
-    let platform<'Task when 'Task : comparison> (launch : ProcessLaunch<'Task>) : SimulatedUnixPlatform =
+    let platform<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : SimulatedUnixPlatform =
         launch.Platform
 
     /// The process's first task.
-    let leader<'Task when 'Task : comparison> (launch : ProcessLaunch<'Task>) : 'Task = launch.Leader
+    let leader<'Thread when 'Thread : comparison> (launch : ProcessLaunch<'Thread>) : 'Thread = launch.Leader
 
     /// `withCredentials`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithCredentials<'Task when 'Task : comparison>
+    let internal tryWithCredentials<'Thread when 'Thread : comparison>
         (credentials : Credentials)
-        (launch : ProcessLaunch<'Task>)
-        : Result<ProcessLaunch<'Task>, CredentialsRefusal>
+        (launch : ProcessLaunch<'Thread>)
+        : Result<ProcessLaunch<'Thread>, CredentialsRefusal>
         =
         let platform = launch.Platform
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -284,19 +284,19 @@ module ProcessLaunch =
     /// process there.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupLimit`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`. Contradictory.</exception>
-    let withCredentials<'Task when 'Task : comparison>
+    let withCredentials<'Thread when 'Thread : comparison>
         (credentials : Credentials)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         tryWithCredentials credentials launch
         |> Refusal.orRaise "ProcessLaunch.withCredentials" CredentialsRefusal.kind CredentialsRefusal.describe
 
     /// `withUmask`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithUmask<'Task when 'Task : comparison>
+    let internal tryWithUmask<'Thread when 'Thread : comparison>
         (umask : PermissionBits)
-        (launch : ProcessLaunch<'Task>)
-        : Result<ProcessLaunch<'Task>, UmaskRefusal>
+        (launch : ProcessLaunch<'Thread>)
+        : Result<ProcessLaunch<'Thread>, UmaskRefusal>
         =
         let umask = PermissionBits.assertValid "ProcessLaunch.withUmask" umask
         let stored = SimulatedUnixPlatform.umaskStoredBits launch.Platform
@@ -319,10 +319,10 @@ module ProcessLaunch =
     /// exist.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The mask holds a bit `flavour`'s `umask(2)` never stores: it keeps only `stored` (`SimulatedUnixPlatform.umaskStoredBits`). No parent could have left such a mask. Contradictory.</exception>
-    let withUmask<'Task when 'Task : comparison>
+    let withUmask<'Thread when 'Thread : comparison>
         (umask : PermissionBits)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         tryWithUmask umask launch
         |> Refusal.orRaise "ProcessLaunch.withUmask" UmaskRefusal.kind UmaskRefusal.describe
@@ -335,11 +335,11 @@ module ProcessLaunch =
     /// `context` prefixes the rejection a forged entry earns, and is the
     /// client's to choose: the host that has to fix one knows it by whatever
     /// name the client's own configuration gives it.
-    let withEnvironment<'Task when 'Task : comparison>
+    let withEnvironment<'Thread when 'Thread : comparison>
         (context : string)
         (environment : UnixByteString list)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         { launch with
             Environment = environment |> List.map (UnixByteString.assertValid context)
@@ -351,11 +351,11 @@ module ProcessLaunch =
     ///
     /// `context` prefixes the rejection a forged path earns; see
     /// `withEnvironment`.
-    let withProcessPath<'Task when 'Task : comparison>
+    let withProcessPath<'Thread when 'Thread : comparison>
         (context : string)
         (path : AbsoluteUnixPath option)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         { launch with
             ProcessPath = path |> Option.map (AbsoluteUnixPath.assertValid context)
@@ -364,10 +364,10 @@ module ProcessLaunch =
     /// Set whether the process writes a core dump when a signal whose default
     /// action dumps core kills it. Fixed for the life of the process: this
     /// library models no `setrlimit(2)`.
-    let withCoreDumps<'Task when 'Task : comparison>
+    let withCoreDumps<'Thread when 'Thread : comparison>
         (coreDumps : CoreDumps)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         { launch with
             CoreDumps = coreDumps
@@ -384,10 +384,10 @@ module ProcessLaunch =
     /// resolved, because after it the process holds the *directory* rather than
     /// the name, so the path `getcwd` reports is the physical one with every
     /// symlink resolved away.
-    let withCurrentDirectory<'Task when 'Task : comparison>
+    let withCurrentDirectory<'Thread when 'Thread : comparison>
         (directory : AbsoluteUnixPath)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         { launch with
             CurrentDirectory = AbsoluteUnixPath.assertValid "ProcessLaunch.withCurrentDirectory" directory
@@ -452,12 +452,12 @@ module ProcessLaunch =
     /// records as live: the machine after it, with the launch table's pipes,
     /// the process on its process table and a hold on its current directory,
     /// and the process and its tasks.
-    let internal launchOnto<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (launch : ProcessLaunch<'Task>)
+    let internal launchOnto<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
         (pid : ProcessId)
         (leaderThreadId : OsThreadId)
         (machine : UnixMachineState)
-        : Result<UnixMachineState * UnixProcessState<'Task, 'Handler> * Map<'Task, UnixTaskState>, LaunchRefusal>
+        : Result<UnixMachineState * UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixTaskState>, LaunchRefusal>
         =
         let platform = machine.UnixPlatform
 
@@ -513,7 +513,7 @@ module ProcessLaunch =
             }
             |> UnixMachineState.holdCurrentDirectory directory
 
-        let proc : UnixProcessState<'Task, 'Handler> =
+        let proc : UnixProcessState<'Thread, 'Handler> =
             {
                 FileDescriptors = FileDescriptorRegistry.descriptorTable registry
                 Environment = launch.Environment

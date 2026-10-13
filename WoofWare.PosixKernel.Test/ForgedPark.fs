@@ -12,11 +12,11 @@ module ForgedPark =
     /// file table holds. `UnixWait.park` refuses a park on a description the
     /// table does not hold, which is exactly the park a test of
     /// `ParkedOnAbsentDescription` needs.
-    let onAbsent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let onAbsent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         if (UnixTaskTable.parkOf task system.Tasks).IsSome then
             failwith $"ForgedPark.onAbsent: task %O{task} is parked already"

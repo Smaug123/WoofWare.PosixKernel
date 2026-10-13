@@ -293,10 +293,10 @@ type internal RenameSourceProgress =
 /// Opaque: the only thing to do with one is give it to
 /// `UnixNamespace.renameWithDestination`.
 [<NoEquality ; NoComparison>]
-type PausedRename<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedRename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
             Rules : RenameRules
             SourceProgress : RenameSourceProgress
             /// Where a relative destination pathname starts, which is looked up
@@ -406,10 +406,10 @@ module internal CloneFileRefusal =
 /// Opaque: the only thing to do with one is give it to
 /// `UnixNamespace.cloneFileWithSource`.
 [<NoEquality ; NoComparison>]
-type PausedCloneFileSource<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedCloneFileSource<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 /// A `clonefile(2)` that has resolved its source and stopped at the point
@@ -422,10 +422,10 @@ type PausedCloneFileSource<'Task, 'Handler when 'Task : comparison and 'Handler 
 /// Opaque: the only thing to do with one is give it to
 /// `UnixNamespace.cloneFileWithDestination`.
 [<NoEquality ; NoComparison>]
-type PausedCloneFile<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
             Source : InodeNumber
         }
 
@@ -460,10 +460,10 @@ module internal SymlinkRefusal =
 /// from `UnixNamespace.symlinkat` or `symlink`, and finish it with
 /// `UnixNamespace.symlinkWithPath`.
 [<NoEquality ; NoComparison>]
-type PausedSymlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedSymlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
             Directory : AtDirectory
             /// `None` for an empty target, which only a flavour that accepts one
             /// gets this far with.
@@ -524,10 +524,10 @@ module internal LinkRefusal =
 /// `UnixNamespace.linkat` or `link`, and finish it with
 /// `UnixNamespace.linkWithDestination`.
 [<NoEquality ; NoComparison>]
-type PausedLink<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedLink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
             Rules : LinkRules
             Source : InodeNumber
             Destination : AtDirectory
@@ -768,10 +768,10 @@ module UnixNamespace =
 
     /// Who owns an inode the process is about to create in `directory`, which
     /// the caller's walk has just established is a directory.
-    let private newInodeOwner<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private newInodeOwner<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (context : string)
         (directory : InodeNumber)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : InodeOwner
         =
         match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
@@ -790,13 +790,13 @@ module UnixNamespace =
 
     /// `openat`, of a path this kernel has already copied in, starting from
     /// `directory` if it is relative.
-    let internal openPathParsed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (flags : OpenFlags)
         (path : UnixPath)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         // Measured (`openat-limit.c`): Linux's empty path is ENOENT even with
         // no descriptor left, since its copy-in refuses it; Darwin has
@@ -842,8 +842,8 @@ module UnixNamespace =
             (truncatedExisting : bool)
             (through : ReachedThrough)
             (inode : InodeNumber)
-            (system : UnixSystem<'Task, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
             // A directory gets a description positioned in its entries rather
             // than at a byte offset. It can only be here for reading: every
@@ -1150,15 +1150,15 @@ module UnixNamespace =
         truncated
         |> Result.bind (fun (truncatedExisting, system) -> opened truncatedExisting through inode system)
 
-    let private openFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private openFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
-        (task : 'Task)
+        (task : 'Thread)
         (directory : AtDirectory)
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         // Loudly partial in an unregistered or parked task, before anything is
         // answered, as every call that can sleep is.
@@ -1170,8 +1170,8 @@ module UnixNamespace =
 
         // No open sleeps yet: nothing can make an object whose open waits.
         let answered
-            (result : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, OpenRefusal>)
-            : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, OpenRefusal>
+            (result : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>)
+            : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
             result
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
@@ -1204,13 +1204,13 @@ module UnixNamespace =
         | Ok path -> openPathParsed directory flags path mode system |> answered
 
     /// `openPath`, with a refusal answered as the `Error` rather than raised.
-    let internal tryOpenPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryOpenPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         openFrom "openPath" task AtDirectory.CurrentDirectory flags path mode system
 
@@ -1256,26 +1256,26 @@ module UnixNamespace =
     /// every errno, and under Linux after the word's and the copy-in's (an
     /// empty path's ENOENT among them) and before the walk's. Every other
     /// outcome is a descriptor or an errno.
-    let openPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (flags : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryOpenPath task flags path mode system
         |> Refusal.orRaise "UnixNamespace.openPath" OpenRefusal.kind OpenRefusal.describe
 
     /// `openat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryOpenat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryOpenat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, OpenRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         openFrom "openat" task (AtDirectory.decode flavour dirfd) flags path mode system
@@ -1291,26 +1291,26 @@ module UnixNamespace =
     /// a `dirfd` that names nothing or no directory, on both flavours; and on
     /// Linux an unreadable, over-long or empty path is answered ahead of that
     /// refusal, while on Darwin the refusal comes first.
-    let openat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let openat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryOpenat task dirfd path flags mode system
         |> Refusal.orRaise "UnixNamespace.openat" OpenRefusal.kind OpenRefusal.describe
 
     /// `readlinkat`, of a path this kernel has already copied in, starting
     /// from `directory` if it is relative.
-    let internal readlinkParsed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal readlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : UnixPath)
         (destination : UserBuffer)
         (capacity : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadLinkAnswer, ReadLinkRefusal>
         =
         let verdict =
@@ -1441,11 +1441,11 @@ module UnixNamespace =
             Ok (ReadLinkAnswer.Reported (ImmutableArray.CreateRange (Seq.truncate capacity all)))
 
     /// `readlink`, with a refusal answered as the `Error` rather than raised.
-    let internal tryReadlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryReadlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (destination : UserBuffer)
         (capacity : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadLinkAnswer, ReadLinkRefusal>
         =
         // The size is screened before the path is copied in, on both flavours:
@@ -1489,23 +1489,23 @@ module UnixNamespace =
     /// `path` is the argument's bytes, copied in after that screen and before
     /// anything else: EFAULT if they were unreadable, ENAMETOOLONG if they run
     /// past `PATH_MAX`.
-    let readlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let readlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (destination : UserBuffer)
         (capacity : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ReadLinkAnswer
         =
         tryReadlink path destination capacity system
         |> Refusal.orRaise "UnixNamespace.readlink" ReadLinkRefusal.kind ReadLinkRefusal.describe
 
     /// `readlinkat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryReadlinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryReadlinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (destination : UserBuffer)
         (capacity : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadLinkAnswer, ReadLinkRefusal>
         =
         match SimulatedUnixPlatform.readlinkCapacity system.Machine.UnixPlatform capacity with
@@ -1530,22 +1530,22 @@ module UnixNamespace =
     /// names nothing and ENOENT if it is not a symbolic link. No descriptor
     /// here names a symbolic link, since this library models neither
     /// `O_PATH` nor `O_SYMLINK`.
-    let readlinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let readlinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (destination : UserBuffer)
         (capacity : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ReadLinkAnswer
         =
         tryReadlinkat dirfd path destination capacity system
         |> Refusal.orRaise "UnixNamespace.readlinkat" ReadLinkRefusal.kind ReadLinkRefusal.describe
 
     /// `readDirectoryEntry`, with a refusal answered as the `Error` rather than raised.
-    let internal tryReadDirectoryEntry<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryReadDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ReadDirectoryAnswer * UnixSystem<'Task, 'Handler>, ReadDirectoryRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ReadDirectoryAnswer * UnixSystem<'Thread, 'Handler>, ReadDirectoryRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -1598,7 +1598,7 @@ module UnixNamespace =
         | Some _ -> Error (ReadDirectoryRefusal.DeviceFileSystem inode)
         | None ->
 
-        let withPosition (position : DirectoryPosition) (system : UnixSystem<'Task, 'Handler>) =
+        let withPosition (position : DirectoryPosition) (system : UnixSystem<'Thread, 'Handler>) =
             UnixSystemState.withFileDescriptors
                 (FileDescriptorRegistry.setDirectoryPosition fd position (UnixSystemState.fileDescriptors system))
                 system
@@ -1664,22 +1664,22 @@ module UnixNamespace =
     /// filesystem, followed by `..` and `.`, at the *end*, where ext4 has been
     /// seen to put them; `readdir(3)` fixes no position for either. A
     /// directory that `rmdir` has since removed yields nothing more.
-    let readDirectoryEntry<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let readDirectoryEntry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ReadDirectoryAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ReadDirectoryAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryReadDirectoryEntry fd system
         |> Refusal.orRaise "UnixNamespace.readDirectoryEntry" ReadDirectoryRefusal.kind ReadDirectoryRefusal.describe
 
     /// `mkdirat`, of a path this kernel has already copied in, starting from
     /// `directory` if it is relative.
-    let internal mkdirParsed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal mkdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : UnixPath)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, PathRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
         =
         let rules = SimulatedUnixPlatform.mkDirRules system.Machine.UnixPlatform
 
@@ -1729,23 +1729,23 @@ module UnixNamespace =
             }
         )
 
-    let private mkdirFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private mkdirFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, PathRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
         =
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
         | Ok path -> mkdirParsed directory path mode system
 
     /// `mkdir`, with a refusal answered as the `Error` rather than raised.
-    let internal tryMkdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryMkdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, PathRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
         =
         mkdirFrom AtDirectory.CurrentDirectory path mode system
 
@@ -1762,22 +1762,22 @@ module UnixNamespace =
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
     /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
-    let mkdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mkdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryMkdir path mode system
         |> Refusal.orRaise "UnixNamespace.mkdir" PathRefusal.kind PathRefusal.describe
 
     /// `mkdirat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryMkdirat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryMkdirat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, PathRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         mkdirFrom (AtDirectory.decode flavour dirfd) path mode system
@@ -1790,23 +1790,23 @@ module UnixNamespace =
     /// path starts where `dirfd` says, as every `*at` call's does. Nothing
     /// about `mode` is screened, so
     /// it never decides an answer ahead of the path or `dirfd`.
-    let mkdirat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mkdirat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryMkdirat dirfd path mode system
         |> Refusal.orRaise "UnixNamespace.mkdirat" PathRefusal.kind PathRefusal.describe
 
-    let private mknodFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private mknodFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : PathArgumentBytes)
         (mode : int)
         (dev : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, MkNodRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, MkNodRefusal>
         =
         let platform = system.Machine.UnixPlatform
         let credentials = system.Process.Credentials
@@ -1893,35 +1893,35 @@ module UnixNamespace =
         )
 
     /// `mknod`, with a refusal answered as the `Error` rather than raised.
-    let internal tryMknod<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryMknod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
         (dev : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, MkNodRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, MkNodRefusal>
         =
         mknodFrom AtDirectory.CurrentDirectory path mode dev system
 
     /// `mknod(2)`: make a node of the type `mode` names at `path`. It is
     /// `mknodat` from `AT_FDCWD`; see there for what it answers and refuses.
-    let mknod<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mknod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
         (dev : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryMknod path mode dev system
         |> Refusal.orRaise "UnixNamespace.mknod" MkNodRefusal.kind MkNodRefusal.describe
 
     /// `mknodat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryMknodat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryMknodat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (mode : int)
         (dev : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, MkNodRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, MkNodRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         mknodFrom (AtDirectory.decode flavour dirfd) path mode dev system
@@ -1950,24 +1950,24 @@ module UnixNamespace =
     /// models, but answers Linux's EPERM to a caller without privilege who
     /// asks for a device. Refuses Darwin's FIFO, which is `mkfifo(2)`, and
     /// Darwin's privileged caller before the path is read.
-    let mknodat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mknodat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (mode : int)
         (dev : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryMknodat dirfd path mode dev system
         |> Refusal.orRaise "UnixNamespace.mknodat" MkNodRefusal.kind MkNodRefusal.describe
 
     /// `unlinkat` without `AT_REMOVEDIR`, of a path this kernel has already
     /// copied in, starting from `directory` if it is relative.
-    let internal unlinkParsed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal unlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : UnixPath)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RemovalRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
         =
         let rules = SimulatedUnixPlatform.unlinkRules system.Machine.UnixPlatform
 
@@ -2034,10 +2034,10 @@ module UnixNamespace =
         Ok (SyscallAnswer.Completed 0L, ObjectLifetime.commitRemoving target mutation system)
 
     /// `unlink`, with a refusal answered as the `Error` rather than raised.
-    let internal tryUnlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryUnlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RemovalRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
         =
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -2053,21 +2053,21 @@ module UnixNamespace =
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
     /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
-    let unlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let unlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryUnlink path system
         |> Refusal.orRaise "UnixNamespace.unlink" RemovalRefusal.kind RemovalRefusal.describe
 
     /// `unlinkat` with `AT_REMOVEDIR`, of a path this kernel has already
     /// copied in, starting from `directory` if it is relative.
-    let internal rmdirParsed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal rmdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : UnixPath)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RemovalRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
         =
         let rules = SimulatedUnixPlatform.rmDirRules system.Machine.UnixPlatform
 
@@ -2132,10 +2132,10 @@ module UnixNamespace =
         Ok (SyscallAnswer.Completed 0L, ObjectLifetime.commitRemoving target mutation system)
 
     /// `rmdir`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRmdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRmdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RemovalRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
         =
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -2151,21 +2151,21 @@ module UnixNamespace =
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
     /// if they were unreadable, ENAMETOOLONG if they run past `PATH_MAX`.
-    let rmdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let rmdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryRmdir path system
         |> Refusal.orRaise "UnixNamespace.rmdir" RemovalRefusal.kind RemovalRefusal.describe
 
     /// `unlinkat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryUnlinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryUnlinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, UnlinkAtRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UnlinkAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -2198,29 +2198,32 @@ module UnixNamespace =
     /// Refuses a flag word carrying flags the flavour accepts and this library
     /// does not model, and whatever `unlink` or `rmdir` refuses. A refusal
     /// changes nothing.
-    let unlinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let unlinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryUnlinkat dirfd path flags system
         |> Refusal.orRaise "UnixNamespace.unlinkat" UnlinkAtRefusal.kind UnlinkAtRefusal.describe
 
     let private renameStopped
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         (error : UnixError)
-        : CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        : CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         CallProgress.Answered (SyscallAnswer.Failed error, system)
 
-    let private renameSourceFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private renameSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (sourceDirectory : AtDirectory)
         (destinationDirectory : AtDirectory)
         (source : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, RenameRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              RenameRefusal
+           >
         =
         let rules = SimulatedUnixPlatform.renameRules system.Machine.UnixPlatform
 
@@ -2285,12 +2288,15 @@ module UnixNamespace =
         | None -> paused (RenameSourceProgress.Resolved sourceResolution)
 
     /// `renameat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRenameat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRenameat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, RenameRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              RenameRefusal
+           >
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -2315,38 +2321,41 @@ module UnixNamespace =
     /// nothing else about the call changes: `rename` is this from `AT_FDCWD`
     /// on both sides.
     /// </remarks>
-    let renameat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let renameat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryRenameat olddirfd oldpath newdirfd system
         |> Refusal.orRaise "UnixNamespace.renameat" RenameRefusal.kind RenameRefusal.describe
 
     /// `rename`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRename<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, RenameRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              RenameRefusal
+           >
         =
         renameSourceFrom AtDirectory.CurrentDirectory AtDirectory.CurrentDirectory source system
 
     /// `rename(2)`: `renameat` from `AT_FDCWD` on both sides.
-    let rename<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let rename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedRename<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedRename<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryRename source system
         |> Refusal.orRaise "UnixNamespace.rename" RenameRefusal.kind RenameRefusal.describe
 
     /// `renameWithDestination`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRenameWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRenameWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : PathArgumentBytes)
-        (paused : PausedRename<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RenameRefusal>
+        (paused : PausedRename<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
         match box paused with
         | null ->
@@ -2565,23 +2574,23 @@ module UnixNamespace =
     /// resolve a path, where a path names a mount point in an unmeasured way,
     /// and where the source is on the device filesystem. A refusal changes
     /// nothing.
-    let renameWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let renameWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : PathArgumentBytes)
-        (paused : PausedRename<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedRename<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryRenameWithDestination destination paused
         |> Refusal.orRaise "UnixNamespace.renameWithDestination" RenameRefusal.kind RenameRefusal.describe
 
     /// `renameat(2)` given both pathnames up front: `tryRenameat`, then
     /// `tryRenameWithDestination` of `newpath` if the call reaches its copy.
-    let internal tryRenameatEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRenameatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
         (newpath : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RenameRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
         match tryRenameat olddirfd oldpath newdirfd system with
         | Error refusal -> Error refusal
@@ -2590,11 +2599,11 @@ module UnixNamespace =
 
     /// `rename(2)` given both pathnames up front, as `tryRenameatEager` is
     /// `renameat(2)`.
-    let internal tryRenameEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryRenameEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
         (destination : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, RenameRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
         match tryRename source system with
         | Error refusal -> Error refusal
@@ -2602,11 +2611,11 @@ module UnixNamespace =
         | Ok (CallProgress.NeedsCopyIn paused) -> tryRenameWithDestination destination paused
 
     /// `cloneFile`, with a refusal answered as the `Error` rather than raised.
-    let internal tryCloneFile<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedCloneFileSource<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>,
+              CallProgress<PausedCloneFileSource<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
               CloneFileRefusal
            >
         =
@@ -2656,20 +2665,20 @@ module UnixNamespace =
     /// takes.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has `clonefile`.</exception>
-    let cloneFile<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let cloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedCloneFileSource<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedCloneFileSource<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryCloneFile flags system
         |> Refusal.orRaise "UnixNamespace.cloneFile" CloneFileRefusal.kind CloneFileRefusal.describe
 
     /// `cloneFileWithSource`, with a refusal answered as the `Error` rather than raised.
-    let internal tryCloneFileWithSource<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryCloneFileWithSource<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
-        (paused : PausedCloneFileSource<'Task, 'Handler>)
+        (paused : PausedCloneFileSource<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedCloneFile<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>,
+              CallProgress<PausedCloneFile<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
               CloneFileRefusal
            >
         =
@@ -2729,19 +2738,19 @@ module UnixNamespace =
     /// reading the destination.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has `clonefile`.</exception>
-    let cloneFileWithSource<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let cloneFileWithSource<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
-        (paused : PausedCloneFileSource<'Task, 'Handler>)
-        : CallProgress<PausedCloneFile<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (paused : PausedCloneFileSource<'Thread, 'Handler>)
+        : CallProgress<PausedCloneFile<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryCloneFileWithSource source paused
         |> Refusal.orRaise "UnixNamespace.cloneFileWithSource" CloneFileRefusal.kind CloneFileRefusal.describe
 
     /// `cloneFileWithDestination`, with a refusal answered as the `Error` rather than raised.
-    let internal tryCloneFileWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryCloneFileWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : PathArgumentBytes)
-        (paused : PausedCloneFile<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, CloneFileRefusal>
+        (paused : PausedCloneFile<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
         =
         // Measured on Darwin 27.0 at uid 501 (`clonefile-rules.c`, APFS). The
         // destination: an existing file, directory ("e" and "e/"), link to a
@@ -2903,10 +2912,10 @@ module UnixNamespace =
     /// status-change times move. The source does not change.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has `clonefile`.</exception>
-    let cloneFileWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let cloneFileWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : PathArgumentBytes)
-        (paused : PausedCloneFile<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedCloneFile<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryCloneFileWithDestination destination paused
         |> Refusal.orRaise "UnixNamespace.cloneFileWithDestination" CloneFileRefusal.kind CloneFileRefusal.describe
@@ -2914,12 +2923,12 @@ module UnixNamespace =
     /// `clonefile(2)` given both pathnames up front, as `UnixSystem.step`'s
     /// `Syscall.CloneFile` makes it: `tryCloneFile`, then each pathname as the
     /// call reaches its copy.
-    let internal tryCloneFileEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryCloneFileEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (source : PathArgumentBytes)
         (destination : PathArgumentBytes)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, CloneFileRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
         =
         match tryCloneFile flags system with
         | Error refusal -> Error refusal
@@ -2931,11 +2940,11 @@ module UnixNamespace =
         | Ok (CallProgress.Answered answered) -> Ok answered
         | Ok (CallProgress.NeedsCopyIn paused) -> tryCloneFileWithDestination destination paused
 
-    let private symlinkTargetFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private symlinkTargetFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (target : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedSymlink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSymlink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         // Measured by `link-symlink.c` (SYMORDER) on Linux 6.18.5 and Darwin
         // 27.0: the target is copied in before anything else, so an unreadable
@@ -2977,11 +2986,11 @@ module UnixNamespace =
     /// link's own pathname is never read. Otherwise the call stops where the
     /// kernel copies that pathname in, and `symlinkWithPath` finishes it; see
     /// it for what the call answers and refuses.
-    let symlinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let symlinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : PathArgumentBytes)
         (dirfd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedSymlink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSymlink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         let directory =
             AtDirectory.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) dirfd
@@ -2989,18 +2998,18 @@ module UnixNamespace =
         symlinkTargetFrom directory target system
 
     /// `symlink(2)`: `symlinkat` from the current directory.
-    let symlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let symlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedSymlink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedSymlink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         symlinkTargetFrom AtDirectory.CurrentDirectory target system
 
     /// `symlinkWithPath`, with a refusal answered as the `Error` rather than raised.
-    let internal trySymlinkWithPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySymlinkWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (paused : PausedSymlink<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SymlinkRefusal>
+        (paused : PausedSymlink<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
         match box paused with
         | null ->
@@ -3075,10 +3084,10 @@ module UnixNamespace =
     /// Refuses a pathname this kernel will not resolve, and a call that would
     /// create a link with an empty target, which this library does not
     /// represent.
-    let symlinkWithPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let symlinkWithPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (paused : PausedSymlink<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedSymlink<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySymlinkWithPath path paused
         |> Refusal.orRaise "UnixNamespace.symlinkWithPath" SymlinkRefusal.kind SymlinkRefusal.describe
@@ -3086,12 +3095,12 @@ module UnixNamespace =
     /// `symlinkat(2)` given both pathnames up front, as `UnixSystem.step`'s
     /// `Syscall.SymlinkAt` makes it: `symlinkat`, then `trySymlinkWithPath` of
     /// `path` if the call reaches its copy.
-    let internal trySymlinkatEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySymlinkatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : PathArgumentBytes)
         (dirfd : int)
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SymlinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
         match symlinkat target dirfd system with
         | CallProgress.Answered answered -> Ok answered
@@ -3099,23 +3108,23 @@ module UnixNamespace =
 
     /// `symlink(2)` given both pathnames up front, as `trySymlinkatEager` is
     /// `symlinkat(2)`.
-    let internal trySymlinkEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal trySymlinkEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : PathArgumentBytes)
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, SymlinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
         match symlink target system with
         | CallProgress.Answered answered -> Ok answered
         | CallProgress.NeedsCopyIn paused -> trySymlinkWithPath path paused
 
-    let private linkSourceFrom<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private linkSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (arguments : LinkArguments)
         (source : AtDirectory)
         (destination : AtDirectory)
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedLink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, LinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<CallProgress<PausedLink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>, LinkRefusal>
         =
         let rules = SimulatedUnixPlatform.linkRules system.Machine.UnixPlatform
         let vfs = system.Machine.FileSystem
@@ -3215,13 +3224,13 @@ module UnixNamespace =
             )
 
     /// `linkat`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLinkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLinkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedLink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, LinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<CallProgress<PausedLink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>, LinkRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -3257,22 +3266,22 @@ module UnixNamespace =
     /// with, a nameless source, and a source on a filesystem whose rules for
     /// `link(2)` have not been measured.
     /// </remarks>
-    let linkat<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let linkat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedLink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedLink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryLinkat olddirfd oldpath newdirfd flags system
         |> Refusal.orRaise "UnixNamespace.linkat" LinkRefusal.kind LinkRefusal.describe
 
     /// `link`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldpath : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<CallProgress<PausedLink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>, LinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<CallProgress<PausedLink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>, LinkRefusal>
         =
         let rules = SimulatedUnixPlatform.linkRules system.Machine.UnixPlatform
 
@@ -3289,19 +3298,19 @@ module UnixNamespace =
     /// `link(2)`: `linkat` from the current directory on both sides,
     /// following a final symbolic link in the source on Darwin and not on
     /// Linux (`LinkRules.PlainLinkSource`).
-    let link<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let link<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldpath : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedLink<'Task, 'Handler>, SyscallAnswer * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedLink<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>
         =
         tryLink oldpath system
         |> Refusal.orRaise "UnixNamespace.link" LinkRefusal.kind LinkRefusal.describe
 
     /// `linkWithDestination`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLinkWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLinkWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (newpath : PathArgumentBytes)
-        (paused : PausedLink<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, LinkRefusal>
+        (paused : PausedLink<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
         match box paused with
         | null ->
@@ -3364,10 +3373,10 @@ module UnixNamespace =
     /// the source gains a
     /// name, its status-change time moves, and so do the new name's
     /// directory's modification and status-change times.
-    let linkWithDestination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let linkWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (newpath : PathArgumentBytes)
-        (paused : PausedLink<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (paused : PausedLink<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryLinkWithDestination newpath paused
         |> Refusal.orRaise "UnixNamespace.linkWithDestination" LinkRefusal.kind LinkRefusal.describe
@@ -3375,14 +3384,14 @@ module UnixNamespace =
     /// `linkat(2)` given both pathnames up front, as `UnixSystem.step`'s
     /// `Syscall.LinkAt` makes it: `tryLinkat`, then `tryLinkWithDestination` of
     /// `newpath` if the call reaches its copy.
-    let internal tryLinkatEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLinkatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
         (newpath : PathArgumentBytes)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, LinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
         match tryLinkat olddirfd oldpath newdirfd flags system with
         | Error refusal -> Error refusal
@@ -3391,11 +3400,11 @@ module UnixNamespace =
 
     /// `link(2)` given both pathnames up front, as `tryLinkatEager` is
     /// `linkat(2)`.
-    let internal tryLinkEager<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLinkEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldpath : PathArgumentBytes)
         (newpath : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, LinkRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
         match tryLink oldpath system with
         | Error refusal -> Error refusal

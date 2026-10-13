@@ -12,9 +12,9 @@ open WoofWare.PosixKernel
 module internal WriteOutcomes =
 
     /// The answer and system of `outcome`, failing if the write raised a signal.
-    let returned<'Answer, 'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (outcome : Result<WriteStep<'Answer, 'Task, 'Handler>, WriteRefusal>)
-        : Result<'Answer * UnixSystem<'Task, 'Handler>, WriteRefusal>
+    let returned<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (outcome : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>)
+        : Result<'Answer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
         outcome
         |> Result.map (fun outcome ->
@@ -31,13 +31,13 @@ module internal WriteOutcomes =
     /// to transfer, `tryWriteBytes` or `tryWriteBytesThenSleep` of the first
     /// that many of `bytes`. An admission's answer is reported as the write's.
     /// The oracle `admitThenWrite` holds the public protocol to.
-    let private stepsThenWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private stepsThenWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         match UnixReadWrite.tryAdmitWrite task fd buffer (uint64 bytes.Length) system with
         | Error refusal -> Error refusal
@@ -64,14 +64,14 @@ module internal WriteOutcomes =
     /// A whole `send(2)` by `task` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
     /// `admitThenSend` holds the public protocol to.
-    let private stepsThenSend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private stepsThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, SendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
         match UnixReadWrite.tryAdmitSend task fd buffer (uint64 bytes.Length) flags system with
         | Error refusal -> Error refusal
@@ -97,9 +97,9 @@ module internal WriteOutcomes =
 
     /// A paused write's or send's answer, in the shape of the internal steps
     /// the tests match on.
-    let private stepOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (fate : ProcessFate<WriteOutcome<'Task>, 'Task, 'Handler>)
-        : WriteStep<WriteAnswer, 'Task, 'Handler>
+    let private stepOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
         match fate with
         | ProcessFate.ProcessEnded ended -> WriteStep.ProcessEnded ended
@@ -133,13 +133,13 @@ module internal WriteOutcomes =
     /// library's public protocol (`UnixReadWrite.write`, and if it stops at the
     /// copy, `writeWithBytes` of the bytes `PausedWrite.copyRange` names),
     /// held to `stepsThenWrite`, which makes the same write a step at a time.
-    let admitThenWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let admitThenWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
             match UnixReadWrite.tryWrite task fd buffer (uint64 bytes.Length) system with
@@ -154,14 +154,14 @@ module internal WriteOutcomes =
     /// A whole `send(2)` by `task` with the raw flag word `flags`, through the
     /// library's public protocol, as `admitThenWrite` makes a `write(2)`, held
     /// to `stepsThenSend`.
-    let admitThenSend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let admitThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, SendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
         let actual =
             match UnixReadWrite.trySend task fd buffer (uint64 bytes.Length) flags system with
@@ -177,11 +177,11 @@ module internal WriteOutcomes =
     /// `UnixReadWrite.tryAdmitFinishWrite`, and if it says to transfer,
     /// `tryFinishWriteBytes` of `bytesAt offset count`. The oracle
     /// `finishWrite` holds the public protocol to.
-    let private stepsThenFinishWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private stepsThenFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (bytesAt : int -> int -> ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         match UnixReadWrite.tryAdmitFinishWrite task system with
         | Error refusal -> Error refusal
@@ -201,11 +201,11 @@ module internal WriteOutcomes =
     /// copy, `writeWithBytes` of `bytesAt offset count` for the range
     /// `PausedWrite.copyRange` names), held to `stepsThenFinishWrite`.
     /// `bytesAt` must answer exactly `count` bytes.
-    let finishWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (bytesAt : int -> int -> ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
             match UnixReadWrite.tryFinishWrite task system with
@@ -223,21 +223,21 @@ module internal WriteOutcomes =
         agreeing "finishWrite" (stepsThenFinishWrite task bytesAt system) actual
 
     /// `UnixReadWrite.tryAdmitWrite` by the leader, through `returned`.
-    let admitWrite<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let admitWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteAdmission * UnixSystem<'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteAdmission * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
         UnixReadWrite.tryAdmitWrite system.Leader fd buffer count system |> returned
 
     /// `UnixReadWrite.tryWriteBytes` by the leader, through `returned`.
-    let write<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Task, 'Handler>, WriteRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
         UnixReadWrite.tryWriteBytes system.Leader fd bytes system |> returned
 
@@ -248,11 +248,11 @@ module internal WriteOutcomes =
 module internal WriteAdmissions =
 
     /// The admission, having checked that the system came back as it arrived.
-    let unchanged<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let unchanged<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAdmission, WriteRefusal>
         =
         WriteOutcomes.admitWrite fd buffer count system

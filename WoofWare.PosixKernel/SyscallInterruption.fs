@@ -204,29 +204,29 @@ module SyscallInterruption =
 
     /// What a task in `sigsuspend` does now, its temporary mask in force.
     [<RequireQualifiedAccess>]
-    type internal Suspension<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+    type internal Suspension<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
         /// The call ends: the task's return to user mode runs a handler, or
         /// applies a default that terminates the process. The signals are as
         /// the call leaves them, for that return to take from.
-        | Ends of SignalState<'Task, 'Handler>
+        | Ends of SignalState<'Thread, 'Handler>
         /// The call sleeps on, with these signals.
-        | Sleeps of SignalState<'Task, 'Handler>
+        | Sleeps of SignalState<'Thread, 'Handler>
 
     /// What the `sigsuspend` `task` is in does, with `signals` holding its
     /// temporary mask and the mask to restore: what the task would take as it
     /// returned to user mode decides it.
-    let internal suspension<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        (signals : SignalState<'Task, 'Handler>)
-        : Result<Suspension<'Task, 'Handler>, SigsuspendRefusal>
+    let internal suspension<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        (signals : SignalState<'Thread, 'Handler>)
+        : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
         =
         let tasks = system.Tasks |> Map.keys |> Set.ofSeq
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
         let rec decide
-            (signals : SignalState<'Task, 'Handler>)
-            : Result<Suspension<'Task, 'Handler>, SigsuspendRefusal>
+            (signals : SignalState<'Thread, 'Handler>)
+            : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
             =
             match SignalState.takeOnReturn system.Process.CoreDumps system.Leader tasks task signals with
             | Error refusal -> Error (SigsuspendRefusal.Receiver refusal)
@@ -270,10 +270,10 @@ module SyscallInterruption =
 
     /// The handler frames `task` would get, innermost first, were it to return
     /// to user mode now: empty when it would run no handler.
-    let private framesOnReturn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<HandlerFrame<'Task, 'Handler> list, SyscallInterruptionRefusal>
+    let private framesOnReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<HandlerFrame<'Thread, 'Handler> list, SyscallInterruptionRefusal>
         =
         let tasks = system.Tasks |> Map.keys |> Set.ofSeq
 
@@ -294,9 +294,9 @@ module SyscallInterruption =
     /// what it would do, which the syscall's finishing call then reports. A task
     /// in `sigsuspend` is woken also when what it could take would change the
     /// signal state, which its finishing call commits before it sleeps again.
-    let internal wakes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         // Nothing pending is no handler to run, and every sleeping task is
@@ -334,10 +334,10 @@ module SyscallInterruption =
     /// than a page by a task with one pending moves a page, short, and never
     /// answers EINTR. They count bytes moved, so where the buffer starts does
     /// not matter, and a transfer of a page or less never reaches a check.
-    let internal stopsAtPageBoundary<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal stopsAtPageBoundary<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (count : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         let pageSize =
@@ -351,9 +351,9 @@ module SyscallInterruption =
     /// put bytes into a pipe does. `Error` where this library will not say what
     /// the task takes as it returns to user mode, or where it is a signal's
     /// default action.
-    let internal interrupts<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal interrupts<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<bool, SyscallInterruptionRefusal>
         =
         framesOnReturn task system |> Result.map (List.isEmpty >> not)
@@ -365,9 +365,9 @@ module SyscallInterruption =
     /// Under Linux it may, whatever signal is pending: the handlers run as the
     /// task returns. Under Darwin it may only if no signal with a handler is
     /// deliverable to the task too.
-    let internal beforeCompleting<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal beforeCompleting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<unit, SyscallInterruptionRefusal>
         =
         // Measured (`signal-interrupt-requeue.c`): with the sleeper held off
@@ -391,9 +391,9 @@ module SyscallInterruption =
     /// and the handlers run as it returns.
     ///
     /// Fails loudly if `task` is not asleep in a syscall.
-    let internal ofPark<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal ofPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallInterruption option, SyscallInterruptionRefusal>
         =
         let parked =

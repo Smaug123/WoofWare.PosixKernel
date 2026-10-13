@@ -429,10 +429,10 @@ module internal TcpSendSpaceMaxRefusal =
 [<RequireQualifiedAccess>]
 module UnixBootImage =
 
-    let private withMachine<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (image : UnixBootImage<'Task, 'Handler>)
+    let private withMachine<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (image : UnixBootImage<'Thread, 'Handler>)
         (machine : UnixMachineState)
-        : UnixBootImage<'Task, 'Handler>
+        : UnixBootImage<'Thread, 'Handler>
         =
         { image with
             Machine = machine
@@ -440,17 +440,17 @@ module UnixBootImage =
 
     /// The platform the machine was made for, which every launch onto it must
     /// be described for (`ProcessLaunch.create`).
-    let platform<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (image : UnixBootImage<'Task, 'Handler>)
+    let platform<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (image : UnixBootImage<'Thread, 'Handler>)
         : SimulatedUnixPlatform
         =
         image.Machine.UnixPlatform
 
     /// `boot`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBoot<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (launch : ProcessLaunch<'Task>)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixSystem<'Task, 'Handler>, LaunchRefusal>
+    let internal tryBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixSystem<'Thread, 'Handler>, LaunchRefusal>
         =
         let leaderThreadId =
             match ThreadIdAllocator.live image.Machine.ThreadIds |> Set.toList with
@@ -484,19 +484,19 @@ module UnixBootImage =
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a task on a processor it does not have.</exception>
     /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
-    let boot<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (launch : ProcessLaunch<'Task>)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         tryBoot launch image
         |> Refusal.orRaise "UnixBootImage.boot" LaunchRefusal.kind LaunchRefusal.describe
 
     /// `withProcessId`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithProcessId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, ProcessIdRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, ProcessIdRefusal>
         =
         let pid = ProcessId.assertValid "UnixBootImage.withProcessId" pid
         let machine = image.Machine
@@ -541,19 +541,19 @@ module UnixBootImage =
     /// (`ProcessIdTable.darwinPidMax`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">On Linux, the ID is not below the machine's `pid_max`, so a Linux kernel could not have handed it out. Contradictory. On Darwin, the ID is not below `PID_MAX` (`ProcessIdTable.darwinPidMax`, read from xnu's source and not measured), so a Darwin kernel could not have handed it out. Contradictory.</exception>
-    let withProcessId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithProcessId pid image
         |> Refusal.orRaise "UnixBootImage.withProcessId" ProcessIdRefusal.kind ProcessIdRefusal.describe
 
     /// `withLeaderThreadId`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithLeaderThreadId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithLeaderThreadId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, LeaderThreadIdRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, LeaderThreadIdRefusal>
         =
         let machine = image.Machine
 
@@ -584,21 +584,21 @@ module UnixBootImage =
     /// (set that with `withProcessId`), and 0 and the largest 64-bit ID.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The machine is Linux's, where the leader's thread ID is the process ID, so it cannot be set apart from it. Contradictory.</exception>
-    let withLeaderThreadId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withLeaderThreadId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithLeaderThreadId id image
         |> Refusal.orRaise "UnixBootImage.withLeaderThreadId" LeaderThreadIdRefusal.kind LeaderThreadIdRefusal.describe
 
     /// `withFileSystem`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithFileSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
         (seed : Map<DirectoryEntryName, SeedEntry>)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, FileSystemSeedFault>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, FileSystemSeedFault>
         =
         let machine = image.Machine
         let platform = machine.UnixPlatform
@@ -673,21 +673,21 @@ module UnixBootImage =
     /// there.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
-    let withFileSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
         (seed : Map<DirectoryEntryName, SeedEntry>)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithFileSystem createdAt defaultOwner seed image
         |> Refusal.orRaise "UnixBootImage.withFileSystem" FileSystemSeedFault.kind FileSystemSeedFault.describe
 
     /// `withUserAddressLimit`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithUserAddressLimit<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithUserAddressLimit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (limit : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, UserAddressLimitRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, UserAddressLimitRefusal>
         =
         let machine = image.Machine
 
@@ -717,10 +717,10 @@ module UnixBootImage =
     /// architecture has been observed to have (see `ObservedUserAddressLimit`).
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The machine's flavour screens no buffer before performing an operation (Darwin), so it has no `TASK_SIZE_MAX` for a limit to set. Contradictory: no machine of the flavour has the setting.</exception>
-    let withUserAddressLimit<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withUserAddressLimit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (limit : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithUserAddressLimit limit image
         |> Refusal.orRaise
@@ -732,10 +732,10 @@ module UnixBootImage =
     /// from, with `seed` in place of `UnixSystem.defaultEntropySeed`. Every
     /// byte the pool hands out follows from the seed, so a run that must replay
     /// bit for bit depends on it.
-    let withEntropySeed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withEntropySeed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (seed : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         { image.Machine with
             EntropyPool = EntropyPool.ofSeed seed
@@ -743,10 +743,10 @@ module UnixBootImage =
         |> withMachine image
 
     /// `withProcessorCount`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithProcessorCount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithProcessorCount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (count : int)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, ProcessorCountRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, ProcessorCountRefusal>
         =
         let machine = image.Machine
 
@@ -767,19 +767,19 @@ module UnixBootImage =
     /// program that will divide by it.
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The count is below 1. Contradictory: a machine running the process has at least the processor it runs on, and programs divide by the count.</exception>
-    let withProcessorCount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withProcessorCount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (count : int)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithProcessorCount count image
         |> Refusal.orRaise "UnixBootImage.withProcessorCount" ProcessorCountRefusal.kind ProcessorCountRefusal.describe
 
     /// `withEphemeralPortRange`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithEphemeralPortRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, EphemeralPortRangeRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, EphemeralPortRangeRefusal>
         =
         let machine = image.Machine
 
@@ -805,10 +805,10 @@ module UnixBootImage =
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out. Contradictory.</exception>
-    let withEphemeralPortRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithEphemeralPortRange (low, high) image
         |> Refusal.orRaise
@@ -817,10 +817,10 @@ module UnixBootImage =
             EphemeralPortRangeRefusal.describe
 
     /// `withBootTime`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithBootTime<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithBootTime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bootTime : UnixTimestamp)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, BootTimeRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, BootTimeRefusal>
         =
         let machine = image.Machine
 
@@ -855,10 +855,10 @@ module UnixBootImage =
     /// booted as a `struct timeval`, so it has no finer boot instant.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">On Darwin, the instant has a nonzero sub-microsecond part. Darwin keeps the time it booted as a `struct timeval` (`sysctl kern.boottime`), so no Darwin machine booted at it. Contradictory.</exception>
-    let withBootTime<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withBootTime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bootTime : UnixTimestamp)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithBootTime bootTime image
         |> Refusal.orRaise "UnixBootImage.withBootTime" BootTimeRefusal.kind BootTimeRefusal.describe
@@ -876,11 +876,11 @@ module UnixBootImage =
     /// repeat or overlap, as on a real machine: every Linux's local table holds
     /// both `127.0.0.0/8` and `127.0.0.1/32`, and an address assigned to two
     /// interfaces holds two routes to one prefix.
-    let withLocalIpv4Addresses<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withLocalIpv4Addresses<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (addresses : Ipv4Address list)
         (routes : Ipv4Prefix list)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         let machine = image.Machine
 
@@ -891,10 +891,10 @@ module UnixBootImage =
         |> withMachine image
 
     /// `withMount`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithMount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithMount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mount : EmulatedMount option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, MountRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, MountRefusal>
         =
         let machine = image.Machine
 
@@ -928,19 +928,19 @@ module UnixBootImage =
     /// descriptor from the flavour, so the pair must describe one machine.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">A kernel of `flavour` cannot report `fileSystemType` (`EmulatedFileSystemType.isReportableUnder`), so a process asking `fstatfs(2)` would learn a fact no such system could tell it: APFS on Linux is contradictory, since no mainline Linux filesystem reports its type; tmpfs on Darwin is unmeasured, since a Darwin machine can mount one but none has been measured.</exception>
-    let withMount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withMount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mount : EmulatedMount option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithMount mount image
         |> Refusal.orRaise "UnixBootImage.withMount" MountRefusal.kind MountRefusal.describe
 
     /// `withProtectedFiles`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithProtectedFiles<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithProtectedFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (protection : ProtectedFiles)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, ProtectedFilesRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, ProtectedFilesRefusal>
         =
         let machine = image.Machine
 
@@ -963,19 +963,19 @@ module UnixBootImage =
     /// settings.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">`protection` sets an `fs.protected_*` sysctl, and a kernel of `flavour` (Darwin) has none: measured on Darwin 27.0, it applies none of their rules. Contradictory.</exception>
-    let withProtectedFiles<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withProtectedFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (protection : ProtectedFiles)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithProtectedFiles protection image
         |> Refusal.orRaise "UnixBootImage.withProtectedFiles" ProtectedFilesRefusal.kind ProtectedFilesRefusal.describe
 
     /// `withPipeDevice`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithPipeDevice<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithPipeDevice<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (device : int64 option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, PipeDeviceRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, PipeDeviceRefusal>
         =
         let machine = image.Machine
 
@@ -1006,19 +1006,19 @@ module UnixBootImage =
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The machine is Darwin's, whose pipes all report `st_dev` 0 (measured on 27.0.0), and the device is not 0. Contradictory.</exception>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The device is negative, which no `dev_t` is. Contradictory.</exception>
-    let withPipeDevice<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withPipeDevice<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (device : int64 option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithPipeDevice device image
         |> Refusal.orRaise "UnixBootImage.withPipeDevice" PipeDeviceRefusal.kind PipeDeviceRefusal.describe
 
     /// `withSoMaxConn`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithSoMaxConn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithSoMaxConn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, SoMaxConnRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, SoMaxConnRefusal>
         =
         let machine = image.Machine
 
@@ -1045,19 +1045,19 @@ module UnixBootImage =
     ///
     /// Refuses a value below 1: no machine was measured with a non-positive
     /// somaxconn.
-    let withSoMaxConn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withSoMaxConn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithSoMaxConn value image
         |> Refusal.orRaise "UnixBootImage.withSoMaxConn" SoMaxConnRefusal.kind SoMaxConnRefusal.describe
 
     /// `withInotifyLimits`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithInotifyLimits<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithInotifyLimits<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (limits : InotifyLimits)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, InotifyLimitsRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, InotifyLimitsRefusal>
         =
         match SimulatedUnixPlatform.flavour image.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyLimitsRefusal.NotReadOn SimulatedUnixFlavour.Darwin)
@@ -1087,10 +1087,10 @@ module UnixBootImage =
     /// Linux-flavoured: Darwin has no inotify to read them.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The machine is of `flavour` (Darwin), which has no inotify, so nothing would read the limits.</exception>
-    let withInotifyLimits<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withInotifyLimits<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (limits : InotifyLimits)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithInotifyLimits limits image
         |> Refusal.orRaise "UnixBootImage.withInotifyLimits" InotifyLimitsRefusal.kind InotifyLimitsRefusal.describe
@@ -1098,10 +1098,10 @@ module UnixBootImage =
     /// Set the sysctl that gives a new IPv6 socket its `IPV6_V6ONLY`: Linux's
     /// `net.ipv6.bindv6only`, Darwin's `net.inet6.ip6.v6only`. Off by default
     /// on both.
-    let withIpv6OnlyByDefault<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withIpv6OnlyByDefault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : bool)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         { image.Machine with
             Ipv6OnlyByDefault = value
@@ -1109,10 +1109,10 @@ module UnixBootImage =
         |> withMachine image
 
     /// `withTcpSendSpace`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithTcpSendSpace<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithTcpSendSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, TcpSendSpaceRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, TcpSendSpaceRefusal>
         =
         let machine = image.Machine
 
@@ -1151,19 +1151,19 @@ module UnixBootImage =
     /// silently ignoring it.
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The value is above `max` (`UnixMachineState.darwinSocketBufferMax`, `kern.ipc.maxsockbuf`), and Darwin refuses such a `net.inet.tcp.sendspace` with ERANGE. Contradictory.</exception>
-    let withTcpSendSpace<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withTcpSendSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithTcpSendSpace value image
         |> Refusal.orRaise "UnixBootImage.withTcpSendSpace" TcpSendSpaceRefusal.kind TcpSendSpaceRefusal.describe
 
     /// `withTcpReceiveSpace`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithTcpReceiveSpace<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithTcpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, TcpReceiveSpaceRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, TcpReceiveSpaceRefusal>
         =
         let machine = image.Machine
 
@@ -1199,10 +1199,10 @@ module UnixBootImage =
     /// library does not model a receive buffer that grows as data arrives.
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The value is not positive, and Linux refuses such a `net.ipv4.tcp_rmem` default. Contradictory.</exception>
-    let withTcpReceiveSpace<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withTcpReceiveSpace<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithTcpReceiveSpace value image
         |> Refusal.orRaise
@@ -1211,10 +1211,10 @@ module UnixBootImage =
             TcpReceiveSpaceRefusal.describe
 
     /// `withTcpSendSpaceMax`, with a refusal answered as the `Error` rather than raised.
-    let internal tryWithTcpSendSpaceMax<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryWithTcpSendSpaceMax<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : Result<UnixBootImage<'Task, 'Handler>, TcpSendSpaceMaxRefusal>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : Result<UnixBootImage<'Thread, 'Handler>, TcpSendSpaceMaxRefusal>
         =
         let machine = image.Machine
 
@@ -1248,10 +1248,10 @@ module UnixBootImage =
     /// silently ignored.
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The value is not positive, and Linux refuses such a `net.ipv4.tcp_wmem` maximum. Contradictory.</exception>
-    let withTcpSendSpaceMax<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withTcpSendSpaceMax<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : int option)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         tryWithTcpSendSpaceMax value image
         |> Refusal.orRaise

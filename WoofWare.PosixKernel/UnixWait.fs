@@ -29,11 +29,11 @@ module UnixWait =
     /// Refuses to replace a park of one syscall with a park of another, and
     /// otherwise accepts a re-park of the same syscall, which moves the task to
     /// the back of park order and lets go of the holds the earlier park took.
-    let internal park<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
         let state = UnixTaskTable.get task system.Tasks
@@ -67,9 +67,9 @@ module UnixWait =
     /// The condition is read from the park, which holds every open file
     /// description it names until the call returns, so it is never asked
     /// about a description that has gone.
-    let satisfied<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
         Map.tryFind task system.Tasks
@@ -102,10 +102,10 @@ module UnixWait =
     ///
     /// A woken task is owed no success: several waiters for one lock all wake,
     /// and all but one find it taken again and re-park.
-    let rec wakes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (asleep : Set<'Task>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ('Task * Set<WakePrimitive>) list
+    let rec wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (asleep : Set<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Set<WakePrimitive>) list
         =
         wakesAmong [ (), asleep, system ] system.Machine
         |> List.map (fun ((), task, fired) -> task, fired)
@@ -120,11 +120,11 @@ module UnixWait =
     /// waiters wait on exclusively wakes one of them by park order across
     /// every view, the ordinals being the machine's. The answer is in park
     /// order across every view.
-    and internal wakesAmong<'Process, 'Task, 'Handler
-        when 'Process : equality and 'Task : comparison and 'Handler : equality>
-        (views : ('Process * Set<'Task> * UnixSystem<'Task, 'Handler>) list)
+    and internal wakesAmong<'Process, 'Thread, 'Handler
+        when 'Process : equality and 'Thread : comparison and 'Handler : equality>
+        (views : ('Process * Set<'Thread> * UnixSystem<'Thread, 'Handler>) list)
         (machine : UnixMachineState)
-        : ('Process * 'Task * Set<WakePrimitive>) list
+        : ('Process * 'Thread * Set<WakePrimitive>) list
         =
         let satisfied =
             views
@@ -350,7 +350,7 @@ module UnixWait =
             )
             |> Set.ofSeq
 
-        let chosen : Map<ExclusiveWaitQueue, 'Process * 'Task> =
+        let chosen : Map<ExclusiveWaitQueue, 'Process * 'Thread> =
             satisfied
             |> List.collect (fun (ordinal, task, fired) ->
                 fired
@@ -394,9 +394,9 @@ module UnixWait =
     /// What a client with nothing runnable reads to learn how far it may advance
     /// the clock before one of these calls times out. `asleep` means what it
     /// means to `wakes`.
-    let deadlines<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (asleep : Set<'Task>)
-        (system : UnixSystem<'Task, 'Handler>)
+    let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (asleep : Set<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : int64 list
         =
         asleep

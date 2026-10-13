@@ -228,13 +228,13 @@ module internal EndedWriteSignalRefusal =
 /// is modelled, so it is served; the Darwin cases here are the ones this
 /// kernel does not model.
 [<RequireQualifiedAccess>]
-type internal CloseRefusal<'Task> =
+type internal CloseRefusal<'Thread> =
     /// Releasing the description destroys an object in a state this kernel
     /// has not measured.
     | Release of DescriptionReleaseRefusal
     /// Any descriptor onto an open file description that `task` is parked on
     /// an `flock` of, under the Darwin flavour.
-    | DarwinFlockedDescriptorWithWaiter of description : OpenFileDescriptionId * task : 'Task
+    | DarwinFlockedDescriptorWithWaiter of description : OpenFileDescriptionId * task : 'Thread
     /// The descriptor `fd`, which `task` is parked in a Linux-flavoured
     /// `poll(2)` watching.
     ///
@@ -246,7 +246,7 @@ type internal CloseRefusal<'Task> =
     /// edges, so such a poll would be woken again at once, for ever. A Darwin
     /// poll's watched descriptor closes: the close removes the filters
     /// registered through it from the kqueue the poll made, as Darwin does.
-    | PolledDescriptor of fd : int * task : 'Task
+    | PolledDescriptor of fd : int * task : 'Thread
     /// The descriptor a `read` or `write` of a pipe or a connected socket by
     /// `task`, asleep on the open file description `description`, was made
     /// through, under the Darwin flavour, when the call has something besides
@@ -257,11 +257,11 @@ type internal CloseRefusal<'Task> =
     /// Darwin's close ends such a call (a pipe read with end of file, a pipe
     /// write with `EPIPE`, a socket's either with `EBADF`), and which of the
     /// close and what had already woken the call it answers is unmeasured.
-    | DarwinWokenTransfer of description : OpenFileDescriptionId * task : 'Task
+    | DarwinWokenTransfer of description : OpenFileDescriptionId * task : 'Thread
     /// The close would end the pipe `write` `task` is asleep in, under the
     /// Darwin flavour, and the `SIGPIPE` that write raises as it returns is one
     /// this kernel cannot answer (`refusal`).
-    | DarwinEndedWriteSignal of task : 'Task * refusal : EndedWriteSignalRefusal
+    | DarwinEndedWriteSignal of task : 'Thread * refusal : EndedWriteSignalRefusal
     /// The descriptor is the last one onto the open file description of the
     /// connected stream socket `socket`, whose `SO_LINGER` is on, and `task`'s
     /// call in flight still holds that description, so the close would leave
@@ -276,14 +276,14 @@ type internal CloseRefusal<'Task> =
     /// the peer, the FINs, and the bytes still unsent. A call's return has no refusal to
     /// answer with, so the close is refused here instead, whatever the linger
     /// time.
-    | LingeringCloseDeferredToCall of socket : SocketId * task : 'Task
+    | LingeringCloseDeferredToCall of socket : SocketId * task : 'Thread
 
 [<RequireQualifiedAccess>]
 module internal CloseRefusal =
     /// What this kernel knows about why it cannot close the descriptor. The
     /// client supplies its own half — which entry point, which descriptor
     /// number, and what it would have to build to lift the refusal.
-    let describe (refusal : CloseRefusal<'Task>) : string =
+    let describe (refusal : CloseRefusal<'Thread>) : string =
         match refusal with
         | CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, task) ->
             $"the descriptor names open file description %O{description}, and task %O{task} is parked on an `flock` of it. Measured on Darwin (open-file-references.c section D), closing the descriptor the flock was entered through does not return until the flock has, whether or not a dup keeps the description: the close blocks until the lock is granted or a signal ends the flock. This kernel models no close that sleeps, nor which descriptor a call was entered through."
@@ -298,7 +298,7 @@ module internal CloseRefusal =
         | CloseRefusal.Release refusal -> DescriptionReleaseRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : CloseRefusal<'Task>) : RefusalKind =
+    let kind (refusal : CloseRefusal<'Thread>) : RefusalKind =
         match refusal with
         | CloseRefusal.Release inner -> DescriptionReleaseRefusal.kind inner
         | CloseRefusal.DarwinFlockedDescriptorWithWaiter _ -> RefusalKind.Unmodelled
@@ -365,45 +365,45 @@ module internal FcntlRefusal =
 
 /// Why this kernel will not answer a `dup2(2)`.
 [<RequireQualifiedAccess>]
-type internal Dup2Refusal<'Task> =
+type internal Dup2Refusal<'Thread> =
     /// A descriptor the call would make lies at or above the bound this kernel
     /// assumes the process's `RLIMIT_NOFILE` reaches.
     | DescriptorLimit of DescriptorLimitRefusal
     /// The target is open, and this kernel will not close it (`refusal`): a
     /// `dup2` onto an open descriptor closes it as `close(2)` does, sleeping
     /// calls and all.
-    | ClosingTarget of refusal : CloseRefusal<'Task>
+    | ClosingTarget of refusal : CloseRefusal<'Thread>
 
 [<RequireQualifiedAccess>]
 module internal Dup2Refusal =
     /// What this kernel knows about why it cannot answer.
-    let describe (refusal : Dup2Refusal<'Task>) : string =
+    let describe (refusal : Dup2Refusal<'Thread>) : string =
         match refusal with
         | Dup2Refusal.DescriptorLimit refusal -> DescriptorLimitRefusal.describe refusal
         | Dup2Refusal.ClosingTarget refusal ->
             $"the target descriptor is open, and dup2 closes it as close(2) does, which this kernel will not do here: %s{CloseRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : Dup2Refusal<'Task>) : RefusalKind =
+    let kind (refusal : Dup2Refusal<'Thread>) : RefusalKind =
         match refusal with
         | Dup2Refusal.DescriptorLimit _ -> RefusalKind.Unmodelled
         | Dup2Refusal.ClosingTarget inner -> CloseRefusal.kind inner
 
 /// Why this kernel will not answer a `dup3(2)`.
 [<RequireQualifiedAccess>]
-type internal Dup3Refusal<'Task> =
+type internal Dup3Refusal<'Thread> =
     /// A descriptor the call would make lies at or above the bound this kernel
     /// assumes the process's `RLIMIT_NOFILE` reaches.
     | DescriptorLimit of DescriptorLimitRefusal
     /// The flavour has no `dup3`.
     | NotProvided of flavour : SimulatedUnixFlavour
     /// As `Dup2Refusal.ClosingTarget`.
-    | ClosingTarget of refusal : CloseRefusal<'Task>
+    | ClosingTarget of refusal : CloseRefusal<'Thread>
 
 [<RequireQualifiedAccess>]
 module internal Dup3Refusal =
     /// What this kernel knows about why it cannot answer.
-    let describe (refusal : Dup3Refusal<'Task>) : string =
+    let describe (refusal : Dup3Refusal<'Thread>) : string =
         match refusal with
         | Dup3Refusal.DescriptorLimit refusal -> DescriptorLimitRefusal.describe refusal
         | Dup3Refusal.NotProvided flavour ->
@@ -412,7 +412,7 @@ module internal Dup3Refusal =
             $"the target descriptor is open, and dup3 closes it as close(2) does, which this kernel will not do here: %s{CloseRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : Dup3Refusal<'Task>) : RefusalKind =
+    let kind (refusal : Dup3Refusal<'Thread>) : RefusalKind =
         match refusal with
         | Dup3Refusal.DescriptorLimit _ -> RefusalKind.Unmodelled
         | Dup3Refusal.NotProvided _ -> RefusalKind.NotOnPlatform
@@ -608,8 +608,8 @@ module UnixDescriptor =
     /// The effective user ID, as `geteuid(2)` reports it.
     ///
     /// Total, and changes nothing: `geteuid` cannot fail.
-    let effectiveUserId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let effectiveUserId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : UserId
         =
         system.Process.Credentials.EffectiveUser
@@ -617,17 +617,17 @@ module UnixDescriptor =
     /// The effective group ID, as `getegid(2)` reports it.
     ///
     /// Total, and changes nothing: `getegid` cannot fail.
-    let effectiveGroupId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let effectiveGroupId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : GroupId
         =
         system.Process.Credentials.EffectiveGroup
 
     /// `getgroups`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetgroups<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryGetgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : UserBuffer)
         (size : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetGroupsAnswer, GetGroupsRefusal>
         =
         // Measured on Linux 6.18.5 and Darwin 27.0 (`getgroups.c`), in this
@@ -672,20 +672,20 @@ module UnixDescriptor =
     /// for `size` of them.
     ///
     /// Changes nothing, so it returns no system.
-    let getgroups<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let getgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : UserBuffer)
         (size : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetGroupsAnswer
         =
         tryGetgroups destination size system
         |> Refusal.orRaise "UnixDescriptor.getgroups" GetGroupsRefusal.kind GetGroupsRefusal.describe
 
     /// `dup`, with a refusal answered as the `Error` rather than raised.
-    let internal tryDup<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryDup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, DescriptorLimitRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, DescriptorLimitRefusal>
         =
         let registry = UnixSystemState.fileDescriptors system
 
@@ -712,21 +712,21 @@ module UnixDescriptor =
     /// descriptor that is not open is EBADF even when the new one would reach
     /// the bound (`SimulatedUnixPlatform.descriptorBound`), which is otherwise
     /// refused.
-    let dup<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let dup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup fd system
         |> Refusal.orRaise "UnixDescriptor.dup" DescriptorLimitRefusal.kind DescriptorLimitRefusal.describe
 
     /// `lseek`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLseek<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryLseek<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
         (whence : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, LSeekRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LSeekRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -1025,12 +1025,12 @@ module UnixDescriptor =
     /// Refuses the inputs whose answer this kernel cannot state: `SEEK_DATA`
     /// and `SEEK_HOLE`, `SEEK_END` on a directory whose size it cannot state,
     /// and `SEEK_CUR` on a directory read part of the way through.
-    let lseek<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let lseek<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
         (whence : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryLseek fd offset whence system
         |> Refusal.orRaise "UnixDescriptor.lseek" LSeekRefusal.kind LSeekRefusal.describe
@@ -1048,12 +1048,12 @@ module UnixDescriptor =
     ///
     /// The caller reached the file `through` a path or a descriptor, by a
     /// name: a regular file is reached no other way.
-    let internal truncateAt<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal truncateAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (through : ReachedThrough)
         (inode : InodeNumber)
         (length : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<UnixSystem<'Task, 'Handler>, TruncationRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<UnixSystem<'Thread, 'Handler>, TruncationRefusal>
         =
         let now = UnixMachineState.realtime system.Scheduling system.Machine
         let rule = SimulatedUnixPlatform.setIdBitsOnTruncation system.Machine.UnixPlatform
@@ -1096,11 +1096,11 @@ module UnixDescriptor =
             Error (TruncationRefusal.UnmeasuredSetIdChange (inode, refusal))
 
     /// `ftruncate`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFtruncate<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryFtruncate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (length : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, TruncationRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, TruncationRefusal>
         =
         // **Ahead of the descriptor**, measured on both platforms: the same
         // unknown fd is EBADF with a length of 0 and EINVAL with a length of -1,
@@ -1179,22 +1179,22 @@ module UnixDescriptor =
 
     /// `ftruncate(2)`: set a regular file's length through a descriptor open for
     /// writing.
-    let ftruncate<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let ftruncate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (length : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryFtruncate fd length system
         |> Refusal.orRaise "UnixDescriptor.ftruncate" TruncationRefusal.kind TruncationRefusal.describe
 
     /// `posixFadvise`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPosixFadvise<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryPosixFadvise<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
         (length : int64)
         (advice : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<FileAdviceAnswer, PosixFadviseRefusal>
         =
         // Measured, the offset is never validated at all: a negative one, and
@@ -1263,12 +1263,12 @@ module UnixDescriptor =
     /// answers ESPIPE.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give.</exception>
-    let posixFadvise<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let posixFadvise<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
         (length : int64)
         (advice : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : FileAdviceAnswer
         =
         tryPosixFadvise fd offset length advice system
@@ -1300,12 +1300,12 @@ module UnixDescriptor =
                 openFiles
 
     /// `flock`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFlock<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryFlock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (operation : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, FLockRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
         =
         // Loudly partial in an unregistered task, before anything is answered:
         // a non-blocking call by one would otherwise be served and only a
@@ -1483,21 +1483,21 @@ module UnixDescriptor =
     /// the condition holds. `task` must be registered in `Tasks`, and must not
     /// already be parked: a task blocks in one syscall at a time, and a parked
     /// `flock` is finished through `flockAcquire`, never re-issued.
-    let flock<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let flock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (operation : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryFlock task fd operation system
         |> Refusal.orRaise "UnixDescriptor.flock" FLockRefusal.kind FLockRefusal.describe
 
     /// `flockAcquire`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFlockAcquire<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, FLockRefusal>
+    let internal tryFlockAcquire<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
         =
         let requester, mode =
             match UnixTaskTable.parkedFor task system.Tasks with
@@ -1632,19 +1632,19 @@ module UnixDescriptor =
     /// could have taken a lock on this same description, which Darwin serves as
     /// a first acquisition, and the resume is then the conversion whose
     /// keep-versus-drop divergence is unmeasured.
-    let flockAcquire<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+    let flockAcquire<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryFlockAcquire task system
         |> Refusal.orRaise "UnixDescriptor.flockAcquire" FLockRefusal.kind FLockRefusal.describe
 
     /// `bytesAvailable`, with a refusal answered as the `Error` rather than raised.
-    let internal tryBytesAvailable<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryBytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<BytesAvailableAnswer, BytesAvailableRefusal>
         =
         // Measured by pipe-syscalls.c on both flavours: a descriptor that is not
@@ -1728,20 +1728,20 @@ module UnixDescriptor =
     /// Refused for every other descriptor.
     ///
     /// Changes nothing.
-    let bytesAvailable<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let bytesAvailable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : BytesAvailableAnswer
         =
         tryBytesAvailable fd destination system
         |> Refusal.orRaise "UnixDescriptor.bytesAvailable" BytesAvailableRefusal.kind BytesAvailableRefusal.describe
 
     /// `fileClone`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFileClone<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryFileClone<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : int)
         (source : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<UnixError, FileCloneRefusal>
         =
         // Measured on Linux 6.18.5 (`copy-file-syscalls.c`, tmpfs and ext4
@@ -1842,10 +1842,10 @@ module UnixDescriptor =
     /// otherwise EOPNOTSUPP on a tmpfs. Changes nothing.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and `FICLONE` is a Linux request.</exception>
-    let fileClone<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let fileClone<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : int)
         (source : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : UnixError
         =
         tryFileClone destination source system
@@ -1856,9 +1856,9 @@ module UnixDescriptor =
     /// saying why not, which depends on the object and the flavour.
     ///
     /// Changes nothing.
-    let terminalAttributes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let terminalAttributes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : TerminalAttributesAnswer
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -1902,10 +1902,10 @@ module UnixDescriptor =
     // inode is still named is a question about the filesystem, and what a
     // sleeping call holds is the task table's.
     /// `close`, with a refusal answered as the `Error` rather than raised.
-    let internal tryClose<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, CloseRefusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloseRefusal<'Thread>>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
@@ -1935,7 +1935,7 @@ module UnixDescriptor =
         // refuses. Checked against the park record rather than a task's run
         // state, so the window between a wake and the woken task's re-entry is
         // covered too.
-        let darwinRefusal : CloseRefusal<'Task> option =
+        let darwinRefusal : CloseRefusal<'Thread> option =
             if not darwin then
                 None
             else
@@ -2027,7 +2027,7 @@ module UnixDescriptor =
         // A real poll looks each descriptor up again whenever it wakes, so
         // closing one it watches changes what it reports -- by number, not by
         // description, so a `dup` keeping the description alive does not help.
-        let pollRefusal : CloseRefusal<'Task> option =
+        let pollRefusal : CloseRefusal<'Thread> option =
             parks
             |> List.tryPick (fun (task, parked) ->
                 match parked with
@@ -2389,7 +2389,7 @@ module UnixDescriptor =
         // close then happens as the last of them returns, which has no refusal
         // to answer with. Under `SO_LINGER` that close may be one this kernel
         // refuses, so it is refused now instead.
-        let deferredUnderLinger : CloseRefusal<'Task> option =
+        let deferredUnderLinger : CloseRefusal<'Thread> option =
             match destroyed, closing.Target with
             | None, OpenFileTarget.Socket socketId when
                 OpenFileTable.descriptorCount closingId (FileDescriptorRegistry.openFiles registry) = Some 0
@@ -2530,10 +2530,10 @@ module UnixDescriptor =
     /// then reports nothing.
     ///
     /// EBADF is its only errno.
-    let close<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let close<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryClose fd system
         |> Refusal.orRaise "UnixDescriptor.close" CloseRefusal.kind CloseRefusal.describe
@@ -2617,20 +2617,20 @@ module UnixDescriptor =
             ||| bit status.Flocked OpenFlagNumbering.DarwinFlocked
 
     /// Store `registry` as `system`'s descriptor table and open file descriptions.
-    let private withRegistry<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private withRegistry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registry : FileDescriptorRegistry)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         UnixSystemState.withFileDescriptors registry system
 
     /// `fcntl`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFcntl<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryFcntl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (command : int)
         (argument : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, FcntlRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FcntlRefusal>
         =
         let platform = system.Machine.UnixPlatform
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -2798,12 +2798,12 @@ module UnixDescriptor =
     /// An `F_DUPFD` whose descriptor would lie at or above the bound
     /// (`SimulatedUnixPlatform.descriptorBound`) is refused, after `EBADF` and
     /// a negative argument's `EINVAL`. Every other command is refused.
-    let fcntl<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let fcntl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (command : int)
         (argument : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryFcntl fd command argument system
         |> Refusal.orRaise "UnixDescriptor.fcntl" FcntlRefusal.kind FcntlRefusal.describe
@@ -2811,12 +2811,12 @@ module UnixDescriptor =
     /// `dup2` and `dup3` once the screens peculiar to `dup3` have passed: make
     /// `newFd` name the description `oldFd` names, with `flags`, closing it
     /// first if it is open.
-    let private duplicateOnto<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private duplicateOnto<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
         (flags : DescriptorFlags)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, Dup2Refusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         let registry = UnixSystemState.fileDescriptors system
         let bound = SimulatedUnixPlatform.descriptorBound system.Machine.UnixPlatform
@@ -2865,11 +2865,11 @@ module UnixDescriptor =
         )
 
     /// `dup2`, with a refusal answered as the `Error` rather than raised.
-    let internal tryDup2<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryDup2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, Dup2Refusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         duplicateOnto oldFd newFd DescriptorFlags.none system
 
@@ -2886,22 +2886,22 @@ module UnixDescriptor =
     ///
     /// A `newFd` at or above the bound (`SimulatedUnixPlatform.descriptorBound`)
     /// is refused, after the `EBADF`s.
-    let dup2<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let dup2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup2 oldFd newFd system
         |> Refusal.orRaise "UnixDescriptor.dup2" Dup2Refusal.kind Dup2Refusal.describe
 
     /// `dup3`, with a refusal answered as the `Error` rather than raised.
-    let internal tryDup3<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryDup3<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, Dup3Refusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup3Refusal<'Thread>>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (Dup3Refusal.NotProvided SimulatedUnixFlavour.Darwin)
@@ -2938,12 +2938,12 @@ module UnixDescriptor =
     /// `dup3`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`.</exception>
-    let dup3<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let dup3<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
         (flags : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryDup3 oldFd newFd flags system
         |> Refusal.orRaise "UnixDescriptor.dup3" Dup3Refusal.kind Dup3Refusal.describe
@@ -2955,11 +2955,11 @@ module UnixDescriptor =
     ///
     /// `EBADF` for a descriptor that is not open. On a Darwin kqueue the flag
     /// is set and the answer is `ENOTTY` (see `SetNonBlockingAnswer.Failed`).
-    let setNonBlocking<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let setNonBlocking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (isNonBlocking : bool)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SetNonBlockingAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SetNonBlockingAnswer * UnixSystem<'Thread, 'Handler>
         =
         let bit = nonBlockingBit (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
 
@@ -2989,9 +2989,9 @@ module UnixDescriptor =
     /// Whether the open file description `fd` names carries `O_NONBLOCK`, as
     /// `fcntl(fd, F_GETFL)` reports it; `None` for a descriptor that is not
     /// open, which `F_GETFL` answers `EBADF`.
-    let isNonBlocking<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let isNonBlocking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool option
         =
         let bit = nonBlockingBit (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)

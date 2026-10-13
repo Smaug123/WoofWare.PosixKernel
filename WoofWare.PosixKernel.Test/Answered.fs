@@ -8,57 +8,57 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal Answered =
 
-    let openPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : OpenFlags)
         (path : UnixPath)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match OpenFlagWords.openPath flags (PathArg.ofPath path) mode system with
         | Ok answer -> answer
         | Error refusal -> failwith $"open(%O{path}) was refused: %s{OpenRefusal.describe refusal}"
 
-    let unlink<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let unlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixNamespace.tryUnlink (PathArg.ofPath path) system with
         | Ok answer -> answer
         | Error refusal -> failwith $"unlink(%O{path}) was refused: %s{RemovalRefusal.describe refusal}"
 
-    let rmdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let rmdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixNamespace.tryRmdir (PathArg.ofPath path) system with
         | Ok answer -> answer
         | Error refusal -> failwith $"rmdir(%O{path}) was refused: %s{RemovalRefusal.describe refusal}"
 
-    let mkdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mkdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixNamespace.tryMkdir path mode system with
         | Ok answer -> answer
         | Error refusal -> failwith $"mkdir was refused: %s{PathRefusal.describe refusal}"
 
-    let chdir<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let chdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixPathResolution.tryChdir path system with
         | Ok answer -> answer
         | Error refusal -> failwith $"chdir was refused: %s{PathRefusal.describe refusal}"
 
-    let statfs<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let statfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
         match UnixPathResolution.tryStatfs path system with
@@ -83,10 +83,10 @@ module internal Answered =
         | Error refusal -> failwith $"expected an answer, but it was refused: %A{refusal}"
 
     /// `dup(2)`, which must not reach the descriptor bound.
-    let dup<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let dup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
         match UnixDescriptor.tryDup fd system with
         | Ok answer -> answer

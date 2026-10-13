@@ -109,11 +109,11 @@ type Syscall =
 /// Why this kernel will not answer a syscall at all. The client decides what a
 /// refusal means for it; nothing here is recoverable by retrying.
 [<RequireQualifiedAccess>]
-type internal SyscallRefusal<'Task> =
+type internal SyscallRefusal<'Thread> =
     | Dup of DescriptorLimitRefusal
     | Fcntl of FcntlRefusal
-    | Dup2 of Dup2Refusal<'Task>
-    | Dup3 of Dup3Refusal<'Task>
+    | Dup2 of Dup2Refusal<'Thread>
+    | Dup3 of Dup3Refusal<'Thread>
     | LSeek of LSeekRefusal
     | FLock of FLockRefusal
     | FTruncate of TruncationRefusal
@@ -127,7 +127,7 @@ type internal SyscallRefusal<'Task> =
     | Access of AccessRefusal
     | Symlink of SymlinkRefusal
     | Link of LinkRefusal
-    | Close of CloseRefusal<'Task>
+    | Close of CloseRefusal<'Thread>
     | UTimensAt of UTimensAtRefusal
     | CopyFileRange of CopyFileRangeRefusal
     | FileClone of FileCloneRefusal
@@ -143,7 +143,7 @@ module internal SyscallRefusal =
     /// What this kernel knows about why it cannot answer, after the name of
     /// the syscall it refused. The client supplies its own half: which task
     /// made the call.
-    let describe<'Task> (refusal : SyscallRefusal<'Task>) : string =
+    let describe<'Thread> (refusal : SyscallRefusal<'Thread>) : string =
         match refusal with
         | SyscallRefusal.Dup refusal -> $"dup: %s{DescriptorLimitRefusal.describe refusal}"
         | SyscallRefusal.Fcntl refusal -> $"fcntl: %s{FcntlRefusal.describe refusal}"
@@ -172,7 +172,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.Inotify refusal -> $"inotify_init1 or inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : SyscallRefusal<'Task>) : RefusalKind =
+    let kind (refusal : SyscallRefusal<'Thread>) : RefusalKind =
         match refusal with
         | SyscallRefusal.Dup _ -> RefusalKind.Unmodelled
         | SyscallRefusal.Fcntl inner -> FcntlRefusal.kind inner
@@ -221,7 +221,7 @@ module internal SyscallRefusal =
 /// which rule broke. Any version may add a rule or remove one, for instance
 /// when the types come to make a state it forbids unrepresentable.
 [<RequireQualifiedAccess>]
-type UnixSystemDefect<'Task> =
+type UnixSystemDefect<'Thread> =
     internal
     /// A live open file description names a socket the socket table does not
     /// hold, so resolving that descriptor would fail.
@@ -325,7 +325,7 @@ type UnixSystemDefect<'Task> =
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
     /// without the park being consulted.
-    | ParkedOnAbsentDescription of task : 'Task * description : OpenFileDescriptionId
+    | ParkedOnAbsentDescription of task : 'Thread * description : OpenFileDescriptionId
     /// An open file description survives that no descriptor names and no
     /// syscall in flight holds (`ParkedSyscall.descriptions`). A real kernel
     /// frees a file when its last reference goes, so this is a leak: a close,
@@ -347,24 +347,24 @@ type UnixSystemDefect<'Task> =
     | LingeringSocketHeldOnlyByCalls of description : OpenFileDescriptionId * socket : SocketId
     /// A task is parked in an `epoll_wait` on a description that is not an
     /// epoll instance, which no wait could have produced.
-    | ParkedEpollWaitOnNonEpoll of task : 'Task * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedEpollWaitOnNonEpoll of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// A task is parked in a `kevent` on a description that is not a kqueue,
     /// which no wait could have produced and on which `UnixWait.wakes`
     /// crashes.
-    | ParkedKeventOnNonKqueue of task : 'Task * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedKeventOnNonKqueue of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// A task is parked in a `kevent` on a kqueue that has not been drained,
     /// and the descriptor the call was made through no longer names that
     /// kqueue (`current` is what it names now). Closing that descriptor drains
     /// the kqueue, so this is a park recorded without `kevent` or a descriptor
     /// closed around it.
     | ParkedKeventDescriptorRebound of
-        task : 'Task *
+        task : 'Thread *
         fd : int *
         kqueue : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// A task is parked in a `kevent` for `maxEvents` events, which is not
     /// positive: such a call returns at once.
-    | ParkedKeventCountNotPositive of task : 'Task * maxEvents : int
+    | ParkedKeventCountNotPositive of task : 'Thread * maxEvents : int
     /// The process's descriptor `fd` names, or a `kevent` wait of one of its
     /// tasks made through `fd` sleeps on, the kqueue `kqueue`, which the
     /// process `owner` owns (`KqueueState.Owner`). A kqueue's registrations
@@ -401,13 +401,13 @@ type UnixSystemDefect<'Task> =
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A task is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
-    | ParkedPollOnEventQueue of task : 'Task * description : OpenFileDescriptionId
+    | ParkedPollOnEventQueue of task : 'Thread * description : OpenFileDescriptionId
     /// A task's parked `poll` watches `fd` on the description it named when
     /// the call went to sleep, and `fd` now names `current` instead. `close`
     /// refuses to close a descriptor a parked poll watches, so this is a park
     /// recorded without `poll` or a descriptor closed around it.
     | ParkedPollDescriptorRebound of
-        task : 'Task *
+        task : 'Thread *
         fd : int *
         watched : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
@@ -416,18 +416,18 @@ type UnixSystemDefect<'Task> =
     /// whose filters are modelled or a pipe. Closing a descriptor removes its
     /// registrations, a poll registers on nothing else, and a regular file's
     /// filters are always ready, so they report before the call can sleep.
-    | ParkedKqueuePollRegistrationTarget of task : 'Task * fd : int * target : OpenFileTarget option
+    | ParkedKqueuePollRegistrationTarget of task : 'Thread * fd : int * target : OpenFileTarget option
     /// A task's parked Darwin `poll` attributes the registration `key` to
     /// entry `entry`, which the call does not have.
-    | ParkedKqueuePollEntryOutOfRange of task : 'Task * key : (int * KqueueFilter) * entry : int
+    | ParkedKqueuePollEntryOutOfRange of task : 'Thread * key : (int * KqueueFilter) * entry : int
     /// A task's parked Darwin `poll` lists `key` as activated where the list
     /// may not hold it: `key` is not registered, is listed twice, or is not a
     /// socket's filter (see `PollQueue.Active`).
-    | ParkedKqueuePollActiveMalformed of task : 'Task * key : (int * KqueueFilter)
+    | ParkedKqueuePollActiveMalformed of task : 'Thread * key : (int * KqueueFilter)
     /// A task's parked Darwin `poll` registers the socket filter `key`, which is
     /// ready, and does not list it as activated: whatever made it ready did not
     /// activate it, so the call would sleep through what a real one wakes for.
-    | ParkedKqueuePollActivationMissed of task : 'Task * key : (int * KqueueFilter)
+    | ParkedKqueuePollActivationMissed of task : 'Thread * key : (int * KqueueFilter)
     /// A task's parked Darwin `poll` registers the filter `key` as attached to
     /// the socket `attached` (`None`: to none), through a descriptor naming the
     /// socket `named` (`None`: something other than a socket). A poll attaches
@@ -435,16 +435,16 @@ type UnixSystemDefect<'Task> =
     /// names, and closing the descriptor removes the filter, so the two agree
     /// for as long as it lasts.
     | ParkedKqueuePollAttachedElsewhere of
-        task : 'Task *
+        task : 'Thread *
         key : (int * KqueueFilter) *
         attached : SocketId option *
         named : SocketId option
     /// A task is parked in a Darwin `poll` whose kqueue (`ParkedKqueuePoll.Queue`)
     /// is not on the machine. The park holds it until the park ends.
-    | ParkedOnAbsentPollQueue of task : 'Task * queue : PollQueueId
+    | ParkedOnAbsentPollQueue of task : 'Thread * queue : PollQueueId
     /// A task is parked in a Darwin `poll` whose kqueue another process,
     /// `owner`, made. A poll's kqueue is its own call's.
-    | PollQueueOfAnotherProcess of task : 'Task * queue : PollQueueId * owner : ProcessId
+    | PollQueueOfAnotherProcess of task : 'Thread * queue : PollQueueId * owner : ProcessId
     /// The machine holds a sleeping Darwin poll's kqueue that `parks` parks
     /// name, rather than exactly one: it is made as its call sleeps, and
     /// destroyed as the park naming it ends.
@@ -455,11 +455,11 @@ type UnixSystemDefect<'Task> =
     /// A task is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedAcceptOnNonListener of task : 'Task * description : OpenFileDescriptionId
+    | ParkedAcceptOnNonListener of task : 'Thread * description : OpenFileDescriptionId
     /// A task is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
     /// accept asleep on it, and `accept` refuses to sleep on one.
-    | ParkedAcceptOnDrainedListener of task : 'Task * description : OpenFileDescriptionId
+    | ParkedAcceptOnDrainedListener of task : 'Thread * description : OpenFileDescriptionId
     /// Under Darwin, a task is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
@@ -467,41 +467,41 @@ type UnixSystemDefect<'Task> =
     /// so this is a park recorded without the syscall or a descriptor closed
     /// around it.
     | ParkedCallDescriptorRebound of
-        task : 'Task *
+        task : 'Thread *
         fd : int *
         description : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// Under Linux, a task's `accept`, or pipe or connection transfer, records
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
-    | ParkedCallEndedByCloseUnderLinux of task : 'Task
+    | ParkedCallEndedByCloseUnderLinux of task : 'Thread
     /// Under Linux, a listener records that a close has drained it
     /// (`ListenState.Drained`), which only Darwin's close does.
     | ListenerDrainedUnderLinux of socket : SocketId
     /// A task is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wakes` crashes.
-    | ParkedPipeTransferOnWrongTarget of task : 'Task * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedPipeTransferOnWrongTarget of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// A task is asleep in a pipe transfer whose progress no call could have
     /// made: a read of nothing, or a write of `count` bytes with `written` of
     /// them in, where a sleeping write has put in at least none and fewer than
     /// all.
-    | ParkedPipeTransferProgress of task : 'Task * count : int * written : int
+    | ParkedPipeTransferProgress of task : 'Thread * count : int * written : int
     /// A task is asleep in a `read`, `recv`, `write` or `send` of a connected
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedConnectionTransferOnNonConnection of task : 'Task * description : OpenFileDescriptionId
+    | ParkedConnectionTransferOnNonConnection of task : 'Thread * description : OpenFileDescriptionId
     /// A task is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`
     /// bytes with `written` of them taken, where a sleeping write has taken at
     /// least none and fewer than all.
-    | ParkedConnectionTransferProgress of task : 'Task * count : int * written : int
+    | ParkedConnectionTransferProgress of task : 'Thread * count : int * written : int
     /// A task's park records an ordinal at or above the next one to mint, so
     /// some future park would repeat it, and the two waiters' order would be
     /// unspecified.
-    | ParkOrdinalNotFresh of next : ParkOrdinal * task : 'Task * ordinal : ParkOrdinal
+    | ParkOrdinalNotFresh of next : ParkOrdinal * task : 'Thread * ordinal : ParkOrdinal
     /// Two tasks' parks record the same ordinal. Ordinals are minted from one
     /// monotonic counter, so a duplicate means two parks were stamped with one
     /// mint.
@@ -532,23 +532,23 @@ type UnixSystemDefect<'Task> =
     /// is what a later `bind` or `connect` completes.
     | BoundToPortZero of socket : SocketId
     /// A task the table does not hold has handler frames.
-    | HandlerFramesWithoutTask of task : 'Task
+    | HandlerFramesWithoutTask of task : 'Thread
     /// A task the table does not hold has a signal mask.
-    | MaskWithoutTask of task : 'Task
+    | MaskWithoutTask of task : 'Thread
     /// A task the table does not hold has a mask for a `sigsuspend(2)` to
     /// restore.
-    | MaskToRestoreWithoutTask of task : 'Task
+    | MaskToRestoreWithoutTask of task : 'Thread
     /// A task asleep in a syscall other than `sigsuspend(2)` has a mask for a
     /// `sigsuspend` to restore. A task has one only while it is in that call or
     /// returning from it, and a task returns to user mode before it makes
     /// another call.
-    | MaskToRestoreOutsideSigsuspend of task : 'Task * parked : ParkedSyscall
+    | MaskToRestoreOutsideSigsuspend of task : 'Thread * parked : ParkedSyscall
     /// A task asleep in `sigsuspend(2)` has no mask to restore, so its return
     /// would leave it with the call's temporary mask.
-    | SigsuspendWithoutMaskToRestore of task : 'Task
+    | SigsuspendWithoutMaskToRestore of task : 'Thread
     /// A pending signal is directed at a task the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
-    | PendingSignalTargetWithoutTask of task : 'Task * signal : Signal
+    | PendingSignalTargetWithoutTask of task : 'Thread * signal : Signal
     /// The process's signal state reads signals under a numbering other than
     /// its machine's platform assigns, so a signal in the signal tables may
     /// have a different number, or none, under the kernel's numbering.
@@ -572,17 +572,17 @@ type UnixSystemDefect<'Task> =
     | UmaskNotOfPlatform of umask : PermissionBits * platform : SimulatedUnixPlatform
     /// The process's leader is not one of its tasks. A running process always has
     /// its leader, since the leader cannot exit while another task lives.
-    | LeaderWithoutTask of leader : 'Task
+    | LeaderWithoutTask of leader : 'Thread
     /// Two live tasks report the same thread ID, so a lock that records its owner
     /// by thread ID would take either for the other.
-    | DuplicateOsThreadId of id : OsThreadId * tasks : 'Task list
+    | DuplicateOsThreadId of id : OsThreadId * tasks : 'Thread list
     /// On Linux, the leader's thread ID is not the process ID, which it always is.
-    | LeaderThreadIdNotProcessId of leader : 'Task * id : OsThreadId * pid : ProcessId
+    | LeaderThreadIdNotProcessId of leader : 'Thread * id : OsThreadId * pid : ProcessId
     /// A task's thread ID is one the machine's counter could not have handed out:
     /// at or above the greatest `pid_max` Linux takes
     /// (`ThreadIdAllocator.linuxPidMaxCeiling`), or not yet reached on Darwin,
     /// where a later thread could be given the same ID.
-    | OsThreadIdNotMintable of task : 'Task * id : OsThreadId * allocator : ThreadIdAllocator
+    | OsThreadIdNotMintable of task : 'Thread * id : OsThreadId * allocator : ThreadIdAllocator
     /// The machine's thread ID counter is not its flavour's: a Linux counter on a
     /// Darwin machine, or the other way about.
     | ThreadIdAllocatorNotOfFlavour of flavour : SimulatedUnixFlavour * allocator : ThreadIdAllocator
@@ -657,7 +657,7 @@ type UnixSystemDefect<'Task> =
     /// The task `task` is on the logical processor `cpu`, which is not one of
     /// the machine's `processorCount`, numbered from 0. See
     /// `UnixTaskState.cpu`.
-    | CpuBeyondMachine of task : 'Task * cpu : CpuId * processorCount : int
+    | CpuBeyondMachine of task : 'Thread * cpu : CpuId * processorCount : int
     /// The machine records the task with thread ID `occupant` as running on
     /// the logical processor `cpu`, which is not one of its `processorCount`,
     /// numbered from 0. See `UnixScheduling`.
@@ -669,17 +669,17 @@ type UnixSystemDefect<'Task> =
     /// The machine records `task` as running on the logical processor
     /// `occupied`, and the task's own processor is `cpu`: a running task's
     /// processor is the one it runs on (`UnixTaskState.cpu`).
-    | OccupantOnAnotherCpu of task : 'Task * occupied : CpuId * cpu : CpuId
+    | OccupantOnAnotherCpu of task : 'Thread * occupied : CpuId * cpu : CpuId
     /// A task is parked in a syscall that nothing in this version parks a task
     /// in, such as `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`,
     /// `ParkedSyscall.Select` or `ParkedSyscall.SignalWait`: a case reserved
     /// for behaviour not yet modelled, which no call produces and no finishing
     /// call answers.
-    | ReservedPark of task : 'Task * parked : ParkedSyscall
+    | ReservedPark of task : 'Thread * parked : ParkedSyscall
     /// A task is parked in a read of an inotify instance through the open file
     /// description `description`, which names `target` rather than an
     /// inotify instance.
-    | ParkedInotifyReadOnNonInotify of task : 'Task * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedInotifyReadOnNonInotify of task : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
     /// The machine's inotify limits are ones `UnixBootImage.withInotifyLimits`
     /// refuses: not all positive, or a queue too long for `ioctl(FIONREAD)` to
     /// count.
@@ -735,7 +735,7 @@ type UnixSystemDefect<'Task> =
 module UnixSystemDefect =
     /// The defect, for a bug report: the rule that does not hold, by the name
     /// this library's source gives it, and the values that break it.
-    let describe<'Task> (defect : UnixSystemDefect<'Task>) : string =
+    let describe<'Thread> (defect : UnixSystemDefect<'Thread>) : string =
         $"the system's tables disagree with each other, in a state no kernel could be in, which is a bug in this library: %A{defect}"
 
 /// Why the directory a host named cannot be the one a simulated process starts
@@ -871,18 +871,18 @@ module UnixSystem =
 
     /// The process's first task, which it started with: its thread-group
     /// leader.
-    let leader<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : 'Task
+    let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'Thread
         =
         system.Leader
 
     /// Every task the process has, by the client's name for it, which
     /// `UnixTaskState`'s readers read. A name the process has no task by,
     /// because the task was never created or has exited, has no entry.
-    let tasks<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : Map<'Task, UnixTaskState>
+    let tasks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Map<'Thread, UnixTaskState>
         =
         system.Tasks
 
@@ -894,16 +894,16 @@ module UnixSystem =
     /// `Delivery.Endpoint`, which names the process the pipe was launched into
     /// as well as the descriptor. The log is one for the whole machine, so the
     /// order of writes across endpoints is kept. It grows without bound.
-    let delivered<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let delivered<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : DeliveryLog
         =
         UnixMachineState.delivered system.Machine
 
     /// The process's signal state, which `SignalState`'s queries read.
-    let signals<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+    let signals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         UnixProcessState.signals system.Process
 
@@ -914,8 +914,8 @@ module UnixSystem =
     /// This is the exec-time image, not the C library's `environ`:
     /// `setenv(3)` and `putenv(3)` change the process's own copy in user
     /// space, which this library does not model.
-    let environment<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let environment<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : UnixByteString list
         =
         UnixProcessState.environment system.Process
@@ -925,23 +925,23 @@ module UnixSystem =
     /// models no `exec(2)`, so a process has a path only if its launch set one
     /// (`ProcessLaunch.withProcessPath`). The path is not resolved against the
     /// filesystem, so a client that wants it to name a file seeds the file.
-    let processPath<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let processPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
         UnixProcessState.processPath system.Process
 
     /// The platform the machine impersonates.
-    let platform<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let platform<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : SimulatedUnixPlatform
         =
         UnixMachineState.platform system.Machine
 
     /// The number of logical processors the machine reports to the process:
     /// at least 1, and fixed at boot (`UnixBootImage.withProcessorCount`).
-    let processorCount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let processorCount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : int
         =
         UnixMachineState.processorCount system.Machine
@@ -949,8 +949,8 @@ module UnixSystem =
     /// How long the machine has been up, to the nanosecond. Only `advanceClock`
     /// moves it. A process reads the same instant through
     /// `UnixClock.clockGettime`, at the granularity its flavour reports.
-    let nanosecondsSinceBoot<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let nanosecondsSinceBoot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : int64
         =
         UnixSchedulingState.nanosecondsSinceBoot system.Scheduling
@@ -961,10 +961,10 @@ module UnixSystem =
     /// Throws for a negative amount, since no clock this kernel models runs
     /// backwards, and for one that would take the uptime past
     /// `Int64.MaxValue` nanoseconds (about 292 years).
-    let advanceClock<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let advanceClock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (nanoseconds : int64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
@@ -973,60 +973,60 @@ module UnixSystem =
     /// The process's descriptor table, which `FileDescriptorRegistry`'s queries
     /// read: every descriptor it holds, and the open file description each
     /// names.
-    let fileDescriptors<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : FileDescriptorRegistry
         =
         UnixSystemState.fileDescriptors system
 
     /// The machine's open file descriptions, which `OpenFileTable`'s queries
     /// read: every one any descriptor names, and any a call in flight holds.
-    let openFiles<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let openFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : OpenFileTable
         =
         system.Machine.OpenFiles
 
     /// The machine's filesystem, which `VirtualFileSystem`'s queries read.
-    let fileSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let fileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : VirtualFileSystem
         =
         system.Machine.FileSystem
 
     /// The inode of the directory the process is standing in. The path
     /// `getcwd(3)` reports is `UnixPathResolution.currentDirectoryPath`.
-    let currentDirectoryInode<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let currentDirectoryInode<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : InodeNumber
         =
         system.Process.CurrentDirectoryInode
 
     /// Who the process is: all six of its IDs, and its supplementary groups.
-    let credentials<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let credentials<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : Credentials
         =
         system.Process.Credentials
 
     /// The process's file-mode creation mask, without replacing it as `umask`
     /// does.
-    let fileModeCreationMask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let fileModeCreationMask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : PermissionBits
         =
         system.Process.Umask
 
     /// The machine's entropy pool, from which every random-bytes syscall draws.
-    let entropyPool<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let entropyPool<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : EntropyPool
         =
         system.Machine.EntropyPool
 
     /// The range a `bind(2)` of port 0 draws from, inclusive at both ends.
-    let ephemeralPortRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let ephemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : uint16 * uint16
         =
         system.Machine.EphemeralPortRange
@@ -1034,8 +1034,8 @@ module UnixSystem =
     /// The machine's `somaxconn` sysctl (`net.core.somaxconn` on Linux,
     /// `kern.ipc.somaxconn` on Darwin): the ceiling `listen(2)` clamps its
     /// backlog to. See `UnixBootImage.withSoMaxConn`.
-    let soMaxConn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let soMaxConn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : int
         =
         system.Machine.SoMaxConn
@@ -1043,24 +1043,24 @@ module UnixSystem =
     /// The mount the machine's root filesystem claims to be: its type and what
     /// `statfs(2)` reports about it. Fixed for the run, since this library
     /// models no `mount(2)`; see `UnixBootImage.withMount`.
-    let mount<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let mount<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : EmulatedMount
         =
         system.Machine.Mount
 
     /// The machine's `fs.protected_*` sysctls. See
     /// `UnixBootImage.withProtectedFiles`.
-    let protectedFiles<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let protectedFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : ProtectedFiles
         =
         system.Machine.ProtectedFiles
 
     /// Every pipe with an end open, by identity: an end an open file
     /// description names, or one the client holds (`PipeState.heldByClient`).
-    let pipes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let pipes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : Map<PipeId, PipeState>
         =
         system.Machine.Pipes
@@ -1069,16 +1069,16 @@ module UnixSystem =
     /// `nanosecondsSinceBoot`. This is the instant the kernel stamps on an
     /// inode it changes. `clock_gettime(CLOCK_REALTIME)` reports the same
     /// clock, at the granularity its flavour reports it at.
-    let realtime<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let realtime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : UnixTimestamp
         =
         UnixMachineState.realtime system.Scheduling system.Machine
 
     /// Whether, and where, the machine's kernel screens a read or write buffer
     /// before performing the operation. See `UnixBootImage.withUserAddressLimit`.
-    let userBufferCheck<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let userBufferCheck<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : UserBufferCheck
         =
         UnixMachineState.userBufferCheck system.Machine
@@ -1087,9 +1087,9 @@ module UnixSystem =
     /// that identity: a socket goes when its last open file description does,
     /// so an identity read from a descriptor that has since closed names
     /// nothing.
-    let socket<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let socket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : SocketDescription option
         =
         Map.tryFind socketId system.Machine.Sockets
@@ -1097,35 +1097,35 @@ module UnixSystem =
     /// The kqueue of the sleeping Darwin `poll` whose park names `queue`
     /// (`ParkedKqueuePoll.Queue`), or `None` if the machine holds none by that
     /// identity.
-    let pollQueue<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let pollQueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (queue : PollQueueId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PollQueue option
         =
         Map.tryFind queue system.Machine.PollQueues
 
     /// The pipe `pipeId` names. Loudly partial, as `UnixMachineState.pipe` is.
-    let internal pipe<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal pipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PipeState
         =
         UnixMachineState.pipe pipeId system.Machine
 
     /// How ready the socket `socketId` is. See
     /// `UnixMachineState.socketReadinessLevel`.
-    let internal socketReadinessLevel<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal socketReadinessLevel<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ReadinessLevel
         =
         UnixMachineState.socketReadinessLevel socketId system.Machine
 
     /// What the descriptor `fd` names, or `None` if the process has no such
     /// descriptor open.
-    let descriptorTarget<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let descriptorTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : OpenFileTarget option
         =
         FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
@@ -1133,8 +1133,8 @@ module UnixSystem =
     /// The process ID, as `getpid(2)` reports it.
     ///
     /// Total, and changes nothing: `getpid` cannot fail.
-    let processId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : ProcessId
         =
         system.Process.ProcessId
@@ -1149,10 +1149,10 @@ module UnixSystem =
     ///
     /// The mask is the process's, shared by all its threads: measured on both,
     /// a thread's `umask` is what every other thread's next call answers.
-    let umask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let umask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mask : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : PermissionBits * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : PermissionBits * UnixSystem<'Thread, 'Handler>
         =
         let kept =
             mask
@@ -1168,11 +1168,11 @@ module UnixSystem =
         }
 
     /// `step`, with a refusal answered as the `Error` rather than raised.
-    let internal tryStep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (call : Syscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, SyscallRefusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, SyscallRefusal<'Thread>>
         =
         // `flock` is the only one of these that can block, so it is the only one
         // whose own function already speaks `SyscallOutcome`; the rest answer
@@ -1180,8 +1180,8 @@ module UnixSystem =
         // functions are precise, which is what its docstring above says it is
         // for.
         let answered
-            (result : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, 'refusal>)
-            : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, 'refusal>
+            (result : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, 'refusal>)
+            : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, 'refusal>
             =
             result
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
@@ -1341,11 +1341,11 @@ module UnixSystem =
     /// are reached through their own functions, which lose nothing.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
-    let step<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (call : Syscall)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryStep task call system
         |> Refusal.orRaise "UnixSystem.step" SyscallRefusal.kind SyscallRefusal.describe
@@ -1371,17 +1371,17 @@ module UnixSystem =
     /// that counts or collects across every process (the holds on
     /// descriptions, the live thread and process IDs, the current directory
     /// holds) is skipped.
-    let internal machineDefects<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal machineDefects<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (complete : bool)
-        (processes : (UnixProcessState<'Task, 'Handler> * Map<'Task, UnixTaskState>) list)
+        (processes : (UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixTaskState>) list)
         (scheduling : UnixSchedulingState)
         (machine : UnixMachineState)
-        : UnixSystemDefect<'Task> list
+        : UnixSystemDefect<'Thread> list
         =
-        let onlyIfComplete (defects : unit -> UnixSystemDefect<'Task> list) : UnixSystemDefect<'Task> list =
+        let onlyIfComplete (defects : unit -> UnixSystemDefect<'Thread> list) : UnixSystemDefect<'Thread> list =
             if complete then defects () else []
 
-        let allTasks : ('Task * UnixTaskState) list =
+        let allTasks : ('Thread * UnixTaskState) list =
             processes |> List.collect (fun (_, tasks) -> Map.toList tasks)
 
 
@@ -2529,9 +2529,9 @@ module UnixSystem =
     /// state against the task table, the leader against the tasks, each task's
     /// processor against the machine's, and the process's supplementary groups
     /// and file-mode creation mask against its platform.
-    let checkViewInvariants<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystemDefect<'Task> list
+    let checkViewInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystemDefect<'Thread> list
         =
 
         let currentDirectory =
@@ -2587,7 +2587,7 @@ module UnixSystem =
             // or connection transfer, was made through ends the call, so while it sleeps the
             // descriptor still names what it sleeps on. Under Linux the close
             // leaves it asleep, and the number is not consulted.
-            let enteredThrough (task : 'Task) (fd : int) (description : OpenFileDescriptionId) =
+            let enteredThrough (task : 'Thread) (fd : int) (description : OpenFileDescriptionId) =
                 match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
                 | Some current when current = description -> []
                 | _ when not darwin -> []
@@ -2596,14 +2596,14 @@ module UnixSystem =
                         UnixSystemDefect.ParkedCallDescriptorRebound (task, fd, description, current)
                     ]
 
-            let endedByClose (task : 'Task) =
+            let endedByClose (task : 'Thread) =
                 if darwin then
                     []
                 else
                     [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux task ]
 
             // What is wrong with what a connection transfer sleeps on.
-            let connectionTarget (task : 'Task) (target : SleepTarget<SocketId>) =
+            let connectionTarget (task : 'Thread) (target : SleepTarget<SocketId>) =
                 match target with
                 | SleepTarget.EndedByClose _ -> endedByClose task
                 | SleepTarget.Waiting (description, fd) ->
@@ -3153,9 +3153,9 @@ module UnixSystem =
     ///
     /// A client that holds its own references into these tables owes its own
     /// rules about them on top of these.
-    let checkInvariants<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystemDefect<'Task> list
+    let checkInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystemDefect<'Thread> list
         =
         let others =
             Set.remove system.Process.ProcessId (ProcessIdTable.live system.Machine.ProcessIds)
@@ -3390,9 +3390,9 @@ module UnixSystem =
     /// depth rather than of its kernel. All of these are configuration a
     /// caller overrides with the setters in `UnixBootImage`, which is also how
     /// a caller supplies a non-empty filesystem or a different address list.
-    let initial<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let initial<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (platform : SimulatedUnixPlatform)
-        : UnixBootImage<'Task, 'Handler>
+        : UnixBootImage<'Thread, 'Handler>
         =
         // `SimulatedUnixPlatform.create` validates at construction, so a value
         // of the type is already a platform some Unix could be; this catches
@@ -3487,11 +3487,11 @@ module UnixSystem =
     /// outside 301 to 4194304 (`ThreadIdAllocator.linuxPidMaxFloor` to
     /// `ThreadIdAllocator.linuxPidMaxCeiling`), which Linux's sysctl answers
     /// with EINVAL.
-    let writePidMaxSysctl<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let writePidMaxSysctl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (context : string)
         (pidMax : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         // Measured on Linux 6.18.5 aarch64 by
         // `docs/plans/2026-08-23-posix-kernel-extraction/pid-max-below-live.c`:

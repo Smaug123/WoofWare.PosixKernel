@@ -70,9 +70,9 @@ module internal DescriptionReleaseRefusal =
 module ObjectLifetime =
 
     /// `pinnedInodes`, with `graph` as the filesystem the closure climbs.
-    let private pinnedIn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (graph : VirtualFileSystem)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
         let rec climb (frontier : InodeNumber list) (seen : Set<InodeNumber>) : Set<InodeNumber> =
@@ -116,8 +116,8 @@ module ObjectLifetime =
     /// This is the set `VirtualFileSystem.checkInvariants` takes as `pinned`.
     /// Ancestors that are still reachable from the root are in it too,
     /// harmlessly: its users only ever ask about an inode no name reaches.
-    let pinnedInodes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let pinnedInodes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
         pinnedIn system.Machine.FileSystem system
@@ -125,10 +125,10 @@ module ObjectLifetime =
     /// Whether `graph` has `inode` and names it nowhere, it is not the root,
     /// and this system holds no reference to it: whether a real kernel would
     /// free it, `graph` being the filesystem.
-    let private freeIn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private freeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (graph : VirtualFileSystem)
         (inode : InodeNumber)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         // The root is excluded explicitly rather than by the binding count,
@@ -170,10 +170,10 @@ module ObjectLifetime =
     /// directory's ".." was the last reference to. So one call collects a whole
     /// orphaned chain, and the caller passes only the inode whose reference it
     /// just dropped.
-    let rec internal forgetIfUnheld<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let rec internal forgetIfUnheld<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let graph = system.Machine.FileSystem
 
@@ -212,11 +212,11 @@ module ObjectLifetime =
     /// One change, so that an inotify watch hears of the inode's going in
     /// Linux's order, before the `IN_DELETE` of the name (measured,
     /// `inotify-probe.c` row D rmdir-watched-dir).
-    let internal commitRemoving<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal commitRemoving<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (removed : InodeNumber)
         (mutation : VfsMutation)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let after = VfsMutation.after mutation
 
@@ -280,10 +280,10 @@ module ObjectLifetime =
     /// with the listener. Measured on both (`tcp-shutdown.c` section Q, and
     /// `listener-reset-order.c` for the order, in
     /// docs/plans/2026-10-08-tcp-shutdown-linger).
-    let internal releaseDestroyed<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal releaseDestroyed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destroyedDescription : DestroyedDescription)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<UnixSystem<'Task, 'Handler>, DescriptionReleaseRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         let destroyed = destroyedDescription.Description
 
@@ -524,10 +524,10 @@ module ObjectLifetime =
     /// returned, and its park has let go of the holds it took, so that a
     /// description whose last descriptor closed while it slept goes now, as a
     /// real kernel releases the file when the call drops its reference.
-    let private releaseUnreferenced<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private releaseUnreferenced<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<UnixSystem<'Task, 'Handler>, DescriptionReleaseRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         (Ok system, List.distinct descriptions)
         ||> List.fold (fun result id ->
@@ -551,11 +551,11 @@ module ObjectLifetime =
     /// and under Darwin behind a queued FIN, where a close of the descriptor
     /// a read or write was made through ends the call, so no call holds a
     /// socket nothing names.
-    let internal releaseUnreferencedUnrefusable<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal releaseUnreferencedUnrefusable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         match releaseUnreferenced descriptions system with
         | Ok released -> released

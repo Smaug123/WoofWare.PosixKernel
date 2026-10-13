@@ -358,18 +358,18 @@ type internal ConnectAddress =
 /// `PausedConnect.copyRange` says which bytes of the address buffer to copy,
 /// and `UnixConnection.connectWithAddress` takes them and finishes the call.
 [<NoEquality ; NoComparison>]
-type PausedConnect<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
             /// The task that made the call, which the rest of it is made by.
-            Task : 'Task
+            Task : 'Thread
             Fd : int
             Address : UserBuffer
             DeclaredLength : uint32
             Range : CopyRange
             /// The system the call was made in: everything a `connect` does
             /// before the copy is a question.
-            System : UnixSystem<'Task, 'Handler>
+            System : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -378,8 +378,8 @@ module PausedConnect =
     /// `UnixConnection.connectWithAddress` takes. Always from the start of the
     /// buffer, and the whole of the length the caller declared, as far as the
     /// kernel reads one.
-    let copyRange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (paused : PausedConnect<'Task, 'Handler>)
+    let copyRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (paused : PausedConnect<'Thread, 'Handler>)
         : CopyRange
         =
         paused.Range
@@ -434,13 +434,13 @@ module UnixConnection =
     /// holds the table);
     /// a `ConnectRefusal` names an unmeasured or unmodellable input, and a
     /// throw is a bug in this library or in the caller's state construction.
-    let internal connectDecoded<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal connectDecoded<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
         (declaredLength : uint32)
         (address : ConnectAddress)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         let family = address.Family
         let destination = address.Destination
@@ -452,7 +452,7 @@ module UnixConnection =
 
         // An IPv6 socket's connect to a native IPv6 address, which needs an
         // IPv6 transport, refused at the point the ladder would use it.
-        let nativeDestination () : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal> option =
+        let nativeDestination () : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> option =
             address.NativeDestination
             |> Option.map (fun destination -> Error (ConnectRefusal.Ipv6Destination (socketId, destination)))
 
@@ -460,7 +460,7 @@ module UnixConnection =
         // binds nothing on the way: measured on both, at every v4-mapped
         // address including a group one and port 0 (`docs/probes/dual-mode/`,
         // A3 and G).
-        let ipv6Only () : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal> option =
+        let ipv6Only () : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> option =
             match sock.Addressing, nativeDestination () with
             | SocketAddressing.Inet6V6Only _, None ->
                 Some (Ok (SyscallAnswer.Failed (SimulatedUnixPlatform.ipv6OnlyConnectError platform), system))
@@ -469,23 +469,23 @@ module UnixConnection =
 
         let declaredLength = int declaredLength
 
-        let fail (error : UnixError) : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal> =
+        let fail (error : UnixError) : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> =
             Ok (SyscallAnswer.Failed error, system)
 
         let failed
             (error : UnixError)
-            (system : UnixSystem<'Task, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             Ok (SyscallAnswer.Failed error, system)
 
         let completed
-            (system : UnixSystem<'Task, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             Ok (SyscallAnswer.Completed 0L, system)
 
-        let withPhase (phase : SocketPhase) (system : UnixSystem<'Task, 'Handler>) : UnixSystem<'Task, 'Handler> =
+        let withPhase (phase : SocketPhase) (system : UnixSystem<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
             { system with
                 Machine =
                     { system.Machine with
@@ -551,8 +551,8 @@ module UnixConnection =
         let ensureBoundFrom
             (current : Ipv4Binding option)
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Task, 'Handler>)
-            : Result<Ipv4Binding * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             match current with
             | Some binding when binding.Endpoint.Port = 0us ->
@@ -643,14 +643,17 @@ module UnixConnection =
 
         let ensureBound
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Task, 'Handler>)
-            : Result<Ipv4Binding * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             ensureBoundFrom sock.Ipv4Binding dest system
 
         // The established/refused attempt, shared by both flavours once the
         // per-flavour screens have let an idle stream socket through.
-        let attemptStream (dest : Ipv4Endpoint) : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal> =
+        let attemptStream
+            (dest : Ipv4Endpoint)
+            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            =
             let dest = resolveWildcard dest
 
             if not (destinationIsLocal dest.Address) then
@@ -1154,7 +1157,7 @@ module UnixConnection =
                 // `attemptStream` does.
                 let failBound
                     (error : UnixError)
-                    : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+                    : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
                     =
                     match sock.Ipv4Binding with
                     | Some _ -> fail error
@@ -1239,7 +1242,7 @@ module UnixConnection =
             // `127.0.0.1:5556` reads back `0.0.0.0:5556`. Measured
             // (`sockaddr-connect-ladder.c`, U, and `sockaddr-dgram-connect.c`,
             // L and D).
-            let disconnectedFirst : UnixSystem<'Task, 'Handler> =
+            let disconnectedFirst : UnixSystem<'Thread, 'Handler> =
                 match flavour, sock.Phase, sock.Ipv4Binding with
                 | SimulatedUnixFlavour.Darwin, SocketPhase.DatagramPeer _, Some binding ->
                     { system with
@@ -1353,7 +1356,10 @@ module UnixConnection =
             // every family but AF_UNSPEC, and a failure keeps that binding;
             // Darwin binds nothing, and disconnects first. Measured
             // (`sockaddr-dgram-connect.c`, B, D and L).
-            let failPrepared (error : UnixError) : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal> =
+            let failPrepared
+                (error : UnixError)
+                : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                =
                 match flavour with
                 | SimulatedUnixFlavour.Darwin -> failed error disconnectedFirst
                 | SimulatedUnixFlavour.Linux ->
@@ -1569,13 +1575,13 @@ module UnixConnection =
     /// domain whose addresses this kernel does not read is refused, after
     /// Linux's rejection of a length its copy-in will not take, which comes
     /// before anything about the socket.
-    let internal connectSocket<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal connectSocket<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -1611,13 +1617,13 @@ module UnixConnection =
     /// said the kernel copies: the step `connectWithAddress` takes. It runs the
     /// admission again itself, and fails loudly unless `copied` is exactly what
     /// that copies.
-    let internal tryConnectBytes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryConnectBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
@@ -1665,29 +1671,29 @@ module UnixConnection =
     /// refused (`ConnectRefusal.AcceptQueueFull`), so this always answers
     /// `SyscallOutcome.Answered`. The task is what a connect that sleeps will
     /// park.
-    let private finishConnect<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private finishConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
-        ignore<'Task> task
+        ignore<'Thread> task
 
         tryConnectBytes fd address declaredLength copied system
         |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
 
     /// `connect`, with a refusal answered as the `Error` rather than raised.
-    let internal tryConnect<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedConnect<'Task, 'Handler>, SyscallOutcome * UnixSystem<'Task, 'Handler>>,
+              CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>,
               ConnectRefusal
            >
         =
@@ -1752,22 +1758,22 @@ module UnixConnection =
     /// this version: that one is refused. A task that is parked already, or
     /// that the table does not hold, fails loudly.
     /// </remarks>
-    let connect<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : CallProgress<PausedConnect<'Task, 'Handler>, SyscallOutcome * UnixSystem<'Task, 'Handler>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>
         =
         tryConnect task fd address declaredLength system
         |> Refusal.orRaise "UnixConnection.connect" ConnectRefusal.kind ConnectRefusal.describe
 
     /// `connectWithAddress`, with a refusal answered as the `Error` rather than raised.
-    let internal tryConnectWithAddress<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryConnectWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedConnect<'Task, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Task, 'Handler>, ConnectRefusal>
+        (paused : PausedConnect<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         CopyRange.require "UnixConnection.connectWithAddress" paused.Range copied
         finishConnect paused.Task paused.Fd paused.Address paused.DeclaredLength copied paused.System
@@ -1778,10 +1784,10 @@ module UnixConnection =
     /// family, port and address out of. See `connect`.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">`copied` is not exactly `PausedConnect.copyRange`'s `ByteCount` long.</exception>
-    let connectWithAddress<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let connectWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
-        (paused : PausedConnect<'Task, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Task, 'Handler>
+        (paused : PausedConnect<'Thread, 'Handler>)
+        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryConnectWithAddress copied paused
         |> Refusal.orRaise "UnixConnection.connectWithAddress" ConnectRefusal.kind ConnectRefusal.describe
@@ -1806,10 +1812,10 @@ module UnixConnection =
     /// EINVAL/EOPNOTSUPP for a socket that is not a listening stream socket, and
     /// refuses a full table, so reaching this in any other state is a bug in
     /// the caller. Internal for that reason.
-    let internal acceptConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal acceptConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : int * TcpConnection * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int * TcpConnection * UnixSystem<'Thread, 'Handler>
         =
         match
             FileDescriptorRegistry.room
@@ -1893,10 +1899,10 @@ module UnixConnection =
     /// server end at once, without a descriptor: the state `acceptConnection`
     /// followed by `close` of the accepted descriptor would leave, bar the
     /// identities those would spend.
-    let private dropConnection<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private dropConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let listener = UnixMachineState.socket socketId system.Machine
 
@@ -1987,13 +1993,13 @@ module UnixConnection =
     /// connection is handed over, which is what Darwin's accepted socket
     /// inherits (measured, `blocking-accept.c` section F: a flag set while the
     /// call slept was inherited).
-    let private handOver<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private handOver<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (nonBlocking : bool)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Task, 'Handler>, AcceptRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         // A connection is there to take, which needs a descriptor below the
         // limit: at a limit of the bound, EMFILE (measured, `fcntl-dup.c`,
@@ -2021,7 +2027,7 @@ module UnixConnection =
             SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
             && int declaredLength < 0
 
-        let dropped () : Result<AcceptOutcome * UnixSystem<'Task, 'Handler>, AcceptRefusal> =
+        let dropped () : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal> =
             Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, dropConnection socketId system)
 
         match linuxNegative, destination with
@@ -2081,13 +2087,13 @@ module UnixConnection =
         Ok (AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), system)
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
-    let internal tryAccept<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Task, 'Handler>, AcceptRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         match UnixTaskTable.parkedFor task system.Tasks with
         | Some parked ->
@@ -2232,21 +2238,21 @@ module UnixConnection =
     /// own sockets want one answer on every platform clears it itself.
     ///
     /// `task` must not already be parked.
-    let accept<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : AcceptOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryAccept task fd destination declaredLength system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
-    let private finishAcceptHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Task, 'Handler>, AcceptRefusal>
+    let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let parked =
             match UnixTaskTable.parkedFor task system.Tasks with
@@ -2324,10 +2330,10 @@ module UnixConnection =
                 $"UnixConnection.finishAccept: task %O{task}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
     /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishAccept<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Task, 'Handler>, AcceptRefusal>
+    let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
         let held =
             match UnixTaskTable.parkedFor task system.Tasks with
@@ -2373,20 +2379,20 @@ module UnixConnection =
     /// pending, and leaves the queue as it is.
     ///
     /// `task` must be parked in an accept.
-    let finishAccept<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : AcceptOutcome * UnixSystem<'Task, 'Handler>
+    let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryFinishAccept task system
         |> Refusal.orRaise "UnixConnection.finishAccept" AcceptRefusal.kind AcceptRefusal.describe
 
     /// `shutdown`, with a refusal answered as the `Error` rather than raised.
-    let internal tryShutdown<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryShutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (how : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ShutdownAnswer * UnixSystem<'Task, 'Handler>, ShutdownRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ShutdownAnswer * UnixSystem<'Thread, 'Handler>, ShutdownRefusal>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (ShutdownAnswer.Failed UnixError.EBADF, system)
@@ -2426,7 +2432,7 @@ module UnixConnection =
         | None -> Ok (ShutdownAnswer.Failed UnixError.EINVAL, system)
         | Some how ->
 
-        let unconnected () : Result<ShutdownAnswer * UnixSystem<'Task, 'Handler>, ShutdownRefusal> =
+        let unconnected () : Result<ShutdownAnswer * UnixSystem<'Thread, 'Handler>, ShutdownRefusal> =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Darwin -> Ok (ShutdownAnswer.Failed UnixError.ENOTCONN, system)
             | SimulatedUnixFlavour.Linux -> Error (ShutdownRefusal.LinuxUnconnected socketId)
@@ -2510,11 +2516,11 @@ module UnixConnection =
     ///
     /// A parked read or write on either end may have an answer afterwards;
     /// `UnixWait.wakes` finds it.
-    let shutdown<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let shutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (how : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ShutdownAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ShutdownAnswer * UnixSystem<'Thread, 'Handler>
         =
         tryShutdown fd how system
         |> Refusal.orRaise "UnixConnection.shutdown" ShutdownRefusal.kind ShutdownRefusal.describe

@@ -8,12 +8,12 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal PReadUnchanged =
 
-    let pread<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let pread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer, BufferRefusal>
         =
         match UnixReadWrite.tryPread system.Leader fd buffer count offset system with

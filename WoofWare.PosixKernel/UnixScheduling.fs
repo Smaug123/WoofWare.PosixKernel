@@ -76,11 +76,11 @@ module UnixScheduling =
     /// Fails loudly if `task` names no task, or if `cpu` is not one of the
     /// machine's processors (`UnixSystem.processorCount`): each is a bug in
     /// the client.
-    let dispatch<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (cpu : CpuId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let state = UnixTaskTable.get task system.Tasks
 
@@ -123,9 +123,9 @@ module UnixScheduling =
     /// running, because the client has not dispatched it since it was created
     /// or since it last parked, or has dispatched another task to its
     /// processor since, and `None` if `task` names no task.
-    let runningOn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : CpuId option
         =
         match Map.tryFind task system.Tasks with
@@ -134,9 +134,9 @@ module UnixScheduling =
         | None -> None
 
     /// `getcpu`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetcpu<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetCpuAnswer, GetCpuRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -179,9 +179,9 @@ module UnixScheduling =
     /// library's, which is a bug in the client.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
-    let getcpu<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let getcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : GetCpuAnswer
         =
         tryGetcpu task system

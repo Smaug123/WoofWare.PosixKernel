@@ -9,11 +9,11 @@ module ReuseAddress =
 
     /// `setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(int))` through
     /// real storage, failing the test unless the option is set.
-    let set<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let set<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (value : bool)
         (fd : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let platform = system.Machine.UnixPlatform
         let level = SimulatedUnixPlatform.socketOptionLevel platform

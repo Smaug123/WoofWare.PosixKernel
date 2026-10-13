@@ -245,9 +245,9 @@ module internal KeventRefusal =
 module UnixKqueue =
 
     /// `kqueue`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKqueue<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<int * UnixSystem<'Task, 'Handler>, KqueueRefusal>
+    let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -288,9 +288,9 @@ module UnixKqueue =
     /// Under the Linux flavour every call is refused: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
-    let kqueue<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : int * UnixSystem<'Task, 'Handler>
+    let kqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int * UnixSystem<'Thread, 'Handler>
         =
         tryKqueue system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe
@@ -299,19 +299,19 @@ module UnixKqueue =
 
     /// Whether a close has drained the kqueue `kqueue`: the same question the
     /// wake condition of a waiter on it asks.
-    let private drained<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private drained<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         WakeCondition.satisfied task (WakeCondition.Primitive (WakePrimitive.KqueueDrained kqueue)) system
         |> Set.isEmpty
         |> not
 
-    let private kqueueState<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private kqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -322,11 +322,11 @@ module UnixKqueue =
             failwith
                 $"UnixKqueue: %O{kqueue} names %A{other} rather than a live kqueue, where the call resolved it as one (this is a bug in this library)."
 
-    let private withKqueueState<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private withKqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (state : KqueueState)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
@@ -389,11 +389,11 @@ module UnixKqueue =
 
     /// Apply one readable change to the kqueue `kqueue`: `None` when it
     /// succeeded, or the errno it failed with, and the system it left.
-    let private applyChange<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private applyChange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (change : Kevent)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<UnixError option * UnixSystem<'Task, 'Handler>, KeventRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<UnixError option * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let add = KeventFlags.Add
         let delete = KeventFlags.Delete
@@ -521,20 +521,20 @@ module UnixKqueue =
     /// ended the call and the entries echoed before it; and the system its
     /// applied changes left.
     [<RequireQualifiedAccess>]
-    type private ChangelistOutcome<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
-        | Applied of echoed : Kevent list * system : UnixSystem<'Task, 'Handler>
-        | Failed of error : UnixError * echoed : Kevent list * system : UnixSystem<'Task, 'Handler>
+    type private ChangelistOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+        | Applied of echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
+        | Failed of error : UnixError * echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
 
     /// Apply the readable `changes` of a changelist of `nchanges` entries in
     /// order, with room for `room` entries in `eventlist`.
-    let private applyChangelist<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private applyChangelist<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (nchanges : int)
         (changes : Kevent list)
         (room : int)
         (eventlist : UserBuffer)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ChangelistOutcome<'Task, 'Handler>, KeventRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
         =
         let numbering = SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform
 
@@ -548,9 +548,9 @@ module UnixKqueue =
         let rec apply
             (echoed : Kevent list)
             (room : int)
-            (system : UnixSystem<'Task, 'Handler>)
+            (system : UnixSystem<'Thread, 'Handler>)
             (remaining : Kevent list)
-            : Result<ChangelistOutcome<'Task, 'Handler>, KeventRefusal>
+            : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
             =
             match remaining with
             | [] -> Ok (ChangelistOutcome.Applied (List.rev echoed, system))
@@ -593,16 +593,16 @@ module UnixKqueue =
         | other -> other
 
     /// `kevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKevent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (kq : int)
         (nchanges : int)
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
         (timeout : KeventTimeout)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Task, 'Handler>, KeventRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         if List.length changes > max nchanges 0 then
             failwith
@@ -757,24 +757,24 @@ module UnixKqueue =
     /// is refused: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
-    let kevent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let kevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (kq : int)
         (nchanges : int)
         (changes : Kevent list)
         (nevents : int)
         (eventlist : UserBuffer)
         (timeout : KeventTimeout)
-        (system : UnixSystem<'Task, 'Handler>)
-        : KeventOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryKevent task kq nchanges changes nevents eventlist timeout system
         |> Refusal.orRaise "UnixKqueue.kevent" KeventRefusal.kind KeventRefusal.describe
 
-    let private finishKeventHolding<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Task, 'Handler>, KeventRefusal>
+    let private finishKeventHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
             match UnixTaskTable.parkedFor task system.Tasks with
@@ -795,7 +795,7 @@ module UnixKqueue =
             | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
             | None -> false
 
-        let completing (outcome : KeventOutcome) (answered : UnixSystem<'Task, 'Handler>) =
+        let completing (outcome : KeventOutcome) (answered : UnixSystem<'Thread, 'Handler>) =
             SyscallInterruption.beforeCompleting task system
             |> Result.mapError KeventRefusal.Interruption
             |> Result.map (fun () -> outcome, (UnixParkState.unpark task answered))
@@ -841,10 +841,10 @@ module UnixKqueue =
             Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park task parkedAgain swept)
 
     /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishKevent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Task, 'Handler>, KeventRefusal>
+    let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let held =
             match UnixTaskTable.parkedFor task system.Tasks with
@@ -879,10 +879,10 @@ module UnixKqueue =
     /// `task` must be parked in a `kevent`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
-    let finishKevent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : KeventOutcome * UnixSystem<'Task, 'Handler>
+    let finishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryFinishKevent task system
         |> Refusal.orRaise "UnixKqueue.finishKevent" KeventRefusal.kind KeventRefusal.describe

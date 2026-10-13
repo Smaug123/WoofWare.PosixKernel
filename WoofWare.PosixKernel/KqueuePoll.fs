@@ -95,10 +95,10 @@ module internal KqueuePoll =
     ///
     /// Loudly partial: a poll registers only on the targets answered here, and
     /// closing a descriptor removes every registration made through it.
-    let private reportOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private reportOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int, filter : KqueueFilter as key)
         (registration : PollRegistration)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : (KqueueFilterReport * bool) option
         =
         match registration.Socket with
@@ -187,9 +187,9 @@ module internal KqueuePoll =
     /// ready now, in the order they were made: the queue a call has once it
     /// has registered everything, since registering a ready filter activates
     /// it.
-    let activeAtRegistration<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let activeAtRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registrations : Map<int * KqueueFilter, PollRegistration>)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : (int * KqueueFilter) list
         =
         registrations
@@ -210,12 +210,12 @@ module internal KqueuePoll =
     ///
     /// Answers each entry's `revents`, in order, starting from `revents`, and
     /// the registrations and active list the scan leaves.
-    let scan<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let scan<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entries : PollEntry list)
         (revents : int16 list)
         (registrations : Map<int * KqueueFilter, PollRegistration>)
         (active : (int * KqueueFilter) list)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : int16 list * Map<int * KqueueFilter, PollRegistration> * (int * KqueueFilter) list
         =
         if List.length revents <> List.length entries then
@@ -262,9 +262,9 @@ module internal KqueuePoll =
     /// asks.
     ///
     /// Loudly partial: `task` must be asleep in a Darwin `poll`.
-    let reportable<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let reportable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match UnixTaskTable.parkedFor task system.Tasks with

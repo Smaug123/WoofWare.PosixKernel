@@ -128,10 +128,10 @@ module TestReadme =
         |> shouldEqual []
 
     /// The type arguments a README signature leaves out.
-    let private elidedTypeArguments : Set<string> = Set.ofList [ "Task" ; "Handler" ]
+    let private elidedTypeArguments : Set<string> = Set.ofList [ "Thread" ; "Handler" ]
 
     /// How the README writes a type: as F# source would, without the type
-    /// arguments `'Task` and `'Handler` (`UnixSystem<'Task, 'Handler>` is
+    /// arguments `'Thread` and `'Handler` (`UnixSystem<'Thread, 'Handler>` is
     /// `UnixSystem`), except as the arguments of a `Map` or `Set`.
     let rec private render (postfixArgument : bool) (t : Type) : string =
         let parenthesised (s : string) : string =
@@ -304,7 +304,7 @@ module TestReadme =
         |> Result.isOk
         |> shouldEqual false
 
-        matchCall "UnixReadWrite.read" [ "task", Some "'Task" ; "fd", Some "int64" ; "buffer", None ; "count", None ]
+        matchCall "UnixReadWrite.read" [ "task", Some "'Thread" ; "fd", Some "int64" ; "buffer", None ; "count", None ]
         |> Result.isOk
         |> shouldEqual false
 

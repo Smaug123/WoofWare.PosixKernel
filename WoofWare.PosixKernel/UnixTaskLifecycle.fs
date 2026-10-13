@@ -7,7 +7,7 @@ namespace WoofWare.PosixKernel
 ///
 /// Not a `UnixSystem`: it has no tasks, so nothing can make a syscall in it, and no
 /// function that answers one accepts it.
-type EndedProcess<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type EndedProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
             /// How the process ended, which is what its parent's `wait` reads.
@@ -29,28 +29,28 @@ type EndedProcess<'Task, 'Handler when 'Task : comparison and 'Handler : equalit
             Scheduling : UnixSchedulingState
             /// The process's own state as it stood when it ended. It holds nothing for
             /// any task: no signal mask, and no signal pending on one task alone.
-            FinalProcess : UnixProcessState<'Task, 'Handler>
+            FinalProcess : UnixProcessState<'Thread, 'Handler>
             /// The process as the call that ended it found it, tasks and all: what
             /// `SimulatedMachine.endProcess` checks against the machine it ends the
             /// process on, as `SimulatedMachine.unfocus` checks a view, and reads
             /// the calls the process's tasks had in flight from.
-            EndedIn : UnixSystem<'Task, 'Handler>
+            EndedIn : UnixSystem<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
 module EndedProcess =
 
     /// How the process ended, which is what its parent's `wait` reads.
-    let termination<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Task, 'Handler>)
+    let termination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
         : ProcessTermination
         =
         ended.Termination
 
     /// The ID of the process that ended. The machine no longer counts it as
     /// any live process's.
-    let processId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Task, 'Handler>)
+    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
         : ProcessId
         =
         ended.FinalProcess.ProcessId
@@ -59,9 +59,9 @@ module EndedProcess =
     /// the machine the process ran on, from before it ended. For a process
     /// alone on its machine, `SimulatedMachine.ofSystem` of it is the machine
     /// to end the process on with `SimulatedMachine.endProcess`.
-    let endedIn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let endedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         ended.EndedIn
 
@@ -73,32 +73,32 @@ module EndedProcess =
 /// `ReturnToUserOutcome` for a return to user mode, and `unit` for a thread's
 /// exit, which says nothing more.
 [<RequireQualifiedAccess>]
-type ProcessFate<'Outcome, 'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The process carries on, as `system`.
-    | Continues of outcome : 'Outcome * system : UnixSystem<'Task, 'Handler>
+    | Continues of outcome : 'Outcome * system : UnixSystem<'Thread, 'Handler>
     /// The process has ended, and never returns from the call.
-    | ProcessEnded of EndedProcess<'Task, 'Handler>
+    | ProcessEnded of EndedProcess<'Thread, 'Handler>
 
 /// Why this library will not answer a task's thread exit: a case it does not
 /// model, rather than an error a kernel would report, because the thread-exit
 /// syscall cannot fail.
 [<RequireQualifiedAccess>]
-type internal ThreadExitRefusal<'Task> =
+type internal ThreadExitRefusal<'Thread> =
     /// The task is blocked in a syscall, so it cannot be making another one.
-    | Parked of task : 'Task * park : TaskPark
+    | Parked of task : 'Thread * park : TaskPark
     /// The task is the process's leader, and other tasks live. On both flavours
     /// the process carries on, with a leader that has gone (a zombie task on
     /// Linux); this library keeps the leader until the process ends.
-    | LeaderBeforeOthers of task : 'Task
+    | LeaderBeforeOthers of task : 'Thread
     /// The task is the last one on Darwin, where what its thread exit does has not
     /// been measured.
-    | LastTaskOnDarwin of task : 'Task
+    | LastTaskOnDarwin of task : 'Thread
 
 [<RequireQualifiedAccess>]
 module internal ThreadExitRefusal =
 
     /// A human-readable account of why the exit was refused.
-    let describe<'Task> (refusal : ThreadExitRefusal<'Task>) : string =
+    let describe<'Thread> (refusal : ThreadExitRefusal<'Thread>) : string =
         match refusal with
         | ThreadExitRefusal.Parked (task, park) ->
             $"task %O{task} is parked in %A{park.Syscall}, so it cannot be making the thread-exit syscall; whatever ended the thread skipped finishing or abandoning its park"
@@ -108,7 +108,7 @@ module internal ThreadExitRefusal =
             $"task %O{task} is the process's last task, and what Darwin does when the last task makes the thread-exit syscall has not been measured"
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : ThreadExitRefusal<'Task>) : RefusalKind =
+    let kind (refusal : ThreadExitRefusal<'Thread>) : RefusalKind =
         match refusal with
         | ThreadExitRefusal.Parked _ -> RefusalKind.Misuse
         | ThreadExitRefusal.LeaderBeforeOthers _ -> RefusalKind.Unmodelled
@@ -128,7 +128,7 @@ type SpawnAnswer =
 /// does not model or has not measured, rather than an error a kernel would
 /// report.
 [<RequireQualifiedAccess>]
-type internal SpawnRefusal<'Task> =
+type internal SpawnRefusal<'Thread> =
     /// Unmeasured. Darwin's 64-bit thread ID counter has reached the top of its
     /// range, and what Darwin does when a thread is created then has not been
     /// measured.
@@ -138,13 +138,13 @@ type internal SpawnRefusal<'Task> =
 module internal SpawnRefusal =
 
     /// A human-readable account of why the thread's creation was refused.
-    let describe<'Task> (refusal : SpawnRefusal<'Task>) : string =
+    let describe<'Thread> (refusal : SpawnRefusal<'Thread>) : string =
         match refusal with
         | SpawnRefusal.ThreadIdCounterExhausted ->
             "Darwin's thread ID counter has reached the top of its 64-bit range, and what Darwin does when a thread is created then has not been measured"
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : SpawnRefusal<'Task>) : RefusalKind =
+    let kind (refusal : SpawnRefusal<'Thread>) : RefusalKind =
         match refusal with
         | SpawnRefusal.ThreadIdCounterExhausted -> RefusalKind.Unmodelled
 
@@ -158,10 +158,10 @@ module UnixTaskLifecycle =
     /// ID, the processor it was running on, and the holds its call in flight,
     /// if any, had. The machine lets go of the process's current directory and
     /// its process ID.
-    let internal endProcess<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (termination : ProcessTermination)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EndedProcess<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EndedProcess<'Thread, 'Handler>
         =
         let signals =
             (system.Process.Signals, Map.keys system.Tasks)
@@ -207,11 +207,11 @@ module UnixTaskLifecycle =
         }
 
     /// `exitThread`, with a refusal answered as the `Error` rather than raised.
-    let internal tryExitThread<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryExitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (status : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ProcessFate<unit, 'Task, 'Handler>, ThreadExitRefusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
         let state = UnixTaskTable.get task system.Tasks
 
@@ -277,22 +277,22 @@ module UnixTaskLifecycle =
     /// Fails loudly if `task` names no task, which is a bug in the client.
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">The task is blocked in a syscall, so it cannot be making another one.</exception>
-    let exitThread<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let exitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (status : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ProcessFate<unit, 'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessFate<unit, 'Thread, 'Handler>
         =
         tryExitThread task status system
         |> Refusal.orRaise "UnixTaskLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
 
     /// `spawn`, with a refusal answered as the `Error` rather than raised.
-    let internal trySpawn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (parent : 'Task)
-        (child : 'Task)
+    let internal trySpawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parent : 'Thread)
+        (child : 'Thread)
         (cpu : CpuId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SpawnAnswer * UnixSystem<'Task, 'Handler>, SpawnRefusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
         match (UnixTaskTable.get parent system.Tasks).Parked with
         | Some park ->
@@ -349,12 +349,12 @@ module UnixTaskLifecycle =
     /// Fails loudly if `parent` names no task or is parked in a syscall, if
     /// `child` already names a task, or if `cpu` is not one of the machine's
     /// processors (`UnixSystem.processorCount`): each is a bug in the client.
-    let spawn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (parent : 'Task)
-        (child : 'Task)
+    let spawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (parent : 'Thread)
+        (child : 'Thread)
         (cpu : CpuId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SpawnAnswer * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SpawnAnswer * UnixSystem<'Thread, 'Handler>
         =
         trySpawn parent child cpu system
         |> Refusal.orRaise "UnixTaskLifecycle.spawn" SpawnRefusal.kind SpawnRefusal.describe
@@ -365,11 +365,11 @@ module UnixTaskLifecycle =
     ///
     /// Fails loudly if `task` names no task, or is parked in a syscall: a task
     /// blocked in one is not making another, so either is a bug in the client.
-    let exitGroup<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let exitGroup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (status : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : EndedProcess<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EndedProcess<'Thread, 'Handler>
         =
         match (UnixTaskTable.get task system.Tasks).Parked with
         | Some park ->

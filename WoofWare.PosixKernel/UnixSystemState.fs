@@ -11,17 +11,17 @@ namespace WoofWare.PosixKernel
 /// they were taken from the same values. A system no machine has focused is
 /// `NotFocused`, so equality between such systems is unaffected.
 [<CustomEquality ; NoComparison>]
-type internal FocusOrigin<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type internal FocusOrigin<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     | NotFocused
     | FocusedFrom of
         machine : UnixMachineState *
         scheduling : UnixSchedulingState *
-        proc : UnixProcessState<'Task, 'Handler> *
-        tasks : Map<'Task, UnixTaskState>
+        proc : UnixProcessState<'Thread, 'Handler> *
+        tasks : Map<'Thread, UnixTaskState>
 
     override this.Equals (other : obj) : bool =
         match other with
-        | :? FocusOrigin<'Task, 'Handler> as other ->
+        | :? FocusOrigin<'Thread, 'Handler> as other ->
             match this, other with
             | NotFocused, NotFocused -> true
             | FocusedFrom (machine, scheduling, proc, tasks), FocusedFrom (machine', scheduling', proc', tasks') ->
@@ -52,25 +52,25 @@ type internal FocusOrigin<'Task, 'Handler when 'Task : comparison and 'Handler :
 /// Opaque: a client reads it through the queries in the `UnixSystem` module
 /// and changes it only through syscalls, `UnixSystem.advanceClock` and
 /// `UnixSystem.writePidMaxSysctl`.
-type UnixSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
             Machine : UnixMachineState
             /// How long the machine has been up, and which task each of its
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
-            Process : UnixProcessState<'Task, 'Handler>
-            Tasks : Map<'Task, UnixTaskState>
+            Process : UnixProcessState<'Thread, 'Handler>
+            Tasks : Map<'Thread, UnixTaskState>
             /// The process's first task, which it started with: its thread-group
             /// leader.
             ///
             /// Always in `Tasks`. It cannot exit while another task lives
             /// (`UnixTaskLifecycle.exitThread` refuses that), so it is a task for as
             /// long as the process is running. On Linux its thread ID is the process ID.
-            Leader : 'Task
+            Leader : 'Thread
             /// Where this view was taken from, if a `SimulatedMachine` focused
             /// it; see `FocusOrigin`.
-            Origin : FocusOrigin<'Task, 'Handler>
+            Origin : FocusOrigin<'Thread, 'Handler>
         }
 
 /// Reading and writing a `UnixSystem`'s process's descriptor table together
@@ -79,8 +79,8 @@ type UnixSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
 module internal UnixSystemState =
     /// Whether the process's descriptor table is every descriptor on the
     /// machine: whether no other process is on it.
-    let census<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let census<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : DescriptorCensus
         =
         let others =
@@ -93,18 +93,18 @@ module internal UnixSystemState =
 
     /// The process's descriptor table, read against the machine's open file
     /// descriptions.
-    let fileDescriptors<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
+    let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
         : FileDescriptorRegistry
         =
         FileDescriptorRegistry.ofTables (census system) system.Process.FileDescriptors system.Machine.OpenFiles
 
     /// `system` with `registry`'s descriptor table as the process's, and its open
     /// file descriptions as the machine's.
-    let withFileDescriptors<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let withFileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registry : FileDescriptorRegistry)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -118,10 +118,10 @@ module internal UnixSystemState =
         }
 
     /// `system` with its machine's open file descriptions rewritten by `f`.
-    let mapOpenFiles<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let mapOpenFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (f : OpenFileTable -> OpenFileTable)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -188,11 +188,11 @@ module internal UnixParkState =
     /// Refuses to replace a park of one syscall with a park of another, as
     /// `UnixTaskTable.withPark` does. Writes `park` as it stands, ordinal and
     /// all: `UnixWait.park` is what mints a fresh ordinal.
-    let setPark<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (park : TaskPark)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let previous = UnixTaskTable.parkOf task system.Tasks
 
@@ -210,10 +210,10 @@ module internal UnixParkState =
     /// description only the park held stays in the table until
     /// `ObjectLifetime.releaseUnreferenced` is asked about it. A Darwin poll's
     /// kqueue, which nothing but its park reaches, goes with the park.
-    let unpark<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let unpark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let previous = UnixTaskTable.parkOf task system.Tasks
 
@@ -235,7 +235,7 @@ module internal UnixParkState =
 ///
 /// Opaque, so that the only way to a system from it is `boot`, after which no
 /// setter applies.
-type UnixBootImage<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type UnixBootImage<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
             Machine : UnixMachineState

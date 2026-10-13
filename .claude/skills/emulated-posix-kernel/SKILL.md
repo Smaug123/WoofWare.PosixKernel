@@ -78,7 +78,7 @@ The criterion is **whether an absent key has a truthful reading**:
   no honest default processor index or thread ID, and an arbitrary one aliases
   two tasks. As a field, the compiler asks every future task-creation site which
   value it wants.
-- **`Map<'Task, _>` on the kernel** when it does — `SignalState`'s handler
+- **`Map<'Thread, _>` on the kernel** when it does — `SignalState`'s handler
   frames (no frame, so an empty mask).
 
 CPU placement has both, as Linux does. A task's processor (`UnixTaskState.Cpu`,

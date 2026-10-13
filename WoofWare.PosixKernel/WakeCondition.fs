@@ -220,11 +220,11 @@ module WakeCondition =
     /// The pipe the open file description `description` names `pipeEnd` of, and
     /// that pipe; fails loudly, naming the waiter's `primitive`, for a
     /// description that is gone or names something else.
-    let private pipeOfWaiter<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private pipeOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : PipeId * PipeState
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -243,10 +243,10 @@ module WakeCondition =
     /// is an end of, which end, and its transfer; fails loudly, naming the
     /// waiter's `primitive`, for a description that is gone or names
     /// something else.
-    let private connectionOfWaiter<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private connectionOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ConnectionEnd * TcpTransfer
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -274,9 +274,9 @@ module WakeCondition =
                     $"WakeCondition.satisfied: a task waits on open file description %O{description} for %A{primitive}, but the description names %A{found.Target} (%A{phase}) rather than an end of a connection. Nothing takes a socket out of a connection while a descriptor or a call holds it, so the park was recorded on one that was never connected (this is a bug in the caller that recorded it)."
 
     /// Whether a close has ended the call `task` is asleep in.
-    let private endedByClose<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match
@@ -323,10 +323,10 @@ module WakeCondition =
 
     // A primitive that names a description no longer in the table has had its
     // wait broken underneath it: see `satisfied`.
-    let private holds<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (primitive : WakePrimitive)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match primitive with
@@ -467,10 +467,10 @@ module WakeCondition =
     /// A task whose call a close has ended (`WakePrimitive.EndedByClose`)
     /// answers that primitive alone: the call holds nothing any more, and the
     /// descriptions its other primitives name may have gone with the close.
-    let internal satisfied<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (condition : WakeCondition)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
         let rec primitives (condition : WakeCondition) : WakePrimitive list =

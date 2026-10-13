@@ -2,16 +2,16 @@ namespace WoofWare.PosixKernel
 
 /// One process on a `SimulatedMachine`: everything a view of the machine from
 /// that process (`UnixSystem`) holds besides the machine itself.
-type internal ProcessSlot<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
-            Process : UnixProcessState<'Task, 'Handler>
+            Process : UnixProcessState<'Thread, 'Handler>
             /// The process's tasks. A task is named by the client, separately in
             /// each process: two processes may each have a task the client calls
             /// by the same name.
-            Tasks : Map<'Task, UnixTaskState>
+            Tasks : Map<'Thread, UnixTaskState>
             /// See `UnixSystem.Leader`.
-            Leader : 'Task
+            Leader : 'Thread
         }
 
 /// Several simulated processes on one machine.
@@ -24,7 +24,7 @@ type internal ProcessSlot<'Task, 'Handler when 'Task : comparison and 'Handler :
 ///
 /// Opaque: a client reads it through the queries in the `SimulatedMachine`
 /// module and through the views it focuses.
-type SimulatedMachine<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type SimulatedMachine<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
             Machine : UnixMachineState
@@ -32,17 +32,17 @@ type SimulatedMachine<'Task, 'Handler when 'Task : comparison and 'Handler : equ
             /// processors runs: see `UnixSchedulingState`.
             Scheduling : UnixSchedulingState
             /// Every process on the machine, by its process ID.
-            Processes : Map<ProcessId, ProcessSlot<'Task, 'Handler>>
+            Processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>
         }
 
 /// What a sweep of a machine's sleeping tasks that woke none of them read:
 /// everything a wake condition is asked of but the clock, and the earliest
 /// deadline any of those tasks waits for.
-type internal RememberedSweep<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     {
         Machine : UnixMachineState
-        Processes : Map<ProcessId, ProcessSlot<'Task, 'Handler>>
-        Asleep : Map<ProcessId, Set<'Task>>
+        Processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>
+        Asleep : Map<ProcessId, Set<'Thread>>
         /// The earliest `WakePrimitive.DeadlinePassed` among the wake
         /// conditions of the tasks in `Asleep`, if any has one.
         EarliestDeadline : int64 voption
@@ -55,10 +55,10 @@ type internal RememberedSweep<'Task, 'Handler when 'Task : comparison and 'Handl
 /// Opaque. A client starts from `WakeSweepMemo.empty`, and passes each call the
 /// memo the last one answered.
 [<ReferenceEquality>]
-type WakeSweepMemo<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type WakeSweepMemo<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
-            Remembered : RememberedSweep<'Task, 'Handler> voption
+            Remembered : RememberedSweep<'Thread, 'Handler> voption
 #if DEBUG
             /// How many answers `SimulatedMachine.wakesRemembering` has given from `Remembered`
             /// since it was swept, which decides the ones it checks against a sweep
@@ -70,7 +70,7 @@ type WakeSweepMemo<'Task, 'Handler when 'Task : comparison and 'Handler : equali
 [<RequireQualifiedAccess>]
 module WakeSweepMemo =
     /// A memo that remembers no sweep, so the next call sweeps.
-    let empty<'Task, 'Handler when 'Task : comparison and 'Handler : equality> : WakeSweepMemo<'Task, 'Handler> =
+    let empty<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> : WakeSweepMemo<'Thread, 'Handler> =
         {
             Remembered = ValueNone
 #if DEBUG
@@ -104,11 +104,11 @@ module WakeSweepMemo =
     /// ones, and `asleep` is the tasks `remembered` was asked about: whether
     /// everything a wake condition reads but the clock is as `remembered`
     /// found it.
-    let internal readsSame<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (remembered : RememberedSweep<'Task, 'Handler>)
-        (asleep : Map<ProcessId, Set<'Task>>)
+    let internal readsSame<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (remembered : RememberedSweep<'Thread, 'Handler>)
+        (asleep : Map<ProcessId, Set<'Thread>>)
         (machine : UnixMachineState)
-        (processes : Map<ProcessId, ProcessSlot<'Task, 'Handler>>)
+        (processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>)
         : bool
         =
         let sameSlots () : bool =
@@ -139,12 +139,12 @@ module WakeSweepMemo =
     /// everything else the same and the clock short of every deadline, each
     /// primitive holds or does not exactly as it did, and the sweep's answer
     /// is the same.
-    let internal covers<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (remembered : RememberedSweep<'Task, 'Handler>)
-        (asleep : Map<ProcessId, Set<'Task>>)
+    let internal covers<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (remembered : RememberedSweep<'Thread, 'Handler>)
+        (asleep : Map<ProcessId, Set<'Thread>>)
         (machine : UnixMachineState)
         (scheduling : UnixSchedulingState)
-        (processes : Map<ProcessId, ProcessSlot<'Task, 'Handler>>)
+        (processes : Map<ProcessId, ProcessSlot<'Thread, 'Handler>>)
         : bool
         =
         (match remembered.EarliestDeadline with
@@ -166,14 +166,14 @@ module WakeSweepMemo =
 /// version may add a rule or remove one, for instance when the types come to
 /// make a state it forbids unrepresentable.
 [<RequireQualifiedAccess>]
-type SimulatedMachineDefect<'Task> =
+type SimulatedMachineDefect<'Thread> =
     internal
     /// A defect in the clauses of `UnixSystem.checkInvariants` that concern
     /// the machine, read against every process on it.
-    | Machine of UnixSystemDefect<'Task>
+    | Machine of UnixSystemDefect<'Thread>
     /// One of `UnixSystem.checkViewInvariants`'s defects, in the view of the
     /// process `processId`.
-    | View of processId : ProcessId * defect : UnixSystemDefect<'Task>
+    | View of processId : ProcessId * defect : UnixSystemDefect<'Thread>
     /// One of `FileDescriptorRegistry.checkDescriptorTableInvariants`'s
     /// defects, in the descriptor table of the process `processId`.
     | DescriptorTable of processId : ProcessId * defect : FileDescriptorRegistryDefect
@@ -195,7 +195,7 @@ module SimulatedMachineDefect =
     /// The defect, for a bug report: the rule that does not hold, by the name
     /// this library's source gives it, the process it was found in where it
     /// concerns one, and the values that break it.
-    let describe<'Task> (defect : SimulatedMachineDefect<'Task>) : string =
+    let describe<'Thread> (defect : SimulatedMachineDefect<'Thread>) : string =
         $"the machine is in a state no kernel could be in, which is a bug in this library: %A{defect}"
 
 /// Why `SimulatedMachine.launch` will not start a process.
@@ -266,10 +266,10 @@ module internal ProcessEndRefusal =
 [<RequireQualifiedAccess>]
 module SimulatedMachine =
 
-    let private viewOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        (slot : ProcessSlot<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let private viewOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        (slot : ProcessSlot<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         {
             Machine = machine.Machine
@@ -287,9 +287,9 @@ module SimulatedMachine =
     /// Fails loudly if `system` is a view of a machine holding other processes
     /// besides, which a machine without them would not be one any kernel could
     /// be in.
-    let ofSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : SimulatedMachine<'Task, 'Handler>
+    let ofSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SimulatedMachine<'Thread, 'Handler>
         =
         let others =
             Set.remove system.Process.ProcessId (ProcessIdTable.live system.Machine.ProcessIds)
@@ -313,10 +313,10 @@ module SimulatedMachine =
         }
 
     /// `launch`, with a refusal answered as the `Error` rather than raised.
-    let internal tryLaunch<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (launch : ProcessLaunch<'Task>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : Result<ProcessId * SimulatedMachine<'Task, 'Handler>, ProcessCreationRefusal>
+    let internal tryLaunch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : Result<ProcessId * SimulatedMachine<'Thread, 'Handler>, ProcessCreationRefusal>
         =
         let current = machine.Machine
 
@@ -402,17 +402,17 @@ module SimulatedMachine =
     /// </summary>
     /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a task on a processor it does not have.</exception>
     /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
-    let launch<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (launch : ProcessLaunch<'Task>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : ProcessId * SimulatedMachine<'Task, 'Handler>
+    let launch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : ProcessId * SimulatedMachine<'Thread, 'Handler>
         =
         tryLaunch launch machine
         |> Refusal.orRaise "SimulatedMachine.launch" ProcessCreationRefusal.kind ProcessCreationRefusal.describe
 
     /// The process ID of every process on the machine.
-    let processIds<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (machine : SimulatedMachine<'Task, 'Handler>)
+    let processIds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (machine : SimulatedMachine<'Thread, 'Handler>)
         : Set<ProcessId>
         =
         machine.Processes |> Map.keys |> Set.ofSeq
@@ -425,10 +425,10 @@ module SimulatedMachine =
     /// change reaches the machine only through `unfocus`, which refuses the
     /// view once any other change has been written back: focus again to make
     /// another call after that.
-    let focus<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let focus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler> option
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler> option
         =
         Map.tryFind processId machine.Processes |> Option.map (viewOf machine)
 
@@ -438,9 +438,9 @@ module SimulatedMachine =
     /// process's view is written back asks this to know that only the machine
     /// in the view has gone stale, so that focusing the process again loses
     /// nothing. False if no process on the machine has the view's process ID.
-    let holdsProcessOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (view : UnixSystem<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
+    let holdsProcessOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : UnixSystem<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
         : bool
         =
         match Map.tryFind view.Process.ProcessId machine.Processes with
@@ -451,10 +451,10 @@ module SimulatedMachine =
 
     /// Fail loudly, naming `operation`, unless `view` is a view of `machine`
     /// as it stands; see `unfocus`.
-    let private assertCurrent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private assertCurrent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
-        (view : UnixSystem<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
+        (view : UnixSystem<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
         : unit
         =
         let processId = view.Process.ProcessId
@@ -468,8 +468,8 @@ module SimulatedMachine =
         let holds
             (machineState : UnixMachineState)
             (scheduling : UnixSchedulingState)
-            (proc : UnixProcessState<'Task, 'Handler>)
-            (tasks : Map<'Task, UnixTaskState>)
+            (proc : UnixProcessState<'Thread, 'Handler>)
+            (tasks : Map<'Thread, UnixTaskState>)
             : bool
             =
             obj.ReferenceEquals (machineState, machine.Machine)
@@ -509,10 +509,10 @@ module SimulatedMachine =
     /// What a syscall that ends the process answers is an `EndedProcess`,
     /// which is not a view and so cannot be written back: `endProcess` ends
     /// the process on the machine instead.
-    let unfocus<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (view : UnixSystem<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : SimulatedMachine<'Task, 'Handler>
+    let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : UnixSystem<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : SimulatedMachine<'Thread, 'Handler>
         =
         assertCurrent "SimulatedMachine.unfocus" view machine
         let processId = view.Process.ProcessId
@@ -534,11 +534,11 @@ module SimulatedMachine =
     /// Run `f` in the view of the machine from the process `processId`, and
     /// write the view it returns back: `focus`, then `unfocus`. `None` if no
     /// process on the machine has that ID.
-    let inView<'Task, 'Handler, 'Result when 'Task : comparison and 'Handler : equality>
+    let inView<'Thread, 'Handler, 'Result when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (f : UnixSystem<'Task, 'Handler> -> 'Result * UnixSystem<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : ('Result * SimulatedMachine<'Task, 'Handler>) option
+        (f : UnixSystem<'Thread, 'Handler> -> 'Result * UnixSystem<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : ('Result * SimulatedMachine<'Thread, 'Handler>) option
         =
         focus processId machine
         |> Option.map (fun view ->
@@ -548,12 +548,12 @@ module SimulatedMachine =
 
     /// `step`, with a refusal answered as the `Error` rather than raised. A
     /// refused call changes nothing, and answers `machine` itself.
-    let internal tryStep<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (task : 'Task)
+        (task : 'Thread)
         (call : Syscall)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : (Result<SyscallOutcome, SyscallRefusal<'Task>> * SimulatedMachine<'Task, 'Handler>) option
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : (Result<SyscallOutcome, SyscallRefusal<'Thread>> * SimulatedMachine<'Thread, 'Handler>) option
         =
         focus processId machine
         |> Option.map (fun view ->
@@ -568,12 +568,12 @@ module SimulatedMachine =
     /// machine has that ID.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The machine's flavour has no such call, as `UnixSystem.step` says.</exception>
-    let step<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
-        (task : 'Task)
+        (task : 'Thread)
         (call : Syscall)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : (SyscallOutcome * SimulatedMachine<'Task, 'Handler>) option
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : (SyscallOutcome * SimulatedMachine<'Thread, 'Handler>) option
         =
         tryStep processId task call machine
         |> Option.map (fun (result, machine) ->
@@ -583,10 +583,10 @@ module SimulatedMachine =
         )
 
     /// `endProcess`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEndProcess<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : Result<ProcessTermination * SimulatedMachine<'Task, 'Handler>, ProcessEndRefusal>
+    let internal tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : Result<ProcessTermination * SimulatedMachine<'Thread, 'Handler>, ProcessEndRefusal>
         =
         let view = ended.EndedIn
         assertCurrent "SimulatedMachine.endProcess" view machine
@@ -620,7 +620,7 @@ module SimulatedMachine =
             |> Seq.toList
 
         let released =
-            ((Ok dead : Result<UnixSystem<'Task, 'Handler>, DescriptionReleaseRefusal>), unreferenced)
+            ((Ok dead : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>), unreferenced)
             ||> List.fold (fun state id ->
                 match state with
                 | Error refusal -> Error refusal
@@ -641,8 +641,8 @@ module SimulatedMachine =
         // run; Darwin drops them highest first, releasing each as it goes.
         let drop
             (fd : int)
-            (dead : UnixSystem<'Task, 'Handler>)
-            : UnixSystem<'Task, 'Handler> * DestroyedDescription option
+            (dead : UnixSystem<'Thread, 'Handler>)
+            : UnixSystem<'Thread, 'Handler> * DestroyedDescription option
             =
             match FileDescriptorRegistry.dropDescriptor processId fd (UnixSystemState.fileDescriptors dead) with
             | Error FileDescriptorCloseError.BadFd ->
@@ -762,10 +762,10 @@ module SimulatedMachine =
     ///
     /// Fails loudly, as `unfocus` does, if the view the process ended in
     /// (`EndedProcess.endedIn`) is not a view of `machine` as it stands.
-    let endProcess<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Task, 'Handler>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : ProcessTermination * SimulatedMachine<'Task, 'Handler>
+    let endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : ProcessTermination * SimulatedMachine<'Thread, 'Handler>
         =
         tryEndProcess ended machine
         |> Refusal.orRaise "SimulatedMachine.endProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe
@@ -789,10 +789,10 @@ module SimulatedMachine =
     /// (`inView`), by the finishing call of the syscall it is asleep in.
     ///
     /// Fails loudly if `asleep` names a process the machine does not hold.
-    let wakes<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (asleep : Map<ProcessId, Set<'Task>>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : ((ProcessId * 'Task) * Set<WakePrimitive>) list
+    let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (asleep : Map<ProcessId, Set<'Thread>>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list
         =
         for KeyValue (processId, _) in asleep do
             if not (Map.containsKey processId machine.Processes) then
@@ -830,11 +830,11 @@ module SimulatedMachine =
     /// A Debug build checks some of the answers the memo gives against a sweep,
     /// failing loudly if they differ, and answers a new memo after each of them,
     /// which counts them.
-    let wakesRemembering<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (memo : WakeSweepMemo<'Task, 'Handler>)
-        (asleep : Map<ProcessId, Set<'Task>>)
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : ((ProcessId * 'Task) * Set<WakePrimitive>) list * WakeSweepMemo<'Task, 'Handler>
+    let wakesRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (memo : WakeSweepMemo<'Thread, 'Handler>)
+        (asleep : Map<ProcessId, Set<'Thread>>)
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list * WakeSweepMemo<'Thread, 'Handler>
         =
         match memo.Remembered with
         | ValueSome remembered when
@@ -907,9 +907,9 @@ module SimulatedMachine =
     ///
     /// The filesystem's own rules are `VirtualFileSystem.checkInvariants`'s,
     /// and are not repeated here.
-    let checkInvariants<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (machine : SimulatedMachine<'Task, 'Handler>)
-        : SimulatedMachineDefect<'Task> list
+    let checkInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (machine : SimulatedMachine<'Thread, 'Handler>)
+        : SimulatedMachineDefect<'Thread> list
         =
         let slots = Map.toList machine.Processes
 

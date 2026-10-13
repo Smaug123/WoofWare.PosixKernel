@@ -10,83 +10,83 @@ module internal Launched =
 
     /// A process on `platform` launched with `streams`, its leader `leader`
     /// on `cpu`.
-    let launch<'Task when 'Task : comparison>
+    let launch<'Thread when 'Thread : comparison>
         (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
-        (leader : 'Task)
+        (leader : 'Thread)
         (cpu : CpuId)
-        : ProcessLaunch<'Task>
+        : ProcessLaunch<'Thread>
         =
         ProcessLaunch.tryCreate platform streams leader cpu
         |> Configured.expectOk LaunchTableRefusal.describe
 
     /// `image` booted with a first process launched with `streams`, its leader
     /// `leader` on `cpu`, as `configure` configures the launch.
-    let bootWith<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (configure : ProcessLaunch<'Task> -> ProcessLaunch<'Task>)
+    let bootWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (configure : ProcessLaunch<'Thread> -> ProcessLaunch<'Thread>)
         (streams : Map<int, LaunchDescriptor>)
-        (leader : 'Task)
+        (leader : 'Thread)
         (cpu : CpuId)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let launch = launch (UnixBootImage.platform image) streams leader cpu |> configure
 
         UnixBootImage.tryBoot launch image |> Configured.expectOk LaunchRefusal.describe
 
     /// `bootWith` with the launch as `ProcessLaunch.create` makes it.
-    let boot<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let boot<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (streams : Map<int, LaunchDescriptor>)
-        (leader : 'Task)
+        (leader : 'Thread)
         (cpu : CpuId)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         bootWith id streams leader cpu image
 
     /// `ProcessLaunch.withCredentials`, which the test means to admit them.
-    let credentials<'Task when 'Task : comparison>
+    let credentials<'Thread when 'Thread : comparison>
         (credentials : Credentials)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         ProcessLaunch.tryWithCredentials credentials launch
         |> Configured.expectOk CredentialsRefusal.describe
 
     /// `ProcessLaunch.withUmask`, which the test means to admit it.
-    let umask<'Task when 'Task : comparison>
+    let umask<'Thread when 'Thread : comparison>
         (umask : PermissionBits)
-        (launch : ProcessLaunch<'Task>)
-        : ProcessLaunch<'Task>
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
         =
         ProcessLaunch.tryWithUmask umask launch
         |> Configured.expectOk UmaskRefusal.describe
 
     /// `UnixBootImage.withProcessId`, which the test means to admit it.
-    let processId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         UnixBootImage.tryWithProcessId pid image
         |> Configured.expectOk ProcessIdRefusal.describe
 
     /// `UnixBootImage.withLeaderThreadId`, which the test means to admit it.
-    let leaderThreadId<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let leaderThreadId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : uint64)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         UnixBootImage.tryWithLeaderThreadId id image
         |> Configured.expectOk LeaderThreadIdRefusal.describe
 
     /// `UnixBootImage.withFileSystem`, which the test means to admit the seed.
-    let fileSystem<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let fileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
         (seed : Map<DirectoryEntryName, SeedEntry>)
-        (image : UnixBootImage<'Task, 'Handler>)
-        : UnixBootImage<'Task, 'Handler>
+        (image : UnixBootImage<'Thread, 'Handler>)
+        : UnixBootImage<'Thread, 'Handler>
         =
         UnixBootImage.tryWithFileSystem createdAt defaultOwner seed image
         |> Configured.expectOk (sprintf "%A")
@@ -95,9 +95,9 @@ module internal Launched =
     /// in saying where its process stands: for a test that has moved the
     /// process's current directory by hand, on a machine holding that process
     /// alone.
-    let restand<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let restand<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Machine =

@@ -898,7 +898,11 @@ module UnixTaskTable =
     /// Total, and loudly partial rather than an option: every task is added
     /// when it is created and removed only when it exits, so a name that
     /// resolves to nothing is a client bug rather than anything a process did.
-    let internal get<'Task when 'Task : comparison> (name : 'Task) (tasks : Map<'Task, UnixTaskState>) : UnixTaskState =
+    let internal get<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (tasks : Map<'Thread, UnixTaskState>)
+        : UnixTaskState
+        =
         // `TryGetValue` rather than `Map.tryFind`, whose option a client that asks once per
         // instruction (`UnixScheduling.dispatch`) would allocate every time.
         let mutable task = Unchecked.defaultof<UnixTaskState>
@@ -913,12 +917,12 @@ module UnixTaskTable =
     ///
     /// Internal so that the only routes by which a task enters the table are
     /// a process's launch and `UnixTaskLifecycle.spawn`, which mint its id.
-    let internal add<'Task when 'Task : comparison>
-        (name : 'Task)
+    let internal add<'Thread when 'Thread : comparison>
+        (name : 'Thread)
         (cpu : CpuId)
         (osThreadId : OsThreadId)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+        (tasks : Map<'Thread, UnixTaskState>)
+        : Map<'Thread, UnixTaskState>
         =
         if Map.containsKey name tasks then
             failwith
@@ -936,17 +940,17 @@ module UnixTaskTable =
     /// The syscall `name` is blocked in, if any. Fails loudly, as `get` does,
     /// for a name that is not a task; a client reads `UnixTaskState.parkedIn`
     /// of the state it looked up instead.
-    let internal parkedFor<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
+    let internal parkedFor<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (tasks : Map<'Thread, UnixTaskState>)
         : ParkedSyscall option
         =
         UnixTaskState.parkedIn (get name tasks)
 
     /// The park `name` is in, with its place in park order, if it is parked.
-    let internal parkOf<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
+    let internal parkOf<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (tasks : Map<'Thread, UnixTaskState>)
         : TaskPark option
         =
         (get name tasks).Parked
@@ -969,11 +973,11 @@ module UnixTaskTable =
     /// The table alone: it moves no hold on an open file description. Internal
     /// so that `UnixWait.park`, which mints the ordinal, and `UnixParkState`,
     /// which moves the holds, are the ways a park is written.
-    let internal withPark<'Task when 'Task : comparison>
-        (name : 'Task)
+    let internal withPark<'Thread when 'Thread : comparison>
+        (name : 'Thread)
         (park : TaskPark)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+        (tasks : Map<'Thread, UnixTaskState>)
+        : Map<'Thread, UnixTaskState>
         =
         let existing = get name tasks
 
@@ -1022,10 +1026,10 @@ module UnixTaskTable =
     /// table, where `UnixSystem.checkInvariants` reports them
     /// (`HoldCountMismatch`). `UnixParkState.unpark` ends a park and lets go of
     /// its holds.
-    let internal unpark<'Task when 'Task : comparison>
-        (name : 'Task)
-        (tasks : Map<'Task, UnixTaskState>)
-        : Map<'Task, UnixTaskState>
+    let internal unpark<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (tasks : Map<'Thread, UnixTaskState>)
+        : Map<'Thread, UnixTaskState>
         =
         let existing = get name tasks
 
@@ -1042,10 +1046,10 @@ module UnixTaskTable =
     ///
     /// Answers both sets rather than raising, so the client reports them in its
     /// own vocabulary: this library has no opinion on what a defect is called.
-    let reconcile<'Task when 'Task : comparison>
-        (live : Set<'Task>)
-        (tasks : Map<'Task, UnixTaskState>)
-        : 'Task list * 'Task list
+    let reconcile<'Thread when 'Thread : comparison>
+        (live : Set<'Thread>)
+        (tasks : Map<'Thread, UnixTaskState>)
+        : 'Thread list * 'Thread list
         =
         let named = tasks |> Map.toList |> List.map fst |> Set.ofList
         Set.difference live named |> Set.toList, Set.difference named live |> Set.toList

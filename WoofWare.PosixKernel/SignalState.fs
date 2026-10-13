@@ -73,10 +73,10 @@ type CoreDumps =
 /// process's own set, which `kill(2)` adds to; `ValueSome task` is `task`'s
 /// own set, which `pthread_kill(3)` adds to, and which only `task` can take a
 /// signal from.
-type PendingSignal<'Task> =
+type PendingSignal<'Thread> =
     {
         Signal : Signal
-        Target : 'Task voption
+        Target : 'Thread voption
     }
 
 /// Which handler frame a delivery pushed: the name `UnixSignal.sigreturn`
@@ -87,11 +87,11 @@ type HandlerFrameId = | HandlerFrameId of int64
 /// One handler the kernel has set up to run on a task: the frame it pushes on
 /// the task's stack when it delivers a caught signal, which the handler's
 /// return (`sigreturn(2)`) pops.
-type HandlerFrame<'Task, 'Handler> =
+type HandlerFrame<'Thread, 'Handler> =
     {
         Id : HandlerFrameId
         /// The signal delivered, and the pending set it was taken from.
-        Entry : PendingSignal<'Task>
+        Entry : PendingSignal<'Thread>
         /// The disposition the signal was delivered under.
         Action : SignalCatch<'Handler>
         /// The task's signal mask when the signal was delivered, which
@@ -110,9 +110,9 @@ type HandlerFrame<'Task, 'Handler> =
 /// default that terminates the process, applies it and answers the ended
 /// process.
 [<RequireQualifiedAccess>]
-type internal SignalDelivery<'Task, 'Handler> =
+type internal SignalDelivery<'Thread, 'Handler> =
     /// `ReturnToUserOutcome.RunHandlers`. Never empty.
-    | RunHandlers of frames : HandlerFrame<'Task, 'Handler> list
+    | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list
     /// `ProcessFate.ProcessEnded` of `UnixSignal.onReturnToUser`, before the
     /// process is ended.
     | DefaultTerminate of signal : Signal * coreDumped : bool
@@ -158,7 +158,7 @@ type internal SignalMaskChange =
 /// are the only route in (the representation is private), so the tables and
 /// queue never hold SIGKILL or SIGSTOP in a mask, a disposition for SIGKILL
 /// or SIGSTOP, a stored `Default`, or a signal the numbering does not have.
-type SignalState<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type SignalState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
             /// Whose `<signal.h>` this process's signals are read under. Fixed
@@ -173,17 +173,17 @@ type SignalState<'Task, 'Handler when 'Task : comparison and 'Handler : equality
             /// Each task's signal mask. Never holds an empty mask, for the
             /// same reason `Dispositions` holds no default; and never SIGKILL
             /// or SIGSTOP, which a kernel drops from every mask it stores.
-            Blocked : Map<'Task, SignalMask>
+            Blocked : Map<'Thread, SignalMask>
             /// For each task in `sigsuspend(2)` or `pause(2)`, from the call
             /// until the task next returns to user mode: the mask the call
             /// replaced with its temporary one. Linux's `saved_sigmask`, Darwin's
             /// `uu_oldmask`. An absent task is in neither call; a present one may
             /// hold an empty mask, which it is restored to.
-            MasksToRestore : Map<'Task, SignalMask>
+            MasksToRestore : Map<'Thread, SignalMask>
             /// Each task's handler frames, innermost first. Never holds an
             /// empty stack, for the same reason `Dispositions` holds no
             /// default.
-            Frames : Map<'Task, HandlerFrame<'Task, 'Handler> list>
+            Frames : Map<'Thread, HandlerFrame<'Thread, 'Handler> list>
             /// The id the next frame pushed gets.
             NextFrame : int64
             /// Every pending entry, sorted by its set and then by `pickRank`,
@@ -194,18 +194,18 @@ type SignalState<'Task, 'Handler when 'Task : comparison and 'Handler : equality
             /// so two states holding the same signals would otherwise compare
             /// unequal while behaving identically. Pending sets are tiny in
             /// practice, so a sorted list does.
-            Pending : PendingSignal<'Task> list
+            Pending : PendingSignal<'Thread> list
         }
 
 /// What generating a signal does to the process at once, as decided by
 /// `SignalState.generate`. Anything else it does happens later, through the
 /// pending sets and `SignalState.onReturnToUser`.
 [<RequireQualifiedAccess>]
-type internal SignalGeneration<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type internal SignalGeneration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The process carries on, with these signals. The signal is pending, or
     /// coalesced into an instance already pending, or discarded because it is
     /// ignored.
-    | ProcessContinues of SignalState<'Task, 'Handler>
+    | ProcessContinues of SignalState<'Thread, 'Handler>
     /// The signal terminates the process: its disposition is the default,
     /// which is to terminate, and some task could receive it. A
     /// parent's `wait` reports the core flag iff `coreDumped`. There is no
@@ -214,7 +214,7 @@ type internal SignalGeneration<'Task, 'Handler when 'Task : comparison and 'Hand
     /// The signal stops the whole process, which has these signals: its
     /// disposition is the default, which is to stop, and some task could
     /// receive it.
-    | ProcessStopped of signal : Signal * SignalState<'Task, 'Handler>
+    | ProcessStopped of signal : Signal * SignalState<'Thread, 'Handler>
 
 /// Why this library will not say what a process's signal does: a case it does
 /// not model, rather than one a kernel refuses.
@@ -280,7 +280,7 @@ module SignalState =
             failwith
                 $"SignalState.%s{operation}: %O{signal} is not a signal under the %O{numbering} numbering; a raw signo should have been refused at the caller's own boundary, via Signal.ofRawSignoUnder."
 
-    let private parse (operation : string) (state : SignalState<'Task, 'Handler>) (signal : Signal) : Signal =
+    let private parse (operation : string) (state : SignalState<'Thread, 'Handler>) (signal : Signal) : Signal =
         parseUnder operation state.Numbering signal
 
     /// SIGKILL and SIGSTOP, for which the kernel holds no disposition but the
@@ -377,7 +377,11 @@ module SignalState =
     ///
     /// Fails loud on a signal the numbering does not have, and on SIGKILL or
     /// SIGSTOP, which no process can have ignored.
-    let internal initial (numbering : SignalNumbering) (inheritedIgnores : Set<Signal>) : SignalState<'Task, 'Handler> =
+    let internal initial
+        (numbering : SignalNumbering)
+        (inheritedIgnores : Set<Signal>)
+        : SignalState<'Thread, 'Handler>
+        =
         let dispositions =
             (Map.empty, inheritedIgnores)
             ||> Set.fold (fun dispositions signal ->
@@ -402,17 +406,17 @@ module SignalState =
 
     /// The numbering every signal in this state is read under: the platform's
     /// (`SimulatedUnixPlatform.signalNumbering`), fixed for the process's life.
-    let numbering (state : SignalState<'Task, 'Handler>) : SignalNumbering = state.Numbering
+    let numbering (state : SignalState<'Thread, 'Handler>) : SignalNumbering = state.Numbering
 
     /// What a delivery of `signal` would do now. A client asks
     /// `UnixSignal.sigaction`.
-    let internal disposition (signal : Signal) (state : SignalState<'Task, 'Handler>) : SignalDisposition<'Handler> =
+    let internal disposition (signal : Signal) (state : SignalState<'Thread, 'Handler>) : SignalDisposition<'Handler> =
         match Map.tryFind (parse "disposition" state signal) state.Dispositions with
         | Some disposition -> disposition
         | None -> SignalDisposition.Default
 
     /// Every signal whose disposition is not the default.
-    let internal dispositions (state : SignalState<'Task, 'Handler>) : Map<Signal, SignalDisposition<'Handler>> =
+    let internal dispositions (state : SignalState<'Thread, 'Handler>) : Map<Signal, SignalDisposition<'Handler>> =
         state.Dispositions
 
     /// Set `signal`'s disposition, as `sigaction(2)` does. A client calls
@@ -431,8 +435,8 @@ module SignalState =
     let internal setDisposition
         (signal : Signal)
         (disposition : SignalDisposition<'Handler>)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         let signal = parse "setDisposition" state signal
 
@@ -473,30 +477,30 @@ module SignalState =
     /// `task`'s handler frames, innermost first: the ones
     /// `UnixSignal.onReturnToUser` has pushed and `UnixSignal.sigreturn` has not
     /// yet popped.
-    let framesOf (task : 'Task) (state : SignalState<'Task, 'Handler>) : HandlerFrame<'Task, 'Handler> list =
+    let framesOf (task : 'Thread) (state : SignalState<'Thread, 'Handler>) : HandlerFrame<'Thread, 'Handler> list =
         match Map.tryFind task state.Frames with
         | Some frames -> frames
         | None -> []
 
     /// Every task with a handler frame.
-    let tasksWithFrames (state : SignalState<'Task, 'Handler>) : Set<'Task> = state.Frames |> Map.keys |> Set.ofSeq
+    let tasksWithFrames (state : SignalState<'Thread, 'Handler>) : Set<'Thread> = state.Frames |> Map.keys |> Set.ofSeq
 
     /// `task`'s signal mask: what `sigprocmask(2)` would answer as its old
     /// mask.
-    let maskOf (task : 'Task) (state : SignalState<'Task, 'Handler>) : SignalMask =
+    let maskOf (task : 'Thread) (state : SignalState<'Thread, 'Handler>) : SignalMask =
         match Map.tryFind task state.Blocked with
         | Some mask -> mask
         | None -> SignalMask.empty
 
     /// Every task whose mask blocks anything.
-    let tasksWithMasks (state : SignalState<'Task, 'Handler>) : Set<'Task> = state.Blocked |> Map.keys |> Set.ofSeq
+    let tasksWithMasks (state : SignalState<'Thread, 'Handler>) : Set<'Thread> = state.Blocked |> Map.keys |> Set.ofSeq
 
     /// `state` with `task`'s mask `mask`, already screened by `maskable`.
     let private withMask
-        (task : 'Task)
+        (task : 'Thread)
         (mask : SignalMask)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         { state with
             Blocked =
@@ -516,9 +520,9 @@ module SignalState =
     let internal changeMask
         (change : SignalMaskChange)
         (set : SignalMask)
-        (task : 'Task)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (task : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         let set = maskable "changeMask" state.Numbering set
         let current = maskOf task state
@@ -534,23 +538,23 @@ module SignalState =
     /// `state` with `child` given `parent`'s mask, as a new thread starts with
     /// its creator's.
     let internal inheritMask
-        (parent : 'Task)
-        (child : 'Task)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (parent : 'Thread)
+        (child : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         withMask child (maskOf parent state) state
 
     /// The mask `task` gets back once the `sigsuspend(2)` or `pause(2)` it is
     /// in returns: `Some` from the call until the task next returns to user
     /// mode (`UnixSignal.onReturnToUser`), and `None` otherwise.
-    let maskToRestore (task : 'Task) (state : SignalState<'Task, 'Handler>) : SignalMask option =
+    let maskToRestore (task : 'Thread) (state : SignalState<'Thread, 'Handler>) : SignalMask option =
         Map.tryFind task state.MasksToRestore
 
     /// Every task with a mask to restore: those in `sigsuspend(2)` or
     /// `pause(2)`, and those whose call has ended and which have not yet
     /// returned to user mode.
-    let tasksWithMasksToRestore (state : SignalState<'Task, 'Handler>) : Set<'Task> =
+    let tasksWithMasksToRestore (state : SignalState<'Thread, 'Handler>) : Set<'Thread> =
         state.MasksToRestore |> Map.keys |> Set.ofSeq
 
     /// `sigsuspend(2)`'s change to `task`'s mask: `temporary` replaces it, SIGKILL
@@ -562,10 +566,10 @@ module SignalState =
     /// made a second call without returning to user mode from the first), and
     /// on a mask made under another numbering.
     let internal suspend
-        (task : 'Task)
+        (task : 'Thread)
         (temporary : SignalMask)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         if Map.containsKey task state.MasksToRestore then
             failwith
@@ -585,7 +589,11 @@ module SignalState =
     /// Signals pending on the process stay for another thread to take.
     ///
     /// For a thread that has exited.
-    let internal forgetTask (thread : 'Task) (state : SignalState<'Task, 'Handler>) : SignalState<'Task, 'Handler> =
+    let internal forgetTask
+        (thread : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
+        =
         // Discarded, not passed to the process: measured on Linux 6.18.5 and Darwin
         // 27.0.0 by `docs/plans/2026-08-23-posix-kernel-extraction/thread-exit-pending.c`.
         // A signal pending on an exiting thread alone was never delivered afterwards,
@@ -613,8 +621,8 @@ module SignalState =
     /// dispositions of either.
     let private beginGeneration
         (signal : Signal)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler> option
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler> option
         =
         // Measured 2026-09-26 on Linux 6.18.5 and Darwin 27.0.0
         // (docs/plans/2026-08-23-posix-kernel-extraction/signal-disposition-table.c,
@@ -692,9 +700,9 @@ module SignalState =
     /// otherwise add it to its set in its place in the pick order, after any
     /// instance of the same real-time signal already there.
     let private admit
-        (entry : PendingSignal<'Task>)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (entry : PendingSignal<'Thread>)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         let coalesced =
             not (Signal.isRealTimeUnder state.Numbering entry.Signal)
@@ -704,12 +712,12 @@ module SignalState =
         if coalesced then
             state
         else
-            let key (pending : PendingSignal<'Task>) : 'Task voption * (int * int) =
+            let key (pending : PendingSignal<'Thread>) : 'Thread voption * (int * int) =
                 pending.Target, pickRank state.Numbering pending.Signal
 
             let entryKey = key entry
 
-            let precedes (pending : PendingSignal<'Task>) : bool = compare (key pending) entryKey <= 0
+            let precedes (pending : PendingSignal<'Thread>) : bool = compare (key pending) entryKey <= 0
 
             { state with
                 Pending =
@@ -752,9 +760,9 @@ module SignalState =
     /// (`SignalReceiverRefusal.PendingForProcessAndLeader`); this function,
     /// which is not told the leader, holds them apart.
     let internal enqueue
-        (entry : PendingSignal<'Task>)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (entry : PendingSignal<'Thread>)
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         let entry =
             { entry with
@@ -767,9 +775,9 @@ module SignalState =
 
     /// Which task could take a pending signal now.
     [<RequireQualifiedAccess>]
-    type private Receiver<'Task> =
+    type private Receiver<'Thread> =
         /// This task would take it.
-        | Task of 'Task
+        | Task of 'Thread
         /// It is the process's own, the leader blocks it, and another task does not.
         | BeyondLeader
         /// Every task that could take it blocks it.
@@ -777,7 +785,7 @@ module SignalState =
 
     /// Fails loudly unless `leader` and `task` are both among `tasks`: each is a
     /// bug in the client.
-    let private checkTask (operation : string) (tasks : Set<'Task>) (role : string) (task : 'Task) : unit =
+    let private checkTask (operation : string) (tasks : Set<'Thread>) (role : string) (task : 'Thread) : unit =
         if not (Set.contains task tasks) then
             failwith $"SignalState.%s{operation}: the %s{role} %O{task} is not one of the process's tasks %O{tasks}."
 
@@ -785,13 +793,13 @@ module SignalState =
     /// one task; and for one pending on the process, the leader, unless it blocks
     /// the signal.
     let private receiverFor
-        (leader : 'Task)
-        (tasks : Set<'Task>)
-        (entry : PendingSignal<'Task>)
-        (state : SignalState<'Task, 'Handler>)
-        : Receiver<'Task>
+        (leader : 'Thread)
+        (tasks : Set<'Thread>)
+        (entry : PendingSignal<'Thread>)
+        (state : SignalState<'Thread, 'Handler>)
+        : Receiver<'Thread>
         =
-        let blocks (task : 'Task) : bool =
+        let blocks (task : 'Thread) : bool =
             SignalMask.contains entry.Signal (maskOf task state)
 
         match entry.Target with
@@ -842,11 +850,11 @@ module SignalState =
     /// task that is not.
     let internal generate
         (coreDumps : CoreDumps)
-        (leader : 'Task)
-        (tasks : Set<'Task>)
-        (entry : PendingSignal<'Task>)
-        (state : SignalState<'Task, 'Handler>)
-        : Result<SignalGeneration<'Task, 'Handler>, SignalReceiverRefusal>
+        (leader : 'Thread)
+        (tasks : Set<'Thread>)
+        (entry : PendingSignal<'Thread>)
+        (state : SignalState<'Thread, 'Handler>)
+        : Result<SignalGeneration<'Thread, 'Handler>, SignalReceiverRefusal>
         =
         checkTask "generate" tasks "leader" leader
 
@@ -876,7 +884,7 @@ module SignalState =
         // were delivered once, to the main thread; a `kill` and a
         // `pthread_kill` of the second thread were delivered once to each.
         // Linux 6.18.5 delivered the first pair twice.
-        let leftPending () : Result<SignalGeneration<'Task, 'Handler>, SignalReceiverRefusal> =
+        let leftPending () : Result<SignalGeneration<'Thread, 'Handler>, SignalReceiverRefusal> =
             let mergesOnDarwin =
                 match state.Numbering with
                 | SignalNumbering.Linux -> false
@@ -934,7 +942,7 @@ module SignalState =
 
     /// Every pending entry: the process's own set first, then each task's, each set in the order a task
     /// takes its signals (see `pendingFor`).
-    let pending (state : SignalState<'Task, 'Handler>) : PendingSignal<'Task> list = state.Pending
+    let pending (state : SignalState<'Thread, 'Handler>) : PendingSignal<'Thread> list = state.Pending
 
     /// The pending signals `task` could take, in the order it would take them
     /// were it to block none: its own, and if it is the process's `leader`, the
@@ -945,7 +953,12 @@ module SignalState =
     /// the lowest-numbered; several instances of one real-time signal come in
     /// the order they were generated. Linux takes every signal of the task's own
     /// set before any of the process's; Darwin takes the two as one set.
-    let pendingFor (leader : 'Task) (task : 'Task) (state : SignalState<'Task, 'Handler>) : PendingSignal<'Task> list =
+    let pendingFor
+        (leader : 'Thread)
+        (task : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : PendingSignal<'Thread> list
+        =
         let own = state.Pending |> List.filter (fun entry -> entry.Target = ValueSome task)
 
         let shared =
@@ -982,8 +995,8 @@ module SignalState =
     /// A pending signal the task does not block is left out, as Linux's
     /// `do_sigpending` leaves it out. No task can see one: it takes such a
     /// signal as it returns to user mode, before it can ask.
-    let pendingBlocked (leader : 'Task) (task : 'Task) (state : SignalState<'Task, 'Handler>) : SignalMask =
-        let sees (entry : PendingSignal<'Task>) : bool =
+    let pendingBlocked (leader : 'Thread) (task : 'Thread) (state : SignalState<'Thread, 'Handler>) : SignalMask =
+        let sees (entry : PendingSignal<'Thread>) : bool =
             match entry.Target with
             | ValueSome target -> target = task
             | ValueNone ->
@@ -1045,11 +1058,11 @@ module SignalState =
     /// returning yet.
     let internal takeOnReturn
         (coreDumps : CoreDumps)
-        (leader : 'Task)
-        (tasks : Set<'Task>)
-        (task : 'Task)
-        (state : SignalState<'Task, 'Handler>)
-        : Result<SignalDelivery<'Task, 'Handler> option * SignalState<'Task, 'Handler>, SignalReceiverRefusal>
+        (leader : 'Thread)
+        (tasks : Set<'Thread>)
+        (task : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : Result<SignalDelivery<'Thread, 'Handler> option * SignalState<'Thread, 'Handler>, SignalReceiverRefusal>
         =
         checkTask "onReturnToUser" tasks "leader" leader
         checkTask "onReturnToUser" tasks "task asked" task
@@ -1071,16 +1084,16 @@ module SignalState =
         // the order `pendingFor` walks is the order `Pending` holds, so this is
         // the instance the walk reached.
         let rec without
-            (entry : PendingSignal<'Task>)
-            (pending : PendingSignal<'Task> list)
-            : PendingSignal<'Task> list
+            (entry : PendingSignal<'Thread>)
+            (pending : PendingSignal<'Thread> list)
+            : PendingSignal<'Thread> list
             =
             match pending with
             | [] -> failwith $"SignalState.onReturnToUser: walked to %O{entry}, which is not pending."
             | head :: tail when head = entry -> tail
             | head :: tail -> head :: without entry tail
 
-        let taken (entry : PendingSignal<'Task>) (state : SignalState<'Task, 'Handler>) =
+        let taken (entry : PendingSignal<'Thread>) (state : SignalState<'Thread, 'Handler>) =
             { state with
                 Pending = without entry state.Pending
             }
@@ -1089,17 +1102,17 @@ module SignalState =
         // so an entry the walk has skipped as blocked stays blocked until the
         // walk is over.
         let rec walk
-            (pushed : HandlerFrame<'Task, 'Handler> list)
-            (state : SignalState<'Task, 'Handler>)
-            (candidates : PendingSignal<'Task> list)
-            : Result<SignalDelivery<'Task, 'Handler> option * SignalState<'Task, 'Handler>, SignalReceiverRefusal>
+            (pushed : HandlerFrame<'Thread, 'Handler> list)
+            (state : SignalState<'Thread, 'Handler>)
+            (candidates : PendingSignal<'Thread> list)
+            : Result<SignalDelivery<'Thread, 'Handler> option * SignalState<'Thread, 'Handler>, SignalReceiverRefusal>
             =
             let finished () =
                 match pushed with
                 | [] -> Ok (None, state)
                 | _ -> Ok (Some (SignalDelivery.RunHandlers pushed), state)
 
-            let unlessFramesPushed (entry : PendingSignal<'Task>) (delivery : SignalDelivery<'Task, 'Handler>) =
+            let unlessFramesPushed (entry : PendingSignal<'Thread>) (delivery : SignalDelivery<'Thread, 'Handler>) =
                 match pushed with
                 | [] -> Ok (Some delivery, taken entry state)
                 | _ -> Error (SignalReceiverRefusal.DefaultBehindHandlers entry.Signal)
@@ -1190,11 +1203,11 @@ module SignalState =
     /// signal pending on a task that is not.
     let internal onReturnToUser
         (coreDumps : CoreDumps)
-        (leader : 'Task)
-        (tasks : Set<'Task>)
-        (task : 'Task)
-        (state : SignalState<'Task, 'Handler>)
-        : Result<SignalDelivery<'Task, 'Handler> option * SignalState<'Task, 'Handler>, SignalReceiverRefusal>
+        (leader : 'Thread)
+        (tasks : Set<'Thread>)
+        (task : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : Result<SignalDelivery<'Thread, 'Handler> option * SignalState<'Thread, 'Handler>, SignalReceiverRefusal>
         =
         takeOnReturn coreDumps leader tasks task state
         |> Result.map (fun (delivery, after) ->
@@ -1233,10 +1246,10 @@ module SignalState =
     /// Fails loudly unless `frame` is `task`'s innermost frame: handlers return
     /// innermost first, so anything else is a bug in the client.
     let internal sigreturn
-        (task : 'Task)
+        (task : 'Thread)
         (frame : HandlerFrameId)
-        (state : SignalState<'Task, 'Handler>)
-        : SignalState<'Task, 'Handler>
+        (state : SignalState<'Thread, 'Handler>)
+        : SignalState<'Thread, 'Handler>
         =
         match framesOf task state with
         | innermost :: rest when innermost.Id = frame ->

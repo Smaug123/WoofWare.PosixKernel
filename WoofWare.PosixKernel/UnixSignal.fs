@@ -72,7 +72,7 @@ module internal ThreadKillRefusal =
 /// Why this library will not answer a `sigprocmask(2)`: something it does not
 /// model, rather than an error a kernel would report.
 [<RequireQualifiedAccess>]
-type internal SigprocmaskRefusal<'Task> =
+type internal SigprocmaskRefusal<'Thread> =
     /// Under Darwin, whose `sigprocmask` changes every task's mask, the call
     /// would unblock `signal` for `task`, which is not the caller, while
     /// `signal` is pending where `task` would take it: on `task` itself, or,
@@ -85,19 +85,19 @@ type internal SigprocmaskRefusal<'Task> =
     /// library does not record. This library delivers every signal a task's
     /// mask lets through at its next return to user mode, and wakes a sleeping
     /// task for one, so it cannot express what the task does next.
-    | DarwinUnblockedForAnotherTask of task : 'Task * signal : Signal
+    | DarwinUnblockedForAnotherTask of task : 'Thread * signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal SigprocmaskRefusal =
     /// What this kernel knows about why it cannot answer. The client supplies
     /// its own half: which task made the call.
-    let describe<'Task> (refusal : SigprocmaskRefusal<'Task>) : string =
+    let describe<'Thread> (refusal : SigprocmaskRefusal<'Thread>) : string =
         match refusal with
         | SigprocmaskRefusal.DarwinUnblockedForAnotherTask (task, signal) ->
             $"under Darwin, sigprocmask changes every task's mask, and this call would unblock %O{signal} for task %O{task}, which is not the caller, while %O{signal} is pending for that task. Darwin was measured neither to wake that task from a sleep for it nor always to deliver it as the task next returns to user mode, which depended on the call the task was in and on what it had done since the signal was sent, and this kernel does not record that."
 
     /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : SigprocmaskRefusal<'Task>) : RefusalKind =
+    let kind (refusal : SigprocmaskRefusal<'Thread>) : RefusalKind =
         match refusal with
         | SigprocmaskRefusal.DarwinUnblockedForAnotherTask _ -> RefusalKind.Unmodelled
 
@@ -115,7 +115,7 @@ type KillOutcome =
 /// answers it, if it did not end the process (see `ProcessFate`): run the
 /// handlers of the caught signals it took, or apply a signal's kernel default.
 [<RequireQualifiedAccess>]
-type ReturnToUserOutcome<'Task, 'Handler when 'Task : comparison and 'Handler : equality> =
+type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The task took nothing the client acts on, and runs its own code next.
     | Resumes
     /// A frame for every caught signal the task takes now, pushed all at once,
@@ -123,7 +123,7 @@ type ReturnToUserOutcome<'Task, 'Handler when 'Task : comparison and 'Handler : 
     /// each handler's `UnixSignal.sigreturn` is followed by another
     /// `UnixSignal.onReturnToUser`, which may push more frames before the next
     /// one down runs. Never empty.
-    | RunHandlers of frames : HandlerFrame<'Task, 'Handler> list
+    | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list
     /// No handler claims the signal and its kernel default is to suspend the
     /// whole process. The library holds no stopped state, so the client acts
     /// on it.
@@ -179,18 +179,18 @@ type SigsuspendOutcome =
 [<RequireQualifiedAccess>]
 module UnixSignal =
 
-    let private tasksOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (system : UnixSystem<'Task, 'Handler>)
-        : Set<'Task>
+    let private tasksOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<'Thread>
         =
         system.Tasks |> Map.keys |> Set.ofSeq
 
     /// `kill`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKill<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal tryKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : int32)
         (signo : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<ProcessFate<KillOutcome, 'Task, 'Handler>, UnixError>, KillRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, KillRefusal>
         =
         let self = ProcessId.toInt32 (UnixSystem.processId system)
 
@@ -213,7 +213,7 @@ module UnixSignal =
         match Signal.ofRawSignoUnder (SignalState.numbering system.Process.Signals) signo with
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
-            let withSignals (signals : SignalState<'Task, 'Handler>) : UnixSystem<'Task, 'Handler> =
+            let withSignals (signals : SignalState<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
                 { system with
                     Process =
                         { system.Process with
@@ -291,11 +291,11 @@ module UnixSignal =
     ///
     /// Only a signal to the calling process itself is answered. Signal number 0
     /// sends nothing, and a number that is neither 0 nor a signal is `EINVAL`.
-    let kill<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let kill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : int32)
         (signo : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ProcessFate<KillOutcome, 'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
         =
         tryKill pid signo system
         |> Refusal.orRaise "UnixSignal.kill" KillRefusal.kind KillRefusal.describe
@@ -310,10 +310,10 @@ module UnixSignal =
         | SignalNumbering.Linux, Signal.RealTime 1 -> true
         | _, _ -> false
 
-    let private withSignals<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (signals : SignalState<'Task, 'Handler>)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let private withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (signals : SignalState<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         { system with
             Process =
@@ -323,10 +323,10 @@ module UnixSignal =
         }
 
     /// `onReturnToUser`, with a refusal answered as the `Error` rather than raised.
-    let internal tryOnReturnToUser<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ProcessFate<ReturnToUserOutcome<'Task, 'Handler>, 'Task, 'Handler>, SignalReceiverRefusal>
+    let internal tryOnReturnToUser<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         // Looked up rather than asked of `UnixTaskTable.parkedFor`, so that a
         // name that is no task is left to `SignalState.onReturnToUser`'s own
@@ -438,10 +438,10 @@ module UnixSignal =
     ///
     /// Fails loudly if `task` names no task, or is asleep in a syscall, each of
     /// which is a bug in the client.
-    let onReturnToUser<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : ProcessFate<ReturnToUserOutcome<'Task, 'Handler>, 'Task, 'Handler>
+    let onReturnToUser<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>
         =
         tryOnReturnToUser task system
         |> Refusal.orRaise "UnixSignal.onReturnToUser" SignalReceiverRefusal.kind SignalReceiverRefusal.describe
@@ -454,20 +454,20 @@ module UnixSignal =
     ///
     /// Fails loudly unless `frame` is `task`'s innermost frame: handlers return
     /// innermost first, so anything else is a bug in the client.
-    let sigreturn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let sigreturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (frame : HandlerFrameId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         withSignals (SignalState.sigreturn task frame system.Process.Signals) system
 
     /// `pthreadKill`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPthreadKill<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (target : 'Task)
+    let internal tryPthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (target : 'Thread)
         (signo : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<ProcessFate<KillOutcome, 'Task, 'Handler>, UnixError>, ThreadKillRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, ThreadKillRefusal>
         =
         if not (Map.containsKey target system.Tasks) then
             failwith
@@ -534,11 +534,11 @@ module UnixSignal =
     ///
     /// Fails loudly if `target` is not one of the process's tasks, which is a
     /// bug in the client.
-    let pthreadKill<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (target : 'Task)
+    let pthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (target : 'Thread)
         (signo : int32)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<ProcessFate<KillOutcome, 'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>
         =
         tryPthreadKill target signo system
         |> Refusal.orRaise "UnixSignal.pthreadKill" ThreadKillRefusal.kind ThreadKillRefusal.describe
@@ -547,12 +547,12 @@ module UnixSignal =
     /// process's own signal numbering. `newAction` is `None` to ask for the
     /// signal's disposition without changing it, and the answer is the
     /// disposition the signal had before the call.
-    let private sigactionUnder<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private sigactionUnder<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (cLibrary : bool)
         (signo : int32)
         (newAction : SignalDisposition<'Handler> option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalDisposition<'Handler> * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         let numbering = SignalState.numbering system.Process.Signals
 
@@ -585,11 +585,11 @@ module UnixSignal =
     /// `sigaction(3)` as a program calls it, through its C library, which on
     /// Linux refuses glibc's own 32 and 33 before the kernel sees them: see
     /// `sigactionSyscall` for the rest of the answer.
-    let sigaction<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let sigaction<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (signo : int32)
         (newAction : SignalDisposition<'Handler> option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalDisposition<'Handler> * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         sigactionUnder true signo newAction system
 
@@ -610,11 +610,11 @@ module UnixSignal =
     /// A number that is not a signal is `EINVAL`, and so is installing
     /// anything for SIGKILL or SIGSTOP. Darwin refuses even to report those
     /// two, where Linux reports them as `SIG_DFL`.
-    let sigactionSyscall<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let sigactionSyscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (signo : int32)
         (newAction : SignalDisposition<'Handler> option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalDisposition<'Handler> * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         sigactionUnder false signo newAction system
 
@@ -641,15 +641,15 @@ module UnixSignal =
 
     /// The mask calls' common answer. `screened` are the signals the C
     /// library takes out of `set` before the kernel sees it.
-    let private changeMaskUnder<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private changeMaskUnder<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (scope : MaskScope)
         (screened : Set<Signal>)
-        (task : 'Task)
+        (task : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         match Map.tryFind task system.Tasks with
         | None ->
@@ -725,12 +725,12 @@ module UnixSignal =
     /// Fails loudly if `task` names no task, or is asleep in a syscall, each
     /// of which is a bug in the client; and on a set made under another
     /// numbering.
-    let pthreadSigmask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let pthreadSigmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         // Measured by `sigprocmask-ops.c`: blocking every bit through glibc left
         // 0xfffffffe7ffbfeff (without 9, 19, 32 and 33), and through Darwin's
@@ -743,11 +743,11 @@ module UnixSignal =
     /// The first task of `before` other than `caller`, with the first signal
     /// pending where it would take it, that its mask in `before` blocks and
     /// its mask in `after` does not.
-    let private unblockedForAnother<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (caller : 'Task)
-        (before : UnixSystem<'Task, 'Handler>)
-        (after : UnixSystem<'Task, 'Handler>)
-        : ('Task * Signal) option
+    let private unblockedForAnother<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : 'Thread)
+        (before : UnixSystem<'Thread, 'Handler>)
+        (after : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Signal) option
         =
         let was = before.Process.Signals
         let now = after.Process.Signals
@@ -768,12 +768,12 @@ module UnixSignal =
         )
 
     /// `sigprocmask`, with a refusal answered as the `Error` rather than raised.
-    let internal trySigprocmask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal trySigprocmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<Result<SignalMask * UnixSystem<'Task, 'Handler>, UnixError>, SigprocmaskRefusal<'Task>>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>, SigprocmaskRefusal<'Thread>>
         =
         let numbering = SignalState.numbering system.Process.Signals
 
@@ -821,12 +821,12 @@ module UnixSignal =
     /// returns from the call, as `pthreadSigmask` describes.
     ///
     /// Everything else is as `pthreadSigmask` answers.
-    let sigprocmask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let sigprocmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         trySigprocmask task how set system
         |> Refusal.orRaise "UnixSignal.sigprocmask" SigprocmaskRefusal.kind SigprocmaskRefusal.describe
@@ -843,13 +843,13 @@ module UnixSignal =
     /// `sigprocmask` and `__pthread_sigmask` answered exactly as the C
     /// library's calls on every row measured, so `sigprocmask` and
     /// `pthreadSigmask` serve them.
-    let rtSigprocmask<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let rtSigprocmask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (how : int32)
         (set : SignalMask option)
         (sigsetSize : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Task, 'Handler>, UnixError>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
         match SignalState.numbering system.Process.Signals with
         | SignalNumbering.Darwin ->
@@ -870,9 +870,9 @@ module UnixSignal =
     /// that its mask blocks (see `SignalState.pendingBlocked`).
     ///
     /// Fails loudly if `task` names no task, which is a bug in the client.
-    let sigpending<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
+    let sigpending<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
         : SignalMask
         =
         if not (Map.containsKey task system.Tasks) then
@@ -882,12 +882,12 @@ module UnixSignal =
         SignalState.pendingBlocked system.Leader task system.Process.Signals
 
     /// `sigsuspend` with `temporary`, made by `task`.
-    let private suspendWith<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private suspendWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
-        (task : 'Task)
-        (temporary : SignalState<'Task, 'Handler> -> SignalMask)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Task, 'Handler>, SigsuspendRefusal>
+        (task : 'Thread)
+        (temporary : SignalState<'Thread, 'Handler> -> SignalMask)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
         match Map.tryFind task system.Tasks with
         | None ->
@@ -917,11 +917,11 @@ module UnixSignal =
             )
 
     /// `sigsuspend`, with a refusal answered as the `Error` rather than raised.
-    let internal trySigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal trySigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (mask : SignalMask)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Task, 'Handler>, SigsuspendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
         suspendWith "sigsuspend" task (fun _ -> mask) system
 
@@ -963,20 +963,20 @@ module UnixSignal =
     /// mask to restore from an earlier call (it has not returned to user mode
     /// since), each of which is a bug in the client; and on a mask made under
     /// another numbering.
-    let sigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let sigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (mask : SignalMask)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SigsuspendOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SigsuspendOutcome * UnixSystem<'Thread, 'Handler>
         =
         trySigsuspend task mask system
         |> Refusal.orRaise "UnixSignal.sigsuspend" SigsuspendRefusal.kind SigsuspendRefusal.describe
 
     /// `pause`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPause<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Task, 'Handler>, SigsuspendRefusal>
+    let internal tryPause<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
         suspendWith "pause" task (SignalState.maskOf task) system
 
@@ -988,21 +988,21 @@ module UnixSignal =
     /// Linux. Darwin's restores the mask it was called with, undoing what a
     /// `sigprocmask` from another thread changed meanwhile, as `sigsuspend`
     /// does: measured by `sigsuspend-mask.c`'s "pause-spread" rows.
-    let pause<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SigsuspendOutcome * UnixSystem<'Task, 'Handler>
+    let pause<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SigsuspendOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryPause task system
         |> Refusal.orRaise "UnixSignal.pause" SigsuspendRefusal.kind SigsuspendRefusal.describe
 
     /// `rtSigsuspend`, with a refusal answered as the `Error` rather than raised.
-    let internal tryRtSigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let internal tryRtSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (mask : SignalMask)
         (sigsetSize : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Task, 'Handler>, SigsuspendRefusal>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
         match SignalState.numbering system.Process.Signals with
         | SignalNumbering.Darwin ->
@@ -1024,21 +1024,21 @@ module UnixSignal =
     /// from 0 to 16 but 8, and 128.
     ///
     /// Fails loudly on a Darwin process, which has no such system call.
-    let rtSigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
+    let rtSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
         (mask : SignalMask)
         (sigsetSize : uint64)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SigsuspendOutcome * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SigsuspendOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryRtSigsuspend task mask sigsetSize system
         |> Refusal.orRaise "UnixSignal.rtSigsuspend" SigsuspendRefusal.kind SigsuspendRefusal.describe
 
     /// `finishSigsuspend`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishSigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Task, 'Handler>, SigsuspendRefusal>
+    let internal tryFinishSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
         match UnixTaskTable.parkedFor task system.Tasks with
         | Some ParkedSyscall.SigSuspend -> ()
@@ -1072,10 +1072,10 @@ module UnixSignal =
     ///
     /// Refuses as `sigsuspend` does, changing nothing. Fails loudly if `task` is
     /// not parked in one of these calls.
-    let finishSigsuspend<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (task : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : SigsuspendOutcome * UnixSystem<'Task, 'Handler>
+    let finishSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (task : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SigsuspendOutcome * UnixSystem<'Thread, 'Handler>
         =
         tryFinishSigsuspend task system
         |> Refusal.orRaise "UnixSignal.finishSigsuspend" SigsuspendRefusal.kind SigsuspendRefusal.describe

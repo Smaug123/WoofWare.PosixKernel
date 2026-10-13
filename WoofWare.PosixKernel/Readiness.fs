@@ -39,9 +39,9 @@ module internal LinuxReadiness =
     ///
     /// Defined for a socket only when `modelsSocket` accepts it, and failing
     /// otherwise.
-    let ofDescription<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : uint32
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
@@ -167,10 +167,10 @@ module internal LinuxReadiness =
     ///
     /// `poll(2)`, an epoll `ADD` or `MOD`, and `epoll_wait`'s re-poll of a
     /// pending entry each poll their targets so.
-    let polled<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
         | Some {
@@ -205,9 +205,9 @@ module internal EpollReadyList =
     /// Each pending entry of the epoll instance, in delivery order, with what it would
     /// report if `epoll_wait` re-polled it right now: the target's current
     /// readiness restricted to the registration's stored mask.
-    let private annotatedReady<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private annotatedReady<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollState : EpollState)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list
         =
         epollState.Ready
@@ -235,9 +235,9 @@ module internal EpollReadyList =
     /// that has gone means a park was ended or the epoll instance destroyed some other
     /// way, and neither answer is honest: `true` wakes the waiter into an
     /// `EBADF` no kernel produces, and `false` sleeps for ever.
-    let hasDeliverableEvent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind epollId system.Machine.OpenFiles with
@@ -275,11 +275,11 @@ module internal EpollReadyList =
     ///
     /// Loudly partial in `epollId`: callers hold a live epoll instance's description in
     /// hand.
-    let drain<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : (uint64 * uint32) list * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (uint64 * uint32) list * UnixSystem<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -540,11 +540,11 @@ module internal DarwinReadiness =
     /// pipe has lost an end. Once either end has no descriptor left, every
     /// filter on the surviving end is ready with `EV_EOF`, reporting 0, but a
     /// read end's `EVFILT_READ`, which still reports what the pipe holds.
-    let ofPipe<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let ofPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (filter : KqueueFilter)
         (pipeId : PipeId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : KqueueFilterReport option
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -607,10 +607,10 @@ module internal KqueueQueue =
 
     /// The kqueue state of the open file description `kqueue`. Loudly partial:
     /// every caller has just resolved it as a live kqueue.
-    let private stateOf<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private stateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -621,11 +621,11 @@ module internal KqueueQueue =
             failwith
                 $"KqueueQueue.%s{operation}: %O{kqueue} names %A{other} rather than a live kqueue (this is a bug in the caller, which resolved it as one)."
 
-    let private withState<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let private withState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (state : KqueueState)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
@@ -658,11 +658,11 @@ module internal KqueueQueue =
     /// Activate the registration `key` of the kqueue `kqueue`: queue it at the
     /// tail if its filter is ready now and it is not queued already. What an
     /// `EV_ADD` does, of a new registration and of an existing one alike.
-    let activateRegistration<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let activateRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (key : int * KqueueFilter)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let state = stateOf "activateRegistration" kqueue system
 
@@ -791,9 +791,9 @@ module internal KqueueQueue =
     /// Loudly partial in `kqueue`, as `EpollReadyList.hasDeliverableEvent` is
     /// in its epoll instance: a task parked on a kqueue holds it until its call returns,
     /// so the kqueue cannot have gone while something waits on it.
-    let hasDeliverableEvent<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Task, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -822,11 +822,11 @@ module internal KqueueQueue =
     /// Returns the reports in order, and the system with the queue as the walk
     /// left it. Loudly partial: `kqueue` must be a live kqueue, and `maxCount`
     /// positive.
-    let drain<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Task, 'Handler>)
-        : KqueueReport list * UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : KqueueReport list * UnixSystem<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -989,11 +989,11 @@ module internal SocketWake =
     /// Called with the socket already in the state the event left it in,
     /// since a kqueue registration is activated only if its filter is then
     /// ready.
-    let signal<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let signal<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (wake : SocketWake)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         let system =
             UnixSystemState.mapOpenFiles
@@ -1013,11 +1013,11 @@ module internal SocketWake =
     ///
     /// Called with the connection already in the state the transfer left it
     /// in, as `signal` is.
-    let internal signalTransfer<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
+    let internal signalTransfer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (wakes : TcpWake list)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         (system, wakes)
         ||> List.fold (fun system wake ->

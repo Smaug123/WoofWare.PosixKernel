@@ -8,10 +8,10 @@ module Tasks =
 
     /// `child`, created by the process's leader on processor 0, failing the test if
     /// the creation is refused.
-    let spawn<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (child : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let spawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (child : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         match UnixTaskLifecycle.trySpawn system.Leader child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
@@ -20,10 +20,10 @@ module Tasks =
 
     /// `system` with a task `name`: itself if `name` is already a task, and
     /// otherwise with `name` spawned by the leader.
-    let ensure<'Task, 'Handler when 'Task : comparison and 'Handler : equality>
-        (name : 'Task)
-        (system : UnixSystem<'Task, 'Handler>)
-        : UnixSystem<'Task, 'Handler>
+    let ensure<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (name : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
         =
         if Map.containsKey name system.Tasks then
             system
