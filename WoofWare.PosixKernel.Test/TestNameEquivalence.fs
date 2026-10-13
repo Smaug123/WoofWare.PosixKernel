@@ -969,6 +969,12 @@ module TestNameEquivalence =
                     | [] -> ()
                     | defects -> fail $"the system is defective: %A{defects}"
 
+                    match
+                        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+                    with
+                    | [] -> ()
+                    | defects -> fail $"the filesystem is defective: %A{defects}"
+
                     cover (
                         if mightDecide then
                             "answered, might be equivalent"
