@@ -1,0 +1,11 @@
+# kernel: Darwin 27.0.0 arm64
+dlsym(pipe2) = present
+pipe2(0) -> 0 errno 0 fds 3 4 F_GETFL 0 0x1 F_GETFD 0 0
+pipe2(0x1000000) -> 0 errno 0 fds 3 4 F_GETFL 0 0x1 F_GETFD 1 1
+pipe2(0x4) -> 0 errno 0 fds 3 4 F_GETFL 0x4 0x5 F_GETFD 0 0
+pipe2(0x1000004) -> 0 errno 0 fds 3 4 F_GETFL 0x4 0x5 F_GETFD 1 1
+pipe2(0x1) -> -1 errno 22 fds -1 -1
+pipe2(0x2) -> -1 errno 22 fds -1 -1
+pipe2(0x8) -> -1 errno 22 fds -1 -1
+pipe2(0x10000) -> -1 errno 22 fds -1 -1
+pipe2(0x7fffffff) -> -1 errno 22 fds -1 -1

@@ -1,0 +1,5 @@
+# kernel: Darwin 27.0.0 arm64
+self	pid=61495 ppid=61463 pgrp=61463 sid=61463
+grandchild	before	pid=61498 ppid=61497 pgrp=61463 sid=61463
+grandchild	after_parent_exit	ppid=1
+self	middle_pid=61497

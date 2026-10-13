@@ -1,6 +1,6 @@
 // What a reserved park for a blocking datagram receive (and, perhaps, send)
 // must answer, measured on both flavours. Design note:
-// pawprint-kernel-design/datagram-park-options.md.
+// docs/design/datagram-park-options.md.
 //
 // Build and run:
 //   Darwin: cc -Wall -o /tmp/dp datagram-park.c -lpthread && /tmp/dp

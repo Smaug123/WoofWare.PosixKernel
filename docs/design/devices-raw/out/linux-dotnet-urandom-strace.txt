@@ -1,0 +1,14 @@
+10.0.400
+secure first: before=22,22 afterFirst=23 afterSecond=23
+111:250   openat(AT_FDCWD, "/dev/urandom", O_RDONLY|O_CLOEXEC) = 9
+264:250   openat(AT_FDCWD, "/dev/urandom", O_RDONLY|O_CLOEXEC) = 22
+fds: 9 22 
+250   read(9, "\212\345\371\341\331\202\331!\323\21\264x{a|\203", 16) = 16
+250   fstat(22, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0
+250   close(22)                         = 0
+250   fstat(22, {st_mode=S_IFCHR|0666, st_rdev=makedev(0x1, 0x3), ...}) = 0
+250   close(22)                         = 0
+250   read(22, "\7J\35`\203Z>\337\215\241\3424\315\212\335\33", 16) = 16
+250   read(22, "o\232\252\27\240\300\342\234z\300\256\326\v1\235\345\330\246G\207\"B\241\362\355\\\362?E\244\266\33", 32) = 32
+1
+250   getrandom("\x5b\x0d\x29\x43\xfb\xfb\x7f\x6e", 8, GRND_NONBLOCK) = 8

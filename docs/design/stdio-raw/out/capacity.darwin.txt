@@ -1,0 +1,35 @@
+# kernel: Darwin 27.0.0 arm64
+fpathconf(_PC_PIPE_BUF) read end 512, write end 512; PIPE_BUF macro 512
+fill size=      1 total=  65536 writes= 65536 short=0 stop_errno=35 FIONREAD=65536
+fill size=      2 total=  65536 writes= 32768 short=0 stop_errno=35 FIONREAD=65536
+fill size=      3 total=  65535 writes= 21845 short=0 stop_errno=35 FIONREAD=65535
+fill size=      7 total=  65534 writes=  9362 short=0 stop_errno=35 FIONREAD=65534
+fill size=    100 total=  65500 writes=   655 short=0 stop_errno=35 FIONREAD=65500
+fill size=    511 total=  65408 writes=   128 short=0 stop_errno=35 FIONREAD=65408
+fill size=    512 total=  65536 writes=   128 short=0 stop_errno=35 FIONREAD=65536
+fill size=    513 total=  65536 writes=   128 short=1 stop_errno=35 FIONREAD=65536
+fill size=   1000 total=  65536 writes=    66 short=1 stop_errno=35 FIONREAD=65536
+fill size=   1024 total=  65536 writes=    64 short=0 stop_errno=35 FIONREAD=65536
+fill size=   4095 total=  65536 writes=    17 short=1 stop_errno=35 FIONREAD=65536
+fill size=   4096 total=  65536 writes=    16 short=0 stop_errno=35 FIONREAD=65536
+fill size=   4097 total=  65536 writes=    16 short=1 stop_errno=35 FIONREAD=65536
+fill size=   8191 total=  65536 writes=     9 short=1 stop_errno=35 FIONREAD=65536
+fill size=   8192 total=  65536 writes=     8 short=0 stop_errno=35 FIONREAD=65536
+fill size=   8193 total=  65536 writes=     8 short=1 stop_errno=35 FIONREAD=65536
+fill size=  16383 total=  65536 writes=     5 short=1 stop_errno=35 FIONREAD=65536
+fill size=  16384 total=  65536 writes=     4 short=0 stop_errno=35 FIONREAD=65536
+fill size=  16385 total=  65536 writes=     4 short=1 stop_errno=35 FIONREAD=65536
+fill size=  32768 total=  65536 writes=     2 short=0 stop_errno=35 FIONREAD=65536
+fill size=  65535 total=  65536 writes=     2 short=1 stop_errno=35 FIONREAD=65536
+fill size=  65536 total=  65536 writes=     1 short=0 stop_errno=35 FIONREAD=65536
+fill size=  65537 total=  65536 writes=     1 short=1 stop_errno=35 FIONREAD=65536
+fill size= 131072 total=  65536 writes=     1 short=1 stop_errno=35 FIONREAD=65536
+fill size=1048576 total=  65536 writes=     1 short=1 stop_errno=35 FIONREAD=65536
+history first=     1 -> 1 (errno 0), then 1-byte fill adds 65535
+history first=   512 -> 512 (errno 0), then 1-byte fill adds 65024
+history first=  4096 -> 4096 (errno 0), then 1-byte fill adds 61440
+history first= 16384 -> 16384 (errno 0), then 1-byte fill adds 49152
+history first= 16385 -> 16385 (errno 0), then 1-byte fill adds 49151
+history first= 32768 -> 32768 (errno 0), then 1-byte fill adds 32768
+history first= 65536 -> 65536 (errno 0), then 1-byte fill adds 0
+nonblocking 1MiB into empty pipe -> 65536 (errno 0)

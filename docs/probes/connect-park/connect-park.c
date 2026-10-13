@@ -1,6 +1,6 @@
 // What a blocking connect(2) to a listener whose accept queue is full does,
 // measured on both flavours. Design note:
-// pawprint-kernel-design/connect-park-options.md.
+// docs/design/connect-park-options.md.
 //
 // Build and run:
 //   Darwin: cc -Wall -o /tmp/cp connect-park.c -lpthread && /tmp/cp

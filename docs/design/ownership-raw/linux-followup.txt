@@ -1,0 +1,13 @@
+NONOWNER-CHOWN-NOOP	file mode 0644	ok	after uid=1000 gid=1000 mode=644
+NONOWNER-CHOWN-NOOP	file mode 2644	fail:Operation not permitted	after uid=1000 gid=1000 mode=2644
+NONOWNER-CHOWN-NOOP	file mode 2654	fail:Operation not permitted	after uid=1000 gid=1000 mode=2654
+NONOWNER-CHOWN-NOOP	file mode 4644	fail:Operation not permitted	after uid=1000 gid=1000 mode=4644
+--- grpid
+no mkfs.ext4
+/probe/followup.sh: 11: mkfs.ext4: not found
+--- grpid
+/usr/sbin/mkfs.ext4
+/tmp/img on /mnt/g type ext4 (rw,relatime,grpid)
+GRPID	/mnt/g/p	uid=0 gid=2000 mode=777
+GRPID	/mnt/g/p/f	uid=1000 gid=2000 mode=666
+GRPID	/mnt/g/p/d	uid=1000 gid=2000 mode=777
