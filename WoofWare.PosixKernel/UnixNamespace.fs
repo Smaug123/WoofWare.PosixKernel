@@ -787,6 +787,65 @@ module UnixNamespace =
             failwith
                 $"%s{context}: about to create an inode in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
 
+    /// A new empty regular file bound as `name` in `directory`, which a walk
+    /// has just found free, with the permission bits a creating `open(2)`
+    /// gives `mode` and owned as any new inode there is: the file's inode, and
+    /// the system holding it. `operation` names the caller in the failure a
+    /// broken graph gives.
+    let private createRegularFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (mode : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : InodeNumber * UnixSystem<'Thread, 'Handler>
+        =
+        let parent = VirtualFileSystem.get operation directory system.Machine.FileSystem
+
+        let parentPermissions =
+            match parent.Content with
+            | InodeContent.Directory content -> content.Permissions
+            | InodeContent.RegularFile _
+            | InodeContent.Symlink _
+            | InodeContent.CharacterDevice _
+            | InodeContent.Socket _
+            | InodeContent.Fifo _ ->
+                failwith
+                    $"%s{operation}: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is not one now (this is a bug in this library)."
+
+        let permissions =
+            CreatingOpenRules.createdPermissions
+                (SimulatedUnixPlatform.creatingOpenRules system.Machine.UnixPlatform)
+                (Standing.toward system.Process.Credentials parent.Owner)
+                parentPermissions
+                system.Process.Umask
+                mode
+
+        let now = UnixMachineState.realtime system.Scheduling system.Machine
+
+        match
+            VirtualFileSystem.createFile
+                directory
+                name
+                permissions
+                (newInodeOwner operation directory system)
+                now
+                ImmutableArray<byte>.Empty
+                system.Machine.FileSystem
+        with
+        | Error error ->
+            // `createFile` refuses a name the directory already holds, and a
+            // parent that is not a directory. The walk has just established
+            // neither is the case, so either is a broken graph rather than
+            // something the caller did.
+            failwith
+                $"%s{operation}: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
+        | Ok (inode, mutation) ->
+            inode,
+            { system with
+                Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
+            }
+
     /// `openat`, of a path this kernel has already copied in, starting from
     /// `directory` if it is relative.
     let internal openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -978,51 +1037,13 @@ module UnixNamespace =
         with
         | CreatingOpenVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | CreatingOpenVerdict.Create (directory, name) ->
-            let parent =
-                match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
-                | Some ({
-                            Content = InodeContent.Directory parent
-                        } as entry) -> entry, parent
-                | Some _
-                | None ->
-                    failwith
-                        $"UnixNamespace.openPath: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
+            let inode, system =
+                createRegularFile "UnixNamespace.openPath" directory name mode system
 
-            let permissions =
-                CreatingOpenRules.createdPermissions
-                    rules
-                    (Standing.toward credentials (fst parent).Owner)
-                    (snd parent).Permissions
-                    system.Process.Umask
-                    mode
-
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
-
-            match
-                VirtualFileSystem.createFile
-                    directory
-                    name
-                    permissions
-                    (newInodeOwner "UnixNamespace.openPath" directory system)
-                    now
-                    ImmutableArray<byte>.Empty
-                    system.Machine.FileSystem
-            with
-            | Error error ->
-                // `createFile` refuses a name the directory already holds, and a
-                // parent that is not a directory. The walk has just established
-                // neither is the case, so either is a broken graph rather than
-                // something the caller did.
-                failwith
-                    $"UnixNamespace.openPath: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
-            | Ok (inode, mutation) ->
-                { system with
-                    Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
-                }
-                // A file this open created is not one it truncated, whatever
-                // `O_TRUNC` asked: measured on Darwin (`fcntl-dup.c`, WRITTEN
-                // rows), its description is not marked written.
-                |> opened false (ReachedThrough.ofEntry directory name) inode
+            // A file this open created is not one it truncated, whatever
+            // `O_TRUNC` asked: measured on Darwin (`fcntl-dup.c`, WRITTEN
+            // rows), its description is not marked written.
+            opened false (ReachedThrough.ofEntry directory name) inode system
         | CreatingOpenVerdict.OpenExisting inode ->
 
         let entry =
@@ -1842,48 +1863,8 @@ module UnixNamespace =
         | MkNodVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkNodVerdict.Refused refusal -> Error refusal
         | MkNodVerdict.CreateRegularFile (directory, name) ->
-
-        let parent =
-            match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
-            | Some ({
-                        Content = InodeContent.Directory parent
-                    } as entry) -> entry, parent
-            | Some _
-            | None ->
-                failwith
-                    $"UnixNamespace.mknod: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
-
-        let permissions =
-            CreatingOpenRules.createdPermissions
-                rules
-                (Standing.toward credentials (fst parent).Owner)
-                (snd parent).Permissions
-                system.Process.Umask
-                mode
-
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
-
-        match
-            VirtualFileSystem.createFile
-                directory
-                name
-                permissions
-                (newInodeOwner "UnixNamespace.mknod" directory system)
-                now
-                ImmutableArray<byte>.Empty
-                system.Machine.FileSystem
-        with
-        | Error error ->
-            failwith
-                $"UnixNamespace.mknod: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
-        | Ok (_, mutation) ->
-
-        Ok (
-            SyscallAnswer.Completed 0L,
-            { system with
-                Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
-            }
-        )
+            let _, system = createRegularFile "UnixNamespace.mknod" directory name mode system
+            Ok (SyscallAnswer.Completed 0L, system)
 
     /// `mknod`, with a refusal answered as the `Error` rather than raised.
     let internal tryMknod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
