@@ -1,0 +1,153 @@
+# Linux 6.18.5 aarch64, uid 0, flavour linux
+# CLOCK ids: REALTIME=0 MONOTONIC=1 PROCESS_CPUTIME=2 THREAD_CPUTIME=3 MONOTONIC_RAW=4 REALTIME_COARSE=5 MONOTONIC_COARSE=6 BOOTTIME=7 REALTIME_ALARM=8 BOOTTIME_ALARM=9 TAI=11; EINVAL=22 EFAULT=14 EOPNOTSUPP=95 ENOTSUP=95 EPERM=1 ENODEV=19 EINTR=4
+args req=NULL ret=-1 errno=14 el=2us rem=- end=exit0
+args req=unmapped ret=-1 errno=14 el=1us rem=- end=exit0
+args nsec=1e9 ret=-1 errno=22 el=0us rem=- end=exit0
+args nsec=1e9-1 ret=0 errno=0 el=1005103us rem=- end=exit0
+args nsec=-1 (USR1 later) ret=-1 errno=22 el=1us rem=- end=exit0
+args sec=1,nsec=-1 (USR1 later) ret=-1 errno=22 el=2us rem=- end=exit0
+args nsec=LONG_MIN (USR1 later) ret=-1 errno=22 el=1us rem=- end=exit0
+args sec=-1 ret=-1 errno=22 el=2us rem=- end=exit0
+args sec=-1,nsec=1e9 ret=-1 errno=22 el=1us rem=- end=exit0
+args sec=-1,unmapped-rem ret=-1 errno=22 el=0us end=exit0
+args 1ms rem-written? ret=0 errno=0 el=1346us rem=- end=exit0
+args 1ms rem=unmapped ret=0 errno=0 el=1126us end=exit0
+args sec=2^31 (USR1 later) ret=-1 errno=4 el=100277us rem=2147483647.899787000 end=exit0
+args sec=2^32+10 (USR1 later) ret=-1 errno=4 el=104308us rem=4294967305.895754083 end=exit0
+args sec=2^33+10 (USR1 later) ret=-1 errno=4 el=102644us rem=8589934601.897417250 end=exit0
+args sec=2^32-1e9 (USR1 later) ret=-1 errno=4 el=101220us rem=3294967295.898844708 end=exit0
+args sec=2^32,nsec=2e8 (USR1 later) ret=-1 errno=4 el=2003732us rem=4294967294.196329957 end=exit0
+args sec=2^32+1 (USR1 later) ret=-1 errno=4 el=3002200us rem=4294967293.997861915 end=exit0
+args sec=18446744073 (USR1 later) ret=-1 errno=4 el=2005190us rem=9223371946.772334100 end=exit0
+args sec=18446744074 (USR1 later) ret=-1 errno=4 el=2002099us rem=9223371944.769846099 end=exit0
+args sec=36893488148 (USR1 later) ret=-1 errno=4 el=2002667us rem=9223371942.766917931 end=exit0
+args sec=9223372035 (USR1 later) ret=-1 errno=4 el=102038us rem=9223371942.664624723 end=exit0
+args sec=9223372037 (USR1 later) ret=-1 errno=4 el=102558us rem=9223371942.561848931 end=exit0
+args sec=INT64_MAX,nsec=1e9-1 (USR1 later) ret=-1 errno=4 el=104882us rem=9223371942.456644848 end=exit0
+zero nanosleep{0,0} x1000 fails=0 voluntary=1000 involuntary=0 total=69886us end=exit0
+zero nanosleep{0,1} x1000 fails=0 voluntary=1000 involuntary=0 total=69944us end=exit0
+zero sched_yield x1000 fails=0 voluntary=0 involuntary=0 total=158us end=exit0
+zero getppid x1000 fails=0 voluntary=0 involuntary=0 total=102us end=exit0
+zero clock_nanosleep-abs{0,0} x1000 fails=0 voluntary=1000 involuntary=0 total=4442us end=exit0
+eintr trials slack=50000ns ret/errno/rem/excess: -1/4/1.894897917/56250 -1/4/1.896839333/57666 -1/4/1.897636250/56583 -1/4/1.899556083/56083 -1/4/1.898213750/58542 -1/4/1.895102625/55958 -1/4/1.896703583/56125 -1/4/1.894888667/62625 -1/4/1.898411167/57875 -1/4/1.896574667/55625 excess-range=[55625,62625]ns end=exit0
+eintr trials slack=1 slack=1ns ret/errno/rem/excess: -1/4/1.897155668/7500 -1/4/1.899698042/6376 -1/4/1.896590668/6834 -1/4/1.895767126/7793 -1/4/1.898606084/8584 -1/4/1.895173376/9668 -1/4/1.894873751/8417 -1/4/1.898982834/6793 -1/4/1.895196376/6460 -1/4/1.899022334/7042 excess-range=[6376,9668]ns end=exit0
+eintr trials slack=1ms slack=1000000ns ret/errno/rem/excess: -1/4/1.899679459/1008709 -1/4/1.896126750/1015791 -1/4/1.894906167/1006584 -1/4/1.896812541/1007791 -1/4/1.894883250/1009167 -1/4/1.899061375/1005833 -1/4/1.899814042/1007625 -1/4/1.898396333/1006083 -1/4/1.894890375/1005709 -1/4/1.898383750/1006000 excess-range=[1005709,1015791]ns end=exit0
+eintr SA_RESTART slack=50000ns ret=-1 errno=4 el=104775us rem=1.895281666 excess=56958ns end=exit0
+eintr rem=NULL slack=50000ns ret=-1 errno=4 el=105160us end=exit0
+eintr rem=NULL SA_RESTART slack=50000ns ret=-1 errno=4 el=102141us end=exit0
+eintr rem=unmapped slack=50000ns ret=-1 errno=14 el=101944us end=exit0
+eintr rem=req slack=50000ns ret=-1 errno=4 el=101037us rem=1.899022000 excess=59083ns end=exit0
+ignored USR2(SIG_IGN)@100 URG(default)@200 USR1(blocked)@300 in 400ms ret=0 errno=0 el=404332us rem=- USR1-pending-after=1 end=exit0
+stopcont 2s stop@100ms for 500ms cont-handler=0 stopped=1 ret=0 errno=0 el=2002ms rem=1.896822250 end=exit0
+stopcont 2s stop@100ms for 500ms cont-handler=1 stopped=1 ret=-1 errno=4 el=603ms rem=1.899144500 end=exit0
+stopcont 300ms stop@100ms for 500ms cont-handler=0 stopped=1 ret=0 errno=0 el=605ms rem=0.197932000 end=exit0
+stopcont 300ms stop@100ms for 500ms cont-handler=1 stopped=1 ret=-1 errno=4 el=605ms rem=0.197408375 end=exit0
+stopcont abs-monotonic 2s stop@100ms for 500ms cont-handler=0 stopped=1 ret=0 errno=0 el=2000ms rem=- end=exit0
+stopcont abs-monotonic 2s stop@100ms for 500ms cont-handler=1 stopped=1 ret=4 errno=4 el=606ms rem=- end=exit0
+clock id=-2 rel1ms spin glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=-1 rel1ms spin glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=0 rel1ms glibc=0 errno-after=12345 el=1239us raw=0 errno=0 el=1330us end=exit0
+clock id=1 rel1ms glibc=0 errno-after=12345 el=1321us raw=0 errno=0 el=1248us end=exit0
+clock id=2 rel1ms spin glibc=0 errno-after=12345 el=2831us raw=0 errno=0 el=3980us end=exit0
+clock id=3 rel1ms spin glibc=22 errno-after=12345 el=0us raw=-1 errno=95 el=0us end=exit0
+clock id=4 rel1ms glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=5 rel1ms glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=6 rel1ms glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=7 rel1ms glibc=0 errno-after=12345 el=1320us raw=0 errno=0 el=1337us end=exit0
+clock id=8 rel1ms glibc=1 errno-after=12345 el=2us raw=-1 errno=1 el=0us end=exit0
+clock id=9 rel1ms glibc=1 errno-after=12345 el=1us raw=-1 errno=1 el=0us end=exit0
+clock id=10 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=11 rel1ms glibc=0 errno-after=12345 el=1207us raw=0 errno=0 el=1331us end=exit0
+clock id=12 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=13 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=14 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=15 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=16 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=17 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=18 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=19 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=20 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=21 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=22 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=23 rel1ms glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=24 rel1ms glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=-2 abs{0,0} spin glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=-1 abs{0,0} spin glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=0 abs{0,0} glibc=0 errno-after=12345 el=5us raw=0 errno=0 el=3us end=exit0
+clock id=1 abs{0,0} glibc=0 errno-after=12345 el=3us raw=0 errno=0 el=3us end=exit0
+clock id=2 abs{0,0} spin glibc=0 errno-after=12345 el=1us raw=0 errno=0 el=0us end=exit0
+clock id=3 abs{0,0} spin glibc=22 errno-after=12345 el=0us raw=-1 errno=95 el=0us end=exit0
+clock id=4 abs{0,0} glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=5 abs{0,0} glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=6 abs{0,0} glibc=95 errno-after=12345 el=1us raw=-1 errno=95 el=0us end=exit0
+clock id=7 abs{0,0} glibc=0 errno-after=12345 el=4us raw=0 errno=0 el=3us end=exit0
+clock id=8 abs{0,0} glibc=1 errno-after=12345 el=1us raw=-1 errno=1 el=0us end=exit0
+clock id=9 abs{0,0} glibc=1 errno-after=12345 el=1us raw=-1 errno=1 el=0us end=exit0
+clock id=10 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=11 abs{0,0} glibc=0 errno-after=12345 el=4us raw=0 errno=0 el=3us end=exit0
+clock id=12 abs{0,0} glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=13 abs{0,0} glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=14 abs{0,0} glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=15 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=16 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=17 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=18 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=19 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=20 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=21 abs{0,0} glibc=22 errno-after=12345 el=2us raw=-1 errno=22 el=0us end=exit0
+clock id=22 abs{0,0} glibc=22 errno-after=12345 el=1us raw=-1 errno=22 el=0us end=exit0
+clock id=23 abs{0,0} glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+clock id=24 abs{0,0} glibc=22 errno-after=12345 el=0us raw=-1 errno=22 el=0us end=exit0
+order clock=99 req=NULL flags=0 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req=NULL flags=1 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req=unmapped flags=0 raw=-1 errno=22 el=0us rem=- end=exit0
+order clock=99 req=unmapped flags=1 raw=-1 errno=22 el=0us rem=- end=exit0
+order clock=99 req=nsec=1e9 flags=0 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req=nsec=1e9 flags=1 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req={0,0} flags=0 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req={0,0} flags=1 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req=sec=-1 flags=0 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=99 req=sec=-1 flags=1 raw=-1 errno=22 el=1us rem=- end=exit0
+order clock=4 req=NULL flags=0 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req=NULL flags=1 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req=unmapped flags=0 raw=-1 errno=95 el=0us rem=- end=exit0
+order clock=4 req=unmapped flags=1 raw=-1 errno=95 el=0us rem=- end=exit0
+order clock=4 req=nsec=1e9 flags=0 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req=nsec=1e9 flags=1 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req={0,0} flags=0 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req={0,0} flags=1 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req=sec=-1 flags=0 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=4 req=sec=-1 flags=1 raw=-1 errno=95 el=1us rem=- end=exit0
+order clock=1 req=NULL flags=0 raw=-1 errno=14 el=2us rem=- end=exit0
+order clock=1 req=NULL flags=1 raw=-1 errno=14 el=1us rem=- end=exit0
+order clock=1 req=unmapped flags=0 raw=-1 errno=14 el=0us rem=- end=exit0
+order clock=1 req=unmapped flags=1 raw=-1 errno=14 el=1us rem=- end=exit0
+order clock=1 req=nsec=1e9 flags=0 raw=-1 errno=22 el=2us rem=- end=exit0
+order clock=1 req=nsec=1e9 flags=1 raw=-1 errno=22 el=2us rem=- end=exit0
+order clock=1 req={0,0} flags=0 raw=0 errno=0 el=78us rem=- end=exit0
+order clock=1 req={0,0} flags=1 raw=0 errno=0 el=6us rem=- end=exit0
+order clock=1 req=sec=-1 flags=0 raw=-1 errno=22 el=2us rem=- end=exit0
+order clock=1 req=sec=-1 flags=1 raw=-1 errno=22 el=3us rem=- end=exit0
+flags clock=MONOTONIC req=rel1ms flags=2 raw=0 errno=0 el=1330us rem=- end=exit0
+flags clock=MONOTONIC req=rel1ms flags=3 raw=0 errno=0 el=5us rem=- end=exit0
+flags clock=MONOTONIC req=rel1ms flags=-1 raw=0 errno=0 el=4us rem=- end=exit0
+flags clock=MONOTONIC req=rel1ms flags=-2 raw=0 errno=0 el=1339us rem=- end=exit0
+flags clock=MONOTONIC req=rel1ms flags=256 raw=0 errno=0 el=1327us rem=- end=exit0
+abs MONOTONIC +50ms ret=0 errno-after=12345 el=52126us rem=- end=exit0
+abs REALTIME +50ms ret=0 errno-after=12345 el=54059us rem=- end=exit0
+abs BOOTTIME +50ms ret=0 errno-after=12345 el=50434us rem=- end=exit0
+abs TAI +50ms ret=0 errno-after=12345 el=53440us rem=- end=exit0
+abs MONOTONIC -1000ms ret=0 errno-after=12345 el=6us rem=- end=exit0
+abs REALTIME -1000ms ret=0 errno-after=12345 el=6us rem=- end=exit0
+abs MONOTONIC +2s USR1 ret=4 errno-after=12345 el=103218us rem=- end=exit0
+abs MONOTONIC +2s USR1 SA_RESTART ret=4 errno-after=12345 el=105179us rem=- end=exit0
+abs REALTIME +2s USR1 ret=4 errno-after=12345 el=101415us rem=- end=exit0
+abs relative MONOTONIC 2s USR1 ret=4 errno-after=12345 el=105186us rem=1.894877250 end=exit0
+abs relative MONOTONIC 2s USR1 SA_RESTART ret=4 errno-after=12345 el=101216us rem=1.898846250 end=exit0
+abs relative REALTIME 2s USR1 ret=4 errno-after=12345 el=102368us rem=1.897692250 end=exit0
+abs relative BOOTTIME 2s USR1 ret=4 errno-after=12345 el=101742us rem=1.898322708 end=exit0
+step abs-REALTIME 1000ms, +10s at 100ms settime=0 ret=0 el=105ms end=exit0
+step abs-REALTIME 500ms, -1s at 100ms settime=0 ret=0 el=1503ms end=exit0
+step rel-REALTIME clock_nanosleep 1000ms, +10s at 100ms settime=0 ret=0 el=1002ms end=exit0
+step nanosleep 1000ms, +10s at 100ms settime=0 ret=0 el=1001ms end=exit0
+step abs-MONOTONIC 1000ms, +10s at 100ms settime=0 ret=0 el=1005ms end=exit0
