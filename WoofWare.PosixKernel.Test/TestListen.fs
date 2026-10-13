@@ -398,6 +398,41 @@ module TestListen =
                 after |> shouldEqual system
             | Error refusal -> failwith $"%A{error}: refused %A{refusal}"
 
+    /// A Linux socket whose refused connect gave its port back listens at a
+    /// port of its own choosing, as one with none would (measured,
+    /// `docs/probes/refused-connect-port`, row Ib3), so another socket having
+    /// since bound the port it gave back is nothing to it: the screen Linux's
+    /// listen makes of a binding is of the port it chooses.
+    [<Test>]
+    let ``a Linux socket that gave its port back listens beside whoever took it`` () : unit =
+        let platform = SimulatedUnixPlatform.linuxX64
+        let given = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+
+        let givenBack =
+            Some
+                {
+                    Endpoint = given
+                    LockedAddress = None
+                    LockedPort = false
+                    HoldsPort = false
+                }
+
+        let fd, system =
+            withSocket (SocketId 0L) (socketWith SocketKind.Stream givenBack false SocketPhase.Idle) (systemOn platform)
+
+        let _, system =
+            withSocket
+                (SocketId 1L)
+                (socketWith SocketKind.Stream (boundAt (loopback 40000us)) false SocketPhase.Idle)
+                system
+
+        match UnixSocket.tryListen fd 8 system with
+        | Ok (ListenAnswer.Listening (SocketAddress.Inet endpoint), after) ->
+            endpoint.Address |> shouldEqual Ipv4Address.any
+            endpoint.Port |> shouldNotEqual 40000us
+            UnixSystem.checkInvariants after |> shouldEqual []
+        | other -> failwith $"listen answered %A{other}"
+
     /// The kind screen precedes the phase screen: a *datagram* socket in one of
     /// those phases is answered EOPNOTSUPP rather than refused, which is what
     /// keeps `DatagramPeer` from being a refusal for the sockets that legitimately
