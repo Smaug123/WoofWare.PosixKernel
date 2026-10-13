@@ -332,6 +332,12 @@ module WakeCondition =
         | Some (ParkedSyscall.Connect _)
         | None -> false
 
+    /// Every primitive `condition` waits for, in order, repeats and all.
+    let rec internal primitives (condition : WakeCondition) : WakePrimitive list =
+        match condition with
+        | WakeCondition.Primitive primitive -> [ primitive ]
+        | WakeCondition.AnyOf (first, rest) -> primitives first @ List.collect primitives rest
+
     // A primitive that names a description no longer in the table has had its
     // wait broken underneath it: see `satisfied`.
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -484,11 +490,6 @@ module WakeCondition =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
-        let rec primitives (condition : WakeCondition) : WakePrimitive list =
-            match condition with
-            | WakeCondition.Primitive primitive -> [ primitive ]
-            | WakeCondition.AnyOf (first, rest) -> primitives first @ List.collect primitives rest
-
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =
             match condition with
             | WakeCondition.Primitive primitive ->

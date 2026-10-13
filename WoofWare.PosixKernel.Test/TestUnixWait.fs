@@ -3,6 +3,7 @@ namespace WoofWare.PosixKernel.Test
 open FsCheck
 open FsCheck.FSharp
 open FsUnitTyped
+open Microsoft.FSharp.Reflection
 open NUnit.Framework
 open WoofWare.PosixKernel
 
@@ -272,3 +273,279 @@ module TestUnixWait =
             Assert.Throws<exn> (fun () -> UnixWait.park 1 (parkOfThread 3) parked |> ignore)
 
         exn.Message |> shouldContainText "without clearing the first"
+
+    /// The exclusive queue each park waits on, as `UnixWait.wakes` states it: an
+    /// `epoll_wait` on its epoll instance, an `accept` on its listener, and under
+    /// Linux a pipe `read` on the pipe's readers and a pipe `write` on its
+    /// writers. A call a close has ended waits on none, and so does every other.
+    let private statedQueues
+        (linux : bool)
+        (pipeOf : OpenFileDescriptionId -> PipeId option)
+        (parked : ParkedSyscall)
+        : ExclusiveWaitQueue list
+        =
+        match parked with
+        | ParkedSyscall.EpollWait wait -> [ ExclusiveWaitQueue.Epoll wait.Epoll ]
+        | ParkedSyscall.Accept accept ->
+            SleepTarget.description accept.Listener
+            |> Option.map ExclusiveWaitQueue.Listener
+            |> Option.toList
+        | ParkedSyscall.PipeRead read when linux ->
+            SleepTarget.description read.Reader
+            |> Option.bind pipeOf
+            |> Option.map ExclusiveWaitQueue.PipeReaders
+            |> Option.toList
+        | ParkedSyscall.PipeWrite write when linux ->
+            SleepTarget.description write.Writer
+            |> Option.bind pipeOf
+            |> Option.map ExclusiveWaitQueue.PipeWriters
+            |> Option.toList
+        | ParkedSyscall.PipeRead _
+        | ParkedSyscall.PipeWrite _
+        | ParkedSyscall.Flock _
+        | ParkedSyscall.Kevent _
+        | ParkedSyscall.Poll _
+        | ParkedSyscall.KqueuePoll _
+        | ParkedSyscall.ConnectionRead _
+        | ParkedSyscall.ConnectionWrite _
+        | ParkedSyscall.SigSuspend
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.InotifyRead _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.DatagramReceive _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> []
+
+    /// A park of every kind, waiting on `description` wherever a park waits on
+    /// one, with and without a deadline where it may have one, and each call a
+    /// close can end both waiting and ended.
+    let private parksOn (description : OpenFileDescriptionId) : ParkedSyscall list =
+        [
+            for deadline in [ None ; Some 5L ] do
+                ParkedSyscall.EpollWait
+                    {
+                        Epoll = description
+                        MaxEvents = 1
+                        Buffer = UserBuffer.Mapped
+                        Deadline = deadline
+                    }
+
+                ParkedSyscall.Kevent
+                    {
+                        Kqueue = description
+                        Fd = 3
+                        MaxEvents = 1
+                        Buffer = UserBuffer.Mapped
+                        Deadline = deadline
+                    }
+
+                ParkedSyscall.Poll
+                    {
+                        Entries = [ ParkedPollEntry.Watched (3, description, 1s) ; ParkedPollEntry.Ignored 4 ]
+                        Deadline = deadline
+                    }
+
+                ParkedSyscall.KqueuePoll
+                    {
+                        Entries =
+                            [
+                                {
+                                    Fd = 3
+                                    Events = 1s
+                                }
+                            ]
+                        Queue = PollQueueId 0L
+                        Deadline = deadline
+                    }
+
+                ParkedSyscall.Select
+                    {
+                        Deadline = deadline
+                    }
+
+                ParkedSyscall.SignalWait
+                    {
+                        Awaited = SignalMask.empty
+                        Deadline = deadline
+                        Destination = None
+                    }
+
+            for mode in [ FlockMode.Shared ; FlockMode.Exclusive ] do
+                ParkedSyscall.Flock
+                    {
+                        Requester = description
+                        Mode = mode
+                    }
+
+            for ended in [ false ; true ] do
+                let target (object : 'Object) : SleepTarget<'Object> =
+                    if ended then
+                        SleepTarget.EndedByClose object
+                    else
+                        SleepTarget.Waiting (description, 3)
+
+                ParkedSyscall.Accept
+                    {
+                        Listener = target (SocketId 0L)
+                        Destination = UserBuffer.Mapped
+                        DeclaredLength = 16u
+                    }
+
+                ParkedSyscall.PipeRead
+                    {
+                        Reader = target (PipeId 0L)
+                        Buffer = UserBuffer.Mapped
+                        Count = 1
+                    }
+
+                ParkedSyscall.PipeWrite
+                    {
+                        Writer = target (PipeId 0L)
+                        Buffer = UserBuffer.Mapped
+                        Count = 2
+                        Written = 1
+                        ReadsSeen = 0L
+                    }
+
+                ParkedSyscall.ConnectionRead
+                    {
+                        Socket = target (SocketId 0L)
+                        Buffer = UserBuffer.Mapped
+                        Count = 1
+                        Call = TcpReceiveCall.Read
+                    }
+
+                ParkedSyscall.ConnectionWrite
+                    {
+                        Socket = target (SocketId 0L)
+                        Buffer = UserBuffer.Mapped
+                        Count = 2
+                        Written = 1
+                        Call = TcpSendCall.Write
+                    }
+
+            ParkedSyscall.SigSuspend
+
+            ParkedSyscall.Sleep
+                {
+                    Deadline = 5L
+                    Remainder = SleepRemainder.Unreported
+                }
+
+            ParkedSyscall.FifoOpen
+                {
+                    Opener = description
+                    Descriptor = 3
+                    PartnerOpens = 0L
+                }
+
+            ParkedSyscall.InotifyRead
+                {
+                    Instance = description
+                    Buffer = UserBuffer.Mapped
+                    Count = 16
+                }
+
+            ParkedSyscall.DatagramReceive
+                {
+                    Socket = description
+                }
+
+            ParkedSyscall.DatagramSend
+                {
+                    Socket = description
+                }
+
+            ParkedSyscall.Connect
+                {
+                    Socket = description
+                }
+        ]
+
+    /// The exclusive queues a park waits on are those its own wake condition's
+    /// primitives name, so a woken thread stands in the way on exactly the
+    /// queues it was woken from. Exhaustive over every kind of park, waiting on
+    /// each end of a pipe, on a socket and on a description the table does not
+    /// hold, under both flavours.
+    [<Test>]
+    let ``a park waits on the exclusive queues its wake condition names, and on no other`` () : unit =
+        let parkKind (parked : ParkedSyscall) : string =
+            (FSharpValue.GetUnionFields (parked, typeof<ParkedSyscall>) |> fst).Name
+
+        let queueKind (queue : ExclusiveWaitQueue) : string =
+            match queue with
+            | ExclusiveWaitQueue.Epoll _ -> "Epoll"
+            | ExclusiveWaitQueue.Listener _ -> "Listener"
+            | ExclusiveWaitQueue.PipeReaders _ -> "PipeReaders"
+            | ExclusiveWaitQueue.PipeWriters _ -> "PipeWriters"
+
+        let kinds =
+            FSharpType.GetUnionCases typeof<ParkedSyscall>
+            |> Array.map (fun case -> case.Name)
+            |> Set.ofArray
+
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let system =
+                UnixSystem.initial<int, string> platform
+                |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+            let readFd, writeFd, system =
+                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
+                | other -> failwith $"pipe2 did not make a pipe: %A{other}"
+
+            let socketFd, system =
+                match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 system with
+                | Ok (fd, system) -> fd, system
+                | Error error -> failwith $"socket failed with %O{error}"
+
+            let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
+
+            let pipeOf (description : OpenFileDescriptionId) : PipeId option =
+                match OpenFileTable.tryFind description system.Machine.OpenFiles with
+                | Some {
+                           Target = OpenFileTarget.Pipe (pipeId, _)
+                       } -> Some pipeId
+                | Some _
+                | None -> None
+
+            let descriptions =
+                [
+                    idOf readFd system
+                    idOf writeFd system
+                    idOf socketFd system
+                    OpenFileDescriptionId 999_999L
+                ]
+
+            let parks = descriptions |> List.collect parksOn
+
+            parks |> List.map parkKind |> Set.ofList |> shouldEqual kinds
+
+            let mismatches =
+                parks
+                |> List.choose (fun parked ->
+                    let stated = statedQueues linux pipeOf parked
+                    let derived = UnixWait.exclusiveQueuesOfPark system.Machine parked
+
+                    if derived <> stated then
+                        Some $"%O{platform}: %A{parked} waits on %A{derived}, where wakes states %A{stated}"
+                    else
+                        None
+                )
+
+            mismatches |> shouldEqual []
+
+            // Every kind of queue the flavour has is reached, so that the
+            // comparison is not vacuous for any of them.
+            parks
+            |> List.collect (statedQueues linux pipeOf)
+            |> List.map queueKind
+            |> Set.ofList
+            |> shouldEqual (
+                if linux then
+                    Set.ofList [ "Epoll" ; "Listener" ; "PipeReaders" ; "PipeWriters" ]
+                else
+                    Set.ofList [ "Epoll" ; "Listener" ]
+            )
