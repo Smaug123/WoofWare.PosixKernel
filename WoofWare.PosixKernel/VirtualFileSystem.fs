@@ -5,7 +5,9 @@ open System.Collections.Immutable
 
 /// The names one directory binds, sorted as `DirectoryContent.Entries` sorts
 /// them, in a tree that finds the least name above a given one by descending
-/// rather than by walking every name below it.
+/// rather than by walking every name below it; and, apart, those of them that
+/// hold a byte beyond ASCII, which are all a lookup by canonical equivalence
+/// need look through.
 ///
 /// Equal and ordered by the names alone, so that two sets holding the same
 /// names are indistinguishable however they were assembled.
@@ -15,6 +17,8 @@ type internal SortedEntryNames =
     private
         {
             Names : ImmutableSortedSet<DirectoryEntryName>
+            /// The members of `Names` holding a byte beyond ASCII.
+            BeyondAscii : ImmutableSortedSet<DirectoryEntryName>
         }
 
     override this.Equals (other : obj) : bool =
@@ -43,11 +47,19 @@ module internal SortedEntryNames =
     let empty : SortedEntryNames =
         {
             Names = ImmutableSortedSet.Create<DirectoryEntryName> order
+            BeyondAscii = ImmutableSortedSet.Create<DirectoryEntryName> order
         }
 
     let ofSeq (names : DirectoryEntryName seq) : SortedEntryNames =
+        let names = ImmutableSortedSet.CreateRange<DirectoryEntryName> (order, names)
+
         {
-            Names = ImmutableSortedSet.CreateRange<DirectoryEntryName> (order, names)
+            Names = names
+            BeyondAscii =
+                ImmutableSortedSet.CreateRange<DirectoryEntryName> (
+                    order,
+                    names |> Seq.filter (EntryNameMatching.isAsciiName >> not)
+                )
         }
 
     let isEmpty (names : SortedEntryNames) : bool = names.Names.IsEmpty
@@ -59,14 +71,23 @@ module internal SortedEntryNames =
 
     let toList (names : SortedEntryNames) : DirectoryEntryName list = List.ofSeq names.Names
 
+    /// The names that hold a byte beyond ASCII.
+    let beyondAscii (names : SortedEntryNames) : DirectoryEntryName seq = names.BeyondAscii :> _
+
     let add (name : DirectoryEntryName) (names : SortedEntryNames) : SortedEntryNames =
         {
             Names = names.Names.Add name
+            BeyondAscii =
+                if EntryNameMatching.isAsciiName name then
+                    names.BeyondAscii
+                else
+                    names.BeyondAscii.Add name
         }
 
     let remove (name : DirectoryEntryName) (names : SortedEntryNames) : SortedEntryNames =
         {
             Names = names.Names.Remove name
+            BeyondAscii = names.BeyondAscii.Remove name
         }
 
     /// The least name strictly greater than `lower`, or the least of all when
@@ -576,10 +597,6 @@ module VirtualFileSystem =
 
     let root (vfs : VirtualFileSystem) : InodeNumber = vfs.Root
 
-    /// Which entry a name looked up in one of this filesystem's directories
-    /// reaches.
-    let internal nameMatching (vfs : VirtualFileSystem) : EntryNameMatching = vfs.NameMatching
-
     /// The mount whose root is `inode`, or `None` if `inode` is not the root of
     /// a mounted filesystem.
     let mountOf (inode : InodeNumber) (vfs : VirtualFileSystem) : Mount option = Map.tryFind inode vfs.Mounts
@@ -868,6 +885,26 @@ module VirtualFileSystem =
         | Some (InodeContent.Directory directory) -> Some directory
         | Some _
         | None -> None
+
+    /// What `name` reaches among the entries of `directory`, a directory of
+    /// this filesystem, as the filesystem matches names.
+    let internal lookUpEntry
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (vfs : VirtualFileSystem)
+        : EntryLookup
+        =
+        match tryGetDirectory directory vfs with
+        | None ->
+            failwith
+                $"VirtualFileSystem.lookUpEntry: inode %O{directory} is not a directory of this filesystem, so nothing can be looked up in it (this is a bug in the caller)."
+        | Some content ->
+            let beyondAscii =
+                match Map.tryFind directory vfs.SortedNames with
+                | Some names -> SortedEntryNames.beyondAscii names
+                | None -> Seq.empty
+
+            EntryNameMatching.lookUp vfs.NameMatching name content.Entries beyondAscii
 
     let private mutation
         (before : VirtualFileSystem)

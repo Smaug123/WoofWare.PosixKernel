@@ -538,7 +538,7 @@ module PathWalk =
             Error (PathFailure.Errno UnixError.ENAMETOOLONG)
         else
 
-        match EntryNameMatching.lookUp (VirtualFileSystem.nameMatching vfs) name directoryContent.Entries with
+        match VirtualFileSystem.lookUpEntry directory name vfs with
         | EntryLookup.Undecided bound ->
             Error (PathFailure.Refused (PathRefusal.UndecidedNameEquivalence (directory, name, bound)))
         | EntryLookup.Free ->
@@ -794,7 +794,7 @@ module PathWalk =
             Error (PathFailure.Errno UnixError.ENAMETOOLONG)
         else
 
-        match EntryNameMatching.lookUp (VirtualFileSystem.nameMatching vfs) name directoryContent.Entries with
+        match VirtualFileSystem.lookUpEntry directory name vfs with
         // Every caller is refused here, whether it would have read the entry
         // or bound the name: on APFS the name either reaches `bound`'s entry
         // or is free, and the two answers differ for every syscall.

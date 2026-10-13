@@ -1,6 +1,7 @@
 namespace WoofWare.PosixKernel
 
 open System
+open System.Collections.Immutable
 
 /// How a filesystem decides which entry of a directory a name looked up in it
 /// reaches.
@@ -62,6 +63,10 @@ module internal EntryNameMatching =
     let private isAscii (bytes : ReadOnlySpan<byte>) : bool =
         bytes.IndexOfAnyInRange (0x80uy, 0xFFuy) < 0
 
+    /// Whether every byte of `name` is ASCII.
+    let isAsciiName (name : DirectoryEntryName) : bool =
+        isAscii ((UnixByteString.toBytes (DirectoryEntryName.toByteString name)).AsSpan ())
+
     /// What this library can say about a name's canonical decomposition.
     [<RequireQualifiedAccess>]
     type private Decomposition =
@@ -104,17 +109,6 @@ module internal EntryNameMatching =
     /// bound under `bound`, a different byte string: false only where the two
     /// are certainly not canonically equivalent.
     let private mightReach (target : Decomposition) (bound : DirectoryEntryName) : bool =
-        let boundBytes = UnixByteString.toBytes (DirectoryEntryName.toByteString bound)
-
-        // The common case, settled without decoding or allocating: an ASCII
-        // entry is its own decomposition.
-        if isAscii (boundBytes.AsSpan ()) then
-            match target with
-            | Decomposition.Ascii target -> boundBytes.AsSpan().SequenceEqual (ReadOnlySpan<byte> target)
-            | Decomposition.BeyondAscii
-            | Decomposition.NotUtf8 -> false
-        else
-
         match target, decompositionOf bound with
         | Decomposition.NotUtf8, _
         | _, Decomposition.NotUtf8 -> false
@@ -126,7 +120,11 @@ module internal EntryNameMatching =
         | Decomposition.BeyondAscii, Decomposition.BeyondAscii -> true
 
     /// Look `name` up among `entries`, a directory's names, as a filesystem
-    /// comparing names by `matching` does.
+    /// comparing names by `matching` does. `beyondAscii` must be those of the
+    /// names that hold a byte beyond ASCII. An ASCII name might be equivalent
+    /// only to the one name spelled as the looked-up name's decomposition, so
+    /// only the others need be looked through, and a lookup in a directory of
+    /// ASCII names stays logarithmic in its size.
     ///
     /// A name bound under exactly its bytes is always `Bound`, under either
     /// matching: a filesystem comparing by canonical equivalence holds no two
@@ -136,6 +134,7 @@ module internal EntryNameMatching =
         (matching : EntryNameMatching)
         (name : DirectoryEntryName)
         (entries : Map<DirectoryEntryName, InodeNumber>)
+        (beyondAscii : DirectoryEntryName seq)
         : EntryLookup
         =
         match Map.tryFind name entries with
@@ -154,7 +153,31 @@ module internal EntryNameMatching =
         | Decomposition.NotUtf8 -> EntryLookup.Free
         | target ->
 
-        match entries |> Map.tryFindKey (fun bound _ -> mightReach target bound) with
+        // The ASCII entry the name might reach, if its decomposition is ASCII:
+        // the one spelled as that decomposition. The name's own bytes, if they
+        // are ASCII, have already missed.
+        let asciiEntry =
+            match target with
+            | Decomposition.Ascii decomposed ->
+                let spelled =
+                    UnixByteString.ofBytes (ImmutableArray.Create<byte> decomposed)
+                    |> Result.mapError UnixByteString.describe
+                    |> Result.bind (DirectoryEntryName.ofByteString >> Result.mapError DirectoryEntryName.describe)
+
+                match spelled with
+                | Ok spelled when Map.containsKey spelled entries -> Some spelled
+                | Ok _ -> None
+                | Error defect ->
+                    failwith
+                        $"EntryNameMatching.lookUp: \"%s{DirectoryEntryName.toEscaped name}\" decomposes to bytes that are no name (%s{defect}), though decomposing adds no separator, NUL or dot (this is a bug in this library)."
+            | Decomposition.BeyondAscii
+            | Decomposition.NotUtf8 -> None
+
+        match asciiEntry with
+        | Some bound -> EntryLookup.Undecided bound
+        | None ->
+
+        match beyondAscii |> Seq.tryFind (mightReach target) with
         | Some bound -> EntryLookup.Undecided bound
         | None -> EntryLookup.Free
 

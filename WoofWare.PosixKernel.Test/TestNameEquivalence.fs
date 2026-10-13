@@ -701,14 +701,20 @@ module TestNameEquivalence =
                 |> List.mapi (fun i bytes -> entryName bytes, InodeNumber (int64 i + 1L))
                 |> Map.ofList
 
-            let firstPossiblyEquivalent =
-                directory
-                |> Map.toSeq
-                |> Seq.map fst
-                |> Seq.tryFind (fun bound -> possiblyEquivalent (bytesOfName bound) name)
+            let anyPossiblyEquivalent =
+                entries |> List.exists (fun bound -> possiblyEquivalent bound name)
+
+            let namesBeyondAscii =
+                entries
+                |> List.filter (List.exists (fun b -> b >= 0x80uy))
+                |> List.map entryName
 
             let answer =
-                EntryNameMatching.lookUp EntryNameMatching.CanonicalEquivalence (entryName name) directory
+                EntryNameMatching.lookUp
+                    EntryNameMatching.CanonicalEquivalence
+                    (entryName name)
+                    directory
+                    namesBeyondAscii
 
             let fail (why : string) : unit =
                 failwith $"looking up %s{hexOf name} among %A{List.map hexOf entries}: %s{why}, got %A{answer}"
@@ -723,7 +729,7 @@ module TestNameEquivalence =
                 if entries |> List.exists (equivalent name) then
                     fail "an equivalent name is bound, so the name is not free"
 
-                if firstPossiblyEquivalent.IsSome || List.contains name entries then
+                if anyPossiblyEquivalent || List.contains name entries then
                     fail "expected an answer other than free"
 
                 if not entries.IsEmpty then
@@ -738,8 +744,13 @@ module TestNameEquivalence =
                 if List.contains name entries then
                     fail "the name is bound under exactly its bytes"
 
-                if Some bound <> firstPossiblyEquivalent then
-                    fail $"expected the first entry that might be equivalent, %A{firstPossiblyEquivalent}"
+                if
+                    not (
+                        List.contains (bytesOfName bound) entries
+                        && possiblyEquivalent (bytesOfName bound) name
+                    )
+                then
+                    fail "expected an entry that might be equivalent"
 
                 if equivalent (bytesOfName bound) name then
                     cover "undecided, equivalent"
