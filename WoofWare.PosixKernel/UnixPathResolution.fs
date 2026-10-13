@@ -1367,6 +1367,65 @@ module UnixPathResolution =
         tryChmod path mode system
         |> Refusal.orRaise "UnixPathResolution.chmod" ChModRefusal.kind ChModRefusal.describe
 
+    /// What `fchmod(2)` and `fchown(2)` reach through a descriptor. The two
+    /// answer every kind alike, but for the change they make.
+    [<RequireQualifiedAccess>]
+    type private DescriptorAttributeTarget =
+        /// An inode, reached through `through`.
+        | Inode of inode : InodeNumber * through : ReachedThrough
+        /// On Linux, an end of the pipe `pipe`, which the process made and
+        /// whose status is `status`.
+        | Pipe of pipe : PipeId * status : PipeStatus
+        /// On Linux, a socket, whose mode and owner this kernel does not hold.
+        | Socket of socket : SocketId
+        /// On Linux, an end of the pipe `pipe`, which the process was launched
+        /// with, whose mode and owner are the launcher's.
+        | LaunchedPipe of pipe : PipeId
+        /// The call answers this errno, changing nothing.
+        | Fails of error : UnixError
+
+    /// What `fchmod(2)` or `fchown(2)`, which `operation` names, reach
+    /// through `fd`.
+    let private descriptorAttributeTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (fd : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : DescriptorAttributeTarget
+        =
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        match objectReached fd system with
+        | None -> DescriptorAttributeTarget.Fails UnixError.EBADF
+        | Some (reached, OpenFileObject.File inode) ->
+            DescriptorAttributeTarget.Inode (inode, ReachedDescription.through operation reached)
+        // An epoll instance (Linux) and a kqueue (Darwin).
+        | Some (_, OpenFileObject.AnonymousInode) -> DescriptorAttributeTarget.Fails UnixError.EOPNOTSUPP
+        | Some (_, OpenFileObject.Kqueue _) -> DescriptorAttributeTarget.Fails UnixError.EINVAL
+        | Some (_, OpenFileObject.Socket socket) ->
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> DescriptorAttributeTarget.Socket socket
+            | SimulatedUnixFlavour.Darwin -> DescriptorAttributeTarget.Fails UnixError.EINVAL
+        | Some (_, OpenFileObject.Pipe pipeId) ->
+            match flavour with
+            | SimulatedUnixFlavour.Darwin -> DescriptorAttributeTarget.Fails UnixError.EINVAL
+            | SimulatedUnixFlavour.Linux ->
+
+            match (UnixMachineState.pipe pipeId system.Machine).Origin with
+            | PipeOrigin.Launched _ -> DescriptorAttributeTarget.LaunchedPipe pipeId
+            | PipeOrigin.Made status -> DescriptorAttributeTarget.Pipe (pipeId, status)
+
+    /// `system` with the pipe `pipeId`, one the process made, reporting
+    /// `status`.
+    let private withPipeStatus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pipeId : PipeId)
+        (status : PipeStatus)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        { system with
+            Machine = UnixMachineState.withMadePipeStatus pipeId status system.Machine
+        }
+
     /// `fchmod`, with a refusal answered as the `Error` rather than raised.
     let internal tryFchmod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
@@ -1386,66 +1445,31 @@ module UnixPathResolution =
         // mode, for its owner in and out of its group, a non-owner in and out
         // of it, and root; the change shows through both ends, and moves both
         // ends' ctime and nothing else.
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
-
-        match objectReached fd system with
-        | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some (reached, OpenFileObject.File inode) ->
-            let through = ReachedDescription.through "UnixPathResolution.fchmod" reached
-
+        match descriptorAttributeTarget "UnixPathResolution.fchmod" fd system with
+        | DescriptorAttributeTarget.Fails error -> Ok (SyscallAnswer.Failed error, system)
+        | DescriptorAttributeTarget.Socket socket -> Error (FChModRefusal.Socket socket)
+        | DescriptorAttributeTarget.LaunchedPipe pipeId -> Error (FChModRefusal.LaunchedPipe pipeId)
+        | DescriptorAttributeTarget.Inode (inode, through) ->
             changeModeOf through inode mode system
             |> Result.mapError (attributeChangeRefusal FChModRefusal.UnmeasuredModeChange FChModRefusal.UnplacedChange)
-        // An epoll instance (Linux) and a kqueue (Darwin).
-        | Some (_, OpenFileObject.AnonymousInode) -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
-        | Some (_, OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (_, OpenFileObject.Socket socket) ->
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> Error (FChModRefusal.Socket socket)
-            | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (_, OpenFileObject.Pipe pipeId) ->
-            match flavour with
-            | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-            | SimulatedUnixFlavour.Linux ->
+        | DescriptorAttributeTarget.Pipe (pipeId, status) ->
 
-            let pipe = UnixMachineState.pipe pipeId system.Machine
+        let rule = SimulatedUnixPlatform.privilegedModeChange system.Machine.UnixPlatform
 
-            match pipe.Origin with
-            | PipeOrigin.Launched _ -> Error (FChModRefusal.LaunchedPipe pipeId)
-            | PipeOrigin.Made status ->
+        match PermissionBits.afterModeChange rule (Standing.toward system.Process.Credentials status.Owner) mode with
+        | Error refusal ->
+            failwith
+                $"UnixPathResolution.fchmod: a Linux platform's mode-change rule refused a caller (%s{ModeChangeRefusal.describe refusal}), but Linux's rule answers every caller (this is a bug in this library)."
+        | Ok ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+        | Ok (ModeChange.Permitted bits) ->
 
-            let rule = SimulatedUnixPlatform.privilegedModeChange system.Machine.UnixPlatform
+        let changed =
+            { status with
+                Permissions = bits
+            }
+            |> PipeStatus.statusChangedAt (UnixMachineState.realtime system.Scheduling system.Machine)
 
-            match
-                PermissionBits.afterModeChange rule (Standing.toward system.Process.Credentials status.Owner) mode
-            with
-            | Error refusal ->
-                failwith
-                    $"UnixPathResolution.fchmod: a Linux platform's mode-change rule refused a caller (%s{ModeChangeRefusal.describe refusal}), but Linux's rule answers every caller (this is a bug in this library)."
-            | Ok ModeChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
-            | Ok (ModeChange.Permitted bits) ->
-
-            let changed =
-                { pipe with
-                    Origin =
-                        PipeOrigin.Made
-                            { status with
-                                Permissions = bits
-                                Times =
-                                    { status.Times with
-                                        StatusChange = UnixMachineState.realtime system.Scheduling system.Machine
-                                    }
-                            }
-                }
-
-            Ok (
-                SyscallAnswer.Completed 0L,
-                { system with
-                    Machine =
-                        { system.Machine with
-                            Pipes = Map.add pipeId changed system.Machine.Pipes
-                        }
-                }
-            )
+        Ok (SyscallAnswer.Completed 0L, withPipeStatus pipeId changed system)
 
     /// `fchmod(2)`: change the mode of the inode `fd` names.
     ///
@@ -1669,77 +1693,44 @@ module UnixPathResolution =
         // AF_INET6 and AF_UNIX socket, stream or datagram, and answers
         // EOPNOTSUPP for an epoll instance whoever asks; Darwin answers EINVAL
         // for a pipe end, every one of those sockets, and a kqueue.
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
-
-        match objectReached fd system with
-        | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some (reached, OpenFileObject.File inode) ->
-            let through = ReachedDescription.through "UnixPathResolution.fchown" reached
-
+        match descriptorAttributeTarget "UnixPathResolution.fchown" fd system with
+        | DescriptorAttributeTarget.Fails error -> Ok (SyscallAnswer.Failed error, system)
+        | DescriptorAttributeTarget.Socket socket -> Error (FChOwnRefusal.Socket socket)
+        | DescriptorAttributeTarget.LaunchedPipe pipeId -> Error (FChOwnRefusal.LaunchedPipe pipeId)
+        | DescriptorAttributeTarget.Inode (inode, through) ->
             changeOwnerOf through inode user group system
             |> Result.mapError (attributeChangeRefusal FChOwnRefusal.UnmeasuredOwnerChange FChOwnRefusal.UnplacedChange)
-        // An epoll instance (Linux) and a kqueue (Darwin).
-        | Some (_, OpenFileObject.AnonymousInode) -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
-        | Some (_, OpenFileObject.Kqueue _) -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (_, OpenFileObject.Socket socket) ->
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> Error (FChOwnRefusal.Socket socket)
-            | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-        | Some (_, OpenFileObject.Pipe pipeId) ->
-            match flavour with
-            | SimulatedUnixFlavour.Darwin -> Ok (SyscallAnswer.Failed UnixError.EINVAL, system)
-            | SimulatedUnixFlavour.Linux ->
+        | DescriptorAttributeTarget.Pipe (pipeId, status) ->
 
-            let pipe = UnixMachineState.pipe pipeId system.Machine
+        let credentials = system.Process.Credentials
 
-            match pipe.Origin with
-            | PipeOrigin.Launched _ -> Error (FChOwnRefusal.LaunchedPipe pipeId)
-            | PipeOrigin.Made status ->
+        match
+            OwnerChangeRules.verdict
+                (SimulatedUnixPlatform.ownerChangeRule system.Machine.UnixPlatform)
+                (Standing.toward credentials status.Owner)
+                (OwnerChangeRequest.classify credentials status.Owner user group)
+                OwnerChangeTarget.NonDirectory
+                status.Permissions
+        with
+        | Error refusal ->
+            failwith
+                $"UnixPathResolution.fchown: a Linux platform's owner-change rule refused a caller (%s{OwnerChangeRefusal.describe refusal}), but Linux's rule answers every caller (this is a bug in this library)."
+        | Ok OwnerChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
+        | Ok OwnerChange.Untouched -> Ok (SyscallAnswer.Completed 0L, system)
+        | Ok (OwnerChange.Changed bits) ->
 
-            let credentials = system.Process.Credentials
+        let changed =
+            { status with
+                Owner =
+                    {
+                        User = defaultArg user status.Owner.User
+                        Group = defaultArg group status.Owner.Group
+                    }
+                Permissions = bits
+            }
+            |> PipeStatus.statusChangedAt (UnixMachineState.realtime system.Scheduling system.Machine)
 
-            match
-                OwnerChangeRules.verdict
-                    (SimulatedUnixPlatform.ownerChangeRule system.Machine.UnixPlatform)
-                    (Standing.toward credentials status.Owner)
-                    (OwnerChangeRequest.classify credentials status.Owner user group)
-                    OwnerChangeTarget.NonDirectory
-                    status.Permissions
-            with
-            | Error refusal ->
-                failwith
-                    $"UnixPathResolution.fchown: a Linux platform's owner-change rule refused a caller (%s{OwnerChangeRefusal.describe refusal}), but Linux's rule answers every caller (this is a bug in this library)."
-            | Ok OwnerChange.Forbidden -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
-            | Ok OwnerChange.Untouched -> Ok (SyscallAnswer.Completed 0L, system)
-            | Ok (OwnerChange.Changed bits) ->
-
-            let changed =
-                { pipe with
-                    Origin =
-                        PipeOrigin.Made
-                            { status with
-                                Owner =
-                                    {
-                                        User = defaultArg user status.Owner.User
-                                        Group = defaultArg group status.Owner.Group
-                                    }
-                                Permissions = bits
-                                Times =
-                                    { status.Times with
-                                        StatusChange = UnixMachineState.realtime system.Scheduling system.Machine
-                                    }
-                            }
-                }
-
-            Ok (
-                SyscallAnswer.Completed 0L,
-                { system with
-                    Machine =
-                        { system.Machine with
-                            Pipes = Map.add pipeId changed system.Machine.Pipes
-                        }
-                }
-            )
+        Ok (SyscallAnswer.Completed 0L, withPipeStatus pipeId changed system)
 
     /// `fchown(2)`: change the owner and group of the inode `fd` names.
     ///
@@ -2095,36 +2086,14 @@ module UnixPathResolution =
                     asNow
                     access
                     modification
-                    {
-                        Access = status.Times.ReadEndAccess
-                        Modification = status.Times.Modification
-                        StatusChange = status.Times.StatusChange
-                        Birth = status.Times.Created
-                    }
+                    (PipeTimes.asInodeTimes status.Times)
 
-            let changedPipe =
-                { pipe with
-                    Origin =
-                        PipeOrigin.Made
-                            { status with
-                                Times =
-                                    { status.Times with
-                                        ReadEndAccess = times.Access
-                                        Modification = times.Modification
-                                        StatusChange = times.StatusChange
-                                    }
-                            }
+            let changed =
+                { status with
+                    Times = PipeTimes.withInodeTimes times status.Times
                 }
 
-            Ok (
-                SyscallAnswer.Completed 0L,
-                { system with
-                    Machine =
-                        { system.Machine with
-                            Pipes = Map.add pipeId changedPipe system.Machine.Pipes
-                        }
-                }
-            )
+            Ok (SyscallAnswer.Completed 0L, withPipeStatus pipeId changed system)
 
     /// `setTimesOf` the object `fd` names, or EBADF.
     let private setDescriptorTimes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

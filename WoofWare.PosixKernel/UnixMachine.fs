@@ -1212,6 +1212,32 @@ module UnixMachineState =
             (bootSeconds + sinceBoot / UnixTimestamp.nanosecondsPerSecond + carry)
             (int (nanoseconds % UnixTimestamp.nanosecondsPerSecond))
 
+    /// `machine` with the pipe `pipeId`, one the process made, reporting
+    /// `status`. Loudly partial: this kernel holds no status for a pipe the
+    /// process was launched with.
+    let internal withMadePipeStatus
+        (pipeId : PipeId)
+        (status : PipeStatus)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        let piped = pipe pipeId machine
+
+        match piped.Origin with
+        | PipeOrigin.Launched (endpoint, _) ->
+            failwith
+                $"UnixMachineState.withMadePipeStatus: pipe %O{pipeId} was launched as %O{endpoint}, and this kernel holds no status for it (this is a bug in the caller)."
+        | PipeOrigin.Made _ ->
+            { machine with
+                Pipes =
+                    Map.add
+                        pipeId
+                        { piped with
+                            Origin = PipeOrigin.Made status
+                        }
+                        machine.Pipes
+            }
+
     /// `machine` with the timestamps of the pipe `pipeId` passed through
     /// `touch`, if this kernel holds them: it holds none for a pipe the process
     /// was launched with, whose timestamps are the launcher's.
@@ -1221,24 +1247,15 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        let piped = pipe pipeId machine
-
-        match piped.Origin with
+        match (pipe pipeId machine).Origin with
         | PipeOrigin.Launched _ -> machine
         | PipeOrigin.Made status ->
-            { machine with
-                Pipes =
-                    Map.add
-                        pipeId
-                        { piped with
-                            Origin =
-                                PipeOrigin.Made
-                                    { status with
-                                        Times = touch status.Times
-                                    }
-                        }
-                        machine.Pipes
-            }
+            withMadePipeStatus
+                pipeId
+                { status with
+                    Times = touch status.Times
+                }
+                machine
 
     /// What a read reaching `pipeId`'s read operation, or ending a sleep on it,
     /// does to its timestamps: on Darwin, moves the read end's `st_atime` to
