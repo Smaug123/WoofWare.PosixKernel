@@ -1071,18 +1071,40 @@ module SignalState =
         checkThread "onReturnToUser" threads "leader" leader
         checkThread "onReturnToUser" threads "thread asked" thread
 
-        let beyondLeader =
+        // A signal pending on the process that the leader blocks and another
+        // thread does not. Linux's threads all take from the process's pending
+        // set, so a thread that does not block it takes it as it returns; where
+        // its default ends or stops the whole process, which thread does not
+        // matter, as `generate` reasons at generation, and it is answered. Linux
+        // 6.18.5 was measured so (`docs/probes/non-leader-unblock`): sent while
+        // both threads blocked it, a TERM or TSTP at its default that the
+        // second thread unblocked, or let through a `sigsuspend`'s mask,
+        // killed or stopped the process before that call returned. Darwin
+        // 27.0.0 left each pending on the main thread instead, having put it in
+        // that thread's set as it was sent, which this library does not hold
+        // apart from the process's; so under Darwin, as for a caught or ignored
+        // signal, it is refused.
+        let takenBeyondLeader (entry : PendingSignal<'Thread>) : bool =
+            match state.Numbering, effectOf state.Numbering (disposition entry.Signal state) entry.Signal with
+            | SignalNumbering.Linux, Effect.Terminates
+            | SignalNumbering.Linux, Effect.Stops -> true
+            | SignalNumbering.Linux, Effect.Caught
+            | SignalNumbering.Linux, Effect.Ignored
+            | SignalNumbering.Darwin, _ -> false
+
+        let beyondLeader, refused =
             state.Pending
-            |> List.tryFind (fun entry ->
+            |> List.filter (fun entry ->
                 match receiverFor leader threads entry state with
                 | Receiver.BeyondLeader -> true
                 | Receiver.Thread _
                 | Receiver.Nobody -> false
             )
+            |> List.partition takenBeyondLeader
 
-        match beyondLeader with
-        | Some entry -> Error (SignalReceiverRefusal.LeaderBlocks entry.Signal)
-        | None ->
+        match refused with
+        | entry :: _ -> Error (SignalReceiverRefusal.LeaderBlocks entry.Signal)
+        | [] ->
 
         // The first entry equal to `entry` gone from `pending`: within one set,
         // the order `pendingFor` walks is the order `Pending` holds, so this is
@@ -1190,13 +1212,23 @@ module SignalState =
                 | DefaultDisposition.Stop -> unlessFramesPushed entry (SignalDelivery.DefaultStop entry.Signal)
                 | DefaultDisposition.Continue -> unlessFramesPushed entry (SignalDelivery.DefaultContinue entry.Signal)
 
-        walk [] state (pendingFor leader thread state)
+        // The leader walks the process's whole set already; another thread
+        // takes, after its own, those of the process's that it can, which only
+        // Linux has. Its mask decides each as the walk reaches it.
+        let candidates =
+            if thread = leader then
+                pendingFor leader thread state
+            else
+                pendingFor leader thread state @ beyondLeader
+
+        walk [] state candidates
 
     /// What `thread` takes as it returns to user mode, by the rules
     /// `UnixSignal.onReturnToUser` states: `threads` and `leader` are as
     /// `generate` takes them, so `thread` takes the process's own signals as well
-    /// as its own only if it is the leader, and a termination's core flag is as
-    /// `coreDumps` decides.
+    /// as its own only if it is the leader, or, under Linux, one the leader
+    /// blocks whose default ends or stops the process, and a termination's core
+    /// flag is as `coreDumps` decides.
     ///
     /// Returns the possibly-updated state in every case, because an answer can
     /// change the state without producing an action (an ignored signal is

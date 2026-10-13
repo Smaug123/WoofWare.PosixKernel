@@ -756,6 +756,8 @@ It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate
 * `ReturnToUserOutcome.ContinueDiscarded signal`: the kernel discarded a `SIGCONT` at its default, pending while the thread blocked it, as the thread took it, and the client asks `onReturnToUser` again, since the return goes on, under a `sigsuspend`'s temporary mask if the thread is returning from one.
 
 A signal whose default terminates the process ends it where the library applies the default: at generation, when some thread can take it (from `kill`, `pthreadKill`, or a write that raises `SIGPIPE`), and otherwise when a thread that blocked it can take it, as the thread returns to user mode (from `onReturnToUser`): after a mask call or a `sigreturn` that unblocks it, or from a `sigsuspend` whose temporary mask lets it through.
+For a signal sent to the process while every thread blocked it, that thread may be any of the process's threads under Linux, whose threads all take from the process's pending set; a signal whose default stops the process is taken the same way.
+Under Darwin, which put such a signal in its leader's own set as it was sent, a thread other than the leader that unblocks it does not take it, and while it is pending so, `onReturnToUser` refuses every thread.
 Either answer is `ProcessFate.ProcessEnded` of the `EndedProcess`, killed by the signal (`ProcessTermination.Signaled`, with the core flag), and no handler runs, not even one whose frame was pushed at the same return; the client ends the process on its machine with `SimulatedMachine.endProcess`, as for an exit.
 
 A signal whose default stops the process is reported (`KillOutcome.ProcessStopped`, `ReturnToUserOutcome.ProcessStopped`) for the client to act on.
