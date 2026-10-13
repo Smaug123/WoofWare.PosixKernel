@@ -677,6 +677,42 @@ module TestConnect =
                 |> shouldEqual (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
             | other -> failwith $"SO_REUSEADDR %b{reuse}: expected DarwinImplicitBindHeld, got %A{other}"
 
+    /// A socket `bind(2)` gave the wildcard at the port searches for no port,
+    /// so another socket holding the port at another address, which the bind
+    /// rule lets two sockets carrying `SO_REUSEADDR` do, does not change its
+    /// answer: Darwin's EINVAL, as for row E2 of
+    /// `docs/probes/implicit-self-connect`.
+    [<Test>]
+    let ``Darwin answers a wildcard-bound self-tuple beside a port held elsewhere`` () : unit =
+        let platform = SimulatedUnixPlatform.macOsArm64
+
+        let system =
+            let system = systemOn platform
+
+            { system with
+                Machine =
+                    { system.Machine with
+                        LocalRoutes = UnixSystem.defaultLocalRoutes
+                    }
+            }
+
+        let holder =
+            { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
+                ReuseAddress = true
+            }
+
+        let _, system = withSocket (SocketId 0L) holder system
+
+        let bound =
+            { streamSocket (boundAt (Ipv4Endpoint.ofParts Ipv4Address.any 40000us)) SocketPhase.Idle with
+                ReuseAddress = true
+            }
+
+        let fd, system = withSocket (SocketId 1L) bound system
+        let answer, after = connectTo fd 16u (loopback 40000us) system
+        answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+        (UnixMachineState.socket (SocketId 1L) after.Machine) |> shouldEqual bound
+
     /// A socket bound to the wildcard is its own destination only where its
     /// source is known to be: towards 127.0.0.1, which it resolves to.
     /// Towards another loopback address the source is unmeasured, and the
