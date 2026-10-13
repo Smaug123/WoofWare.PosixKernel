@@ -1980,20 +1980,7 @@ module UnixNamespace =
 
         // The covered directory, not the mounted root, is what a sticky
         // parent's rule consults; see `RemovalRefusal.MountPoint`.
-        let coveredInStickyDirectory =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, Some target) when
-                (VirtualFileSystem.mountOf target system.Machine.FileSystem).IsSome
-                ->
-                match VirtualFileSystem.tryGetDirectory directory system.Machine.FileSystem with
-                | Some content when PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0 ->
-                    Some target
-                | Some _
-                | None -> None
-            | ResolvedTarget.Entry _
-            | ResolvedTarget.Directory _ -> None
-
-        match coveredInStickyDirectory with
+        match RemovalChecks.mountPointInStickyDirectory resolution system.Machine.FileSystem with
         | Some mountRoot -> Error (RemovalRefusal.MountPoint mountRoot)
         | None ->
 
@@ -2085,20 +2072,7 @@ module UnixNamespace =
 
         // The covered directory, not the mounted root, is what a sticky
         // parent's rule consults; see `RemovalRefusal.MountPoint`.
-        let coveredInStickyDirectory =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, Some target) when
-                (VirtualFileSystem.mountOf target system.Machine.FileSystem).IsSome
-                ->
-                match VirtualFileSystem.tryGetDirectory directory system.Machine.FileSystem with
-                | Some content when PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0 ->
-                    Some target
-                | Some _
-                | None -> None
-            | ResolvedTarget.Entry _
-            | ResolvedTarget.Directory _ -> None
-
-        match coveredInStickyDirectory with
+        match RemovalChecks.mountPointInStickyDirectory resolution system.Machine.FileSystem with
         | Some mountRoot -> Error (RemovalRefusal.MountPoint mountRoot)
         | None ->
 
@@ -2476,12 +2450,7 @@ module UnixNamespace =
         // owner a sticky parent consults and whose write bit a move to another
         // directory consults, and this kernel holds only the mounted root.
         let sticky (resolution : Resolution) : bool =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, _) ->
-                match VirtualFileSystem.tryGetDirectory directory vfs with
-                | Some content -> PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0
-                | None -> false
-            | ResolvedTarget.Directory _ -> false
+            RemovalChecks.inStickyDirectory resolution vfs
 
         let verdict =
             match mountRootNamed sourceResolution, mountRootNamed destinationResolution, verdict with

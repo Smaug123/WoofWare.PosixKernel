@@ -175,28 +175,48 @@ module private RemovalChecks =
 
         parent, Inode.permissions parent
 
-    /// Whether the *holding* directory refuses this caller the write bit it
-    /// needs to remove a name from it.
+    /// Whether the directory `inode` refuses this caller the write bit it
+    /// needs to remove, rename or replace a name in it, or to rewrite the
+    /// ".." of a directory a rename moves.
     ///
     /// Write alone: the search half is the walk's, and a resolution that got
     /// this far has passed it. The sticky bit is a separate question, which
     /// `sticky` answers.
     ///
-    /// Partial in `directory`, which the walk has just reported as the directory
-    /// holding `name`.
-    let lacksWrite
-        (credentials : Credentials)
-        (directory : InodeNumber)
-        (name : DirectoryEntryName)
-        (vfs : VirtualFileSystem)
-        : bool
-        =
-        // The lookup is above the privilege test, so its two assertions
-        // fire for a privileged caller too. That is deliberate: both name a
-        // corrupt inode graph, and root skipping the check would leave the
-        // corruption to be found somewhere less informative.
-        let parent, permissions = holding directory name vfs
-        PermissionBits.deniedTo (Standing.toward credentials parent.Owner) AccessRequest.Write permissions
+    /// Partial in `inode`, which the caller has just obtained from a
+    /// resolution or from a directory entry, and which `role` names in the
+    /// failure.
+    let lacksWrite (role : string) (credentials : Credentials) (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
+        // The lookup is above the privilege test, so its assertion fires for
+        // a privileged caller too. That is deliberate: it names a corrupt
+        // inode graph, and root skipping the check would leave the corruption
+        // to be found somewhere less informative.
+        let entry = VirtualFileSystem.get role inode vfs
+        PermissionBits.deniedTo (Standing.toward credentials entry.Owner) AccessRequest.Write (Inode.permissions entry)
+
+    /// Whether the directory holding the final name `resolution` reached
+    /// carries the sticky bit: false for a path that ends in no name.
+    let inStickyDirectory (resolution : Resolution) (vfs : VirtualFileSystem) : bool =
+        match resolution.Target with
+        | ResolvedTarget.Entry (directory, _, _) ->
+            match VirtualFileSystem.tryGetDirectory directory vfs with
+            | Some content -> PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0
+            | None -> false
+        | ResolvedTarget.Directory _ -> false
+
+    /// The root of the filesystem mounted on the final name `resolution`
+    /// reached, where the directory holding that name is sticky. The sticky
+    /// rule consults the covered directory's owner, which this kernel does not
+    /// hold, rather than the mounted root's.
+    let mountPointInStickyDirectory (resolution : Resolution) (vfs : VirtualFileSystem) : InodeNumber option =
+        match resolution.Target with
+        | ResolvedTarget.Entry (_, _, Some target) when
+            (VirtualFileSystem.mountOf target vfs).IsSome
+            && inStickyDirectory resolution vfs
+            ->
+            Some target
+        | ResolvedTarget.Entry _
+        | ResolvedTarget.Directory _ -> None
 
     /// What the holding directory's sticky bit says about this caller removing,
     /// renaming or replacing `name`, which is bound to `target`.
@@ -332,7 +352,7 @@ module internal UnlinkRules =
                 UnlinkVerdict.Refuse UnixError.EISDIR
             else
                 UnlinkVerdict.Refuse UnixError.ENOTDIR
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             UnlinkVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials directory name target vfs = StickyRemoval.Forbidden then
             UnlinkVerdict.Refuse UnixError.EPERM
@@ -402,7 +422,7 @@ module internal UnlinkRules =
 
         if RemovalChecks.isDirectory target vfs then
             Ok (UnlinkVerdict.Refuse UnixError.EPERM)
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             Ok (UnlinkVerdict.Refuse UnixError.EACCES)
         else
 
@@ -593,7 +613,7 @@ module internal RmDirRules =
         | None -> RmDirVerdict.Refuse UnixError.ENOENT
         | Some target ->
 
-        if RemovalChecks.lacksWrite credentials directory name vfs then
+        if RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             RmDirVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials directory name target vfs = StickyRemoval.Forbidden then
             RmDirVerdict.Refuse UnixError.EPERM
@@ -664,7 +684,7 @@ module internal RmDirRules =
 
         if not (RemovalChecks.isDirectory target vfs) then
             Ok (RmDirVerdict.Refuse UnixError.ENOTDIR)
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             Ok (RmDirVerdict.Refuse UnixError.EACCES)
         else
 
