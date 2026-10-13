@@ -247,7 +247,8 @@ type internal ConnectRefusal =
     /// Linux's retry would answer the reset's pending error, or ECONNABORTED
     /// once it is taken, and disconnect the socket; unmeasured.
     | ResetBeforeReport of socket : SocketId
-    /// The destination is the socket's own bound address with nothing
+    /// Under Linux, the destination is the socket's own address, whether
+    /// `bind(2)` gave it or the connect's own implicit bind did, with nothing
     /// listening: TCP simultaneous open, which is unmodelled.
     | SimultaneousOpen of destination : SocketAddress
     /// Darwin drops the SYN to a bound but unlistened port, and the connect
@@ -300,7 +301,7 @@ module internal ConnectRefusal =
         | ConnectRefusal.ResetBeforeReport socket ->
             $"socket %O{socket}'s non-blocking connect completed, and its connection was reset before any connect reported the completion. Linux's retry finds the socket closed and answers the reset's pending error, or ECONNABORTED once an SO_ERROR read has taken it, and disconnects the socket, as for a refused connect; what that leaves of the socket's binding is unmeasured."
         | ConnectRefusal.SimultaneousOpen destination ->
-            $"destination %s{SocketAddress.toString destination} is this socket's own bound address and nothing is listening there. A real kernel can complete this as a TCP simultaneous open -- connecting the socket to itself -- which this library does not model."
+            $"destination %s{SocketAddress.toString destination} is this socket's own address, from bind(2) or from the port this connect's implicit bind took, and nothing is listening there. Linux completes this as a TCP simultaneous open -- connecting the socket to itself -- which this library does not model."
         | ConnectRefusal.DarwinSynDropped destination ->
             $"destination %s{SocketAddress.toString destination} is bound but nothing is listening there, and Darwin *drops* such a SYN rather than answering RST: the connect pends on the client's retransmission schedule (a blocking one was measured to stall into ETIMEDOUT), which this library cannot honour deterministically. Listen on the destination socket, or connect to a fully closed port."
         | ConnectRefusal.LinuxUnspecOnPhase (socket, phase) ->
@@ -852,15 +853,27 @@ module UnixConnection =
                 else
                     completed system
             | None ->
-                // The client's own endpoint with no listener behind it is
-                // TCP simultaneous open: a real kernel can complete it,
-                // connecting the socket to itself. Unmodelled.
+                // The client's own endpoint with no listener behind it: Linux
+                // completes it as a TCP simultaneous open, connecting the
+                // socket to itself, which is unmodelled; Darwin answers EINVAL
+                // and leaves the socket as it was. Measured for a source
+                // bind(2) gave and for one connect's own implicit bind gave
+                // (`docs/probes/implicit-self-connect`), which is checked
+                // below, once that bind has chosen its port.
+                let selfTuple
+                    (system : UnixSystem<'Thread, 'Handler>)
+                    : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                    =
+                    match flavour with
+                    | SimulatedUnixFlavour.Linux -> Error (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet dest))
+                    | SimulatedUnixFlavour.Darwin -> failed UnixError.EINVAL system
+
                 match sock.Ipv4Binding with
                 | Some binding when
                     binding.Endpoint.Port = dest.Port
                     && Ipv4Endpoint.addressesOverlap binding.Endpoint dest
                     ->
-                    Error (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet dest))
+                    selfTuple system
                 | _ ->
 
                 match flavour with
@@ -897,6 +910,35 @@ module UnixConnection =
                 // refusal is pending, on both kernels.
                 match ensureBound dest system with
                 | Error refusal -> Error refusal
+                | Ok (binding, system) when binding.Endpoint = dest ->
+                    // Only an unbound socket gets here, a bound one having been
+                    // answered above: its implicit bind took the destination's
+                    // own port. Darwin keeps what that bind made, the wildcard
+                    // at the port, from before the source resolved to loopback.
+                    let implicitBinding =
+                        { binding with
+                            Endpoint =
+                                { binding.Endpoint with
+                                    Address = Ipv4Address.any
+                                }
+                        }
+
+                    selfTuple
+                        { system with
+                            Machine =
+                                { system.Machine with
+                                    Sockets =
+                                        Map.add
+                                            socketId
+                                            { sock with
+                                                Addressing =
+                                                    SocketAddressing.replaceBinding
+                                                        (Some implicitBinding)
+                                                        sock.Addressing
+                                            }
+                                            system.Machine.Sockets
+                                }
+                        }
                 | Ok (binding, system) ->
 
                 if not nonBlocking then

@@ -549,6 +549,89 @@ module TestConnect =
         refusedBy fd (loopback 5000us) system
         |> shouldEqual (ConnectRefusal.EphemeralPortsExhausted (40000us, 40000us))
 
+    /// A system whose ephemeral range is the one port `port`, so that an
+    /// implicit bind can only take that port.
+    let private systemWithOnePort (platform : SimulatedUnixPlatform) (port : uint16) : UnixSystem<int, string> =
+        systemOnWith
+            (UnixBootImage.tryWithEphemeralPortRange (port, port)
+             >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+            platform
+
+    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        UnixSystemState.withFileDescriptors
+            (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            system
+
+    /// The three ways a socket's source comes to be its own destination, port
+    /// 40000 on loopback, with nothing listening: connect's own implicit bind
+    /// taking the only ephemeral port, and bind(2) to loopback or to the
+    /// wildcard.
+    let private selfTupleSockets (platform : SimulatedUnixPlatform) : (string * int * UnixSystem<int, string>) list =
+        let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+
+        [
+            "implicit", streamSocket None SocketPhase.Idle, systemWithOnePort platform 40000us
+            "bound to loopback", streamSocket (boundAt (loopback 40000us)) SocketPhase.Idle, systemOn platform
+            "bound to the wildcard", streamSocket (boundAt wildcard) SocketPhase.Idle, systemOn platform
+        ]
+        |> List.map (fun (name, socket, system) ->
+            let fd, system = withSocket (SocketId 0L) socket system
+            name, fd, system
+        )
+
+    /// Linux completes such a connect as a TCP simultaneous open, connecting
+    /// the socket to itself, whichever way the source came about (measured,
+    /// `docs/probes/implicit-self-connect`, rows L1, L2, E1 and E2). This
+    /// library does not model that, so it refuses each alike.
+    [<Test>]
+    let ``Linux refuses a connect to the socket's own source as a simultaneous open`` () : unit =
+        for name, fd, system in selfTupleSockets SimulatedUnixPlatform.linuxX64 do
+            for blocking in [ true ; false ] do
+                let system = if blocking then system else nonBlocking fd system
+
+                match
+                    CopyIn.connect
+                        fd
+                        UserBuffer.Mapped
+                        16u
+                        (CopyIn.inet system.Machine.UnixPlatform (loopback 40000us))
+                        system
+                with
+                | Error (ConnectRefusal.SimultaneousOpen destination) ->
+                    destination |> shouldEqual (SocketAddress.Inet (loopback 40000us))
+                | other -> failwith $"%s{name}, blocking %b{blocking}: expected SimultaneousOpen, got %A{other}"
+
+    /// Darwin answers EINVAL instead, blocking or not, and the socket stays
+    /// idle with the binding it had, or, if it had none, the one its implicit
+    /// bind gave it: the wildcard at the port (measured,
+    /// `docs/probes/implicit-self-connect`, rows D1, N1, E1 and E2).
+    [<Test>]
+    let ``Darwin answers EINVAL to a connect to the socket's own source`` () : unit =
+        for name, fd, system in selfTupleSockets SimulatedUnixPlatform.macOsArm64 do
+            for blocking in [ true ; false ] do
+                let system = if blocking then system else nonBlocking fd system
+                let before = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+                let answer, after = connectTo fd 16u (loopback 40000us) system
+                answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+
+                let socket = UnixMachineState.socket (SocketId 0L) after.Machine
+                socket.Phase |> shouldEqual SocketPhase.Idle
+
+                let expected =
+                    match before with
+                    | Some binding -> binding
+                    | None ->
+                        {
+                            Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+                            LockedAddress = None
+                            LockedPort = false
+                        }
+
+                if socket.Ipv4Binding <> Some expected then
+                    failwith $"%s{name}, blocking %b{blocking}: bound at %A{socket.Ipv4Binding}, not %A{expected}"
+
+                UnixSystem.checkInvariants after |> shouldEqual []
+
     /// The sockaddr copy's refusals come through `connect` under `Copy`, so a
     /// client matching on one type sees both kinds of refusal.
     [<TestCaseSource(nameof platforms)>]
