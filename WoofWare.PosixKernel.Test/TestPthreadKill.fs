@@ -172,7 +172,7 @@ module TestPthreadKill =
             | Ok (Ok outcome), true ->
                 let expected =
                     if signo = 0 then
-                        SignalGeneration.ProcessContinues system.Process.Signals
+                        SignalGeneration.ProcessContinues (Lone.proc system).Signals
                     else
                         match
                             SignalState.generate
@@ -182,34 +182,36 @@ module TestPthreadKill =
                                 {
                                     Signal =
                                         match
-                                            Signal.ofRawSignoUnder (SignalState.numbering system.Process.Signals) signo
+                                            Signal.ofRawSignoUnder
+                                                (SignalState.numbering (Lone.proc system).Signals)
+                                                signo
                                         with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueSome target
                                 }
-                                system.Process.Signals
+                                (Lone.proc system).Signals
                         with
                         | Ok generation -> generation
                         | Error refusal -> failwith $"generating %d{signo} at %d{target} was refused: %O{refusal}"
 
                 let survivor (after : UnixSystem<int, string>) : unit =
-                    { after with
-                        Process =
-                            { after.Process with
-                                Signals = system.Process.Signals
-                            }
-                    }
+                    after
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = (Lone.proc system).Signals
+                        }
+                    )
                     |> shouldEqual system
 
                 match outcome, expected with
                 | ProcessFate.Continues (KillOutcome.ProcessRuns, after), SignalGeneration.ProcessContinues signals ->
-                    after.Process.Signals |> shouldEqual signals
+                    (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
                 | ProcessFate.Continues (KillOutcome.ProcessStopped stoppedBy, after),
                   SignalGeneration.ProcessStopped (signal, signals) ->
                     stoppedBy |> shouldEqual signal
-                    after.Process.Signals |> shouldEqual signals
+                    (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
                 | ProcessFate.ProcessEnded ended, SignalGeneration.ProcessTerminated (signal, coreDumped) ->
                     ended.Termination
@@ -256,16 +258,16 @@ module TestPthreadKill =
         go 0 0 system
 
     let private catchIn (signal : Signal) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.setDisposition
-                            signal
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.setDisposition
+                        signal
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                        proc.Signals
+            }
+        )
 
     /// `thread` inside a handler that blocks `signal`, entered through a carrier
     /// other than `signal`.
@@ -276,30 +278,30 @@ module TestPthreadKill =
             else
                 HandlerFrames.carrier
 
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        HandlerFrames.enterVia
-                            carrier
-                            "carrier"
-                            system.Leader
-                            threads
-                            thread
-                            (Set.singleton signal)
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    HandlerFrames.enterVia
+                        carrier
+                        "carrier"
+                        (Lone.leader system)
+                        threads
+                        thread
+                        (Set.singleton signal)
+                        proc.Signals
+            }
+        )
 
     let private leave (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = HandlerFrames.leave thread system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = HandlerFrames.leave thread proc.Signals
+            }
+        )
 
     let private continues
         (what : string)
@@ -363,7 +365,7 @@ module TestPthreadKill =
                     let atBystander, raised = drain signal bystander raised
                     let whileBlocked, raised = drain signal raiser raised
 
-                    SignalState.pending raised.Process.Signals
+                    SignalState.pending (Lone.proc raised).Signals
                     |> shouldEqual
                         [
                             {
@@ -503,12 +505,12 @@ module TestPthreadKill =
             |> continues "kill"
             |> leave leader
             |> fun system ->
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals = SignalState.setDisposition signal SignalDisposition.Default system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals = SignalState.setDisposition signal SignalDisposition.Default proc.Signals
+                    }
+                )
 
         let system = systemOn SimulatedUnixFlavour.Darwin |> pendingOnProcess Signal.SIGTERM
 
@@ -533,11 +535,11 @@ module TestPthreadKill =
             let sent =
                 UnixSignal.tryKill (self system) sigcont system |> continues "kill SIGCONT"
 
-            SignalState.pending sent.Process.Signals |> shouldEqual []
+            SignalState.pending (Lone.proc sent).Signals |> shouldEqual []
 
             UnixSignal.tryPthreadKill leader sigcont sent
             |> continues "raise SIGCONT"
-            |> fun system -> SignalState.pending system.Process.Signals
+            |> fun system -> SignalState.pending (Lone.proc system).Signals
             |> shouldEqual []
 
     [<Test>]
@@ -567,7 +569,7 @@ module TestPthreadKill =
 
         UnixSignal.tryPthreadKill leader sigcont sent
         |> continues "raise SIGCONT"
-        |> fun system -> SignalState.pending system.Process.Signals |> List.length
+        |> fun system -> SignalState.pending (Lone.proc system).Signals |> List.length
         |> shouldEqual 2
 
     [<Test>]

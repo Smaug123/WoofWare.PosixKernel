@@ -185,7 +185,7 @@ module TestUnixPathBytes =
             UnixBootImage.tryWithFileSystem
                 epoch
                 (InodeOwner.ofProcess
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Process.Credentials)
+                    (Lone.proc (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)).Credentials)
                 (Map.ofList seed)
                 image
         with

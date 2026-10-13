@@ -98,15 +98,15 @@ module TestInodeLifetime =
                 FileDescriptorRegistry.openDirectory
                     (ForgedName.ofInode kernel inode)
                     inode
-                    (UnixSystemState.fileDescriptors kernel)
+                    (Lone.fileDescriptors kernel)
             | _ ->
                 FileDescriptorRegistry.openFile
                     (ForgedName.ofInode kernel inode)
                     inode
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors kernel)
+                    (Lone.fileDescriptors kernel)
 
-        fd, UnixSystemState.withFileDescriptors registry kernel
+        fd, Lone.withFileDescriptors registry kernel
 
     /// Remove `name` from the directory `path` names, answering the inode that
     /// name bound and the kernel with the name gone — the state `unlink` leaves
@@ -148,7 +148,7 @@ module TestInodeLifetime =
         let kernel = kernel ()
         let a = inodeOf kernel "/outer/inner/a"
         let b = inodeOf kernel "/outer/inner/b"
-        let cwd = kernel.Process.CurrentDirectoryInode
+        let cwd = (Lone.proc kernel).CurrentDirectoryInode
 
         // Before anything is opened, the current directory is the only
         // reference. A `heldInodes` that enumerated only the open file
@@ -173,7 +173,7 @@ module TestInodeLifetime =
         let kernel = kernel ()
 
         UnixMachineState.heldInodes kernel.Machine
-        |> shouldEqual (Set.singleton kernel.Process.CurrentDirectoryInode)
+        |> shouldEqual (Set.singleton (Lone.proc kernel).CurrentDirectoryInode)
 
         OpenFileTable.descriptions kernel.Machine.OpenFiles
         |> Map.isEmpty
@@ -314,8 +314,8 @@ module TestInodeLifetime =
         let fd, held = opened a kernel
 
         let duplicate, held =
-            match FileDescriptorRegistry.dup fd (UnixSystemState.fileDescriptors held) with
-            | Ok (duplicate, registry) -> duplicate, UnixSystemState.withFileDescriptors registry held
+            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors held) with
+            | Ok (duplicate, registry) -> duplicate, Lone.withFileDescriptors registry held
             | Error error -> failwith $"could not dup fd %d{fd}: %O{error}"
 
         let _, unbound = unbound "/outer/inner" "a" held

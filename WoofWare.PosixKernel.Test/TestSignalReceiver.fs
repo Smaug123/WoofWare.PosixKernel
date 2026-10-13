@@ -46,12 +46,12 @@ module TestSignalReceiver =
             |> Threads.spawn 3
 
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals = SignalState.setDisposition Signal.SIGUSR1 disposition system.Process.Signals
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGUSR1 disposition proc.Signals
+                }
+            )
 
         (system, blocking)
         ||> Set.fold (fun system thread -> HandlerFrames.enterIn "carrier" thread (Set.singleton Signal.SIGUSR1) system)
@@ -185,7 +185,7 @@ module TestSignalReceiver =
 
             match UnixSignal.tryKill (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
-                SignalState.pending after.Process.Signals
+                SignalState.pending (Lone.proc after).Signals
                 |> shouldEqual
                     [
                         {
@@ -221,7 +221,7 @@ module TestSignalReceiver =
 
             match flavour, UnixSignal.tryKill (self system) (usr1 flavour) system with
             | SimulatedUnixFlavour.Darwin, Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
-                SignalState.pending after.Process.Signals |> shouldBeEmpty
+                SignalState.pending (Lone.proc after).Signals |> shouldBeEmpty
             | SimulatedUnixFlavour.Linux, Error refusal ->
                 refusal
                 |> shouldEqual (KillRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1))
@@ -241,12 +241,12 @@ module TestSignalReceiver =
             match UnixSignal.tryKill (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 let after =
-                    { after with
-                        Process =
-                            { after.Process with
-                                Signals = HandlerFrames.leave 2 after.Process.Signals
-                            }
-                    }
+                    after
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = HandlerFrames.leave 2 proc.Signals
+                        }
+                    )
 
                 for thread in 0..3 do
                     match UnixSignal.tryOnReturnToUser thread after with
@@ -266,15 +266,15 @@ module TestSignalReceiver =
                         Signal = Signal.SIGUSR1
                         Target = ValueSome 2
                     }
-                    system.Process.Signals
+                    (Lone.proc system).Signals
 
             let system =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals = signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals = signals
+                    }
+                )
 
             match takenBy system with
             | [ None ; None ; Some [ frame ] ; None ] ->

@@ -35,10 +35,10 @@ module TestPollTimeout =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -83,7 +83,7 @@ module TestPollTimeout =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -101,7 +101,7 @@ module TestPollTimeout =
     /// `system` with the listener's accept queue holding `queue`.
     let private withQueue (queue : ConnectionId list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget listener (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected the listener, got %O{other}"
 
@@ -212,7 +212,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes atDeadline
                 reported |> shouldEqual [ 0s ]
                 count |> shouldEqual 0
-                UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
                 UnixSystem.checkInvariants finished |> shouldEqual []
 
         Check.One (config, property)
@@ -242,7 +242,7 @@ module TestPollTimeout =
                 let reported, count, finished = finishes becameReady
                 reported |> shouldEqual [ 0s ; events &&& (pollIn ||| pollRdNorm) ]
                 count |> shouldEqual 1
-                UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
 
         Check.One (config, property)
 
@@ -266,7 +266,7 @@ module TestPollTimeout =
 
         let refused =
             let socketId =
-                match FileDescriptorRegistry.tryFindTarget listener (UnixSystemState.fileDescriptors parked) with
+                match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors parked) with
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"expected the listener, got %O{other}"
 
@@ -368,8 +368,8 @@ module TestPollTimeout =
         UnixWait.deadlines (Set.singleton thread) parkedAgain
         |> shouldEqual [ 10_000_000L ]
 
-        (UnixThreadTable.parkOf thread parkedAgain.Threads |> Option.get).Ordinal
-        |> shouldBeGreaterThan (UnixThreadTable.parkOf thread parked.Threads |> Option.get).Ordinal
+        (UnixThreadTable.parkOf thread (Lone.threads parkedAgain) |> Option.get).Ordinal
+        |> shouldBeGreaterThan (UnixThreadTable.parkOf thread (Lone.threads parked) |> Option.get).Ordinal
 
         let reported, count, _ = parkedAgain |> after 9_000_000L |> finishes
         reported |> shouldEqual [ 0s ]
@@ -379,7 +379,7 @@ module TestPollTimeout =
     let ``the park records each entry with the description it named`` () : unit =
         let _, parked = parks [ entry listener pollIn ; entry -3 pollOut ] 7 idle
 
-        UnixThreadTable.parkedFor thread parked.Threads
+        UnixThreadTable.parkedFor thread (Lone.threads parked)
         |> shouldEqual (
             Some (
                 ParkedSyscall.Poll
@@ -399,7 +399,7 @@ module TestPollTimeout =
     [<Test>]
     let ``closing a descriptor a parked poll watches is refused, and closing a dup of it is not`` () : unit =
         let dupFd, registry =
-            match FileDescriptorRegistry.dup listener (UnixSystemState.fileDescriptors idle) with
+            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
             | Ok (fd, registry) -> fd, registry
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -428,7 +428,7 @@ module TestPollTimeout =
             FileDescriptorRegistry.openDirectory
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
-                (UnixSystemState.fileDescriptors idle)
+                (Lone.fileDescriptors idle)
 
         let _, parked = parks [ entry directory 0x0002s ] 10 (withRegistry registry idle)
         UnixSystem.checkInvariants parked |> shouldEqual []
@@ -448,7 +448,7 @@ module TestPollTimeout =
     /// what `fd` named let go of behind the calls' backs, so that the close
     /// destroys it if no other descriptor names it.
     let private forgeRebind (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let registry = UnixSystemState.fileDescriptors system
+        let registry = Lone.fileDescriptors system
         let id = FileDescriptorRegistry.tryFindId fd registry |> Option.get
 
         let holds =
@@ -462,7 +462,7 @@ module TestPollTimeout =
             )
 
         let registry =
-            match FileDescriptorRegistry.dropDescriptor system.Process.ProcessId fd registry with
+            match FileDescriptorRegistry.dropDescriptor (Lone.proc system).ProcessId fd registry with
             | Ok (registry, _) -> registry
             | Error error -> failwith $"drop failed: %O{error}"
 
@@ -494,7 +494,7 @@ module TestPollTimeout =
 
         // With a dup keeping the description alive, the number is rebound.
         let _, registry =
-            match FileDescriptorRegistry.dup listener (UnixSystemState.fileDescriptors idle) with
+            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
             | Ok dup -> dup
             | Error error -> failwith $"dup failed: %O{error}"
 

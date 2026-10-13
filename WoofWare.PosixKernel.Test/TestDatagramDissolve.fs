@@ -35,7 +35,7 @@ module TestDatagramDissolve =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} is %A{other}"
 

@@ -16,7 +16,7 @@ module internal ReadOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        UnixReadWrite.tryRead system.Leader fd buffer count system
+        UnixReadWrite.tryRead (Lone.leader system) fd buffer count system
         |> Result.map (fun (outcome, after) ->
             match outcome with
             | ReadOutcome.Answered answer -> answer, after

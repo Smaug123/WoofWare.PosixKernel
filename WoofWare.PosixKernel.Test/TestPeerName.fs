@@ -46,7 +46,7 @@ module TestPeerName =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private endpointOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
             | Some binding -> binding.Endpoint
@@ -235,7 +235,7 @@ module TestPeerName =
         let system =
             match
                 WriteOutcomes.admitThenWrite
-                    system.Leader
+                    (Lone.leader system)
                     client
                     UserBuffer.Mapped
                     (ImmutableArray.Create<byte> (Array.zeroCreate 10))

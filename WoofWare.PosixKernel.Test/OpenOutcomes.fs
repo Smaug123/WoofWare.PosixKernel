@@ -31,7 +31,8 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenPath system.Leader flags path mode system |> answered
+        UnixNamespace.tryOpenPath (Lone.leader system) flags path mode system
+        |> answered
 
     /// `UnixNamespace.openat` by the process's leader, failing the test if the
     /// call sleeps.
@@ -43,4 +44,5 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenat system.Leader dirfd path flags mode system |> answered
+        UnixNamespace.tryOpenat (Lone.leader system) dirfd path flags mode system
+        |> answered

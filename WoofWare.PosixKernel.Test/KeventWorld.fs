@@ -30,10 +30,10 @@ module KeventWorld =
         Ipv4Endpoint.ofParts Ipv4Address.loopback port
 
     let withRegistry (registry : FileDescriptorRegistry) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -96,7 +96,7 @@ module KeventWorld =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        connectAs system.Leader fd port system
+        connectAs (Lone.leader system) fd port system
 
     /// A new non-blocking socket connecting to `port`, as the probe's `client`
     /// makes, connected by `thread`, which must be awake.
@@ -107,7 +107,7 @@ module KeventWorld =
 
     /// `clientAs` the process's leader.
     let client (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        clientAs system.Leader port system
+        clientAs (Lone.leader system) port system
 
     /// Accept one connection through `fd`, which must hold one.
     let accept (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
@@ -191,7 +191,7 @@ module KeventWorld =
 
     /// The registrations and the queue of the kqueue `kq` names.
     let stateOf (kq : int) (system : UnixSystem<int, string>) : KqueueState =
-        match FileDescriptorRegistry.tryFindTarget kq (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget kq (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Kqueue state) -> state
         | other -> failwith $"fd %d{kq} names %A{other}, not a kqueue"
 

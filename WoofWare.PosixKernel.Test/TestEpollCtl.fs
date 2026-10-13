@@ -49,11 +49,10 @@ module TestEpollCtl =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
 
@@ -82,7 +81,7 @@ module TestEpollCtl =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -103,22 +102,22 @@ module TestEpollCtl =
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup of fd %d{fd} failed: %O{error}"
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} is not live"
 
     let private epollOf (queueFd : int) (system : UnixSystem<int, string>) : EpollState =
-        match FileDescriptorRegistry.tryFindTarget queueFd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget queueFd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Epoll queueState) -> queueState
         | other -> failwith $"expected an epoll instance, got %A{other}"
 
@@ -293,7 +292,7 @@ module TestEpollCtl =
         | "same-as-epfd" -> epfd, system
         // The probe's `dup` of an epfd that is not open failed, leaving -1.
         | "dup-of-epfd" ->
-            match FileDescriptorRegistry.tryFindId epfd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindId epfd (Lone.fileDescriptors system) with
             | Some _ -> dupOf epfd system
             | None -> -1, system
         | other -> failwith $"ladder row names an unknown kind %s{other}"

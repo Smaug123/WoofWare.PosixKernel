@@ -37,12 +37,12 @@ module TestConnectedTransfer =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     /// TCP buffers as small as each flavour admits.
     let private small (image : UnixBootImage<int, string>) : UnixBootImage<int, string> =
@@ -86,7 +86,7 @@ module TestConnectedTransfer =
         : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
         =
         WriteOutcomes.admitThenWrite
-            system.Leader
+            (Lone.leader system)
             fd
             UserBuffer.Mapped
             (ImmutableArray.Create (payload, 0, count))
@@ -133,7 +133,7 @@ module TestConnectedTransfer =
         go 0L system
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -204,7 +204,7 @@ module TestConnectedTransfer =
         for platform in Machines.platforms do
             let client, server, system = pair false (systemOn small platform)
 
-            match UnixReadWrite.tryRead system.Leader client UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Lone.leader system) client UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -261,7 +261,7 @@ module TestConnectedTransfer =
             |> Result.map fst
             |> shouldEqual (Ok (WriteAnswer.Completed 0L))
 
-            UnixReadWrite.tryAdmitWrite system.Leader client unmapped 0UL system
+            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
             |> Result.map (fun outcome ->
                 match outcome with
                 | WriteStep.Returns (admission, _) -> admission
@@ -270,7 +270,7 @@ module TestConnectedTransfer =
             |> shouldEqual (Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
             // Something to copy.
-            UnixReadWrite.tryAdmitWrite system.Leader client unmapped 10UL system
+            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
             |> shouldEqual (Error (WriteRefusal.ConnectionFault (socketOf client system)))
 
             let system = sentAll server 10 system
@@ -899,7 +899,11 @@ module TestConnectedTransfer =
 
                 let direct =
                     thrice (fun system ->
-                        UnixReadWrite.tryWriteBytes system.Leader c (ImmutableArray.Create (payload, 0, 100)) system
+                        UnixReadWrite.tryWriteBytes
+                            (Lone.leader system)
+                            c
+                            (ImmutableArray.Create (payload, 0, 100))
+                            system
                     )
 
                 (build, direct) |> shouldEqual (build, admitted)
@@ -1669,10 +1673,10 @@ module TestConnectedTransfer =
                     let _, view = wait view
 
                     let epoll =
-                        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors view)
+                        FileDescriptorRegistry.fds (Lone.fileDescriptors view)
                         |> Map.keys
                         |> Seq.filter (fun fd ->
-                            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors view) with
+                            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors view) with
                             | Some (OpenFileTarget.Epoll _) -> true
                             | _ -> false
                         )
@@ -1686,10 +1690,10 @@ module TestConnectedTransfer =
                     let _, view = wait view
 
                     let kq =
-                        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors view)
+                        FileDescriptorRegistry.fds (Lone.fileDescriptors view)
                         |> Map.keys
                         |> Seq.filter (fun fd ->
-                            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors view) with
+                            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors view) with
                             | Some (OpenFileTarget.Kqueue _) -> true
                             | _ -> false
                         )

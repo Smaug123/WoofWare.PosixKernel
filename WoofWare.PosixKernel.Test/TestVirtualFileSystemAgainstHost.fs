@@ -893,12 +893,13 @@ module TestVirtualFileSystemAgainstHost =
                     { system.Machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-                Process =
-                    { system.Process with
-                        CurrentDirectoryInode = VirtualFileSystem.root vfs
-                    }
             }
-            |> Launched.restand
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = VirtualFileSystem.root vfs
+                }
+            )
+            |> Lone.restand
 
         match
             UnixNamespace.tryReadlink
@@ -2820,12 +2821,13 @@ module TestVirtualFileSystemAgainstHost =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private compareRenameRefusal (source : string) (destination : string) : RenameRefusal * RenameRefusal =
         let unique = Guid.NewGuid().ToString "N"
@@ -3145,12 +3147,13 @@ module TestVirtualFileSystemAgainstHost =
                     { system.Machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-                Process =
-                    { system.Process with
-                        CurrentDirectoryInode = VirtualFileSystem.root vfs
-                    }
             }
-            |> Launched.restand
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = VirtualFileSystem.root vfs
+                }
+            )
+            |> Lone.restand
 
         match Answered.chdir (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
         | SyscallAnswer.Completed 0L, moved ->

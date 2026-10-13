@@ -180,12 +180,13 @@ module TestReadLinkMode =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = cellInode
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = cellInode
+            }
+        )
+        |> Lone.restand
 
     let private readOnly : OpenFlags =
         {

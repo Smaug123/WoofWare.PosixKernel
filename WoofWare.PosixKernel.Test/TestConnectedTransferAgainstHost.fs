@@ -601,12 +601,12 @@ module TestConnectedTransferAgainstHost =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.ensure 1
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     /// A connected loopback pair in the kernel, both ends non-blocking, as
     /// `hostPair` makes one: the connecting socket, then the accepted one.
@@ -654,7 +654,7 @@ module TestConnectedTransferAgainstHost =
         =
         let bytes = System.Collections.Immutable.ImmutableArray.Create (payload, 0, count)
 
-        match WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped bytes system with
+        match WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system with
         | Ok (WriteStep.Returns (WriteAnswer.Completed written, system)) -> Seen.Returned written, system
         | Ok (WriteStep.Returns (WriteAnswer.Failed error, system)) -> Seen.Failed (error, false), system
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed error, entry, system)) when entry.Signal = Signal.SIGPIPE ->
@@ -728,7 +728,7 @@ module TestConnectedTransferAgainstHost =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    system.Leader
+                    (Lone.leader system)
                     [
                         {
                             Fd = fd
@@ -747,7 +747,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"FIONREAD: %A{other}"
 
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -755,7 +755,7 @@ module TestConnectedTransferAgainstHost =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 let description =
-                    match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
                     | Some description -> description
                     | None -> failwith $"fd %d{fd} names no description"
 

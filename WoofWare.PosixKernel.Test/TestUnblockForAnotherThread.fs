@@ -251,7 +251,7 @@ module TestUnblockForAnotherThread =
                     (InodeNumber 1L)
                     (DirectoryEntryName.parseOrFail context "f")
                     (PermissionBits.parseOrFail context 0o644)
-                    (InodeOwner.ofProcess system.Process.Credentials)
+                    (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
                     system.Machine.FileSystem
@@ -264,7 +264,7 @@ module TestUnblockForAnotherThread =
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode FileAccessMode.ReadWrite registry
@@ -276,7 +276,7 @@ module TestUnblockForAnotherThread =
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
             }
-            |> UnixSystemState.withFileDescriptors registry
+            |> Lone.withFileDescriptors registry
 
         let system =
             match UnixDescriptor.tryFlock holder lockedThrough 2 system with
@@ -298,7 +298,7 @@ module TestUnblockForAnotherThread =
         let rec fill (chunk : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match
                 WriteOutcomes.admitThenWrite
-                    system.Leader
+                    (Lone.leader system)
                     fullWrite
                     UserBuffer.Mapped
                     (ImmutableArray.CreateRange (Array.create chunk 0x61uy))
@@ -329,7 +329,7 @@ module TestUnblockForAnotherThread =
     let private asleep (world : World) (thread : int) (sleep : Sleep) (system : UnixSystem<int, string>) =
         let parkedOrNot (what : string) (result : Result<'outcome * UnixSystem<int, string>, 'refusal>) =
             match result with
-            | Ok (_, system) when (UnixThreadTable.parkOf thread system.Threads).IsSome -> Some system
+            | Ok (_, system) when (UnixThreadTable.parkOf thread (Lone.threads system)).IsSome -> Some system
             | Ok _ -> None
             | Error refusal -> failwith $"%s{what} was refused: %A{refusal}"
 
@@ -388,7 +388,7 @@ module TestUnblockForAnotherThread =
                 UnixKqueue.tryKevent thread world.Port 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
-            let mask = SignalState.maskOf thread system.Process.Signals
+            let mask = SignalState.maskOf thread (Lone.proc system).Signals
             UnixSignal.trySigsuspend thread mask system |> parkedOrNot "the sigsuspend"
         | Sleep.Pause -> UnixSignal.tryPause thread system |> parkedOrNot "the pause"
 
@@ -528,7 +528,7 @@ module TestUnblockForAnotherThread =
         match UnixWait.wakes (Set.singleton case.Sleeper) after with
         | [] -> None
         | _ ->
-            let threads = after.Threads |> Map.keys |> Set.ofSeq
+            let threads = Lone.threads after |> Map.keys |> Set.ofSeq
 
             let suspended =
                 match case.Sleep with
@@ -542,11 +542,11 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
-                    after.Process.CoreDumps
-                    after.Leader
+                    (Lone.proc after).CoreDumps
+                    (Lone.leader after)
                     threads
                     case.Sleeper
-                    after.Process.Signals
+                    (Lone.proc after).Signals
             with
             | Ok (Some (SignalDelivery.RunHandlers frames), _) ->
                 Some $"handlers for %A{frames |> List.map (fun frame -> frame.Entry.Signal)}"

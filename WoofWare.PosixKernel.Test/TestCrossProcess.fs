@@ -1332,7 +1332,7 @@ module TestCrossProcess =
         let machine =
             Machines.doIn a (fun view -> Answered.chdir (PathArg.ofText "/d") view |> snd) machine
 
-        let standing = (Machines.viewOf a machine).Process.CurrentDirectoryInode
+        let standing = (Lone.proc (Machines.viewOf a machine)).CurrentDirectoryInode
 
         let machine =
             Machines.doIn b (fun view -> Answered.rmdir (UnixPath.parseOrFail "test" "/d") view |> snd) machine
@@ -1416,7 +1416,7 @@ module TestCrossProcess =
                             FileDescriptorRegistry.Unchecked.setDescriptorCount id (inA + inB) registry
                         )
 
-                    UnixSystemState.withFileDescriptors forged view
+                    Lone.withFileDescriptors forged view
                 )
                 machine
 

@@ -56,7 +56,7 @@ module TestNonBlocking =
 
     /// What `poll` would report for `fd` right now.
     let private readinessOf (fd : int) (system : UnixSystem<int, string>) : uint32 =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> LinuxReadiness.ofDescription id system
         | None -> failwith $"fd %d{fd} is not open"
 
@@ -79,7 +79,7 @@ module TestNonBlocking =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
@@ -111,7 +111,7 @@ module TestNonBlocking =
         system.Machine.Sockets |> Map.count |> shouldEqual 2
 
         let targetOf fd =
-            FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system)
 
         targetOf first |> shouldNotEqual (targetOf second)
 
@@ -128,11 +128,11 @@ module TestNonBlocking =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp linux
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
-        let system = UnixSystemState.withFileDescriptors registry system
+        let system = Lone.withFileDescriptors registry system
 
         let system = set fd true system
         UnixDescriptor.isNonBlocking duplicate system |> shouldEqual (Some true)
@@ -166,9 +166,9 @@ module TestNonBlocking =
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
-        let system = UnixSystemState.withFileDescriptors registry system
+        let system = Lone.withFileDescriptors registry system
 
         for fd in [ socketFd ; fileFd ] do
             let after = set fd true system
@@ -210,9 +210,9 @@ module TestNonBlocking =
                     | Ok (duplicate, registry) -> duplicate, registry
                     | Error error -> failwith $"could not dup %d{fd}: %A{error}"
                 )
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
-        [ 0 ; 1 ; 2 ] @ fds, UnixSystemState.withFileDescriptors registry system
+        [ 0 ; 1 ; 2 ] @ fds, Lone.withFileDescriptors registry system
 
     /// Measured: `F_SETFL` takes `O_NONBLOCK` on each of the three streams and
     /// answers 0, `F_GETFL` reads it back, and it lives on the description, so a

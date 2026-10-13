@@ -56,7 +56,7 @@ module TestConnect =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -69,7 +69,7 @@ module TestConnect =
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     let private streamSocket (binding : Ipv4Binding option) (phase : SocketPhase) : SocketDescription =
         {
@@ -155,11 +155,11 @@ module TestConnect =
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         let queueFd, registry = FileDescriptorRegistry.createEpoll registry
 
-        let system = UnixSystemState.withFileDescriptors registry system
+        let system = Lone.withFileDescriptors registry system
 
         for fd in [ 0 ; fileFd ; queueFd ] do
             admitOrFail fd UserBuffer.Mapped 16u system
@@ -448,8 +448,8 @@ module TestConnect =
         let fd, system = clientAndListener platform 5000us
 
         let system =
-            UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            Lone.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
 
         let outcome, system = connectTo fd 16u (loopback 5000us) system

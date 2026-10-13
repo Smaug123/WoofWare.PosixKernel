@@ -218,16 +218,12 @@ module TestPipeAgainstHost =
                 // The test host process ignores SIGPIPE, so a write with no
                 // reader answers EPIPE there rather than ending it.
                 let system =
-                    { system with
-                        Process =
-                            { system.Process with
-                                Signals =
-                                    SignalState.setDisposition
-                                        Signal.SIGPIPE
-                                        SignalDisposition.Ignore
-                                        system.Process.Signals
-                            }
-                    }
+                    system
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                        }
+                    )
 
                 // Up a second before the pipe is made, so that its creation is
                 // not the epoch that Darwin reports as its birth.
@@ -345,7 +341,12 @@ module TestPipeAgainstHost =
                             // `None` for a write that sleeps.
                             let model =
                                 match
-                                    UnixReadWrite.tryAdmitWrite system.Leader modelFd buffer (uint64 count) system
+                                    UnixReadWrite.tryAdmitWrite
+                                        (Lone.leader system)
+                                        modelFd
+                                        buffer
+                                        (uint64 count)
+                                        system
                                 with
                                 | Error refusal -> Error refusal
                                 | Ok (WriteStep.WouldBlock _) -> Ok None
@@ -357,12 +358,12 @@ module TestPipeAgainstHost =
                                     (answer, raised.Signal)
                                     |> shouldEqual (WriteAnswer.Failed UnixError.EPIPE, Signal.SIGPIPE)
 
-                                    after.Process.Signals |> shouldEqual system.Process.Signals
+                                    (Lone.proc after).Signals |> shouldEqual (Lone.proc system).Signals
                                     Ok (Some (answer, after))
                                 | Ok (WriteStep.Returns (WriteAdmission.Transfer n, admitted)) ->
                                     match
                                         UnixReadWrite.tryWriteBytes
-                                            system.Leader
+                                            (Lone.leader system)
                                             modelFd
                                             (ImmutableArray.Create<byte> (Array.sub bytes 0 n))
                                             admitted
@@ -419,7 +420,7 @@ module TestPipeAgainstHost =
                                 else
                                     hostReadAt (hostFd, 8n, unativeint count)
 
-                            match UnixReadWrite.tryRead system.Leader modelFd buffer (uint64 count) system with
+                            match UnixReadWrite.tryRead (Lone.leader system) modelFd buffer (uint64 count) system with
                             | Ok (ReadOutcome.WouldBlock _, _) ->
                                 // The host would sleep: asked without blocking,
                                 // it must find nothing to take.
@@ -507,9 +508,7 @@ module TestPipeAgainstHost =
                                 if bothOpen then
                                     let pipeId =
                                         match
-                                            FileDescriptorRegistry.tryFindTarget
-                                                modelFd
-                                                (UnixSystemState.fileDescriptors system)
+                                            FileDescriptorRegistry.tryFindTarget modelFd (Lone.fileDescriptors system)
                                         with
                                         | Some (OpenFileTarget.Pipe (pipeId, _)) -> pipeId
                                         | other -> failwith $"%s{where}: fd %d{modelFd} is %A{other}"
@@ -533,7 +532,7 @@ module TestPipeAgainstHost =
                                             $"%s{where}: %O{pipeEnd} end: model ready %b{modelReady}, host %b{hostReady}"
                             | SimulatedUnixFlavour.Linux ->
                                 let id =
-                                    FileDescriptorRegistry.tryFindId modelFd (UnixSystemState.fileDescriptors system)
+                                    FileDescriptorRegistry.tryFindId modelFd (Lone.fileDescriptors system)
                                     |> Option.get
 
                                 let model = int16 (LinuxReadiness.ofDescription id system) &&& (0x1c7s ||| 0x18s)

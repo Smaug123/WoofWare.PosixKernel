@@ -583,7 +583,7 @@ module TestMultiProcessFuzz =
         | Call
 
     let private fdsOf (view : UnixSystem<int, string>) : Map<int, OpenFileTarget> =
-        let registry = UnixSystemState.fileDescriptors view
+        let registry = Lone.fileDescriptors view
 
         FileDescriptorRegistry.fds registry
         |> Map.map (fun fd _ ->
@@ -637,7 +637,7 @@ module TestMultiProcessFuzz =
     /// The descriptor of `view` naming the inotify instance made last, by the
     /// order of description IDs, if it holds one.
     let private newestInotify (view : UnixSystem<int, string>) : int option =
-        let registry = UnixSystemState.fileDescriptors view
+        let registry = Lone.fileDescriptors view
 
         FileDescriptorRegistry.fds registry
         |> Map.toList
@@ -694,7 +694,7 @@ module TestMultiProcessFuzz =
         let unblocked =
             all
             |> List.filter (fun fd ->
-                match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors view) with
+                match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors view) with
                 | Some description -> description.NonBlocking
                 | None -> false
             )
@@ -874,7 +874,7 @@ module TestMultiProcessFuzz =
         // A read of `size` bytes from the connected socket `fd`.
         let receive (fd : int) (size : int) : Made =
             let socketId =
-                match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors view) with
+                match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors view) with
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -946,10 +946,10 @@ module TestMultiProcessFuzz =
         // one of those signals.
         let returnToUser (after : UnixSystem<int, string>) : Made =
             let due =
-                SignalState.pending after.Process.Signals
+                SignalState.pending (Lone.proc after).Signals
                 |> List.filter (fun entry ->
                     entry.Target = ValueSome thread
-                    && not (SignalMask.contains entry.Signal (SignalState.maskOf thread after.Process.Signals))
+                    && not (SignalMask.contains entry.Signal (SignalState.maskOf thread (Lone.proc after).Signals))
                 )
                 |> List.map (fun entry -> entry.Signal)
                 |> Set.ofList
@@ -986,7 +986,7 @@ module TestMultiProcessFuzz =
                 | SignalMaskChange.SetMask -> block + 2
 
             let set =
-                SignalMask.ofSignals (SignalState.numbering view.Process.Signals) (Set.singleton signal)
+                SignalMask.ofSignals (SignalState.numbering (Lone.proc view).Signals) (Set.singleton signal)
 
             match UnixSignal.pthreadSigmask thread how (Some set) view with
             | Ok (_, after) -> returnToUser after
@@ -1292,7 +1292,7 @@ module TestMultiProcessFuzz =
             match mask SignalMaskChange.Block signal view with
             | Made.Answered blocked ->
                 let signo =
-                    Signal.toRawSignoUnder (SignalState.numbering blocked.Process.Signals) signal
+                    Signal.toRawSignoUnder (SignalState.numbering (Lone.proc blocked).Signals) signal
 
                 match UnixSignal.tryPthreadKill thread signo blocked with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, raised))) -> returnToUser raised
@@ -1368,7 +1368,7 @@ module TestMultiProcessFuzz =
 
     /// The call `thread` of the view `view` is asleep in, finished.
     let private finish (cover : FuzzLabel -> unit) (thread : int) (view : UnixSystem<int, string>) : Made =
-        match UnixThreadTable.parkedFor thread view.Threads with
+        match UnixThreadTable.parkedFor thread (Lone.threads view) with
         | Some (ParkedSyscall.Accept _) ->
             match UnixConnection.tryFinishAccept thread view with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
@@ -1418,7 +1418,7 @@ module TestMultiProcessFuzz =
         | Some (ParkedSyscall.PipeWrite _)
         | Some (ParkedSyscall.ConnectionWrite _) ->
             let connection =
-                match UnixThreadTable.parkedFor thread view.Threads with
+                match UnixThreadTable.parkedFor thread (Lone.threads view) with
                 | Some (ParkedSyscall.ConnectionWrite _) -> true
                 | _ -> false
 

@@ -13,7 +13,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn (Lone.leader system) child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"
@@ -25,7 +25,7 @@ module Threads =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if Map.containsKey name system.Threads then
+        if Map.containsKey name (Lone.threads system) then
             system
         else
             spawn name system

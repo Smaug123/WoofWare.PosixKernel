@@ -59,7 +59,7 @@ module TestListen =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -72,7 +72,7 @@ module TestListen =
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     let private boundAt (endpoint : Ipv4Endpoint) : Ipv4Binding option =
         Some
@@ -214,11 +214,11 @@ module TestListen =
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         let queueFd, registry = FileDescriptorRegistry.createEpoll registry
 
-        let system = UnixSystemState.withFileDescriptors registry system
+        let system = Lone.withFileDescriptors registry system
 
         for fd in [ 0 ; fileFd ; queueFd ] do
             listenOrFail fd 8 system
