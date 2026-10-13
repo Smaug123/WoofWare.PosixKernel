@@ -18,10 +18,6 @@ type LinkRules =
         /// final position: Darwin's is `linkat(AT_SYMLINK_FOLLOW)`, Linux's
         /// `linkat(0)`.
         PlainLinkSource : SymlinkPolicy
-        /// The walk the new pathname is resolved with: Linux's ignores a
-        /// trailing separator, Darwin's resolves it, exactly as `symlink`'s do
-        /// (`SymlinkRules.TrailingSeparator`).
-        TrailingSeparator : TrailingSeparatorPolicy
         /// When a directory source is refused.
         DirectorySource : DirectorySourceRefusal
     }

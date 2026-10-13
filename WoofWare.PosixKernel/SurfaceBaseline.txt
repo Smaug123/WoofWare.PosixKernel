@@ -2075,14 +2075,12 @@ WoofWare.PosixKernel.LinkReadRule.ModeIgnored [static property]: [read-only] Woo
 WoofWare.PosixKernel.LinkReadRule.ReadBitOfSelectedTriple [static property]: [read-only] WoofWare.PosixKernel.LinkReadRule
 WoofWare.PosixKernel.LinkReadRule.Tag [property]: [read-only] int
 WoofWare.PosixKernel.LinkRules inherit obj, implements WoofWare.PosixKernel.LinkRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.LinkRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.LinkRules..ctor [constructor]: (WoofWare.PosixKernel.SymlinkPolicy, WoofWare.PosixKernel.TrailingSeparatorPolicy, WoofWare.PosixKernel.DirectorySourceRefusal)
+WoofWare.PosixKernel.LinkRules..ctor [constructor]: (WoofWare.PosixKernel.SymlinkPolicy, WoofWare.PosixKernel.DirectorySourceRefusal)
 WoofWare.PosixKernel.LinkRules.DirectorySource [property]: [read-only] WoofWare.PosixKernel.DirectorySourceRefusal
 WoofWare.PosixKernel.LinkRules.Equals [method]: (WoofWare.PosixKernel.LinkRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.LinkRules.get_DirectorySource [method]: unit -> WoofWare.PosixKernel.DirectorySourceRefusal
 WoofWare.PosixKernel.LinkRules.get_PlainLinkSource [method]: unit -> WoofWare.PosixKernel.SymlinkPolicy
-WoofWare.PosixKernel.LinkRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.LinkRules.PlainLinkSource [property]: [read-only] WoofWare.PosixKernel.SymlinkPolicy
-WoofWare.PosixKernel.LinkRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.LinuxEpollLimits inherit obj
 WoofWare.PosixKernel.LinuxEpollLimits.eventSize [static method]: WoofWare.PosixKernel.SimulatedUnixArchitecture -> int
 WoofWare.PosixKernel.LinuxEpollLimits.maxEvents [static method]: WoofWare.PosixKernel.SimulatedUnixArchitecture -> int
@@ -2314,31 +2312,27 @@ WoofWare.PosixKernel.MessageFlagModule.get_named [static method]: unit -> WoofWa
 WoofWare.PosixKernel.MessageFlagModule.named [static property]: [read-only] WoofWare.PosixKernel.MessageFlag list
 WoofWare.PosixKernel.MessageFlagModule.number [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.MessageFlag -> int option
 WoofWare.PosixKernel.MkDirRules inherit obj, implements WoofWare.PosixKernel.MkDirRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.MkDirRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.MkDirRules..ctor [constructor]: (WoofWare.PosixKernel.TrailingSeparatorPolicy, WoofWare.PosixKernel.PermissionBits, bool)
+WoofWare.PosixKernel.MkDirRules..ctor [constructor]: (WoofWare.PosixKernel.PermissionBits, bool)
 WoofWare.PosixKernel.MkDirRules.Equals [method]: (WoofWare.PosixKernel.MkDirRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.MkDirRules.get_InheritsSetGroupIdFromParent [method]: unit -> bool
 WoofWare.PosixKernel.MkDirRules.get_ModeMask [method]: unit -> WoofWare.PosixKernel.PermissionBits
-WoofWare.PosixKernel.MkDirRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.MkDirRules.InheritsSetGroupIdFromParent [property]: [read-only] bool
 WoofWare.PosixKernel.MkDirRules.ModeMask [property]: [read-only] WoofWare.PosixKernel.PermissionBits
-WoofWare.PosixKernel.MkDirRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.MkNodRules inherit obj, implements WoofWare.PosixKernel.MkNodRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.MkNodRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.MkNodRules+Tags inherit obj
 WoofWare.PosixKernel.MkNodRules+Tags.PrivilegeBeforePath [static field]: int = 1
 WoofWare.PosixKernel.MkNodRules+Tags.TypeBeforePath [static field]: int = 0
-WoofWare.PosixKernel.MkNodRules+TypeBeforePath inherit WoofWare.PosixKernel.MkNodRules
-WoofWare.PosixKernel.MkNodRules+TypeBeforePath.get_trailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
-WoofWare.PosixKernel.MkNodRules+TypeBeforePath.trailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.MkNodRules.Equals [method]: (WoofWare.PosixKernel.MkNodRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.MkNodRules.get_IsPrivilegeBeforePath [method]: unit -> bool
 WoofWare.PosixKernel.MkNodRules.get_IsTypeBeforePath [method]: unit -> bool
 WoofWare.PosixKernel.MkNodRules.get_PrivilegeBeforePath [static method]: unit -> WoofWare.PosixKernel.MkNodRules
 WoofWare.PosixKernel.MkNodRules.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.MkNodRules.get_TypeBeforePath [static method]: unit -> WoofWare.PosixKernel.MkNodRules
 WoofWare.PosixKernel.MkNodRules.IsPrivilegeBeforePath [property]: [read-only] bool
 WoofWare.PosixKernel.MkNodRules.IsTypeBeforePath [property]: [read-only] bool
-WoofWare.PosixKernel.MkNodRules.NewTypeBeforePath [static method]: WoofWare.PosixKernel.TrailingSeparatorPolicy -> WoofWare.PosixKernel.MkNodRules
 WoofWare.PosixKernel.MkNodRules.PrivilegeBeforePath [static property]: [read-only] WoofWare.PosixKernel.MkNodRules
 WoofWare.PosixKernel.MkNodRules.Tag [property]: [read-only] int
+WoofWare.PosixKernel.MkNodRules.TypeBeforePath [static property]: [read-only] WoofWare.PosixKernel.MkNodRules
 WoofWare.PosixKernel.Mount inherit obj, implements WoofWare.PosixKernel.Mount System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.Mount System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.Mount..ctor [constructor]: (WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.MountedFileSystem)
 WoofWare.PosixKernel.Mount.Covered [property]: [read-only] WoofWare.PosixKernel.InodeNumber
@@ -3499,11 +3493,9 @@ WoofWare.PosixKernel.RefusalError.Pending [static property]: [read-only] WoofWar
 WoofWare.PosixKernel.RefusalError.Reported [static property]: [read-only] WoofWare.PosixKernel.RefusalError
 WoofWare.PosixKernel.RefusalError.Tag [property]: [read-only] int
 WoofWare.PosixKernel.RenameRules inherit obj, implements WoofWare.PosixKernel.RenameRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.RenameRules..ctor [constructor]: (WoofWare.PosixKernel.TrailingSeparatorPolicy, WoofWare.PosixKernel.RenameWalkOrder)
+WoofWare.PosixKernel.RenameRules..ctor [constructor]: WoofWare.PosixKernel.RenameWalkOrder
 WoofWare.PosixKernel.RenameRules.Equals [method]: (WoofWare.PosixKernel.RenameRules, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.RenameRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.RenameRules.get_WalkOrder [method]: unit -> WoofWare.PosixKernel.RenameWalkOrder
-WoofWare.PosixKernel.RenameRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.RenameRules.WalkOrder [property]: [read-only] WoofWare.PosixKernel.RenameWalkOrder
 WoofWare.PosixKernel.RenameWalkOrder inherit obj, implements WoofWare.PosixKernel.RenameWalkOrder System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RenameWalkOrder System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.RenameWalkOrder+Tags inherit obj
@@ -3552,12 +3544,10 @@ WoofWare.PosixKernel.ReturnToUserOutcome`2.NewRunHandlers [static method]: WoofW
 WoofWare.PosixKernel.ReturnToUserOutcome`2.Resumes [static property]: [read-only] WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2.Tag [property]: [read-only] int
 WoofWare.PosixKernel.RmDirRules inherit obj, implements WoofWare.PosixKernel.RmDirRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RmDirRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.RmDirRules..ctor [constructor]: (WoofWare.PosixKernel.TrailingSeparatorPolicy, WoofWare.PosixKernel.UnbindTargetEffect)
+WoofWare.PosixKernel.RmDirRules..ctor [constructor]: WoofWare.PosixKernel.UnbindTargetEffect
 WoofWare.PosixKernel.RmDirRules.Equals [method]: (WoofWare.PosixKernel.RmDirRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.RmDirRules.get_RemovedDirectoryEffect [method]: unit -> WoofWare.PosixKernel.UnbindTargetEffect
-WoofWare.PosixKernel.RmDirRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.RmDirRules.RemovedDirectoryEffect [property]: [read-only] WoofWare.PosixKernel.UnbindTargetEffect
-WoofWare.PosixKernel.RmDirRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.SeedEntry inherit obj, implements WoofWare.PosixKernel.SeedEntry System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SeedEntry System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.SeedEntry+Directory inherit WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry+Directory.entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
@@ -4129,6 +4119,7 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.encodeCInt [static method]: Woo
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.encodeInternetSockaddr [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.Ipv4Endpoint -> System.Byte []
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.encodeInternetV6Sockaddr [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.Ipv6Endpoint -> System.Byte []
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.encodeSockaddrFamily [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> int -> System.Byte []
+WoofWare.PosixKernel.SimulatedUnixPlatformModule.finalNameTrailingSeparator [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.flavour [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.SimulatedUnixFlavour
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_internetAddressFamily [static method]: unit -> int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.get_internetSocketAddressSize [static method]: unit -> int
@@ -4199,7 +4190,6 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.tcpOptionLevel [static method]:
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.transferCountLimit [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.TransferCountLimit
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.umaskStoredBits [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.unixRelease [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> string
-WoofWare.PosixKernel.SimulatedUnixPlatformModule.unlinkRules [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.UnlinkRules
 WoofWare.PosixKernel.SimulatedUnixReleaseError inherit obj, implements WoofWare.PosixKernel.SimulatedUnixReleaseError System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SimulatedUnixReleaseError System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.SimulatedUnixReleaseError+NotPrintableAscii inherit WoofWare.PosixKernel.SimulatedUnixReleaseError
 WoofWare.PosixKernel.SimulatedUnixReleaseError+NotPrintableAscii.character [property]: [read-only] char
@@ -4604,12 +4594,10 @@ WoofWare.PosixKernel.SymlinkProtection.IsOff [property]: [read-only] bool
 WoofWare.PosixKernel.SymlinkProtection.Off [static property]: [read-only] WoofWare.PosixKernel.SymlinkProtection
 WoofWare.PosixKernel.SymlinkProtection.Tag [property]: [read-only] int
 WoofWare.PosixKernel.SymlinkRules inherit obj, implements WoofWare.PosixKernel.SymlinkRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SymlinkRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.SymlinkRules..ctor [constructor]: (WoofWare.PosixKernel.TrailingSeparatorPolicy, WoofWare.PosixKernel.EmptySymlinkTarget)
+WoofWare.PosixKernel.SymlinkRules..ctor [constructor]: WoofWare.PosixKernel.EmptySymlinkTarget
 WoofWare.PosixKernel.SymlinkRules.EmptyTarget [property]: [read-only] WoofWare.PosixKernel.EmptySymlinkTarget
 WoofWare.PosixKernel.SymlinkRules.Equals [method]: (WoofWare.PosixKernel.SymlinkRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.SymlinkRules.get_EmptyTarget [method]: unit -> WoofWare.PosixKernel.EmptySymlinkTarget
-WoofWare.PosixKernel.SymlinkRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
-WoofWare.PosixKernel.SymlinkRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.SymlinkTarget inherit System.ValueType, implements WoofWare.PosixKernel.SymlinkTarget System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SymlinkTarget System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.SymlinkTarget.Equals [method]: (WoofWare.PosixKernel.SymlinkTarget, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.SymlinkTargetError inherit obj, implements WoofWare.PosixKernel.SymlinkTargetError System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SymlinkTargetError System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
@@ -6323,11 +6311,6 @@ WoofWare.PosixKernel.UnixWait.satisfied [static method]: 'Thread -> WoofWare.Pos
 WoofWare.PosixKernel.UnixWait.wakes [static method]: 'Thread Microsoft.FSharp.Collections.FSharpSet -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> ('Thread * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list
 WoofWare.PosixKernel.UnlinkAtRules inherit obj
 WoofWare.PosixKernel.UnlinkAtRules.atRemoveDir [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> int
-WoofWare.PosixKernel.UnlinkRules inherit obj, implements WoofWare.PosixKernel.UnlinkRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.UnlinkRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.UnlinkRules..ctor [constructor]: WoofWare.PosixKernel.TrailingSeparatorPolicy
-WoofWare.PosixKernel.UnlinkRules.Equals [method]: (WoofWare.PosixKernel.UnlinkRules, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.UnlinkRules.get_TrailingSeparator [method]: unit -> WoofWare.PosixKernel.TrailingSeparatorPolicy
-WoofWare.PosixKernel.UnlinkRules.TrailingSeparator [property]: [read-only] WoofWare.PosixKernel.TrailingSeparatorPolicy
 WoofWare.PosixKernel.UnmodelledException inherit System.Exception
 WoofWare.PosixKernel.UnmodelledOpenFlag inherit obj, implements WoofWare.PosixKernel.UnmodelledOpenFlag System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.UnmodelledOpenFlag System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 20 cases
 WoofWare.PosixKernel.UnmodelledOpenFlag+Tags inherit obj

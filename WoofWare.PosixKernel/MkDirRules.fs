@@ -9,16 +9,6 @@ namespace WoofWare.PosixKernel
 /// </remarks>
 type MkDirRules =
     {
-        // This field is why `MkDirRules.verdict` needs no rules: the divergence
-        // is spent inside the walk, and what comes out the other side is
-        // decided identically on both platforms.
-        /// The walk `mkdir` resolves its path with. Linux's last component is a
-        /// plain dentry lookup (`filename_create`), so a trailing separator buys
-        /// nothing there and every existing final name is EEXIST; Darwin
-        /// resolves it as a lookup would, which is how `mkdir("dang/")` creates
-        /// the dangling link's *target* on that platform and answers ENOTDIR for
-        /// "f/" and ELOOP for "cyc/".
-        TrailingSeparator : TrailingSeparatorPolicy
         /// The bits `mkdir(2)` keeps from its `mode` argument before the umask
         /// is applied — which is *not* `CreatingOpenRules.ModeMask`. Linux keeps
         /// the sticky bit and drops both set-ID bits (`vfs_mkdir` masks with
@@ -67,7 +57,7 @@ module internal MkDirRules =
     /// Takes no `MkDirRules`, and that is the point: every rule below except the
     /// last is measured *identical* on both platforms, and the last reads only
     /// `bindable`. Everything else `mkdir` diverges about is spent earlier, in
-    /// the walk `MkDirRules.TrailingSeparator` selects, or later, in
+    /// the walk `SimulatedUnixPlatform.finalNameTrailingSeparator` selects, or later, in
     /// `createdPermissions`. Contrast `CreatingOpenRules.verdict`, which
     /// genuinely reads two of its fields.
     ///

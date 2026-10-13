@@ -135,37 +135,6 @@ module UnlinkAtRules =
         )
 
 /// <summary>
-/// Parametrises the behaviour of different kernels when <c>unlink(2)</c> removes a name.
-/// </summary>
-/// <remarks>
-/// Unlike e.g. <c>mkdir</c>, whose platform-dependent behaviour is confined entirely to
-/// the directory walk, <c>unlink</c> diverges in the order of its refusals too.
-///
-/// Create one of these with <c>SimulatedUnixPlatform.unlinkRules</c>.
-/// </remarks>
-(*
-Measured on macOS 26.6/APFS at uid 501 and 0, and Linux 6.x arm64 at uid
-1000 and 0, one fresh tree per row.
-*)
-type UnlinkRules =
-    {
-        /// The walk `unlink` resolves its path with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms.
-        ///
-        /// Linux's `do_unlinkat` takes a parent and a name and never resolves
-        /// the final component at all, so a trailing separator neither
-        /// dereferences a final symlink nor is enforced by the walk: it is
-        /// reported on the resolution and enforced by
-        /// `linuxVerdict`. Darwin's `namei` resolves it like any other lookup,
-        /// which is `Demand`.
-        ///
-        /// The row that separates them is `unlink("lroot/")` with `lroot -> "/"`:
-        /// ENOTDIR on Linux, which cannot have traversed the link, against
-        /// EISDIR on Darwin, which did.
-        TrailingSeparator : TrailingSeparatorPolicy
-    }
-
-/// <summary>
 /// What <c>unlink(2)</c> should do, now that its path has been resolved.
 /// </summary>
 [<RequireQualifiedAccess>]
@@ -488,18 +457,6 @@ module internal UnlinkRules =
 /// uid 0, one fresh tree per row.
 type RmDirRules =
     {
-        /// The walk `rmdir` resolves its path with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms. Linux `Ignore`,
-        /// Darwin `Demand`, exactly as `unlink`'s is and for the same reason.
-        ///
-        /// This is the field that makes the two flavours **destroy different
-        /// objects**. With `ld -> d` and `d` an empty directory, `rmdir("ld/")`
-        /// is ENOTDIR on Linux — whose walk cannot have traversed the link — and
-        /// *removes `d`* on Darwin, whose walk did. It is the divergence
-        /// that a final symlink followed under a trailing separator causes, and
-        /// the reason this
-        /// syscall dispatches on the flavour rather than picking a column.
-        TrailingSeparator : TrailingSeparatorPolicy
         /// What removing the directory does to the removed directory's own
         /// inode, which the flavours do not agree on.
         ///

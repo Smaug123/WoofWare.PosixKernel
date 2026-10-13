@@ -13,12 +13,6 @@ type EmptySymlinkTarget =
 /// Everything a flavour's `symlink(2)` does differently from the other's.
 type SymlinkRules =
     {
-        /// The walk `symlink` resolves the link's pathname with: Linux's is a
-        /// plain lookup of the final name, so `symlink(t, "f/")` and
-        /// `symlink(t, "dl/")` (dl dangling) are EEXIST there; Darwin's resolves
-        /// a trailing separator as a lookup would, so the first is ENOTDIR and
-        /// the second follows the link to its free target.
-        TrailingSeparator : TrailingSeparatorPolicy
         /// What an empty target does.
         EmptyTarget : EmptySymlinkTarget
     }
@@ -37,7 +31,7 @@ module internal SymlinkRules =
     /// Decide what a `symlink(2)` owes, given how its link's pathname resolved.
     ///
     /// The flavours' differences are spent in the walk
-    /// (`SymlinkRules.TrailingSeparator`) and before it
+    /// (`SimulatedUnixPlatform.finalNameTrailingSeparator`) and before it
     /// (`SymlinkRules.EmptyTarget`); what reaches here is decided identically
     /// on both, except for the names `bindable` admits. In order, each beating
     /// those below it:

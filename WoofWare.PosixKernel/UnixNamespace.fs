@@ -1691,9 +1691,14 @@ module UnixNamespace =
         // it is about to bind, so an existing link is EEXIST whether it dangles,
         // points at a file, or points at itself. The trailing separator is the
         // only thing that can reach past it, and only on Darwin — see
-        // `MkDirRules.TrailingSeparator`.
+        // `SimulatedUnixPlatform.finalNameTrailingSeparator`.
         match
-            UnixPathResolution.resolvePathFull directory SymlinkPolicy.NoFollowFinal rules.TrailingSeparator path system
+            UnixPathResolution.resolvePathFull
+                directory
+                SymlinkPolicy.NoFollowFinal
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
+                path
+                system
         with
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error refusal
@@ -1818,7 +1823,7 @@ module UnixNamespace =
         match MkNodRules.screen (SimulatedUnixPlatform.mkNodRules platform) credentials mode dev with
         | MkNodScreen.Fails error -> Ok (SyscallAnswer.Failed error, system)
         | MkNodScreen.Refused refusal -> Error refusal
-        | MkNodScreen.Walks (node, trailingSeparator) ->
+        | MkNodScreen.Walks node ->
 
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -1827,7 +1832,12 @@ module UnixNamespace =
         // `NoFollowFinal`: like `mkdir` and `symlink`, `mknod` never
         // dereferences the name it is about to bind.
         match
-            UnixPathResolution.resolvePathFull directory SymlinkPolicy.NoFollowFinal trailingSeparator path system
+            UnixPathResolution.resolvePathFull
+                directory
+                SymlinkPolicy.NoFollowFinal
+                (SimulatedUnixPlatform.finalNameTrailingSeparator platform)
+                path
+                system
         with
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (MkNodRefusal.Path refusal)
@@ -1973,14 +1983,17 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RemovalRefusal>
         =
-        let rules = SimulatedUnixPlatform.unlinkRules system.Machine.UnixPlatform
-
         // `NoFollowFinal` on both flavours — `unlink` removes the name it was
         // given, never what that name points at. The trailing separator is the
         // only thing that can reach past a final symlink, and only on Darwin;
-        // see `UnlinkRules.TrailingSeparator`.
+        // see `SimulatedUnixPlatform.finalNameTrailingSeparator`.
         match
-            UnixPathResolution.resolvePathFull directory SymlinkPolicy.NoFollowFinal rules.TrailingSeparator path system
+            UnixPathResolution.resolvePathFull
+                directory
+                SymlinkPolicy.NoFollowFinal
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
+                path
+                system
         with
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (RemovalRefusal.Path refusal)
@@ -2078,9 +2091,14 @@ module UnixNamespace =
         // `NoFollowFinal` on both flavours. The trailing separator is what
         // reaches past a final symlink, and only on Darwin — which is how
         // `rmdir("ld/")` removes the *link's target* there and is ENOTDIR on
-        // Linux. See `RmDirRules.TrailingSeparator`.
+        // Linux. See `SimulatedUnixPlatform.finalNameTrailingSeparator`.
         match
-            UnixPathResolution.resolvePathFull directory SymlinkPolicy.NoFollowFinal rules.TrailingSeparator path system
+            UnixPathResolution.resolvePathFull
+                directory
+                SymlinkPolicy.NoFollowFinal
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
+                path
+                system
         with
         | Error (PathFailure.Errno error) -> Ok (SyscallAnswer.Failed error, system)
         | Error (PathFailure.Refused refusal) -> Error (RemovalRefusal.Path refusal)
@@ -2250,7 +2268,7 @@ module UnixNamespace =
         // `NoFollowFinal` for both paths on both flavours — `rename` moves the
         // name it was given, never what that name points at. The trailing
         // separator is the only thing that reaches past a final symlink, and
-        // only on Darwin; see `RenameRules.TrailingSeparator`.
+        // only on Darwin; see `SimulatedUnixPlatform.finalNameTrailingSeparator`.
         //
         // Each side's starting directory is looked up as that side's walk
         // begins, after its own copy-in (`walkStart`), so a bad `newdirfd`
@@ -2263,7 +2281,7 @@ module UnixNamespace =
                 UnixPathResolution.resolvePathParent
                     sourceDirectory
                     SymlinkPolicy.NoFollowFinal
-                    rules.TrailingSeparator
+                    (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                     sourcePath
                     system
             with
@@ -2276,7 +2294,7 @@ module UnixNamespace =
             UnixPathResolution.resolvePathFull
                 sourceDirectory
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                 sourcePath
                 system
         with
@@ -2378,7 +2396,7 @@ module UnixNamespace =
                 UnixPathResolution.resolvePathFull
                     paused.Destination
                     SymlinkPolicy.NoFollowFinal
-                    rules.TrailingSeparator
+                    (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                     destinationPath
                     system
                 |> Result.map (fun destinationResolution -> sourceResolution, destinationResolution)
@@ -2389,7 +2407,7 @@ module UnixNamespace =
                 UnixPathResolution.resolvePathParent
                     paused.Destination
                     SymlinkPolicy.NoFollowFinal
-                    rules.TrailingSeparator
+                    (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                     destinationPath
                     system
             with
@@ -2940,8 +2958,6 @@ module UnixNamespace =
         CallProgress.requirePaused "UnixNamespace.symlinkWithPath" "UnixNamespace.symlinkat or symlink" paused
 
         let system = paused.System
-        let rules = SimulatedUnixPlatform.symlinkRules system.Machine.UnixPlatform
-
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
         | Ok path ->
@@ -2950,7 +2966,7 @@ module UnixNamespace =
             UnixPathResolution.resolvePathFull
                 paused.Directory
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                 path
                 system
         with
@@ -2996,7 +3012,7 @@ module UnixNamespace =
     ///
     /// A relative `path` starts where the call's `dirfd` says. A final symbolic
     /// link is never followed, and a trailing separator reaches past the final
-    /// name only as the flavour's `SymlinkRules.TrailingSeparator` says. The
+    /// name only as `SimulatedUnixPlatform.finalNameTrailingSeparator` says. The
     /// new link holds the target byte for byte, has the permission bits 0o777
     /// on Linux and 0o777 less the process's umask on Darwin, and is owned as
     /// any new inode in that directory is (see
@@ -3233,7 +3249,7 @@ module UnixNamespace =
             UnixPathResolution.resolvePathFull
                 paused.Destination
                 SymlinkPolicy.NoFollowFinal
-                paused.Rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator system.Machine.UnixPlatform)
                 newpath
                 system
         with
@@ -3274,7 +3290,7 @@ module UnixNamespace =
     ///
     /// A relative `newpath` starts where the call's new `dirfd` says; a final
     /// symbolic link is never followed, and a trailing separator reaches past
-    /// the final name only as `LinkRules.TrailingSeparator` says. On success
+    /// the final name only as `SimulatedUnixPlatform.finalNameTrailingSeparator` says. On success
     /// the source gains a
     /// name, its status-change time moves, and so do the new name's
     /// directory's modification and status-change times.
