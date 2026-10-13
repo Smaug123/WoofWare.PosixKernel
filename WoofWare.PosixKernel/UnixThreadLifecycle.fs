@@ -79,6 +79,16 @@ type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Hand
     /// The process has ended, and never returns from the call.
     | ProcessEnded of EndedProcess<'Thread, 'Handler>
 
+/// What a `kill(2)` or `pthread_kill(3)` the kernel answered did to the
+/// calling process, if it did not end it (see `ProcessFate`).
+[<RequireQualifiedAccess>]
+type KillOutcome =
+    /// The process runs on: the signal is pending, or was discarded, or there
+    /// was no signal to send.
+    | ProcessRuns
+    /// The signal stops the whole process.
+    | ProcessStopped of signal : Signal
+
 /// Why this library will not answer a thread's exit: a case it does not
 /// model, rather than an error a kernel would report, because the thread-exit
 /// syscall cannot fail.
@@ -152,6 +162,30 @@ module internal SpawnRefusal =
 [<RequireQualifiedAccess>]
 module UnixThreadLifecycle =
 
+    /// `system` without `thread`, which is in no syscall: its thread ID is no
+    /// longer live, the processor it was running on, if any, is idle, its
+    /// signal mask and the signals pending on it alone are gone, and so is its
+    /// entry in the table.
+    let private leave<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let state = UnixThreadTable.get thread system.Threads
+
+        { system with
+            Machine =
+                { system.Machine with
+                    ThreadIds = ThreadIdAllocator.release state.OsThreadId system.Machine.ThreadIds
+                }
+            Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
+            Process =
+                { system.Process with
+                    Signals = SignalState.forgetThread thread system.Process.Signals
+                }
+            Threads = Map.remove thread system.Threads
+        }
+
     /// End the process `system` is, as `termination` says: every thread goes, and
     /// with each everything the process and the machine held for that thread
     /// alone: its signal mask and the signals pending on it alone, its thread
@@ -163,35 +197,21 @@ module UnixThreadLifecycle =
         (system : UnixSystem<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
-        let signals =
-            (system.Process.Signals, Map.keys system.Threads)
-            ||> Seq.fold (fun signals thread -> SignalState.forgetThread thread signals)
-
-        let unparked =
+        let gone =
             (system, Map.keys system.Threads)
-            ||> Seq.fold (fun system thread -> UnixParkState.unpark thread system)
-
-        let threadIds =
-            (unparked.Machine.ThreadIds, unparked.Threads)
-            ||> Map.fold (fun threadIds _ state -> ThreadIdAllocator.release state.OsThreadId threadIds)
-
-        let vacated =
-            (unparked.Scheduling, unparked.Threads)
-            ||> Map.fold (fun scheduling _ state -> UnixSchedulingState.vacate state.Cpu state.OsThreadId scheduling)
+            ||> Seq.fold (fun system thread -> system |> UnixParkState.unpark thread |> leave thread)
 
         let cwd = system.Process.CurrentDirectoryInode
 
         // A directory the process had removed while standing in it is free once
         // nothing else stands in it.
         let released =
-            { unparked with
+            { gone with
                 Machine =
-                    { unparked.Machine with
-                        ThreadIds = threadIds
-                        ProcessIds = ProcessIdTable.remove system.Process.ProcessId unparked.Machine.ProcessIds
+                    { gone.Machine with
+                        ProcessIds = ProcessIdTable.remove system.Process.ProcessId gone.Machine.ProcessIds
                     }
                     |> UnixMachineState.releaseCurrentDirectory cwd
-                Scheduling = vacated
             }
             |> ObjectLifetime.forgetIfUnheld cwd
 
@@ -201,7 +221,7 @@ module UnixThreadLifecycle =
             Scheduling = released.Scheduling
             FinalProcess =
                 { system.Process with
-                    Signals = signals
+                    Signals = gone.Process.Signals
                 }
             EndedIn = system
         }
@@ -240,23 +260,7 @@ module UnixThreadLifecycle =
             | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastThreadOnDarwin thread)
         else
 
-        Ok (
-            ProcessFate.Continues (
-                (),
-                { system with
-                    Machine =
-                        { system.Machine with
-                            ThreadIds = ThreadIdAllocator.release state.OsThreadId system.Machine.ThreadIds
-                        }
-                    Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
-                    Process =
-                        { system.Process with
-                            Signals = SignalState.forgetThread thread system.Process.Signals
-                        }
-                    Threads = Map.remove thread system.Threads
-                }
-            )
-        )
+        Ok (ProcessFate.Continues ((), leave thread system))
 
     /// <summary>
     /// The thread-exit syscall: `thread` ends. This is `SYS_exit` on Linux, which is
@@ -379,3 +383,56 @@ module UnixThreadLifecycle =
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         endProcess (ProcessTermination.Exited (ExitStatus.ofExitArgument flavour status)) system
+
+/// A signal the kernel generates for a process, as `kill(2)`, `pthread_kill(3)`
+/// and a write that raises `SIGPIPE` do, and what it does to the process at once.
+[<RequireQualifiedAccess>]
+module internal ProcessSignal =
+
+    /// Whether `system`'s process is process ID 1, an init process. From inside
+    /// its own PID namespace an init process ignores every signal it has not
+    /// installed a handler for, SIGKILL included, which this library does not
+    /// model, so a call that would generate a signal for it refuses first.
+    let isInit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        ProcessId.toInt32 system.Process.ProcessId = 1
+
+    /// Generate `entry` for `system`'s process, as `SignalState.generate`
+    /// decides, and apply what it decided: the process runs on, with the signal
+    /// pending, coalesced or discarded; it stops (`KillOutcome.ProcessStopped`),
+    /// with the signals the generation left; or the signal kills it, and the
+    /// process ends as it stood before the signal.
+    ///
+    /// Fails loudly for an init process (`isInit`), which the caller refuses
+    /// first.
+    let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (entry : PendingSignal<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, SignalReceiverRefusal>
+        =
+        if isInit system then
+            failwith
+                $"ProcessSignal.generate: %O{entry.Signal} would be generated for process 1, an init process, whose signals every caller refuses first (this is a bug in this library)."
+
+        let generation =
+            SignalState.generate
+                system.Process.CoreDumps
+                system.Leader
+                (system.Threads |> Map.keys |> Set.ofSeq)
+                entry
+                system.Process.Signals
+
+        match generation with
+        | Error refusal -> Error refusal
+        | Ok (SignalGeneration.ProcessContinues signals) ->
+            Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, UnixSystemState.withSignals signals system))
+        | Ok (SignalGeneration.ProcessStopped (signal, signals)) ->
+            Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, UnixSystemState.withSignals signals system))
+        | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
+            Ok (
+                ProcessFate.ProcessEnded (
+                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
+                )
+            )
