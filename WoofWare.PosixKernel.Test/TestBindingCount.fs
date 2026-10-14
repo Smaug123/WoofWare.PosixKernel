@@ -149,7 +149,7 @@ module TestBindingCount =
 
     /// What `stat` reports for every inode of `vfs` agrees with the rule
     /// measured on each filesystem.
-    let private assertStatAgrees (context : string) (vfs : VirtualFileSystem) : unit =
+    let private assertStatAgrees (context : unit -> string) (vfs : VirtualFileSystem) : unit =
         for platform, fsType, system in statSystems do
             let system =
                 { system with
@@ -166,19 +166,19 @@ module TestBindingCount =
                 | Some (Ok status), Some expected ->
                     if status.LinkCount <> expected then
                         failwith
-                            $"%s{context}: on %O{fsType}, stat of inode %O{inode} reports st_nlink %d{status.LinkCount}, but the measured rule says %d{expected}"
+                            $"%s{context ()}: on %O{fsType}, stat of inode %O{inode} reports st_nlink %d{status.LinkCount}, but the measured rule says %d{expected}"
 
-                    status.SpecialFileDevice |> shouldEqual 0L
-                    status.FileFlags |> shouldEqual (if darwin then Some 0u else None)
-                | Some (Error (StatRefusal.NfsDirectorySize refused)), None -> refused |> shouldEqual inode
+                    status.SpecialFileDevice |> Expect.equal context 0L
+                    status.FileFlags |> Expect.equal context (if darwin then Some 0u else None)
+                | Some (Error (StatRefusal.NfsDirectorySize refused)), None -> refused |> Expect.equal context inode
                 | answer, expected ->
                     failwith
-                        $"%s{context}: on %O{fsType}, stat of inode %O{inode} answered %A{answer}, where the measured rule is %A{expected}"
+                        $"%s{context ()}: on %O{fsType}, stat of inode %O{inode} answered %A{answer}, where the measured rule is %A{expected}"
 
     /// The stored count and the scan agree on every inode the graph holds, on
     /// the next inode it would allocate, and on one it never will; and
     /// everything that consults the count answers as it did over the scan.
-    let private assertAgrees (context : string) (pinned : Set<InodeNumber>) (vfs : VirtualFileSystem) : unit =
+    let private assertAgrees (context : unit -> string) (pinned : Set<InodeNumber>) (vfs : VirtualFileSystem) : unit =
         let (InodeNumber next) = VirtualFileSystem.nextInode vfs
 
         let candidates =
@@ -193,34 +193,35 @@ module TestBindingCount =
             let scanned = scannedBindingCount inode vfs
 
             if stored <> scanned then
-                failwith $"%s{context}: bindingCount of inode %O{inode} is %d{stored}, but %d{scanned} entries name it"
+                failwith
+                    $"%s{context ()}: bindingCount of inode %O{inode} is %d{stored}, but %d{scanned} entries name it"
 
             let orphaned = VirtualFileSystem.isOrphanedDirectory inode vfs
             let scannedOrphaned = scannedIsOrphanedDirectory inode vfs
 
             if orphaned <> scannedOrphaned then
                 failwith
-                    $"%s{context}: isOrphanedDirectory of inode %O{inode} is %b{orphaned}, but over the scan it is %b{scannedOrphaned}"
+                    $"%s{context ()}: isOrphanedDirectory of inode %O{inode} is %b{orphaned}, but over the scan it is %b{scannedOrphaned}"
 
             let subdirectories = VirtualFileSystem.subdirectoryCount inode vfs
             let scannedSubdirectories = scannedSubdirectoryCount inode vfs
 
             if subdirectories <> scannedSubdirectories then
                 failwith
-                    $"%s{context}: subdirectoryCount of inode %O{inode} is %d{subdirectories}, but %d{scannedSubdirectories} of its entries name a directory"
+                    $"%s{context ()}: subdirectoryCount of inode %O{inode} is %d{subdirectories}, but %d{scannedSubdirectories} of its entries name a directory"
 
             let entries = VirtualFileSystem.entryCount inode vfs
             let scannedEntries = scannedEntryCount inode vfs
 
             if entries <> scannedEntries then
                 failwith
-                    $"%s{context}: entryCount of inode %O{inode} is %d{entries}, but it binds %d{scannedEntries} names"
+                    $"%s{context ()}: entryCount of inode %O{inode} is %d{entries}, but it binds %d{scannedEntries} names"
 
         assertStatAgrees context vfs
 
         match VirtualFileSystem.checkInvariants pinned vfs with
         | [] -> ()
-        | defects -> failwith $"%s{context}: the filesystem is unsound: %A{defects}"
+        | defects -> failwith $"%s{context ()}: the filesystem is unsound: %A{defects}"
 
     // ------------------------------------------------------------- the seed
 
@@ -658,14 +659,14 @@ module TestBindingCount =
                 SymlinkModes.linux
                 seed
 
-        assertAgrees "after realising the seed" Set.empty vfs
+        assertAgrees (fun () -> "after realising the seed") Set.empty vfs
 
         ops
         |> List.indexed
         |> List.fold
             (fun state (index, op) ->
                 let vfs, pinned = apply record (tick (index + 1)) op state
-                assertAgrees $"after step %d{index}, %A{op}" (withAncestors pinned vfs) vfs
+                assertAgrees (fun () -> $"after step %d{index}, %A{op}") (withAncestors pinned vfs) vfs
 
                 if
                     VirtualFileSystem.inodes vfs

@@ -89,14 +89,20 @@ module TestFsChange =
             | InodeContent.Fifo _
             | InodeContent.Symlink _ -> false
 
-        /// Everything about an inode a diff compares, with its contents as an
-        /// array because `ImmutableArray` compares by reference.
+        /// An inode's content as a diff compares it: a file's bytes as an array,
+        /// because `ImmutableArray` compares by reference.
+        [<RequireQualifiedAccess>]
+        type private ProjectedContent =
+            | File of contents : byte[] * permissions : PermissionBits
+            | Other of InodeContent
+
+        /// Everything about an inode a diff compares.
         let private projection (vfs : VirtualFileSystem) (inode : InodeNumber) (entry : Inode) =
             let content =
                 match entry.Content with
                 | InodeContent.RegularFile (contents, permissions) ->
-                    sprintf "file %A %O" (Seq.toArray contents) permissions
-                | other -> sprintf "%A" other
+                    ProjectedContent.File (contents.AsSpan().ToArray (), permissions)
+                | other -> ProjectedContent.Other other
 
             content, entry.Owner, entry.Times, VirtualFileSystem.bindingCount inode vfs
 
@@ -225,7 +231,7 @@ module TestFsChange =
                 | FsChange.ContentChanged _
                 | FsChange.AttributesChanged _ -> false
 
-            let sorted (changes : FsChange list) : FsChange list = List.sortBy (sprintf "%A") changes
+            let sorted (changes : FsChange list) : FsChange list = List.sort changes
 
             [
                 // Names and forgotten inodes: exactly, each once.

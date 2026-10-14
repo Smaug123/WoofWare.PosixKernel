@@ -180,6 +180,27 @@ module TestUnixError =
         UnixError.all |> List.length |> shouldEqual cases.Length
 
     [<Test>]
+    let ``ToString is the case's name`` () : unit =
+        for error in UnixError.all do
+            let case, _ = Reflection.FSharpValue.GetUnionFields (error, typeof<UnixError>)
+            error.ToString () |> shouldEqual case.Name
+
+    // Property tests label their steps with `%O` of an error, so `ToString` is
+    // on their hot path. F#'s generated one reflects over all the cases on
+    // every call, at about 355 KB each.
+    [<Test>]
+    let ``ToString allocates next to nothing`` () : unit =
+        for error in UnixError.all do
+            error.ToString () |> ignore
+
+        let before = GC.GetAllocatedBytesForCurrentThread ()
+
+        for error in UnixError.all do
+            error.ToString () |> ignore
+
+        GC.GetAllocatedBytesForCurrentThread () - before |> shouldBeSmallerThan 1024L
+
+    [<Test>]
     let ``raw errno numbering is injective on each platform, up to the declared aliases`` () : unit =
         // Injectivity has to hold per platform, not across the union: 40 is a
         // legitimate number for two different errors *on different platforms*,
