@@ -674,8 +674,8 @@ module TestPathCopyIn =
                         else
                             PathArg.ofText (slashed 1024)
 
-                    UnixSystem.tryStep 0 (Syscall.CloneFile (argument, argument, 0)) darwin
+                    UnixSystem.tryStep (Callers.thread 0 darwin) (Syscall.CloneFile (argument, argument, 0)) darwin
                     |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), darwin))
                 | call ->
-                    UnixSystem.tryStep 0 call system
+                    UnixSystem.tryStep (Callers.thread 0 system) call system
                     |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system))

@@ -738,7 +738,7 @@ module TestConnectedTransferAgainstHost =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    (Lone.leader system)
+                    (Callers.leader system)
                     [
                         {
                             Fd = fd

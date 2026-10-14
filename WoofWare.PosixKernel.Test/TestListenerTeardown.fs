@@ -184,7 +184,7 @@ module TestListenerTeardown =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    1
+                    (Callers.thread 1 system)
                     [
                         {
                             Fd = fd
@@ -201,7 +201,7 @@ module TestListenerTeardown =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                     | Ok (Ok created) -> created
                     | other -> failwith $"epoll_create1: %A{other}"
 
@@ -217,13 +217,19 @@ module TestListenerTeardown =
 
                 let system =
                     match
-                        UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (interest, uint64 fd)) system
+                        UnixPoll.tryEpollCtl
+                            (Callers.leader system)
+                            epoll
+                            1
+                            fd
+                            (EpollEventArgument.Readable (interest, uint64 fd))
+                            system
                     with
                     | Ok (EpollCtlAnswer.Changed, system) -> system
                     | other -> failwith $"epoll_ctl: %A{other}"
 
                 let reported, system =
-                    match UnixPoll.tryEpollWait 1 epoll 1 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.thread 1 system) epoll 1 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered [], system) -> 0u, system
                     | Ok (EpollWaitOutcome.Answered [ _, events ], system) -> events, system
                     | other -> failwith $"epoll_wait: %A{other}"
@@ -407,7 +413,7 @@ module TestListenerTeardown =
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                     | Ok (Ok created) -> created
                     | other -> failwith $"epoll_create1: %A{other}"
 
@@ -422,6 +428,7 @@ module TestListenerTeardown =
                     ||> List.fold (fun system i ->
                         match
                             UnixPoll.tryEpollCtl
+                                (Callers.leader system)
                                 epoll
                                 1
                                 clients.[i]
@@ -433,7 +440,7 @@ module TestListenerTeardown =
                     )
 
                 let wait (system : UnixSystem<int, string>) =
-                    match UnixPoll.tryEpollWait 1 epoll 8 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.thread 1 system) epoll 8 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, system) -> events, system
                     | other -> failwith $"epoll_wait: %A{other}"
 
@@ -554,7 +561,7 @@ module TestListenerTeardown =
         let listenerPoll, system =
             match
                 UnixPoll.tryPoll
-                    1
+                    (Callers.thread 1 system)
                     [
                         {
                             Fd = listener

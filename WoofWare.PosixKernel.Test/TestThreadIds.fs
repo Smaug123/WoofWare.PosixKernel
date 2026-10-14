@@ -34,13 +34,13 @@ module TestThreadIds =
         OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread (Lone.threads system)))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
-        match UnixThreadLifecycle.trySpawn (Lone.leader system) child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn (Callers.leader system) child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned id, system) -> OsThreadId.toUInt64 id, system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
 
     let private exitOrFail (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.tryExitThread thread 0 system with
+        match UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
         | other -> failwith $"expected thread %d{thread}'s exit to leave the process running, got %A{other}"
 
@@ -115,7 +115,7 @@ module TestThreadIds =
             |> Launched.leaderThreadId 2897490UL
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixSystem.processId system |> shouldEqual (pid 58948)
+        UnixSystem.processIds system |> shouldEqual (Set.singleton (pid 58948))
         idOf 0 system |> shouldEqual 2897490UL
 
         let concurrent, system =
@@ -208,7 +208,7 @@ module TestThreadIds =
         let system = system |> UnixSystem.writePidMaxSysctl "test" 400
 
         let rec fill (child : int) (started : uint64 list) (system : UnixSystem<int, string>) =
-            match UnixThreadLifecycle.trySpawn (Lone.leader system) child (CpuId 0) system with
+            match UnixThreadLifecycle.trySpawn (Callers.leader system) child (CpuId 0) system with
             | Ok (SpawnAnswer.Spawned id, system) -> fill (child + 1) (OsThreadId.toUInt64 id :: started) system
             | Ok (SpawnAnswer.Failed error, after) ->
                 // A failed creation hands out no thread ID and adds no thread.
@@ -273,7 +273,7 @@ module TestThreadIds =
             (pidMax, idOf 0 written, idOf 1 written) |> shouldEqual (pidMax, 5000UL, 5001UL)
             UnixSystem.checkInvariants written |> shouldEqual []
 
-            match UnixSignal.tryKill 5000 0 written with
+            match UnixSignal.tryKill (Callers.leader written) 5000 0 written with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> after |> shouldEqual written
             | other -> failwith $"kill(5000, 0) at pid_max %d{pidMax}: %A{other}"
 
@@ -406,11 +406,17 @@ module TestThreadIds =
             let exn = Assert.Throws<exn> (fun () -> f ())
             exn.Message |> shouldContainText text
 
+        // A caller that is no thread, or is parked, is refused before the
+        // call, as every call's is.
+        let refused (f : unit -> unit) (text : string) : unit =
+            let exn = Assert.Throws<System.InvalidOperationException> (fun () -> f ())
+            exn.Message |> shouldContainText text
+
         let spawn (parent : int) (child : int) (system : UnixSystem<int, string>) () : unit =
-            UnixThreadLifecycle.trySpawn parent child (CpuId 0) system
+            UnixThreadLifecycle.trySpawn (Callers.thread parent system) child (CpuId 0) system
             |> ignore<Result<SpawnAnswer * UnixSystem<int, string>, SpawnRefusal<int>>>
 
-        fails (spawn 7 2 system) "names no thread"
+        refused (spawn 7 2 system) "names no thread"
         fails (spawn 0 1 system) "already names a thread"
         fails (spawn 1 0 system) "already names a thread"
 
@@ -424,13 +430,13 @@ module TestThreadIds =
                     })
                 system
 
-        fails (spawn 1 2 parked) "parked"
+        refused (spawn 1 2 parked) "parked"
 
         // Each is a bug in the client even from inside a handler that blocks
         // something, which would otherwise be refused.
         let masked = system |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGUSR1)
         fails (spawn 0 1 masked) "already names a thread"
-        fails (spawn 7 2 masked) "names no thread"
+        refused (spawn 7 2 masked) "names no thread"
 
     [<Test>]
     let ``a new thread starts with its creator's mask and nothing pending on it`` () : unit =
@@ -446,7 +452,7 @@ module TestThreadIds =
             let blocking (signals : Signal list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match
                     UnixSignal.pthreadSigmask
-                        0
+                        (Callers.thread 0 system)
                         (match numbering with
                          | SignalNumbering.Linux -> 2
                          | SignalNumbering.Darwin -> 3)
@@ -469,7 +475,13 @@ module TestThreadIds =
 
                 let creator =
                     if pendOnCreator then
-                        match UnixSignal.tryPthreadKill 0 (Signal.toRawSignoUnder numbering Signal.SIGUSR2) creator with
+                        match
+                            UnixSignal.tryPthreadKill
+                                (Callers.leader creator)
+                                0
+                                (Signal.toRawSignoUnder numbering Signal.SIGUSR2)
+                                creator
+                        with
                         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                         | other -> failwith $"pthread_kill answered %A{other}"
                     else
@@ -481,9 +493,10 @@ module TestThreadIds =
                 |> SignalMask.signals
                 |> shouldEqual (Set.ofList blocked)
 
-                UnixSignal.sigpending 1 spawned |> shouldEqual SignalMask.empty
+                UnixSignal.sigpending (Callers.thread 1 spawned) spawned
+                |> shouldEqual SignalMask.empty
 
-                UnixSignal.sigpending 0 spawned
+                UnixSignal.sigpending (Callers.thread 0 spawned) spawned
                 |> SignalMask.signals
                 |> shouldEqual (
                     if pendOnCreator then
@@ -504,17 +517,23 @@ module TestThreadIds =
                 Signal.toRawSignoUnder (UnixSystemState.signalNumbering system) Signal.SIGUSR1
 
             let system =
-                match UnixSignal.sigaction usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) system with
+                match
+                    UnixSignal.sigaction
+                        (Callers.leader system)
+                        usr1
+                        (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
+                        system
+                with
                 | Ok (_, system) -> system
                 | Error error -> failwith $"sigaction failed with %O{error}"
 
             let system =
-                match UnixSignal.tryPthreadKill 0 usr1 system with
+                match UnixSignal.tryPthreadKill (Callers.leader system) 0 usr1 system with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"pthread_kill answered %A{other}"
 
             let frame, inHandler =
-                match UnixSignal.tryOnReturnToUser 0 system with
+                match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
                 | other -> failwith $"onReturnToUser answered %A{other}"
 
@@ -524,7 +543,7 @@ module TestThreadIds =
             |> SignalMask.signals
             |> shouldEqual (Set.singleton Signal.SIGUSR1)
 
-            let returned = UnixSignal.sigreturn 0 frame.Id spawned
+            let returned = UnixSignal.sigreturn (Callers.thread 0 spawned) frame.Id spawned
 
             SignalState.maskOf 0 (Lone.proc returned).Signals
             |> shouldEqual SignalMask.empty
@@ -547,7 +566,7 @@ module TestThreadIds =
             |> Launched.leaderThreadId (System.UInt64.MaxValue - 1UL)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn (Callers.thread 0 system) 1 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // The refusal carries no system, and the one before it is as it was:
@@ -556,7 +575,7 @@ module TestThreadIds =
         |> Set.map OsThreadId.toUInt64
         |> shouldEqual (Set.singleton (System.UInt64.MaxValue - 1UL))
 
-        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn (Callers.thread 0 system) 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
         // One below, the counter hands out its last ID.
@@ -568,7 +587,7 @@ module TestThreadIds =
         let id, system = spawnOrFail 1 system
         id |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
-        UnixThreadLifecycle.trySpawn 0 2 (CpuId 0) system
+        UnixThreadLifecycle.trySpawn (Callers.thread 0 system) 2 (CpuId 0) system
         |> shouldEqual (Error SpawnRefusal.ThreadIdCounterExhausted)
 
     // ------------------------------------------------------------------
@@ -751,7 +770,9 @@ module TestThreadIds =
             | Op.Spawn index ->
                 let parent = live.[index % live.Length]
                 let held = liveIds system
-                let actual = UnixThreadLifecycle.trySpawn parent nextName (CpuId 0) system
+
+                let actual =
+                    UnixThreadLifecycle.trySpawn (Callers.thread parent system) nextName (CpuId 0) system
 
                 match modelNext held model, actual with
                 | Expected.Exhausted, Ok (SpawnAnswer.Failed error, after) ->
@@ -804,7 +825,7 @@ module TestThreadIds =
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
                 let thread = live.[index % live.Length]
-                let ended = UnixThreadLifecycle.exitGroup thread 0 system
+                let ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
 
                 // Every thread's ID is freed with it, the process leaves the
                 // machine, and nothing else on the machine moves.

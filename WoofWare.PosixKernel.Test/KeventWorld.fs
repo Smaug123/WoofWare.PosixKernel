@@ -41,10 +41,18 @@ module KeventWorld =
     /// `idOfIn` the only process on the machine.
     let idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId = idOfIn (Lone.pid system) fd system
 
-    let kqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixKqueue.tryKqueue system with
+    /// A new kqueue, made by `caller`.
+    let kqueueAs (caller : Caller<int>) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixKqueue.tryKqueue caller system with
         | Ok created -> created
         | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
+
+    /// `kqueueAs` the leader of the process `pid`.
+    let kqueueIn (pid : ProcessId) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        kqueueAs (Caller.make pid (Proc.leader pid system)) system
+
+    /// `kqueueIn` the only process on the machine.
+    let kqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> = kqueueIn (Lone.pid system) system
 
     /// A new blocking stream socket, made by `caller`.
     let private blockingStream
@@ -273,9 +281,9 @@ module KeventWorld =
             UserData = userData
         }
 
-    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by thread 4, which no test
-    /// parks.
-    let apply
+    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by `caller`.
+    let applyAs
+        (caller : Caller<int>)
         (kq : int)
         (changes : Kevent list)
         (nevents : int)
@@ -284,7 +292,7 @@ module KeventWorld =
         =
         match
             UnixKqueue.tryKevent
-                4
+                caller
                 kq
                 (List.length changes)
                 changes
@@ -296,7 +304,44 @@ module KeventWorld =
         | Ok answered -> answered
         | Error refusal -> failwith $"kevent refused: %s{KeventRefusal.describe refusal}"
 
-    /// One change and no room, which must succeed: the probe's `reg`.
+    /// `applyAs` thread 4 of the process `pid`, which no test parks.
+    let applyIn
+        (pid : ProcessId)
+        (kq : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (system : UnixSystem<int, string>)
+        : KeventOutcome * UnixSystem<int, string>
+        =
+        applyAs (Caller.make pid 4) kq changes nevents system
+
+    /// `applyIn` the only process on the machine.
+    let apply
+        (kq : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (system : UnixSystem<int, string>)
+        : KeventOutcome * UnixSystem<int, string>
+        =
+        applyIn (Lone.pid system) kq changes nevents system
+
+    /// One change and no room, by thread 4 of the process `pid`, which must
+    /// succeed: the probe's `reg`.
+    let registerIn
+        (pid : ProcessId)
+        (kq : int)
+        (fd : int)
+        (filter : int16)
+        (flags : uint16)
+        (userData : uint64)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match applyIn pid kq [ change fd filter flags userData ] 0 system with
+        | KeventOutcome.Answered [], system -> system
+        | other, _ -> failwith $"registering fd %d{fd}: %A{other}"
+
+    /// `registerIn` the only process on the machine.
     let register
         (kq : int)
         (fd : int)
@@ -306,9 +351,7 @@ module KeventWorld =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match apply kq [ change fd filter flags userData ] 0 system with
-        | KeventOutcome.Answered [], system -> system
-        | other, _ -> failwith $"registering fd %d{fd}: %A{other}"
+        registerIn (Lone.pid system) kq fd filter flags userData system
 
     /// The registrations and the queue of the kqueue `kq` names.
     let stateOf (kq : int) (system : UnixSystem<int, string>) : KqueueState =

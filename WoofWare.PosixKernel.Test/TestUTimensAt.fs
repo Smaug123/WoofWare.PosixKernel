@@ -448,11 +448,11 @@ module TestUTimensAt =
         | "eventq" ->
             match flavourOf caller with
             | SimulatedUnixFlavour.Linux ->
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok (fd, system)) -> fd, None, system
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
-                match UnixKqueue.tryKqueue system with
+                match UnixKqueue.tryKqueue (Callers.leader system) system with
                 | Ok (fd, system) -> fd, None, system
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | "devnull" ->

@@ -292,15 +292,27 @@ module internal InotifyReplay =
         =
         openFdIn (Lone.pid system) flags path mode system
 
-    let write (fd : int) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    /// The probe's `write` of `text` through `fd`, by thread 0 of the process
+    /// `pid`.
+    let writeIn
+        (pid : ProcessId)
+        (fd : int)
+        (text : string)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
         let bytes = ImmutableArray.CreateRange (Encoding.ASCII.GetBytes text)
 
         match
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
+            WriteOutcomes.admitThenWriteAs (Caller.make pid 0) fd UserBuffer.Mapped bytes system
             |> WriteOutcomes.returned
         with
         | Ok (WriteAnswer.Completed _, system) -> system
         | other -> failwith $"write(%d{fd}): %A{other}"
+
+    /// `writeIn` the only process on the machine.
+    let write (fd : int) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        writeIn (Lone.pid system) fd text system
 
     let pwrite
         (fd : int)
@@ -349,12 +361,12 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixReadWrite.tryCopyFileRange source destination (uint64 count) 0 system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) source destination (uint64 count) 0 system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"copy_file_range(%d{source}, %d{destination}): %A{other}"
 
     let readFile (fd : int) (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 count) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
         | other -> failwith $"read(%d{fd}): %A{other}"
 
@@ -405,7 +417,7 @@ module internal InotifyReplay =
         let fd, system =
             openFdIn pid (openFlags FileAccessMode.WriteOnly true false true) path 0o644 system
 
-        system |> write fd text |> closeIn pid fd
+        system |> writeIn pid fd text |> closeIn pid fd
 
     /// `writeFileIn` the only process on the machine.
     let writeFile (path : string) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -659,14 +671,14 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : ReadRecord list * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 count) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) -> parse bytes, system
         | other -> failwith $"read(%d{fd}, %d{count}): %A{other}"
 
     /// Every record the non-blocking instance `fd` holds, read until `EAGAIN`.
     let drainRecords (fd : int) (system : UnixSystem<int, string>) : ReadRecord list * UnixSystem<int, string> =
         let rec go (acc : ReadRecord list) (system : UnixSystem<int, string>) =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 (1 <<< 20)) system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 (1 <<< 20)) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) -> go (acc @ parse bytes) system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), system) -> acc, system
             | other -> failwith $"read(%d{fd}): %A{other}"

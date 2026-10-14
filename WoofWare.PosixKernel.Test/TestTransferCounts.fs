@@ -1161,7 +1161,7 @@ module TestTransferCountsLarge =
                 0L
                 (TestTransferCounts.systemOn (SimulatedUnixPlatform.linuxX64, None))
 
-        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
+        match UnixReadWrite.write (Callers.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
         | CallProgress.NeedsCopyIn paused ->
             (PausedWrite.copyRange paused).ByteCount
             |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
@@ -1170,7 +1170,7 @@ module TestTransferCountsLarge =
             |> ignore
         | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
-        match UnixReadWrite.pwrite 0 fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
+        match UnixReadWrite.pwrite (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
         | CallProgress.NeedsCopyIn paused ->
             (PausedPWrite.copyRange paused).ByteCount
             |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)

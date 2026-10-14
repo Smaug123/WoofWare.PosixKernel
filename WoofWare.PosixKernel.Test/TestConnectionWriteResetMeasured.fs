@@ -158,11 +158,11 @@ module TestConnectionWriteResetMeasured =
 
     /// `thread` returns to user mode, running every handler it takes.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -423,7 +423,9 @@ module TestConnectionWriteResetMeasured =
             UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
         let rec drain (total : int64) (system : UnixSystem<int, string>) =
-            match UnixReadWrite.tryRead 0 server UserBuffer.Mapped (uint64 (1 <<< 22)) system with
+            match
+                UnixReadWrite.tryRead (Callers.thread 0 system) server UserBuffer.Mapped (uint64 (1 <<< 22)) system
+            with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed got), system) when got.Length > 0 ->
                 drain (total + int64 got.Length) system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), system) -> total, system

@@ -909,7 +909,7 @@ module TestNamespaceSequence =
         let fileSystem = system.Machine.FileSystem
 
         (UnixSystem.checkInvariants system |> List.map (sprintf "%A"))
-        @ (FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors system)
+        @ (FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors (Lone.pid system) system)
            |> List.map (sprintf "%A"))
         @ (VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) fileSystem
            |> List.map VirtualFileSystemDefect.describe)

@@ -394,7 +394,7 @@ module DualModeProbe =
 
     /// A one-byte `read`, as `transfer` prints it: the count, or the errno.
     let private readByte (libc : Libc) (fd : int) : string =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1UL libc.System with
+        match UnixReadWrite.tryRead (Callers.thread 0 libc.System) fd UserBuffer.Mapped 1UL libc.System with
         | Result.Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
             libc.System <- system
             $"%d{bytes.Length}"
@@ -478,7 +478,7 @@ module DualModeProbe =
                 | Result.Ok other -> failwith $"DualModeProbe: write answered %A{other}"
 
             let read =
-                match UnixReadWrite.tryRead 0 srv UserBuffer.Mapped 1UL libc.System with
+                match UnixReadWrite.tryRead (Callers.thread 0 libc.System) srv UserBuffer.Mapped 1UL libc.System with
                 | Result.Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                     libc.System <- system
                     $"%d{bytes.Length} '%c{char bytes.[0]}'"

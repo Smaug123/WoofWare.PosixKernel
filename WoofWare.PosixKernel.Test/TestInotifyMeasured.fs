@@ -278,7 +278,7 @@ module TestInotifyMeasured =
         (system : UnixSystem<int, string>)
         : ReadOutcome * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd buffer (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"read(%d{fd}, %d{count}) refused: %s{ReadRefusal.describe refusal}"
 
@@ -314,7 +314,7 @@ module TestInotifyMeasured =
     let private pollIn (fd : int) (events : int16) (system : UnixSystem<int, string>) : string =
         match
             UnixPoll.tryPoll
-                0
+                (Callers.thread 0 system)
                 [
                     {
                         Fd = fd
@@ -336,7 +336,7 @@ module TestInotifyMeasured =
         let b, s = init1 (cloexec ||| nonblock) s
 
         let ep, s =
-            match UnixPoll.tryEpollCreate1 0 s with
+            match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -405,7 +405,7 @@ module TestInotifyMeasured =
         let polled =
             match
                 UnixPoll.tryPoll
-                    0
+                    (Callers.thread 0 system)
                     [
                         {
                             Fd = a
@@ -655,7 +655,7 @@ module TestInotifyMeasured =
         let _, s = addWatch fd "p" create s
 
         let ep, s =
-            match UnixPoll.tryEpollCreate1 0 s with
+            match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -669,6 +669,7 @@ module TestInotifyMeasured =
         let added =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     ep
                     1
                     fd
@@ -690,7 +691,7 @@ module TestInotifyMeasured =
         actual.Add ("epoll-ctl-add", added)
 
         let wait () =
-            match UnixPoll.tryEpollWait 0 ep 4 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 0 system) ep 4 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, s) ->
                 system <- s
                 events
@@ -789,13 +790,13 @@ module TestInotifyMeasured =
         )
 
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
-        match UnixWait.satisfied thread system with
+        match UnixWait.satisfied (Callers.thread thread system) system with
         | Some woken -> not (Set.isEmpty woken)
         | None -> failwith $"thread %d{thread} is not asleep"
 
     /// What the woken read of `thread` answers, as the probe prints it.
     let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        match UnixReadWrite.tryFinishRead thread system with
+        match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
@@ -861,10 +862,10 @@ module TestInotifyMeasured =
 
         // The handler runs and returns, and the client issues the read again.
         let s =
-            match UnixSignal.tryOnReturnToUser reader s with
+            match UnixSignal.tryOnReturnToUser (Callers.thread reader s) s with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, s)) ->
                 (s, frames)
-                ||> List.fold (fun s frame -> UnixSignal.sigreturn reader frame.Id s)
+                ||> List.fold (fun s frame -> UnixSignal.sigreturn (Callers.thread reader s) frame.Id s)
             | other -> failwith $"%A{other}"
 
         system <- sleeps reader fd s
@@ -961,7 +962,7 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let epoll, s =
-            match UnixPoll.tryEpollCreate1 0 s with
+            match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -1039,7 +1040,7 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -1392,13 +1393,14 @@ module TestInotifyMeasured =
         let _, s = addWatch fd "t" attrib s
 
         let ep, s =
-            match UnixPoll.tryEpollCreate1 0 s with
+            match UnixPoll.tryEpollCreate1 (Callers.leader s) 0 s with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
         let s =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader s)
                     ep
                     1
                     fd
@@ -1411,7 +1413,7 @@ module TestInotifyMeasured =
         system <- s
 
         let wait () =
-            match UnixPoll.tryEpollWait 0 ep 4 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 0 system) ep 4 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, s) ->
                 system <- s
                 List.length events
@@ -1471,7 +1473,7 @@ module TestInotifyMeasured =
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
 
         let pread () =
-            match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 256UL 0L system with
+            match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0L system with
             | Ok (ReadAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
@@ -1519,7 +1521,7 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let recv =
-            match UnixReadWrite.tryRecv 0 fd UserBuffer.Mapped 256UL 0 system with
+            match UnixReadWrite.tryRecv (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0 system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
@@ -1627,7 +1629,7 @@ module TestInotifyMeasured =
         let polled = pollIn fd -1s system
 
         let ep, s =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -1642,13 +1644,19 @@ module TestInotifyMeasured =
 
         let added, s =
             match
-                UnixPoll.tryEpollCtl ep 1 fd (EpollEventArgument.Readable (every ||| EpollEvents.EdgeTriggered, 1UL)) s
+                UnixPoll.tryEpollCtl
+                    (Callers.leader s)
+                    ep
+                    1
+                    fd
+                    (EpollEventArgument.Readable (every ||| EpollEvents.EdgeTriggered, 1UL))
+                    s
             with
             | Ok (EpollCtlAnswer.Changed, s) -> "0", s
             | other -> failwith $"%A{other}"
 
         let waited =
-            match UnixPoll.tryEpollWait 0 ep 2 UserBuffer.Mapped 0 s with
+            match UnixPoll.tryEpollWait (Callers.thread 0 s) ep 2 UserBuffer.Mapped 0 s with
             | Ok (EpollWaitOutcome.Answered events, _) ->
                 match events with
                 | (_, mask) :: _ -> $"n=%d{events.Length} events=0x%x{mask}"

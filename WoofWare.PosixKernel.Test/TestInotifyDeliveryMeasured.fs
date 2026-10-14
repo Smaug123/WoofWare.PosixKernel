@@ -191,7 +191,7 @@ module TestInotifyDeliveryMeasured =
             let entry = String (char (int 'a' + i % 26), length)
             system <- writeFile $"l/%s{entry}" "x" system
 
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 let first = parse bytes |> List.head
@@ -249,7 +249,7 @@ module TestInotifyDeliveryMeasured =
         system <- chmod "c/f" 0o644 system
 
         let first =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 bytes.Length
@@ -258,7 +258,7 @@ module TestInotifyDeliveryMeasured =
         system <- chmod "c/f" 0o600 system
 
         let second =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 bytes.Length

@@ -73,7 +73,7 @@ module TestPoll =
         =
         let system = Threads.ensure poller system
 
-        match UnixPoll.tryPoll poller entries milliseconds system with
+        match UnixPoll.tryPoll (Callers.thread poller system) entries milliseconds system with
         | Error refusal -> Error refusal
         | Ok (PollOutcome.Answered (reported, count), after) ->
             after |> shouldEqual system
@@ -511,7 +511,7 @@ module TestPoll =
                     let system = Threads.ensure poller system
 
                     for events in masks do
-                        match UnixPoll.tryPoll poller [ entry fd events ] 0 system with
+                        match UnixPoll.tryPoll (Callers.thread poller system) [ entry fd events ] 0 system with
                         | Ok _
                         | Error _ -> ()
 

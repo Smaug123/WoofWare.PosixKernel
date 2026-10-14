@@ -300,7 +300,7 @@ module TestInotifyInvariants =
     [<Test>]
     let ``a read parked on something other than an instance is a defect`` () : unit =
         let fd, system =
-            match UnixPoll.tryEpollCreate1 0 linux with
+            match UnixPoll.tryEpollCreate1 (Callers.leader linux) 0 linux with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -335,7 +335,7 @@ module TestInotifyInvariants =
         UnixInotify.tryInotifyRmWatch (Callers.leader darwin) 0 1 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0) darwin with
+        match UnixSystem.tryStep (Callers.thread 0 darwin) (Syscall.InotifyInit1 0) darwin with
         | Error (SyscallRefusal.Inotify (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)) -> ()
         | other -> failwith $"%A{other}"
 
@@ -530,20 +530,20 @@ module TestInotifyInvariants =
     [<Test>]
     let ``step answers inotify_init1 and inotify_rm_watch as the functions do`` () : unit =
         let viaStep =
-            match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0x800) linux with
+            match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x800) linux with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), system) -> int fd, system
             | other -> failwith $"%A{other}"
 
         viaStep |> shouldEqual (init1 0x800 linux)
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0x1) linux with
+        match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINVAL), system) -> system |> shouldEqual linux
         | other -> failwith $"%A{other}"
 
         let system, _, _ = instance
 
         match
-            UnixSystem.tryStep 0 (Syscall.InotifyRmWatch (3, 1)) system,
+            UnixSystem.tryStep (Callers.thread 0 system) (Syscall.InotifyRmWatch (3, 1)) system,
             UnixInotify.tryInotifyRmWatch (Callers.leader system) 3 1 system
         with
         | Ok (SyscallOutcome.Answered stepped, afterStep), Ok (answered, after) ->
@@ -650,9 +650,9 @@ module TestInotifyInvariants =
                 | defects -> failwith $"after %A{op}: %A{defects}"
 
             let finishReader () =
-                match UnixWait.satisfied 1 system with
+                match UnixWait.satisfied (Callers.thread 1 system) system with
                 | Some woken when not (Set.isEmpty woken) ->
-                    match UnixReadWrite.tryFinishRead 1 system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), after) ->
                         cover Label.ReaderInterrupted
                         system <- after
@@ -665,12 +665,14 @@ module TestInotifyInvariants =
                     | other -> failwith $"finishing the read: %A{other}"
 
                     // Its handler runs and returns, as the client would see to.
-                    match UnixSignal.tryOnReturnToUser 1 system with
+                    match UnixSignal.tryOnReturnToUser (Callers.thread 1 system) system with
                     | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) -> system <- after
                     | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
                         system <-
                             (after, frames)
-                            ||> List.fold (fun system frame -> UnixSignal.sigreturn 1 frame.Id system)
+                            ||> List.fold (fun system frame ->
+                                UnixSignal.sigreturn (Callers.thread 1 system) frame.Id system
+                            )
                     | other -> failwith $"%A{other}"
                 | _ -> ()
 
@@ -734,7 +736,14 @@ module TestInotifyInvariants =
                         ()
                     else
 
-                    match UnixReadWrite.tryRead (if asleep then 0 else 1) fd buffer (uint64 count) system with
+                    match
+                        UnixReadWrite.tryRead
+                            (Callers.thread (if asleep then 0 else 1) system)
+                            fd
+                            buffer
+                            (uint64 count)
+                            system
+                    with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         if bytes.Length > 0 then
                             cover Label.ReadTookRecords

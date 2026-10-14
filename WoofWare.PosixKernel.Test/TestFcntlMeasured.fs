@@ -533,13 +533,18 @@ module TestFcntlMeasured =
                         | "pipe" -> pipeOf 0 system
                         | "pipe2 bad flag" -> pipeOf (if linux then 1 else 0x10) system
                         | "kqueue" ->
-                            match UnixKqueue.tryKqueue system with
+                            match UnixKqueue.tryKqueue (Callers.leader system) system with
                             | Ok (fd, _) -> Ok (SyscallAnswer.Completed (int64 fd))
                             | Error (KqueueRefusal.DescriptorLimit refusal) -> Error refusal
                             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
                         | "epoll_create1"
                         | "epoll_create1 bad flag" ->
-                            match UnixPoll.tryEpollCreate1 (if call = "epoll_create1" then 0 else 1) system with
+                            match
+                                UnixPoll.tryEpollCreate1
+                                    (Callers.leader system)
+                                    (if call = "epoll_create1" then 0 else 1)
+                                    system
+                            with
                             | Ok (Ok (fd, _)) -> Ok (SyscallAnswer.Completed (int64 fd))
                             | Ok (Error error) -> Ok (SyscallAnswer.Failed error)
                             | Error (EpollCreateRefusal.DescriptorLimit refusal) -> Error refusal
@@ -705,7 +710,7 @@ module TestFcntlMeasured =
         | other -> failwith $"lseek(%d{fd}): %A{other}"
 
     let private readNonBlocking (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+        match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), _) -> $"ok %d{bytes.Length}"
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"%A{error}"
         | other -> failwith $"read of %d{fd}: %A{other}"
@@ -790,7 +795,7 @@ module TestFcntlMeasured =
                 let source, system = FcntlWorld.openWith reading "f" system
 
                 let flock (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-                    match UnixDescriptor.tryFlock (Callers.thread (Lone.leader system) system) fd operation system with
+                    match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
                     | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
                     | other -> failwith $"flock: %A{other}"
 
@@ -885,7 +890,7 @@ module TestFcntlMeasured =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFlock (Callers.thread (Lone.leader system) system) fd operation system with
+        match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
         | other -> failwith $"flock(%d{fd}, %d{operation}): %A{other}"
 
@@ -943,7 +948,7 @@ module TestFcntlMeasured =
                             | Ok (answer, system) -> Some (FcntlWorld.number answer, system)
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "read rdwr" ->
-                            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+                            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                                 Some ($"ok %d{bytes.Length}", system)
                             | other -> failwith $"read: %A{other}"
@@ -1357,7 +1362,7 @@ module TestFcntlMeasured =
             // can, until it has put in the lot.
             while answer.IsNone do
                 system <-
-                    match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 65536UL system with
+                    match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 65536UL system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                     | other -> failwith $"%s{run.Name}: draining: %A{other}"
 

@@ -549,15 +549,14 @@ module SimulatedMachine =
     /// `step`, with a refusal answered as the `Error` rather than raised. A
     /// refused call changes nothing, and answers `machine` itself.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (processId : ProcessId)
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (call : Syscall)
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (Result<SyscallOutcome, SyscallRefusal<'Thread>> * SimulatedMachine<'Thread, 'Handler>) option
         =
-        focus processId machine
+        focus (Caller.processId caller) machine
         |> Option.map (fun view ->
-            match UnixSystem.tryStep thread call view with
+            match UnixSystem.tryStep caller call view with
             | Ok (outcome, view) -> Ok outcome, unfocus view machine
             | Error refusal -> Error refusal, machine
         )
@@ -570,13 +569,12 @@ module SimulatedMachine =
     /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall, as `UnixSystem.step` says.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The machine's flavour has no such call, as `UnixSystem.step` says.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (processId : ProcessId)
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (call : Syscall)
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (SyscallOutcome * SimulatedMachine<'Thread, 'Handler>) option
         =
-        tryStep processId thread call machine
+        tryStep caller call machine
         |> Option.map (fun (result, machine) ->
             result
             |> Refusal.orRaise "SimulatedMachine.step" SyscallRefusal.kind SyscallRefusal.describe,

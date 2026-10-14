@@ -63,7 +63,11 @@ module TestWakeSweepMemo =
                 (fun view ->
                     let view =
                         match
-                            UnixSignal.sigaction 10 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) view
+                            UnixSignal.sigaction
+                                (Callers.leader view)
+                                10
+                                (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
+                                view
                         with
                         | Ok (_, view) -> view
                         | Error error -> failwith $"sigaction: %O{error}"
@@ -83,7 +87,7 @@ module TestWakeSweepMemo =
             Machines.doIn
                 pid
                 (fun view ->
-                    match UnixSignal.tryPthreadKill 1 10 view with
+                    match UnixSignal.tryPthreadKill (Callers.leader view) 1 10 view with
                     | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view))) -> view
                     | other -> failwith $"pthread_kill: %A{other}"
                 )
@@ -233,7 +237,7 @@ module TestWakeSweepMemo =
                             Events = 0x0001s
                         }
 
-                    match UnixPoll.tryPoll thread [ entry ] milliseconds view with
+                    match UnixPoll.tryPoll (Callers.thread thread view) [ entry ] milliseconds view with
                     | Ok (PollOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"poll by thread %d{thread}: %A{other}"
                 )
