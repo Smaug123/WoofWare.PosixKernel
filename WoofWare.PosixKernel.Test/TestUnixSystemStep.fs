@@ -3293,7 +3293,9 @@ module TestUnixSystemStep =
         let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlock waiterThread second 2 parkedIn |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlock waiterThread second 2 parkedIn |> ignore
+            )
 
         exn.Message |> shouldContainText "is parked in"
 
@@ -3304,7 +3306,9 @@ module TestUnixSystemStep =
         let first, _, system = withTwoDescriptions linux
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlock 99 first 1 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlock 99 first 1 system |> ignore
+            )
 
         exn.Message |> shouldContainText "names no thread"
 
@@ -3329,11 +3333,15 @@ module TestUnixSystemStep =
             ]
 
         for name, open' in opens do
-            let parkedExn = Assert.Throws<exn> (fun () -> open' waiterThread parkedIn)
+            let parkedExn =
+                Assert.Throws<System.InvalidOperationException> (fun () -> open' waiterThread parkedIn)
+
             parkedExn.Message |> shouldContainText $"UnixNamespace.%s{name}"
             parkedExn.Message |> shouldContainText "is parked in"
 
-            let unknownExn = Assert.Throws<exn> (fun () -> open' 99 parkedIn)
+            let unknownExn =
+                Assert.Throws<System.InvalidOperationException> (fun () -> open' 99 parkedIn)
+
             unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its open is answered.
@@ -3354,11 +3362,15 @@ module TestUnixSystemStep =
         let connect (thread : int) : unit =
             UnixConnection.tryConnect thread first UserBuffer.Mapped 0u parkedIn |> ignore
 
-        let parkedExn = Assert.Throws<exn> (fun () -> connect waiterThread)
+        let parkedExn =
+            Assert.Throws<System.InvalidOperationException> (fun () -> connect waiterThread)
+
         parkedExn.Message |> shouldContainText "UnixConnection.connect"
         parkedExn.Message |> shouldContainText "is parked in"
 
-        let unknownExn = Assert.Throws<exn> (fun () -> connect 99)
+        let unknownExn =
+            Assert.Throws<System.InvalidOperationException> (fun () -> connect 99)
+
         unknownExn.Message |> shouldContainText "names no thread"
 
         // The holder is neither, and its connect is answered: `first` is not a
@@ -3428,7 +3440,9 @@ module TestUnixSystemStep =
         let _, _, system = withTwoDescriptions linux
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixDescriptor.tryFlockAcquire holderThread system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixDescriptor.tryFlockAcquire holderThread system |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 

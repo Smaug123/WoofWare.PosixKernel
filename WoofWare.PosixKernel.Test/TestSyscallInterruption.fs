@@ -932,7 +932,7 @@ module TestSyscallInterruption =
             |> send 0 [ Sent.Caught (Signal.SIGUSR1, true) ]
 
         let thrown =
-            Assert.Throws<exn> (fun () -> UnixSignal.tryOnReturnToUser 0 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () -> UnixSignal.tryOnReturnToUser 0 system |> ignore)
 
         thrown.Message |> shouldContainText "asleep"
 

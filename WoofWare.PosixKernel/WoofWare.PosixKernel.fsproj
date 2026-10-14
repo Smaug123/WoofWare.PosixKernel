@@ -46,6 +46,7 @@
         <Compile Include="Ipv6Address.fs" />
         <Compile Include="SocketAddress.fs" />
         <Compile Include="ProcessId.fs" />
+        <Compile Include="Caller.fs" />
         <Compile Include="Inotify.fs" />
         <Compile Include="FileDescriptorRegistry.fs" />
         <Compile Include="InotifyDelivery.fs" />
@@ -92,8 +93,8 @@
         <Compile Include="UnixSchedulingState.fs" />
         <Compile Include="UnixMachine.fs" />
         <Compile Include="TcpBufferSizing.fs" />
-        <Compile Include="UnixSystemState.fs" />
         <Compile Include="CallProgress.fs" />
+        <Compile Include="UnixSystemState.fs" />
         <Compile Include="UnixClock.fs" />
         <Compile Include="UnixSocket.fs" />
         <Compile Include="Readiness.fs" />
