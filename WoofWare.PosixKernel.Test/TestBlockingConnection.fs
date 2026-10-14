@@ -3809,7 +3809,7 @@ module TestBlockingConnection =
                     | other -> failwith $"%A{other}"
 
             let marked (system : UnixSystem<int, string>) : bool =
-                match FileDescriptorRegistry.tryFindWithId client (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindWithId client (Lone.fileDescriptors system) with
                 | Some (_, description) -> description.Status.Written
                 | None -> failwith "the client names no description"
 

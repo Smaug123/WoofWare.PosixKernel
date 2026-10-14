@@ -1129,7 +1129,7 @@ module TestTransferCountsLarge =
                 0L
                 (TestTransferCounts.systemOn (SimulatedUnixPlatform.linuxX64, None))
 
-        match UnixReadWrite.write system.Leader fd UserBuffer.Mapped (uint64 bytes.Length) system with
+        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
         | CallProgress.NeedsCopyIn paused ->
             (PausedWrite.copyRange paused).ByteCount
             |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)

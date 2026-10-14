@@ -802,7 +802,7 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than written`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixReadWrite.write system.Leader fd UserBuffer.Mapped 1UL system with
+        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped 1UL system with
         | CallProgress.NeedsCopyIn paused ->
             let exn =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
