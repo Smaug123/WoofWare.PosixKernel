@@ -109,9 +109,9 @@ module TestEpollCreate1 =
                 let expectedRegistry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = (flags = cloExec)
-                        }
+                        (DescriptorFlags.closingOnExec
+                            (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                            (flags = cloExec))
                         expectedRegistry
 
                 after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)

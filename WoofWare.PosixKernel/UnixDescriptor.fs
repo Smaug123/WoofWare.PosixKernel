@@ -700,7 +700,7 @@ module UnixDescriptor =
         | Error refusal -> Error refusal
         | Ok () ->
 
-        match FileDescriptorRegistry.dup fd registry with
+        match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) fd registry with
         | Ok (newFd, registry) ->
             Ok (SyscallAnswer.Completed (int64 newFd), UnixSystemState.withFileDescriptors registry system)
         | Error FileDescriptorDupError.BadFd ->
@@ -2620,30 +2620,29 @@ module UnixDescriptor =
                     failwith
                         $"UnixDescriptor.fcntl: fd %d{fd} named a description a moment ago and has no flags now (this is a bug in this library)."
 
+            let bit (condition : bool) (value : int) : int = if condition then value else 0
+
             let word =
-                match flavour with
-                | SimulatedUnixFlavour.Linux when flags.CloseOnFork ->
-                    failwith
-                        $"UnixDescriptor.fcntl: fd %d{fd} carries FD_CLOFORK under the Linux flavour, which has no such flag (this is a bug in this library)."
-                | _ ->
-                    (if flags.CloseOnExec then FcntlNumbering.CloseOnExec else 0)
-                    ||| (if flags.CloseOnFork then
-                             FcntlNumbering.DarwinCloseOnFork
-                         else
-                             0)
+                match flags with
+                | DescriptorFlags.Linux (closeOnExec = closeOnExec) -> bit closeOnExec FcntlNumbering.CloseOnExec
+                | DescriptorFlags.Darwin (closeOnExec = closeOnExec ; closeOnFork = closeOnFork) ->
+                    bit closeOnExec FcntlNumbering.CloseOnExec
+                    ||| bit closeOnFork FcntlNumbering.DarwinCloseOnFork
 
             Ok (SyscallAnswer.Completed (int64 word), system)
         | Some FcntlCommand.SetDescriptorFlags ->
             // Measured (`fcntl-dup.c`, SETFD rows, every bit): Linux keeps bit
             // 0 and Darwin bits 0 and 1, and every other bit is ignored.
+            let closeOnExec = argument &&& FcntlNumbering.CloseOnExec <> 0
+
             let flags =
-                {
-                    CloseOnExec = argument &&& FcntlNumbering.CloseOnExec <> 0
-                    CloseOnFork =
-                        match flavour with
-                        | SimulatedUnixFlavour.Linux -> false
-                        | SimulatedUnixFlavour.Darwin -> argument &&& FcntlNumbering.DarwinCloseOnFork <> 0
-                }
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = closeOnExec)
+                | SimulatedUnixFlavour.Darwin ->
+                    DescriptorFlags.Darwin (
+                        closeOnExec = closeOnExec,
+                        closeOnFork = (argument &&& FcntlNumbering.DarwinCloseOnFork <> 0)
+                    )
 
             Ok (SyscallAnswer.Completed 0L, withRegistry (FileDescriptorRegistry.setFlags fd flags registry) system)
         | Some (FcntlCommand.DuplicateAtOrAbove closeOnExec) ->
@@ -2659,10 +2658,7 @@ module UnixDescriptor =
             | Error refusal -> Error (FcntlRefusal.DescriptorLimit refusal)
             | Ok () ->
 
-            let flags =
-                { DescriptorFlags.none with
-                    CloseOnExec = closeOnExec
-                }
+            let flags = DescriptorFlags.closingOnExec flavour closeOnExec
 
             match FileDescriptorRegistry.dupAtOrAbove fd argument flags registry with
             | None ->
@@ -2776,7 +2772,11 @@ module UnixDescriptor =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
-        duplicateOnto oldFd newFd DescriptorFlags.none system
+        duplicateOnto
+            oldFd
+            newFd
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+            system
 
     /// `dup2(2)`: make `newFd` name the open file description `oldFd` names,
     /// with neither descriptor flag, and answer `newFd`.
@@ -2821,9 +2821,7 @@ module UnixDescriptor =
         else
 
         let descriptorFlags =
-            { DescriptorFlags.none with
-                CloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
-            }
+            DescriptorFlags.Linux (closeOnExec = (flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0))
 
         duplicateOnto oldFd newFd descriptorFlags system
         |> Result.mapError (fun refusal ->

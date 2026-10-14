@@ -275,10 +275,7 @@ module UnixKqueue =
                 fd,
                 FileDescriptorRegistry.setFlags
                     fd
-                    {
-                        CloseOnExec = true
-                        CloseOnFork = true
-                    }
+                    (DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true))
                     registry
 
         Ok (fd, UnixSystemState.withFileDescriptors registry system)

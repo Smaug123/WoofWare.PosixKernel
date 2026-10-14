@@ -96,12 +96,14 @@ module TestInodeLifetime =
             match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
             | Some (InodeContent.Directory _) ->
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
                     (Lone.fileDescriptors kernel)
             | _ ->
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
@@ -316,7 +318,12 @@ module TestInodeLifetime =
         let fd, held = opened a kernel
 
         let duplicate, held =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors held) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour held.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors held)
+            with
             | Ok (duplicate, registry) -> duplicate, Lone.withFileDescriptors registry held
             | Error error -> failwith $"could not dup fd %d{fd}: %O{error}"
 

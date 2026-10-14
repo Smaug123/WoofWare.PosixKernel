@@ -40,6 +40,7 @@ module TestUnixMachineState =
 
         let _fd, withFile =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 fileInode
@@ -48,6 +49,7 @@ module TestUnixMachineState =
 
         let _directoryFd, withDirectory =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 directoryInode
@@ -88,6 +90,7 @@ module TestUnixMachineState =
 
         let _fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 through
                 fileInode

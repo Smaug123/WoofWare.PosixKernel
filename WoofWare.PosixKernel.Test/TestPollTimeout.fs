@@ -403,7 +403,12 @@ module TestPollTimeout =
     [<Test>]
     let ``closing a descriptor a parked poll watches is refused, and closing a dup of it is not`` () : unit =
         let dupFd, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok (fd, registry) -> fd, registry
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -430,6 +435,7 @@ module TestPollTimeout =
         // them, such as PRI alone, leaves it waiting.
         let directory, registry =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
@@ -473,6 +479,7 @@ module TestPollTimeout =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
@@ -500,7 +507,12 @@ module TestPollTimeout =
 
         // With a dup keeping the description alive, the number is rebound.
         let _, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok dup -> dup
             | Error error -> failwith $"dup failed: %O{error}"
 

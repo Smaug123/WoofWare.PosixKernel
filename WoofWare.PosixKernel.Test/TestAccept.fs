@@ -351,6 +351,7 @@ module TestAccept =
         // things a descriptor can name that are not sockets.
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
@@ -436,7 +437,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -648,7 +649,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 

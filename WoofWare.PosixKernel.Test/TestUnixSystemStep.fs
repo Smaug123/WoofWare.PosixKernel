@@ -81,6 +81,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
@@ -113,6 +114,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
@@ -859,6 +861,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
@@ -1895,6 +1898,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system target)
                 target
@@ -2192,6 +2196,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system target)
                 target
@@ -2783,6 +2788,7 @@ module TestUnixSystemStep =
 
         let second, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
@@ -2798,6 +2804,7 @@ module TestUnixSystemStep =
         | Some (OpenFileTarget.File (inode, _)) ->
             let another, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
@@ -3040,7 +3047,12 @@ module TestUnixSystemStep =
         // A second descriptor onto `second`'s description, so that closing
         // `second` destroys nothing.
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -3237,7 +3249,12 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions darwin
 
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -3662,7 +3679,12 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
 
         let alias, registry =
-            match FileDescriptorRegistry.dup second (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    second
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -3739,7 +3761,12 @@ module TestUnixSystemStep =
         let fd, system = withEventQueue linux
 
         let alias, registry =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -3763,7 +3790,12 @@ module TestUnixSystemStep =
         let fd, system = withEventQueue darwin
 
         let alias, registry =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors system)
+            with
             | Ok pair -> pair
             | Error error -> failwith $"expected the dup to succeed, got %O{error}"
 
@@ -4597,16 +4629,15 @@ module TestUnixSystemStep =
 
             FileDescriptorRegistry.tryFindFlags fd (Lone.fileDescriptors after)
             |> shouldEqual (
-                Some
-                    { DescriptorFlags.none with
-                        CloseOnExec = true
-                    }
+                Some (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour after.Machine.UnixPlatform) true)
             )
 
             let takenBack =
                 Lone.withFileDescriptors
                     ((Lone.fileDescriptors after)
-                     |> FileDescriptorRegistry.setFlags fd DescriptorFlags.none
+                     |> FileDescriptorRegistry.setFlags
+                         fd
+                         (DescriptorFlags.none (SimulatedUnixPlatform.flavour after.Machine.UnixPlatform))
                      |> FileDescriptorRegistry.mapOpenFiles (
                          OpenFileTable.mapStatus
                              (FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors after) |> Option.get)
@@ -5719,6 +5750,7 @@ module TestUnixSystemStep =
 
         let fd, descriptors =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system held)
                 held

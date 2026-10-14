@@ -221,9 +221,9 @@ module UnixInotify =
         let registry =
             FileDescriptorRegistry.setFlags
                 fd
-                { DescriptorFlags.none with
-                    CloseOnExec = flags &&& InotifyInitFlags.CloseOnExec <> 0
-                }
+                (DescriptorFlags.closingOnExec
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (flags &&& InotifyInitFlags.CloseOnExec <> 0))
                 registry
 
         Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))

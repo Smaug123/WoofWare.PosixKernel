@@ -927,11 +927,12 @@ module TestFcntlReference =
                     |> Expect.equal
                         where
                         (fd,
-                         Some
-                             {
-                                 CloseOnExec = cloexec
-                                 CloseOnFork = clofork
-                             })
+                         Some (
+                             if darwin then
+                                 DescriptorFlags.Darwin (closeOnExec = cloexec, closeOnFork = clofork)
+                             else
+                                 DescriptorFlags.Linux (closeOnExec = cloexec)
+                         ))
 
                 // Every descriptor's status word, whether or not the step
                 // asked for one.

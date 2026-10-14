@@ -1148,9 +1148,7 @@ module UnixSocket =
                 let registry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = true
-                        }
+                        (DescriptorFlags.closingOnExec (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) true)
                         (UnixSystemState.fileDescriptors system)
 
                 Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))

@@ -567,16 +567,32 @@ WoofWare.PosixKernel.DeliveryLogModule inherit obj
 WoofWare.PosixKernel.DeliveryLogModule.count [static method]: WoofWare.PosixKernel.DeliveryLog -> int
 WoofWare.PosixKernel.DeliveryLogModule.since [static method]: int -> WoofWare.PosixKernel.DeliveryLog -> WoofWare.PosixKernel.Delivery list
 WoofWare.PosixKernel.DeliveryLogModule.toList [static method]: WoofWare.PosixKernel.DeliveryLog -> WoofWare.PosixKernel.Delivery list
-WoofWare.PosixKernel.DescriptorFlags inherit obj, implements WoofWare.PosixKernel.DescriptorFlags System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DescriptorFlags System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.DescriptorFlags..ctor [constructor]: (bool, bool)
-WoofWare.PosixKernel.DescriptorFlags.CloseOnExec [property]: [read-only] bool
-WoofWare.PosixKernel.DescriptorFlags.CloseOnFork [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags inherit obj, implements WoofWare.PosixKernel.DescriptorFlags System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DescriptorFlags System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.DescriptorFlags+Darwin inherit WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags+Darwin.closeOnExec [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.closeOnFork [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.get_closeOnExec [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.get_closeOnFork [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Linux inherit WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags+Linux.closeOnExec [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Linux.get_closeOnExec [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Tags inherit obj
+WoofWare.PosixKernel.DescriptorFlags+Tags.Darwin [static field]: int = 1
+WoofWare.PosixKernel.DescriptorFlags+Tags.Linux [static field]: int = 0
 WoofWare.PosixKernel.DescriptorFlags.Equals [method]: (WoofWare.PosixKernel.DescriptorFlags, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.DescriptorFlags.get_CloseOnExec [method]: unit -> bool
-WoofWare.PosixKernel.DescriptorFlags.get_CloseOnFork [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_IsDarwin [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_IsLinux [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.DescriptorFlags.IsDarwin [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags.IsLinux [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags.NewDarwin [static method]: (bool, bool) -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags.NewLinux [static method]: bool -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DescriptorFlagsModule inherit obj
-WoofWare.PosixKernel.DescriptorFlagsModule.get_none [static method]: unit -> WoofWare.PosixKernel.DescriptorFlags
-WoofWare.PosixKernel.DescriptorFlagsModule.none [static property]: [read-only] WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlagsModule.closeOnExec [static method]: WoofWare.PosixKernel.DescriptorFlags -> bool
+WoofWare.PosixKernel.DescriptorFlagsModule.closingOnExec [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> bool -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlagsModule.flavour [static method]: WoofWare.PosixKernel.DescriptorFlags -> WoofWare.PosixKernel.SimulatedUnixFlavour
+WoofWare.PosixKernel.DescriptorFlagsModule.none [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.DescriptorFlags
 WoofWare.PosixKernel.DirectoryContent inherit obj, implements WoofWare.PosixKernel.DirectoryContent System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryContent System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.DirectoryContent..ctor [constructor]: (Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>, WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.PermissionBits)
 WoofWare.PosixKernel.DirectoryContent.Entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>

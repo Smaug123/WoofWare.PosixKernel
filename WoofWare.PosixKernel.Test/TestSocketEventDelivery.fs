@@ -400,7 +400,12 @@ module TestSocketEventDelivery =
             let _, c1, kernel = addStream kernel
 
             let dupFd, kernel =
-                match FileDescriptorRegistry.dup listenerFd (Lone.fileDescriptors kernel) with
+                match
+                    FileDescriptorRegistry.dup
+                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        listenerFd
+                        (Lone.fileDescriptors kernel)
+                with
                 | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
                 | Error error -> failwith $"dup failed: %O{error}"
 
@@ -978,7 +983,12 @@ module TestSocketEventDelivery =
         let _, c1, kernel = addStream kernel
 
         let dupFd, kernel =
-            match FileDescriptorRegistry.dup listenerFd (Lone.fileDescriptors kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                    listenerFd
+                    (Lone.fileDescriptors kernel)
+            with
             | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -1008,7 +1018,12 @@ module TestSocketEventDelivery =
             let queueFd, queueId, kernel = addEpoll initialSystem
 
             let dupFd, kernel =
-                match FileDescriptorRegistry.dup queueFd (Lone.fileDescriptors kernel) with
+                match
+                    FileDescriptorRegistry.dup
+                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        queueFd
+                        (Lone.fileDescriptors kernel)
+                with
                 | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
                 | Error error -> failwith $"dup failed: %O{error}"
 

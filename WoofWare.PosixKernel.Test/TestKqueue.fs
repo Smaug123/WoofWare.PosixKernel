@@ -54,7 +54,12 @@ module TestKqueue =
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+        match
+            FileDescriptorRegistry.dup
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                fd
+                (Lone.fileDescriptors system)
+        with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup: %O{error}"
 
@@ -353,6 +358,7 @@ module TestKqueue =
         let fileFd, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)

@@ -105,6 +105,7 @@ module TestEpollCtl =
     let private withFile (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
@@ -114,7 +115,12 @@ module TestEpollCtl =
         fd, withRegistry registry system
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+        match
+            FileDescriptorRegistry.dup
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                fd
+                (Lone.fileDescriptors system)
+        with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup of fd %d{fd} failed: %O{error}"
 

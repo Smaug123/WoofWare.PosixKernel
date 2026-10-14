@@ -463,6 +463,7 @@ module TestSocketAddressLength =
 
             let fileFd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)

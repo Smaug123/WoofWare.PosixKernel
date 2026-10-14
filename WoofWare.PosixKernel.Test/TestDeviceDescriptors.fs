@@ -274,6 +274,7 @@ module TestDeviceDescriptors =
         for registry in
             [
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom
@@ -281,6 +282,7 @@ module TestDeviceDescriptors =
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted file)
                     file
@@ -288,6 +290,7 @@ module TestDeviceDescriptors =
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom
@@ -299,6 +302,7 @@ module TestDeviceDescriptors =
             | other -> failwith $"expected one kind mismatch, got %A{other}"
 
         FileDescriptorRegistry.openCharacterDevice
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
             (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
             (ForgedName.ofInode booted urandom)
             urandom
@@ -322,6 +326,7 @@ module TestDeviceDescriptors =
         for device in [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ] do
             let fd, registry =
                 FileDescriptorRegistry.openCharacterDevice
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom

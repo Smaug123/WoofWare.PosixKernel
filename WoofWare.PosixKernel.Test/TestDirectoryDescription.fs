@@ -830,6 +830,7 @@ module TestDirectoryDescription =
 
     let private registryWith (target : OpenFileTarget) (access : FileAccessMode) : FileDescriptorRegistry =
         FileDescriptorRegistry.Unchecked.ofParts
+            SimulatedUnixFlavour.Linux
             (Map.ofList [ 0, OpenFileDescriptionId 7L ])
             (Map.ofList
                 [

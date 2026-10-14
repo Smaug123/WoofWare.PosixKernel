@@ -903,13 +903,11 @@ module UnixNamespace =
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
+            let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+            let descriptorFlags = DescriptorFlags.closingOnExec flavour flags.CloseOnExec
+
             let status =
-                OpenFileStatus.opened
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
-                    flags.Synchronous
-                    flags.DataSynchronous
-                    flags.Directory
-                    flags.NoFollow
+                OpenFileStatus.opened flavour flags.Synchronous flags.DataSynchronous flags.Directory flags.NoFollow
 
             let status =
                 if truncatedExisting then
@@ -923,9 +921,15 @@ module UnixNamespace =
             let fd, registry =
                 match VirtualFileSystem.tryGetContent inode system.Machine.FileSystem with
                 | Some (InodeContent.Directory _) ->
-                    FileDescriptorRegistry.openDirectory status through inode (UnixSystemState.fileDescriptors system)
+                    FileDescriptorRegistry.openDirectory
+                        descriptorFlags
+                        status
+                        through
+                        inode
+                        (UnixSystemState.fileDescriptors system)
                 | Some (InodeContent.CharacterDevice (device, _)) ->
                     FileDescriptorRegistry.openCharacterDevice
+                        descriptorFlags
                         status
                         through
                         inode
@@ -942,19 +946,12 @@ module UnixNamespace =
                 | Some (InodeContent.Symlink _)
                 | None ->
                     FileDescriptorRegistry.openFile
+                        descriptorFlags
                         status
                         through
                         inode
                         flags.Access
                         (UnixSystemState.fileDescriptors system)
-
-            let registry =
-                FileDescriptorRegistry.setFlags
-                    fd
-                    { DescriptorFlags.none with
-                        CloseOnExec = flags.CloseOnExec
-                    }
-                    registry
 
             Ok (SyscallAnswer.Completed (int64 fd), UnixSystemState.withFileDescriptors registry system)
 

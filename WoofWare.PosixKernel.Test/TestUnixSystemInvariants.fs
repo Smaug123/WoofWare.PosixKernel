@@ -16,7 +16,8 @@ open WoofWare.PosixKernel
 /// `UnmodelledBindingHeld` and `DatagramPeerOfAnotherFamily`, guard states no
 /// syscall yet produces. `StatusNotOfFlavour` and `FlockHeldNotRecorded`
 /// guard an open file description's status against its machine's flavour and
-/// against its lock.
+/// against its lock, and `DescriptorFlagsNotOfFlavour` a descriptor's flags
+/// against the flavour.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestUnixSystemInvariants =
@@ -81,6 +82,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
                         [
@@ -192,6 +194,33 @@ module TestUnixSystemInvariants =
             system |> withStatus id own |> UnixSystem.checkInvariants |> shouldEqual []
 
     [<Test>]
+    let ``a descriptor whose flags are another flavour's is a defect`` () : unit =
+        for platform, other in
+            [
+                SimulatedUnixPlatform.linuxX64, SimulatedUnixFlavour.Darwin
+                SimulatedUnixPlatform.macOsArm64, SimulatedUnixFlavour.Linux
+            ] do
+            let system, fd, _ = withOpenFile platform
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            let withFlags (flags : DescriptorFlags) : UnixSystem<int, string> =
+                Lone.withFileDescriptors (FileDescriptorRegistry.setFlags fd flags (Lone.fileDescriptors system)) system
+
+            let foreign = DescriptorFlags.none other
+
+            withFlags foreign
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, foreign, flavour) ]
+
+            // The control: the machine's own flavour's flags, every one set.
+            let own =
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = true)
+                | SimulatedUnixFlavour.Darwin -> DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true)
+
+            withFlags own |> UnixSystem.checkInvariants |> shouldEqual []
+
+    [<Test>]
     let ``a Darwin description holding a lock its status does not record is a defect`` () : unit =
         let lockExclusive = 2
 
@@ -231,6 +260,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
                         [
@@ -314,6 +344,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 4, queueId ])
                     (Map.ofList
                         [

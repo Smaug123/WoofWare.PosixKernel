@@ -1172,28 +1172,43 @@ module OpenFileDescription =
 
 /// The flags `fcntl(F_GETFD)` reports, which belong to one descriptor rather
 /// than to the open file description it names: `dup(2)` gives the new
-/// descriptor none of them.
+/// descriptor none of them. Each flavour has its own, and a descriptor's flags
+/// are its machine's flavour's.
 ///
 /// Neither changes what any modelled syscall does, since this kernel models
 /// neither `exec` nor `fork`; they are kept so that `F_GETFD` answers what
 /// `F_SETFD`, `O_CLOEXEC` and their kin set.
+[<RequireQualifiedAccess>]
 type DescriptorFlags =
-    {
-        /// `FD_CLOEXEC`.
-        CloseOnExec : bool
-        /// `FD_CLOFORK`, which only Darwin has.
-        CloseOnFork : bool
-    }
+    /// Linux's: `FD_CLOEXEC`.
+    | Linux of closeOnExec : bool
+    /// Darwin's: `FD_CLOEXEC`, and `FD_CLOFORK`, which only Darwin has.
+    | Darwin of closeOnExec : bool * closeOnFork : bool
 
 [<RequireQualifiedAccess>]
 module DescriptorFlags =
-    /// Neither flag, which is what `dup(2)`, `dup2(2)` and every call not
-    /// asked for a flag give a new descriptor.
-    let none : DescriptorFlags =
-        {
-            CloseOnExec = false
-            CloseOnFork = false
-        }
+    /// `FD_CLOEXEC` if `closeOnExec`, and no other flag, under `flavour`: what
+    /// `O_CLOEXEC`, `F_DUPFD_CLOEXEC` and their kin give a new descriptor.
+    let closingOnExec (flavour : SimulatedUnixFlavour) (closeOnExec : bool) : DescriptorFlags =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = closeOnExec)
+        | SimulatedUnixFlavour.Darwin -> DescriptorFlags.Darwin (closeOnExec = closeOnExec, closeOnFork = false)
+
+    /// Neither flag under `flavour`, which is what `dup(2)`, `dup2(2)` and
+    /// every call not asked for a flag give a new descriptor.
+    let none (flavour : SimulatedUnixFlavour) : DescriptorFlags = closingOnExec flavour false
+
+    /// The flavour whose kernel keeps `flags`.
+    let flavour (flags : DescriptorFlags) : SimulatedUnixFlavour =
+        match flags with
+        | DescriptorFlags.Linux _ -> SimulatedUnixFlavour.Linux
+        | DescriptorFlags.Darwin _ -> SimulatedUnixFlavour.Darwin
+
+    /// Whether `flags` hold `FD_CLOEXEC`.
+    let closeOnExec (flags : DescriptorFlags) : bool =
+        match flags with
+        | DescriptorFlags.Linux (closeOnExec = closeOnExec)
+        | DescriptorFlags.Darwin (closeOnExec = closeOnExec) -> closeOnExec
 
 /// One entry of the descriptor table: the open file description the
 /// descriptor names, and the descriptor's own flags.
@@ -2911,11 +2926,11 @@ module internal ReachedDescription =
 
 [<RequireQualifiedAccess>]
 module FileDescriptorRegistry =
-    /// A table entry naming `id`, with neither descriptor flag.
-    let private unflagged (id : OpenFileDescriptionId) : DescriptorEntry =
+    /// A table entry naming `id`, with `flags`.
+    let private entry (flags : DescriptorFlags) (id : OpenFileDescriptionId) : DescriptorEntry =
         {
             Description = id
-            Flags = DescriptorFlags.none
+            Flags = flags
         }
 
     /// Which description `fd` names in `fds`, if `fd` is live.
@@ -3118,8 +3133,9 @@ module FileDescriptorRegistry =
 
     /// A fresh open file description, `description`, opened through
     /// `openedThrough` (`OpenFileTable.create`), and the lowest non-negative
-    /// descriptor not in use to point at it, with neither descriptor flag.
+    /// descriptor not in use to point at it, with `flags`.
     let private createDescription
+        (flags : DescriptorFlags)
         (description : OpenFileDescription)
         (openedThrough : ReachedThrough option)
         (registry : FileDescriptorRegistry)
@@ -3134,7 +3150,7 @@ module FileDescriptorRegistry =
         { registry with
             Descriptors =
                 {
-                    Fds = Map.add fd (unflagged id) registry.Descriptors.Fds
+                    Fds = Map.add fd (entry flags id) registry.Descriptors.Fds
                 }
             OpenFiles = openFiles
         }
@@ -3194,7 +3210,7 @@ module FileDescriptorRegistry =
                 { registry with
                     Descriptors =
                         {
-                            Fds = Map.add fd (unflagged id) registry.Descriptors.Fds
+                            Fds = Map.add fd (entry (DescriptorFlags.none flavour) id) registry.Descriptors.Fds
                         }
                     OpenFiles = openFiles
                 }
@@ -3205,8 +3221,10 @@ module FileDescriptorRegistry =
     /// the *same* open file description as `oldFd`. No new description is
     /// created, so the description's state is shared with `oldFd` rather than
     /// copied. When `oldFd` is not a live entry, returns `Error BadFd`,
-    /// matching the `EBADF` behaviour of `dup(2)`.
+    /// matching the `EBADF` behaviour of `dup(2)`. The new descriptor has
+    /// neither of `flavour`'s descriptor flags.
     let internal dup
+        (flavour : SimulatedUnixFlavour)
         (oldFd : int)
         (registry : FileDescriptorRegistry)
         : Result<int * FileDescriptorRegistry, FileDescriptorDupError>
@@ -3215,7 +3233,7 @@ module FileDescriptorRegistry =
         | None -> Error FileDescriptorDupError.BadFd
         | Some id ->
             let newFd = lowestFree registry.Descriptors.Fds
-            Ok (newFd, install newFd id DescriptorFlags.none registry)
+            Ok (newFd, install newFd id (DescriptorFlags.none flavour) registry)
 
     /// The `fcntl(F_DUPFD)` half of the table: a new descriptor naming the
     /// description `oldFd` names, the lowest not in use at or above `minimum`,
@@ -3399,9 +3417,10 @@ module FileDescriptorRegistry =
     /// process may open the file at all are decided before this is reached, and
     /// so is whether a descriptor below the bound is free
     /// (`SimulatedUnixPlatform.descriptorBound`), which `UnixSystem.checkInvariants`
-    /// holds every descriptor to. So is the description's `status`, which the
-    /// flag word decides.
+    /// holds every descriptor to. So are the descriptor's `flags` and the
+    /// description's `status`, which the flag word decides.
     let internal openFile
+        (flags : DescriptorFlags)
         (status : OpenFileStatus)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
@@ -3410,6 +3429,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.File (inode, 0L)
                 AccessMode = accessMode
@@ -3429,8 +3449,10 @@ module FileDescriptorRegistry =
     /// descriptor not in use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether the process may open the
-    /// node is decided before this is reached, and so is `status`.
+    /// node is decided before this is reached, and so are `flags` and
+    /// `status`.
     let internal openCharacterDevice
+        (flags : DescriptorFlags)
         (status : OpenFileStatus)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
@@ -3440,6 +3462,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.CharacterDevice (inode, device, CharacterDeviceState.Positionless)
                 AccessMode = accessMode
@@ -3456,8 +3479,10 @@ module FileDescriptorRegistry =
     /// use to point at it.
     ///
     /// Total, for the reasons `openFile` is; whether `inode` is a directory the
-    /// process may read is decided before this is reached, and so is `status`.
+    /// process may read is decided before this is reached, and so are `flags`
+    /// and `status`.
     let internal openDirectory
+        (flags : DescriptorFlags)
         (status : OpenFileStatus)
         (openedThrough : ReachedThrough)
         (inode : InodeNumber)
@@ -3465,6 +3490,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            flags
             {
                 Target = OpenFileTarget.Directory (inode, DirectoryPosition.Cursor DirectoryCursor.Start)
                 AccessMode = FileAccessMode.ReadOnly
@@ -3477,7 +3503,7 @@ module FileDescriptorRegistry =
 
     /// A fresh, blocking, read-write open file description naming `target`,
     /// with `flavour`'s status of nothing, and the lowest non-negative
-    /// descriptor not in use to point at it.
+    /// descriptor not in use to point at it, with neither descriptor flag.
     let private createAnonymous
         (flavour : SimulatedUnixFlavour)
         (target : OpenFileTarget)
@@ -3485,6 +3511,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target = target
                 AccessMode = FileAccessMode.ReadWrite
@@ -3542,6 +3569,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target =
                     OpenFileTarget.Inotify
@@ -3615,6 +3643,7 @@ module FileDescriptorRegistry =
         : int * FileDescriptorRegistry
         =
         createDescription
+            (DescriptorFlags.none flavour)
             {
                 Target = OpenFileTarget.Socket socketId
                 AccessMode = FileAccessMode.ReadWrite
@@ -3652,6 +3681,7 @@ module FileDescriptorRegistry =
         =
         let add (pipeEnd : PipeEnd) (accessMode : FileAccessMode) (registry : FileDescriptorRegistry) =
             createDescription
+                (DescriptorFlags.none flavour)
                 {
                     Target = OpenFileTarget.Pipe (pipeId, pipeEnd)
                     AccessMode = accessMode
@@ -4005,12 +4035,14 @@ module FileDescriptorRegistry =
     /// nothing outside tests should use it.
     [<RequireQualifiedAccess>]
     module internal Unchecked =
-        /// A registry whose descriptor table is `fds` and whose open file
+        /// A registry whose descriptor table is `fds`, each descriptor with
+        /// neither of `flavour`'s descriptor flags, and whose open file
         /// descriptions are `descriptions`, each counting the descriptors in
         /// `fds` that name it and no holds, each onto an inode recorded as
         /// opened through no name (`ReachedThrough.Unnamed`), with `nextId`
         /// the identity the next one gets.
         let ofParts
+            (flavour : SimulatedUnixFlavour)
             (fds : Map<int, OpenFileDescriptionId>)
             (descriptions : Map<OpenFileDescriptionId, OpenFileDescription>)
             (nextId : OpenFileDescriptionId)
@@ -4021,7 +4053,7 @@ module FileDescriptorRegistry =
             {
                 Descriptors =
                     {
-                        Fds = fds |> Map.map (fun _ id -> unflagged id)
+                        Fds = fds |> Map.map (fun _ id -> entry (DescriptorFlags.none flavour) id)
                     }
                 OpenFiles =
                     {

@@ -50,6 +50,7 @@ module TestFileDescriptorRegistry =
     let ``openFile takes the lowest free descriptor and a fresh description`` () : unit =
         let a, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -60,6 +61,7 @@ module TestFileDescriptorRegistry =
 
         let b, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 otherInode
@@ -85,6 +87,7 @@ module TestFileDescriptorRegistry =
     let ``two opens of one inode are two descriptions, unlike dup`` () : unit =
         let a, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -93,6 +96,7 @@ module TestFileDescriptorRegistry =
 
         let b, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -105,7 +109,7 @@ module TestFileDescriptorRegistry =
         FileDescriptorRegistry.tryFindId a registry
         |> shouldNotEqual (FileDescriptorRegistry.tryFindId b registry)
 
-        match FileDescriptorRegistry.dup a registry with
+        match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux a registry with
         | Error e -> failwith $"expected dup to succeed, got %O{e}"
         | Ok (duplicate, registry) ->
             FileDescriptorRegistry.tryFindId duplicate registry
@@ -161,7 +165,7 @@ module TestFileDescriptorRegistry =
         let a, registry =
             FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
-        match FileDescriptorRegistry.dup a registry with
+        match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux a registry with
         | Error e -> failwith $"expected dup to succeed, got %O{e}"
         | Ok (b, registry) ->
 
@@ -248,7 +252,7 @@ module TestFileDescriptorRegistry =
         FileDescriptorRegistry.tryFindObject a registry
         |> shouldEqual (FileDescriptorRegistry.tryFindObject b registry)
 
-        match FileDescriptorRegistry.dup a registry with
+        match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux a registry with
         | Error e -> failwith $"expected dup to succeed, got %O{e}"
         | Ok (duplicate, registry) ->
             // `dup` shares the description, so it is the *same* epoll instance rather than
@@ -273,7 +277,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
         let b, registry =
-            match FileDescriptorRegistry.dup a registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux a registry with
             | Ok (duplicate, registry) -> duplicate, registry
             | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
@@ -310,6 +314,7 @@ module TestFileDescriptorRegistry =
     let ``a closed description's identity is never handed out again`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -325,6 +330,7 @@ module TestFileDescriptorRegistry =
 
         let reused, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 otherInode
@@ -350,6 +356,7 @@ module TestFileDescriptorRegistry =
     let ``checkInvariants rejects a NextId at or below a live description`` (next : int64) : unit =
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ])
                 (Map.ofList [ OpenFileDescriptionId 7L, openOn someInode ])
                 (OpenFileDescriptionId next)
@@ -363,6 +370,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``checkInvariants accepts a NextId above every live description`` () : unit =
         FileDescriptorRegistry.Unchecked.ofParts
+            SimulatedUnixFlavour.Linux
             (Map.ofList [ 0, OpenFileDescriptionId 7L ])
             (Map.ofList [ OpenFileDescriptionId 7L, openOn someInode ])
             (OpenFileDescriptionId 8L)
@@ -420,6 +428,7 @@ module TestFileDescriptorRegistry =
             ] do
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                     (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                     ReachedThrough.Unnamed
                     someInode
@@ -427,7 +436,7 @@ module TestFileDescriptorRegistry =
                     LaunchedStreams.registry
 
             let duplicated, registry =
-                match FileDescriptorRegistry.dup fd registry with
+                match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fd registry with
                 | Ok result -> result
                 | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
@@ -477,19 +486,19 @@ module TestFileDescriptorRegistry =
 
     [<Test>]
     let ``dup of unknown fd returns BadFd`` () : unit =
-        FileDescriptorRegistry.dup 3 LaunchedStreams.registry
+        FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux 3 LaunchedStreams.registry
         |> shouldEqual (Error FileDescriptorDupError.BadFd)
 
-        FileDescriptorRegistry.dup -1 LaunchedStreams.registry
+        FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux -1 LaunchedStreams.registry
         |> shouldEqual (Error FileDescriptorDupError.BadFd)
 
-        FileDescriptorRegistry.dup System.Int32.MaxValue LaunchedStreams.registry
+        FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux System.Int32.MaxValue LaunchedStreams.registry
         |> shouldEqual (Error FileDescriptorDupError.BadFd)
 
     [<Test>]
     let ``dup of stdin/stdout/stderr returns fresh fd 3 sharing the description`` () : unit =
         let assertDupAllocatesFd3 (sourceFd : int) : unit =
-            match FileDescriptorRegistry.dup sourceFd LaunchedStreams.registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux sourceFd LaunchedStreams.registry with
             | Ok (newFd, registry) ->
                 newFd |> shouldEqual 3
 
@@ -519,7 +528,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``repeated dup allocates strictly increasing fds starting at 3`` () : unit =
         let assertDupYields (registry : FileDescriptorRegistry) (expectedFd : int) : FileDescriptorRegistry =
-            match FileDescriptorRegistry.dup 1 registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux 1 registry with
             | Ok (newFd, registry) ->
                 newFd |> shouldEqual expectedFd
                 registry
@@ -534,7 +543,7 @@ module TestFileDescriptorRegistry =
 
     [<Test>]
     let ``closing one descriptor of a dup pair leaves the other intact`` () : unit =
-        match FileDescriptorRegistry.dup 1 LaunchedStreams.registry with
+        match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux 1 LaunchedStreams.registry with
         | Error e -> failwith $"unexpected dup error: %O{e}"
         | Ok (duped, registry) ->
 
@@ -585,7 +594,7 @@ module TestFileDescriptorRegistry =
         let registry = LaunchedStreams.registry
 
         let dupOf (fd : int) (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fd registry with
             | Ok result -> result
             | Error e -> failwith $"unexpected dup error: %O{e}"
 
@@ -701,6 +710,7 @@ module TestFileDescriptorRegistry =
                     registry <-
                         snd (
                             FileDescriptorRegistry.openFile
+                                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                                 ReachedThrough.Unnamed
                                 someInode
@@ -711,6 +721,7 @@ module TestFileDescriptorRegistry =
                     registry <-
                         snd (
                             FileDescriptorRegistry.openDirectory
+                                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                                 ReachedThrough.Unnamed
                                 otherInode
@@ -740,11 +751,17 @@ module TestFileDescriptorRegistry =
 
                     nextPipe <- nextPipe + 1L
                 | CountStep.Dup source ->
-                    match FileDescriptorRegistry.dup source registry with
+                    match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux source registry with
                     | Ok (_, after) -> registry <- after
                     | Error error -> failwith $"dup of live fd %d{source} answered %O{error}"
                 | CountStep.DupAtOrAbove (source, minimum) ->
-                    match FileDescriptorRegistry.dupAtOrAbove source minimum DescriptorFlags.none registry with
+                    match
+                        FileDescriptorRegistry.dupAtOrAbove
+                            source
+                            minimum
+                            (DescriptorFlags.none SimulatedUnixFlavour.Linux)
+                            registry
+                    with
                     | Some (_, after) -> registry <- after
                     | None -> failwith $"F_DUPFD of live fd %d{source} from %d{minimum} found no free descriptor"
                 | CountStep.Dup2 (source, target) ->
@@ -755,7 +772,12 @@ module TestFileDescriptorRegistry =
                             | Ok (after, _) -> registry <- after
                             | Error error -> failwith $"close of live fd %d{target} answered %O{error}"
 
-                        registry <- FileDescriptorRegistry.installAt source target DescriptorFlags.none registry
+                        registry <-
+                            FileDescriptorRegistry.installAt
+                                source
+                                target
+                                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
+                                registry
                 | CountStep.Close fd ->
                     let id = FileDescriptorRegistry.tryFindId fd registry |> Option.get
                     let namedElsewhere = (namingCounts registry).[id] > 1
@@ -846,6 +868,7 @@ module TestFileDescriptorRegistry =
                     | 0 ->
                         snd (
                             FileDescriptorRegistry.openFile
+                                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                                 ReachedThrough.Unnamed
                                 someInode
@@ -853,7 +876,9 @@ module TestFileDescriptorRegistry =
                                 registry
                         )
                     | _ ->
-                        match FileDescriptorRegistry.dup fds.[rng.Next fds.Length] registry with
+                        match
+                            FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fds.[rng.Next fds.Length] registry
+                        with
                         | Ok (_, after) -> after
                         | Error error -> failwith $"dup of a live fd answered %O{error}"
                 )
@@ -933,7 +958,7 @@ module TestFileDescriptorRegistry =
                     let pickIndex = rng.Next (liveList.Length)
                     let chosen = liveList.[pickIndex]
 
-                    match FileDescriptorRegistry.dup chosen registry with
+                    match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux chosen registry with
                     | Ok (newFd, registry') ->
                         let expected = referenceLowestFree live
                         newFd |> shouldEqual expected
@@ -1002,7 +1027,7 @@ module TestFileDescriptorRegistry =
                         registry <- registry'
                     | Error e -> failwith $"unexpected close error: %O{e}"
                 else
-                    match FileDescriptorRegistry.dup chosen registry with
+                    match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux chosen registry with
                     | Ok (newFd, registry') ->
                         origin <- Map.add newFd (Map.find chosen origin) origin
                         registry <- registry'
@@ -1050,6 +1075,7 @@ module TestFileDescriptorRegistry =
     let ``checkInvariants rejects a descriptor naming an absent description`` () : unit =
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ])
                 Map.empty
                 (OpenFileDescriptionId 8L)
@@ -1064,6 +1090,7 @@ module TestFileDescriptorRegistry =
         // reports a description nothing references.
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 Map.empty
                 (Map.ofList [ OpenFileDescriptionId 7L, LaunchedStreams.description 1 ])
                 (OpenFileDescriptionId 8L)
@@ -1116,6 +1143,7 @@ module TestFileDescriptorRegistry =
 
         let unsound =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ])
                 Map.empty
                 (OpenFileDescriptionId 8L)
@@ -1133,6 +1161,7 @@ module TestFileDescriptorRegistry =
     /// step is the one under test.
     let private openOrFail (inode : InodeNumber) (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
         FileDescriptorRegistry.openFile
+            (DescriptorFlags.none SimulatedUnixFlavour.Linux)
             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
             ReachedThrough.Unnamed
             inode
@@ -1328,7 +1357,7 @@ module TestFileDescriptorRegistry =
         let registry = lockOrFail a (FlockRequest.Acquire FlockMode.Exclusive) registry
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup a registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux a registry with
             | Ok result -> result
             | Error e -> failwith $"unexpected dup error: %O{e}"
 
@@ -1402,6 +1431,7 @@ module TestFileDescriptorRegistry =
 
         let table (first : FlockMode) (second : FlockMode) =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ; 1, OpenFileDescriptionId 8L ])
                 (Map.ofList
                     [
@@ -1441,6 +1471,7 @@ module TestFileDescriptorRegistry =
             }
 
         FileDescriptorRegistry.Unchecked.ofParts
+            SimulatedUnixFlavour.Linux
             (Map.ofList [ 0, OpenFileDescriptionId 7L ; 1, OpenFileDescriptionId 8L ])
             (Map.ofList
                 [
@@ -1497,6 +1528,7 @@ module TestFileDescriptorRegistry =
 
                     let fd, registry' =
                         FileDescriptorRegistry.openFile
+                            (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                             ReachedThrough.Unnamed
                             inode
@@ -1529,7 +1561,7 @@ module TestFileDescriptorRegistry =
                     // dup
                     let fd = liveFds.[rng.Next liveFds.Length]
 
-                    match FileDescriptorRegistry.dup fd registry with
+                    match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fd registry with
                     | Ok (newFd, registry') ->
                         registry <- registry'
                         fdToId <- Map.add newFd (idOf fd) fdToId
@@ -1628,6 +1660,7 @@ module TestFileDescriptorRegistry =
         // corrupt table masquerade as EBADF.
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ])
                 Map.empty
                 (OpenFileDescriptionId 8L)
@@ -1660,6 +1693,7 @@ module TestFileDescriptorRegistry =
     let ``a fresh description starts at offset zero`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1680,6 +1714,7 @@ module TestFileDescriptorRegistry =
     let ``dup shares one offset`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1687,7 +1722,7 @@ module TestFileDescriptorRegistry =
                 LaunchedStreams.registry
 
         let copy, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fd registry with
             | Ok result -> result
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -1707,6 +1742,7 @@ module TestFileDescriptorRegistry =
     let ``two opens on one file hold independent offsets`` () : unit =
         let first, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1715,6 +1751,7 @@ module TestFileDescriptorRegistry =
 
         let second, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1733,6 +1770,7 @@ module TestFileDescriptorRegistry =
     let ``seeking leaves the object identity alone`` () : unit =
         let first, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1741,6 +1779,7 @@ module TestFileDescriptorRegistry =
 
         let second, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1787,6 +1826,7 @@ module TestFileDescriptorRegistry =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1807,6 +1847,7 @@ module TestFileDescriptorRegistry =
     let ``a reopened file starts from zero again`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1822,6 +1863,7 @@ module TestFileDescriptorRegistry =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -1848,6 +1890,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``checkInvariants rejects two descriptions naming one socket`` () : unit =
         FileDescriptorRegistry.Unchecked.ofParts
+            SimulatedUnixFlavour.Linux
             (Map.ofList [ 0, OpenFileDescriptionId 7L ; 1, OpenFileDescriptionId 8L ])
             (Map.ofList
                 [
@@ -1870,6 +1913,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``checkInvariants accepts two descriptions naming different sockets`` () : unit =
         FileDescriptorRegistry.Unchecked.ofParts
+            SimulatedUnixFlavour.Linux
             (Map.ofList [ 0, OpenFileDescriptionId 7L ; 1, OpenFileDescriptionId 8L ])
             (Map.ofList
                 [
@@ -1931,7 +1975,9 @@ module TestFileDescriptorRegistry =
                     | Error e -> failwith $"unexpected close error: %O{e}"
                 | 2
                 | 3 ->
-                    match FileDescriptorRegistry.dup live.[rng.Next live.Length] registry with
+                    match
+                        FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux live.[rng.Next live.Length] registry
+                    with
                     | Ok (_, registry') ->
                         registry <- registry'
                         cover AllocationMixLabel.Dup
@@ -1940,6 +1986,7 @@ module TestFileDescriptorRegistry =
                 | 5 ->
                     let _, registry' =
                         FileDescriptorRegistry.openFile
+                            (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                             (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                             ReachedThrough.Unnamed
                             (InodeNumber (int64 (rng.Next 5)))
@@ -2015,6 +2062,7 @@ module TestFileDescriptorRegistry =
     let ``checkInvariants rejects a negative offset`` () : unit =
         let table (offset : int64) =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 0, OpenFileDescriptionId 7L ])
                 (Map.ofList
                     [
@@ -2046,6 +2094,7 @@ module TestFileDescriptorRegistry =
     let ``checkInvariants reports a FIFO description, which nothing in this version makes`` () : unit =
         let table (fds : Map<int, OpenFileDescriptionId>) (target : OpenFileTarget) (mode : FileAccessMode) =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 fds
                 (Map.ofList
                     [
@@ -2096,6 +2145,7 @@ module TestFileDescriptorRegistry =
         // instance is handed out as `epoll_create1` makes it.
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -2121,6 +2171,7 @@ module TestFileDescriptorRegistry =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none SimulatedUnixFlavour.Linux)
                 (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
@@ -2147,7 +2198,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
         let duplicated, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux fd registry with
             | Ok result -> result
             | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
@@ -2427,7 +2478,7 @@ module TestFileDescriptorRegistry =
             FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
 
         let dupFd, registry =
-            match FileDescriptorRegistry.dup sockFd registry with
+            match FileDescriptorRegistry.dup SimulatedUnixFlavour.Linux sockFd registry with
             | Ok result -> result
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -2460,6 +2511,7 @@ module TestFileDescriptorRegistry =
 
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (Map.ofList [ 3, queueId ])
                 (Map.ofList
                     [
