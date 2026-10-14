@@ -405,7 +405,8 @@ A Linux directory compares names byte for byte.
 Darwin's APFS takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it: `é` as U+00E9 and as `e` followed by U+0301, or `K` and U+212A KELVIN SIGN.
 It keeps the spelling a name was bound under, which `UnixNamespace.readDirectoryEntry` reports, and holds one spelling of a name in a directory.
 This library holds no Unicode tables, so on Darwin a call throws `UnmodelledException` when its path looks up a name that a directory does not bind byte for byte while binding another name that might be an equivalent spelling of it.
-Two names might be equivalent when each holds a character whose decomposition is not ASCII, or when the two decompose to the same ASCII; so a Darwin directory holds at most one name of the first kind.
+Two names might be equivalent when they decompose to the same ASCII, or when each holds a character whose decomposition is not ASCII and their ASCII ends do not tell them apart: the longest run of ASCII each ends with is the same, and the longest run of ASCII one begins with begins the other's, reading U+037E, U+1FEF and U+212A as the ASCII they decompose to.
+So `café.txt` and `naïve.txt` can share a Darwin directory, but `é` and `中` cannot.
 
 An inode may be a socket file (`InodeContent.Socket`), which a directory entry reports as `DirectoryEntryKind.Socket`, or a FIFO (`InodeContent.Fifo`), which a directory entry reports as `DirectoryEntryKind.Fifo`.
 Nothing produces either yet: `mknod` of `S_IFSOCK` or `S_IFIFO`, and a Unix-domain `bind`, are refused.

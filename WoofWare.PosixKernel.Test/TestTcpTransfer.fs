@@ -1388,3 +1388,84 @@ module TestTcpTransfer =
             Config.QuickThrowOnFailure.WithMaxTest 500,
             Prop.forAll (ArbMap.defaults |> ArbMap.arbitrary<byte list list * int>) property
         )
+
+    [<Test>]
+    let ``two ByteQueues are equal exactly when they hold the same bytes, however chunked`` () : unit =
+        // `prefix` is appended and then taken, so that the queue's oldest
+        // chunk is part-read; `content` is what stays, cut into chunks at `cuts`.
+        let queueOf (prefix : byte list) (content : byte list) (cuts : int list) : ByteQueue =
+            let all = prefix @ content
+
+            let points =
+                cuts
+                |> List.map (fun cut -> if all.IsEmpty then 0 else abs cut % (all.Length + 1))
+                |> List.append [ 0 ; all.Length ]
+                |> List.distinct
+                |> List.sort
+
+            let queue =
+                points
+                |> List.pairwise
+                |> List.fold
+                    (fun q (start, finish) ->
+                        ByteQueue.append
+                            (ImmutableArray.CreateRange (List.skip start all |> List.take (finish - start)))
+                            q
+                    )
+                    ByteQueue.empty
+
+            snd (ByteQueue.take prefix.Length queue)
+
+        // Bytes from a two-letter alphabet, and a second content that is
+        // usually the first or the first with one byte changed, so that equal
+        // and nearly-equal pairs are common.
+        let bytes : Gen<byte list> = Gen.elements [ 0uy ; 1uy ] |> Gen.listOf
+
+        let gen =
+            gen {
+                let! content = bytes
+                let! flip = ArbMap.defaults |> ArbMap.generate<int>
+
+                let! other =
+                    Gen.oneof
+                        [
+                            Gen.constant content
+                            Gen.constant (
+                                if content.IsEmpty then
+                                    content
+                                else
+                                    let i = abs flip % content.Length
+                                    List.updateAt i (1uy - content.[i]) content
+                            )
+                            Gen.constant (content @ [ 0uy ])
+                            bytes
+                        ]
+
+                let! prefixA = bytes
+                let! prefixB = bytes
+                let! cutsA = ArbMap.defaults |> ArbMap.generate<int list>
+                let! cutsB = ArbMap.defaults |> ArbMap.generate<int list>
+                return content, other, prefixA, prefixB, cutsA, cutsB
+            }
+
+        let property
+            (
+                content : byte list,
+                other : byte list,
+                prefixA : byte list,
+                prefixB : byte list,
+                cutsA : int list,
+                cutsB : int list
+            )
+            : unit
+            =
+            let a = queueOf prefixA content cutsA
+            let b = queueOf prefixB other cutsB
+            (a = b) |> shouldEqual (content = other)
+            (b = a) |> shouldEqual (content = other)
+            (a = a) |> shouldEqual true
+
+            if a = b then
+                hash a |> shouldEqual (hash b)
+
+        Check.One (Config.QuickThrowOnFailure.WithMaxTest 2000, Prop.forAll (Arb.fromGen gen) property)

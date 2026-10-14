@@ -949,7 +949,7 @@ module internal TcpTransfer =
 
         let queued = ByteQueue.length direction.Receiving
 
-        let unqueuedFin : string =
+        let unqueuedFin () : string =
             $"TcpTransfer.read: the %A{receiver} end's FIN waits behind bytes in flight, but its receive buffer is empty, which TcpTransfer.violations forbids (this is a bug in this library)."
 
         // Linux's `read(2)` answers a zero-length request before it reaches
@@ -1010,7 +1010,7 @@ module internal TcpTransfer =
             // error even under `MSG_PEEK`.
             match direction.Receiver, direction.Fin with
             | TcpEndState.Open _, _ when receiveShut receiver transfer -> TcpReadAnswer.EndOfFile, [], transfer
-            | TcpEndState.Open _, TcpFin.Queued _ -> failwith unqueuedFin
+            | TcpEndState.Open _, TcpFin.Queued _ -> failwith (unqueuedFin ())
             | TcpEndState.Open _, _ -> TcpReadAnswer.WouldBlock, [], transfer
             // `SOCK_DONE`, which the peer's FIN set, comes before the error
             // whatever this end has sent (`tcp-shutdown-exchange.c`, Q).
@@ -1041,7 +1041,7 @@ module internal TcpTransfer =
                 TcpReadAnswer.Failed (resetError receiver transfer), [], transfer
             | TcpEndState.Reset false, _ -> TcpReadAnswer.EndOfFile, [], transfer
             | TcpEndState.Open _, _ when receiveShut receiver transfer -> TcpReadAnswer.EndOfFile, [], transfer
-            | TcpEndState.Open _, TcpFin.Queued _ -> failwith unqueuedFin
+            | TcpEndState.Open _, TcpFin.Queued _ -> failwith (unqueuedFin ())
             | TcpEndState.Open _, _ ->
                 if count = 0 then
                     TcpReadAnswer.Bytes ImmutableArray.Empty, [], transfer

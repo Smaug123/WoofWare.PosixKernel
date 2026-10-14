@@ -149,11 +149,10 @@ module internal CopyIn =
                 system
 
         let actual =
-            match UnixSocket.tryBind fd destination declaredLength system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered answer) -> Ok answer
-            | Ok (CallProgress.NeedsCopyIn paused) ->
+            UnixSocket.tryBind fd destination declaredLength system
+            |> CallProgress.resumeWith (fun paused ->
                 UnixSocket.tryBindWithAddress (copied "bind" (PausedBind.copyRange paused) blob) paused
+            )
 
         agreeing "bind" expected actual
 
@@ -178,11 +177,10 @@ module internal CopyIn =
                 system
 
         let actual =
-            match UnixConnection.tryConnect thread fd destination declaredLength system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered answer) -> Ok answer
-            | Ok (CallProgress.NeedsCopyIn paused) ->
+            UnixConnection.tryConnect thread fd destination declaredLength system
+            |> CallProgress.resumeWith (fun paused ->
                 UnixConnection.tryConnectWithAddress (copied "connect" (PausedConnect.copyRange paused) blob) paused
+            )
             |> ConnectOutcomes.answered
 
         agreeing "connect" expected actual

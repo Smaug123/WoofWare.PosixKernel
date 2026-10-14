@@ -232,7 +232,7 @@ module internal KeventRefusal =
         | KeventRefusal.UnmodelledFilterParameters _ -> RefusalKind.Unmodelled
         | KeventRefusal.UnmodelledTarget _ -> RefusalKind.Unmodelled
         | KeventRefusal.UnmodelledSocket _ -> RefusalKind.Unmodelled
-        | KeventRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | KeventRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | KeventRefusal.UnmeasuredCopyOutFault _ -> RefusalKind.Unmodelled
         | KeventRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | KeventRefusal.DrainBesideDeadline _ -> RefusalKind.Unmodelled

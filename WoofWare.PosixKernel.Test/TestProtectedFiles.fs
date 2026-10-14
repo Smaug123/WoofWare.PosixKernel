@@ -597,7 +597,7 @@ module TestProtectedFiles =
                     system
             )
             "readlink", readlinkText
-            "access", accessText (UnixPathResolution.tryAccessEager (bytes "/s/lf") 4 system)
+            "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
             "access-nofollow", accessText (UnixPathResolution.tryFaccessatEager -100 (bytes "/s/lf") 0 0x100 system)
             "chown",
             UnixPathResolution.tryChown (PathArg.ofPath (path "/s/lf")) None None system
@@ -694,7 +694,7 @@ module TestProtectedFiles =
                 let actual =
                     Map.ofList
                         [
-                            "access", UnixPathResolution.tryAccessEager (bytes "/ids/lf") 4 system |> ok |> answerText
+                            "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
                             UnixPathResolution.tryFaccessatEager -100 (bytes "/ids/lf") 4 0x200 system
                             |> ok

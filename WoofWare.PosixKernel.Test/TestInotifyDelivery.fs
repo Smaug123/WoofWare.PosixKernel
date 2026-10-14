@@ -1062,11 +1062,9 @@ module TestInotifyDelivery =
         | Op.MkDir i -> UnixNamespace.tryMkdir (path i) 0o755 system |> unrefused
         | Op.RmDir i -> UnixNamespace.tryRmdir (path i) system |> unrefused
         | Op.Unlink i -> UnixNamespace.tryUnlink (path i) system |> unrefused
-        | Op.Link (existing, i) -> UnixNamespace.tryLinkEager (path existing) (path i) system |> unrefused
-        | Op.Symlink (target, i) -> UnixNamespace.trySymlinkEager (path target) (path i) system |> unrefused
-        | Op.Rename (source, destination) ->
-            UnixNamespace.tryRenameEager (path source) (path destination) system
-            |> unrefused
+        | Op.Link (existing, i) -> Eager.tryLink (path existing) (path i) system |> unrefused
+        | Op.Symlink (target, i) -> Eager.trySymlink (path target) (path i) system |> unrefused
+        | Op.Rename (source, destination) -> Eager.tryRename (path source) (path destination) system |> unrefused
         | Op.Chmod (i, form, mode) ->
             let text =
                 match form with
@@ -1094,11 +1092,7 @@ module TestInotifyDelivery =
                 system
             |> unrefused
         | Op.AddWatch (instance, i, mask, dontFollow) ->
-            UnixInotify.tryInotifyAddWatchEager
-                fds.[instance]
-                (path i)
-                (mask ||| (if dontFollow then 0x02000000u else 0u))
-                system
+            Eager.tryInotifyAddWatch fds.[instance] (path i) (mask ||| (if dontFollow then 0x02000000u else 0u)) system
             |> unrefused
         | Op.RmWatch (instance, wd) -> UnixInotify.tryInotifyRmWatch fds.[instance] wd system |> unrefused
         | Op.Open (i, readOnly) ->

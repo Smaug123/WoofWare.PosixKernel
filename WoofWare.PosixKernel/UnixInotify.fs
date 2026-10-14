@@ -349,11 +349,7 @@ module UnixInotify =
         (paused : PausedInotifyAddWatch<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
-        match box paused with
-        | null ->
-            failwith
-                "UnixInotify.inotifyAddWatchWithPath: this paused call is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixInotify.inotifyAddWatch instead."
-        | _ -> ()
+        CallProgress.requirePaused "UnixInotify.inotifyAddWatchWithPath" "UnixInotify.inotifyAddWatch" paused
 
         let system = paused.System
         let instance = paused.Instance
@@ -519,20 +515,6 @@ module UnixInotify =
             "UnixInotify.inotifyAddWatchWithPath"
             InotifyAddWatchRefusal.kind
             InotifyAddWatchRefusal.describe
-
-    /// `inotify_add_watch(2)` given its path up front: `tryInotifyAddWatch`,
-    /// then `tryInotifyAddWatchWithPath` of `path` if the call reaches the copy.
-    let internal tryInotifyAddWatchEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (fd : int)
-        (path : PathArgumentBytes)
-        (mask : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
-        =
-        match tryInotifyAddWatch fd mask system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryInotifyAddWatchWithPath path paused
 
     /// `inotifyRmWatch`, with a refusal answered as the `Error` rather than raised.
     let internal tryInotifyRmWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

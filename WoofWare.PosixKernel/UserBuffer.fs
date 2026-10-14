@@ -163,6 +163,13 @@ module BufferRefusal =
         | BufferRefusal.AddresslessAtTransfer ->
             "the buffer is not an address at all, and the transfer would have to dereference it. This platform screens nothing up front, so the call gets this far before running out of answer."
 
+    /// Which exception a public entry point raises this refusal as.
+    let internal kind (refusal : BufferRefusal) : RefusalKind =
+        match refusal with
+        | BufferRefusal.OpaqueAtTransfer -> RefusalKind.Unmodelled
+        | BufferRefusal.AddresslessAtScreen -> RefusalKind.Unmodelled
+        | BufferRefusal.AddresslessAtTransfer -> RefusalKind.Unmodelled
+
 [<RequireQualifiedAccess>]
 module UserBufferCheck =
     /// Whether this platform refuses a buffer of `length` bytes at `address`

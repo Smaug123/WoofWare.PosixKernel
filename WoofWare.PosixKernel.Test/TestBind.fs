@@ -558,7 +558,7 @@ module TestBind =
         let fd, system = stream platform
 
         let e =
-            Assert.Throws<exn> (fun () ->
+            Assert.Throws<System.InvalidOperationException> (fun () ->
                 UnixSocket.tryBindBytes fd UserBuffer.Mapped exactLength ImmutableArray.Empty system
                 |> ignore<_>
             )

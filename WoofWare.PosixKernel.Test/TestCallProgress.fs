@@ -172,6 +172,113 @@ module TestCallProgress =
                 |> ignore
         | other -> failwith $"a bind of a 16-byte sockaddr answered %A{other} before the copy"
 
+    /// Each public function that resumes a paused call, by name, applied to the
+    /// null paused value that `Unchecked.defaultof` or C# `default` makes.
+    let private resumesOfNull : (string * (unit -> unit)) list =
+        let path = PathArg.ofText "/a"
+        let bytes = ImmutableArray<byte>.Empty
+
+        [
+            "UnixPathResolution.accessWithPath",
+            fun () ->
+                UnixPathResolution.accessWithPath path Unchecked.defaultof<PausedAccess<int, string>>
+                |> ignore<SyscallAnswer>
+            "UnixInotify.inotifyAddWatchWithPath",
+            fun () ->
+                UnixInotify.inotifyAddWatchWithPath path Unchecked.defaultof<PausedInotifyAddWatch<int, string>>
+                |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixNamespace.renameWithDestination",
+            fun () ->
+                UnixNamespace.renameWithDestination path Unchecked.defaultof<PausedRename<int, string>>
+                |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixNamespace.cloneFileWithSource",
+            fun () ->
+                UnixNamespace.cloneFileWithSource path Unchecked.defaultof<PausedCloneFileSource<int, string>>
+                |> ignore<CallProgress<PausedCloneFile<int, string>, SyscallAnswer * UnixSystem<int, string>>>
+            "UnixNamespace.cloneFileWithDestination",
+            fun () ->
+                UnixNamespace.cloneFileWithDestination path Unchecked.defaultof<PausedCloneFile<int, string>>
+                |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixNamespace.symlinkWithPath",
+            fun () ->
+                UnixNamespace.symlinkWithPath path Unchecked.defaultof<PausedSymlink<int, string>>
+                |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixNamespace.linkWithDestination",
+            fun () ->
+                UnixNamespace.linkWithDestination path Unchecked.defaultof<PausedLink<int, string>>
+                |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixReadWrite.writeWithBytes",
+            fun () ->
+                UnixReadWrite.writeWithBytes bytes Unchecked.defaultof<PausedWrite<int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+            "UnixReadWrite.sendWithBytes",
+            fun () ->
+                UnixReadWrite.sendWithBytes bytes Unchecked.defaultof<PausedSend<int, string>>
+                |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+            "UnixReadWrite.pwriteWithBytes",
+            fun () ->
+                UnixReadWrite.pwriteWithBytes bytes Unchecked.defaultof<PausedPWrite<int, string>>
+                |> ignore<WriteAnswer * UnixSystem<int, string>>
+            "UnixSocket.bindWithAddress",
+            fun () ->
+                UnixSocket.bindWithAddress bytes Unchecked.defaultof<PausedBind<int, string>>
+                |> ignore<BindAnswer * UnixSystem<int, string>>
+            "UnixSocket.setsockoptWithValue",
+            fun () ->
+                UnixSocket.setsockoptWithValue bytes Unchecked.defaultof<PausedSetSockOpt<int, string>>
+                |> ignore<SetSockOptAnswer * UnixSystem<int, string>>
+            "UnixSocket.getsockoptWithLength",
+            fun () ->
+                UnixSocket.getsockoptWithLength 4u Unchecked.defaultof<PausedGetSockOpt<int, string>>
+                |> ignore<GetSockOptAnswer * UnixSystem<int, string>>
+            "UnixConnection.connectWithAddress",
+            fun () ->
+                UnixConnection.connectWithAddress bytes Unchecked.defaultof<PausedConnect<int, string>>
+                |> ignore<SyscallOutcome * UnixSystem<int, string>>
+        ]
+
+    let private resumeOfNullCases () : TestCaseData seq =
+        resumesOfNull
+        |> Seq.map (fun (name : string, _) -> TestCaseData(name).SetName $"%s{name} fails loudly on a null paused call")
+
+    /// A null paused call is a bug in the client, which every resume reports the
+    /// same way, naming itself, rather than as a NullReferenceException from
+    /// inside the call.
+    [<TestCaseSource(nameof resumeOfNullCases)>]
+    let ``a resume fails loudly on a null paused call`` (name : string) : unit =
+        let resume =
+            resumesOfNull
+            |> List.find (fun (candidate : string, _) -> candidate = name)
+            |> snd
+
+        let exn = Assert.Throws<exn> (fun () -> resume ())
+        exn.Message |> shouldContainText name
+        exn.Message |> shouldContainText "Unchecked.defaultof"
+
+    [<Test>]
+    let ``every public resume is in the null-paused-call cases`` () : unit =
+        // A resume is a public function that takes a paused call: one of the
+        // `Paused*` types, generic in the thread and the handler.
+        let isPaused (t : Type) : bool =
+            t.IsGenericType
+            && t.Namespace = "WoofWare.PosixKernel"
+            && t.Name.StartsWith ("Paused", StringComparison.Ordinal)
+
+        let resumes =
+            typeof<CopyRange>.Assembly.GetExportedTypes ()
+            |> Seq.collect (fun (t : Type) ->
+                t.GetMethods (Reflection.BindingFlags.Public ||| Reflection.BindingFlags.Static)
+                |> Seq.filter (fun (m : Reflection.MethodInfo) ->
+                    m.GetParameters ()
+                    |> Array.exists (fun (p : Reflection.ParameterInfo) -> isPaused p.ParameterType)
+                )
+                |> Seq.map (fun (m : Reflection.MethodInfo) -> $"%s{t.Name}.%s{m.Name}")
+            )
+            |> Seq.filter (fun (name : string) -> not (name.Contains ".copyRange"))
+            |> Set.ofSeq
+
+        resumes |> shouldEqual (resumesOfNull |> List.map fst |> Set.ofList)
+
     [<Test>]
     let ``a Darwin getsockopt through a null value buffer answers without reading the length cell`` () : unit =
         let platform = SimulatedUnixPlatform.macOsArm64

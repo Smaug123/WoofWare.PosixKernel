@@ -155,13 +155,18 @@ module TestStreamReaderGone =
 
                 assertSound where system
 
-                DeliveryLog.toList system.Machine.Delivered
-                |> List.map (fun delivery ->
-                    let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
-                    launchedInto |> shouldEqual (UnixSystem.processId system)
-                    fd, List.ofSeq delivery.Bytes
-                )
-                |> shouldEqual (List.rev delivered)
+                let log =
+                    DeliveryLog.toList system.Machine.Delivered
+                    |> List.map (fun delivery ->
+                        let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
+                        launchedInto |> shouldEqual (UnixSystem.processId system)
+                        fd, List.ofSeq delivery.Bytes
+                    )
+
+                // NUnit's comparison walks each byte reflectively, and the log
+                // grows every step, so it is asked only to describe a mismatch.
+                if log <> List.rev delivered then
+                    log |> shouldEqual (List.rev delivered)
 
         let gen =
             gen {

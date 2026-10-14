@@ -5397,7 +5397,7 @@ module TestUnixSystemStep =
         (system : UnixSystem<int, string>)
         : Result<unit, UnixError>
         =
-        match UnixNamespace.tryRenameEager source destination system with
+        match Eager.tryRename source destination system with
         | Ok (SyscallAnswer.Completed 0L, _) -> Ok ()
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | other -> failwith $"unexpected answer %A{other}"
@@ -5618,7 +5618,7 @@ module TestUnixSystemStep =
             }
 
         let moved =
-            match UnixNamespace.tryRenameEager (arg "f") (arg "victim") system with
+            match Eager.tryRename (arg "f") (arg "victim") system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected a success, got %A{other}"
 
@@ -5666,7 +5666,7 @@ module TestUnixSystemStep =
             // A symbolic link rather than `dir`: displacing a regular file with
             // a *directory* is ENOTDIR, which would make this row measure the
             // type rule instead of the reap.
-            match UnixNamespace.tryRenameEager (arg "lf") (arg "f") system with
+            match Eager.tryRename (arg "lf") (arg "f") system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected a success, got %A{other}"
 
@@ -5691,7 +5691,7 @@ module TestUnixSystemStep =
 
         let before = system.Machine.FileSystem
 
-        match UnixNamespace.tryRenameEager (arg "f") (arg "f") system with
+        match Eager.tryRename (arg "f") (arg "f") system with
         | Ok (SyscallAnswer.Completed 0L, after) -> after.Machine.FileSystem |> shouldEqual before
         | other -> failwith $"expected a success, got %A{other}"
 
@@ -5731,7 +5731,7 @@ module TestUnixSystemStep =
         let moved =
             // Absolute, because the cwd is now /dir/sub and a relative "dir"
             // would resolve from there.
-            match UnixNamespace.tryRenameEager (arg "/dir") (arg "/moved") system with
+            match Eager.tryRename (arg "/dir") (arg "/moved") system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected a success, got %A{other}"
 
@@ -5807,25 +5807,25 @@ module TestUnixSystemStep =
 
         // Darwin: the source's ENOENT is settled before the destination's
         // pathname is copied in at all.
-        UnixNamespace.tryRenameEager (arg "nope") unreadable (withRenameTree darwin)
+        Eager.tryRename (arg "nope") unreadable (withRenameTree darwin)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.ENOENT, withRenameTree darwin))
 
         // Linux: the source's *parent* walk fails before the destination's
         // pathname is copied in.
-        UnixNamespace.tryRenameEager (arg "nodir/kid") unreadable (withRenameTree linux)
+        Eager.tryRename (arg "nodir/kid") unreadable (withRenameTree linux)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.ENOENT, withRenameTree linux))
 
         // ...and when the syscall does reach it, the EFAULT is reported rather
         // than swallowed -- otherwise the two rows above would pass for a
         // kernel that never copies anything in.
-        UnixNamespace.tryRenameEager (arg "f") unreadable (withRenameTree linux)
+        Eager.tryRename (arg "f") unreadable (withRenameTree linux)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, withRenameTree linux))
 
-        UnixNamespace.tryRenameEager (arg "f") unreadable (withRenameTree darwin)
+        Eager.tryRename (arg "f") unreadable (withRenameTree darwin)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, withRenameTree darwin))
 
         // A bad *source* is EFAULT on both, being copied in first either way.
-        UnixNamespace.tryRenameEager unreadable (arg "nope") (withRenameTree linux)
+        Eager.tryRename unreadable (arg "nope") (withRenameTree linux)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, withRenameTree linux))
 
     [<Test>]

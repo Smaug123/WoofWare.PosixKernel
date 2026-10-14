@@ -62,7 +62,7 @@ module internal GetRandomRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetRandomRefusal) : RefusalKind =
         match refusal with
-        | GetRandomRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetRandomRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetRandomRefusal.NoSuchSyscall _ -> RefusalKind.NotOnPlatform
         | GetRandomRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
@@ -102,7 +102,7 @@ module internal GetEntropyRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetEntropyRefusal) : RefusalKind =
         match refusal with
-        | GetEntropyRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetEntropyRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetEntropyRefusal.NoSuchSyscall _ -> RefusalKind.NotOnPlatform
 
 /// The syscalls that hand out bytes from the kernel's entropy pool.

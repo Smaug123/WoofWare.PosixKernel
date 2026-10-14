@@ -407,7 +407,7 @@ module TestConnect =
         // The copy takes 16 bytes, so every other count is wrong.
         for passed in [ 0 ; 2 ; 8 ; 15 ; 17 ] do
             let e =
-                Assert.Throws<exn> (fun () ->
+                Assert.Throws<System.InvalidOperationException> (fun () ->
                     UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore<_>
                 )

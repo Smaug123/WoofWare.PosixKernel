@@ -211,7 +211,7 @@ module internal EpollWaitRefusal =
     let kind (refusal : EpollWaitRefusal) : RefusalKind =
         match refusal with
         | EpollWaitRefusal.UnmodelledFlavour _ -> RefusalKind.NotOnPlatform
-        | EpollWaitRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | EpollWaitRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | EpollWaitRefusal.UnmeasuredCopyOutFault _ -> RefusalKind.Unmodelled
         | EpollWaitRefusal.DeadlineBeyondClock _ -> RefusalKind.Unmodelled
         | EpollWaitRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner

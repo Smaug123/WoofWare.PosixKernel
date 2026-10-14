@@ -6,6 +6,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
+    <!-- NUnit runs a test per core, and the property tests allocate heavily. Under workstation
+         GC each blocking collection suspends every test while one thread collects; server GC
+         collects on every core. On a four-core Linux VM it took the suite from 658s to 401s. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,6 +36,7 @@
     <Compile Include="PathText.fs" />
     <Compile Include="OpenFlagWords.fs" />
     <Compile Include="Answered.fs" />
+    <Compile Include="Eager.fs" />
     <Compile Include="PReadUnchanged.fs" />
     <Compile Include="DirectoryReading.fs" />
     <Compile Include="Owners.fs" />
@@ -250,6 +255,7 @@
     <Compile Include="TestSimulatedMachine.fs" />
     <Compile Include="TestMultiProcess.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
+    <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeSweepMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
@@ -600,6 +606,11 @@
          fraction of the machine's, so that several test hosts running at once stay bounded too.
          Decimal, 8 GiB: runtimeconfig properties are parsed with base 0. -->
     <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="8589934592" />
+    <!-- Server GC divides the limit above among its heaps, one per core unless told otherwise,
+         and an object must fit in one heap's share: on an 18-core machine the 2 GiB buffers of
+         the LargeMemory fixtures, and TestPipeBuffer's huge write, ran out of memory. Two heaps
+         give each 4 GiB on every machine, and were as fast as one per core on a four-core VM. -->
+    <RuntimeHostConfigurationOption Include="System.GC.HeapCount" Value="2" />
   </ItemGroup>
 
   <ItemGroup>
