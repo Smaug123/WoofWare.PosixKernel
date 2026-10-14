@@ -787,9 +787,9 @@ module TestBlockingPipe =
 
             let flavourName = if linux then "Linux" else "Darwin"
 
-            let compare (where : string) (expected : Seen) (actual : Seen) =
+            let compare (where : unit -> string) (expected : Seen) (actual : Seen) : unit =
                 if expected <> actual then
-                    failwith $"%s{where}: expected %A{expected}, got %A{actual}"
+                    failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
 
             // After an answer the thread returns to user mode, taking its signal.
             let settle (thread : int) (seen : Seen) (after : UnixSystem<int, string>) =
@@ -837,7 +837,8 @@ module TestBlockingPipe =
                 | None -> ()
                 | Some op ->
 
-                let where = $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
+                let where () : string =
+                    $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
 
                 // A close of `fd` from `system` and `reference`, made by `call`,
                 // which answers `expectedAnswer` if it closes and leaves the
@@ -941,7 +942,8 @@ module TestBlockingPipe =
                                             parks
                                     )
                             }
-                    | expected, other -> failwith $"%s{where}: close expected refusal for %A{expected}, got %A{other}"
+                    | expected, other ->
+                        failwith $"%s{where ()}: close expected refusal for %A{expected}, got %A{other}"
 
 
                 match op with
@@ -1043,7 +1045,7 @@ module TestBlockingPipe =
                             | _ -> ()
                         | Error refusal ->
                             failwith
-                                $"%s{where}: dup2 onto a closed or the same descriptor was refused: %s{Dup2Refusal.describe refusal}"
+                                $"%s{where ()}: dup2 onto a closed or the same descriptor was refused: %s{Dup2Refusal.describe refusal}"
                 | BlockingPipeOp.Dup fd ->
                     let answer, after = Answered.dup fd system
 
@@ -1101,7 +1103,7 @@ module TestBlockingPipe =
                     let woken = UnixWait.wakes asleep system |> List.map fst
 
                     if woken <> referenceWakes reference then
-                        failwith $"%s{where}: woke %A{woken}, expected %A{referenceWakes reference}"
+                        failwith $"%s{where ()}: woke %A{woken}, expected %A{referenceWakes reference}"
 
                     if List.length woken > 1 then
                         cover $"%s{flavourName} wake: several"
@@ -1174,7 +1176,7 @@ module TestBlockingPipe =
                 if not stopped then
                     match UnixSystem.checkInvariants system with
                     | [] -> ()
-                    | defects -> failwith $"%s{where}: %A{defects}"
+                    | defects -> failwith $"%s{where ()}: %A{defects}"
 
                     // Every park agrees with the reference's, by progress.
                     for thread in threads do
@@ -1192,11 +1194,11 @@ module TestBlockingPipe =
                                 match parked with
                                 | ParkedSyscall.PipeRead read -> 0, read.Count, 0
                                 | ParkedSyscall.PipeWrite write -> 1, write.Count, write.Written
-                                | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
+                                | other -> failwith $"%s{where ()}: thread %d{thread} parked in %A{other}"
                             )
 
                         if expected <> actual then
-                            failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
+                            failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                     // A description exists exactly while something references
                     // it: a descriptor, or a call that has not yet returned.
@@ -1218,7 +1220,7 @@ module TestBlockingPipe =
 
                     if expectedDescriptions <> actualDescriptions then
                         failwith
-                            $"%s{where}: descriptions %A{actualDescriptions} exist, expected %A{expectedDescriptions}"
+                            $"%s{where ()}: descriptions %A{actualDescriptions} exist, expected %A{expectedDescriptions}"
 
                     // A description's holds are its calls': one for each call,
                     // asleep or woken, that has not returned and that no Darwin
@@ -1234,7 +1236,7 @@ module TestBlockingPipe =
 
                         if recorded <> expected then
                             failwith
-                                $"%s{where}: description %d{description} records %d{recorded} holds, expected %d{expected}"
+                                $"%s{where ()}: description %d{description} records %d{recorded} holds, expected %d{expected}"
 
                     // Gone once nothing references either end.
                     match Map.tryFind pipeId system.Machine.Pipes with

@@ -498,12 +498,14 @@ module TestUnixScheduling =
         for thread in world.Live do
             let view = viewOf thread.Pid world
             let running = runningOracle thread.Serial world.Events
-            let context = $"%A{thread}, after %A{List.rev world.Events}"
+
+            let context () : string =
+                $"%A{thread}, after %A{List.rev world.Events}"
 
             UnixScheduling.runningOn thread.Name view
             |> fun answered ->
                 if answered <> running then
-                    failwith $"runningOn %A{answered}: %s{context}"
+                    failwith $"runningOn %A{answered}: %s{context ()}"
 
             (UnixThreadTable.get thread.Name (Proc.threads thread.Pid view)).Cpu
             |> shouldEqual (cpuOracle thread.Serial world.Events)
@@ -513,7 +515,7 @@ module TestUnixScheduling =
             match running with
             | Some cpu ->
                 if not (obj.ReferenceEquals (UnixScheduling.dispatch thread.Name cpu view, view)) then
-                    failwith $"re-dispatching to %O{cpu} changed the system: %s{context}"
+                    failwith $"re-dispatching to %O{cpu} changed the system: %s{context ()}"
             | None -> ()
 
             if linux then
@@ -533,7 +535,7 @@ module TestUnixScheduling =
                         cover Reached.DisplacedGetCpu
 
                     if not (throws (fun () -> UnixScheduling.tryGetcpu thread.Name view)) then
-                        failwith $"getcpu answered for a thread not running, or parked: %s{context}"
+                        failwith $"getcpu answered for a thread not running, or parked: %s{context ()}"
             else
                 UnixScheduling.tryGetcpu thread.Name view
                 |> shouldEqual (Error (GetCpuRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
