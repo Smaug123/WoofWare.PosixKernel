@@ -8,7 +8,8 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// A `Caller`, and `Entry`, the way into a call: which callers each requirement
-/// admits, and that each shape of answer passes through untouched.
+/// admits, and that a call answers what its body gave, in each shape of
+/// answer.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestEntry =
@@ -63,11 +64,11 @@ module TestEntry =
 
     let private operation : string = "TestEntry.call"
 
-    /// One way into a call: `Enter` makes the call through one of `Entry`'s
-    /// functions, with a body that hands `seen` the system it is given and
-    /// answers something no other call could, and says whether the function
+    /// One way into a call: `Enter` makes the call through `Entry.call` with
+    /// one shape, with a body that hands `seen` the system it is given and
+    /// answers something no other call could, and says whether the call
     /// answered exactly that.
-    type private Shape =
+    type private Way =
         {
             Name : string
             Enter :
@@ -80,7 +81,11 @@ module TestEntry =
     let private same<'T when 'T : not struct> (expected : 'T) (actual : 'T) : bool =
         obj.ReferenceEquals (expected, actual)
 
-    let private shapes : Shape list =
+    /// The process `system` holds, ended.
+    let private ended (system : UnixSystem<int, string>) : EndedProcess<int, string> =
+        UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) system
+
+    let private ways : Way list =
         [
             {
                 Name = "answer"
@@ -88,16 +93,35 @@ module TestEntry =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
 
-                        Entry.answer
+                        Entry.call
                             operation
                             requirement
                             caller
+                            Shape.answer
                             (fun system ->
                                 seen system
                                 sentinel
                             )
                             system
                         |> same sentinel
+            }
+            {
+                Name = "system"
+                Enter =
+                    fun requirement caller system seen ->
+                        let after = changed system
+
+                        Entry.call
+                            operation
+                            requirement
+                            caller
+                            Shape.system
+                            (fun system ->
+                                seen system
+                                after
+                            )
+                            system
+                        |> same after
             }
             {
                 Name = "withSystem"
@@ -107,10 +131,11 @@ module TestEntry =
                         let after = changed system
 
                         let answer, left =
-                            Entry.withSystem
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                Shape.withSystem
                                 (fun system ->
                                     seen system
                                     sentinel, after
@@ -120,17 +145,18 @@ module TestEntry =
                         same sentinel answer && same after left
             }
             {
-                Name = "result, Ok"
+                Name = "result withSystem, Ok"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
                         let after = changed system
 
                         match
-                            Entry.result
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                (Shape.result Shape.withSystem)
                                 (fun system ->
                                     seen system
                                     Ok (sentinel, after)
@@ -141,16 +167,17 @@ module TestEntry =
                         | Error (_ : obj) -> false
             }
             {
-                Name = "result, Error"
+                Name = "result withSystem, Error"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
 
                         match
-                            Entry.result
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                (Shape.result Shape.withSystem)
                                 (fun system ->
                                     seen system
                                     Error sentinel
@@ -168,10 +195,11 @@ module TestEntry =
                         let after = changed system
 
                         match
-                            Entry.fate
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                Shape.fate
                                 (fun system ->
                                     seen system
                                     ProcessFate.Continues (sentinel, after)
@@ -185,14 +213,14 @@ module TestEntry =
                 Name = "fate, ProcessEnded"
                 Enter =
                     fun requirement caller system seen ->
-                        let ended =
-                            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) system
+                        let ended = ended system
 
                         match
-                            Entry.fate
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                Shape.fate
                                 (fun system ->
                                     seen system
                                     ProcessFate.ProcessEnded ended
@@ -203,52 +231,97 @@ module TestEntry =
                         | ProcessFate.ProcessEnded answered -> same ended answered
             }
             {
-                Name = "progress, Answered"
+                Name = "ended"
+                Enter =
+                    fun requirement caller system seen ->
+                        let ended = ended system
+
+                        Entry.call
+                            operation
+                            requirement
+                            caller
+                            Shape.ended
+                            (fun system ->
+                                seen system
+                                ended
+                            )
+                            system
+                        |> same ended
+            }
+            {
+                Name = "progress withSystem, Answered"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
+                        let after = changed system
 
                         match
-                            Entry.progress
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                (Shape.progress Shape.withSystem)
                                 (fun system ->
                                     seen system
-                                    CallProgress.Answered sentinel
+                                    CallProgress.Answered (sentinel, after)
                                 )
                                 system
                         with
-                        | CallProgress.Answered answer -> same sentinel answer
+                        | CallProgress.Answered (answer, left) -> same sentinel answer && same after left
                         | CallProgress.NeedsCopyIn (_ : obj) -> false
             }
             {
-                Name = "progress, NeedsCopyIn"
+                Name = "progress withSystem, NeedsCopyIn"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
 
                         match
-                            Entry.progress
+                            Entry.call
                                 operation
                                 requirement
                                 caller
+                                (Shape.progress Shape.withSystem)
                                 (fun system ->
                                     seen system
                                     CallProgress.NeedsCopyIn sentinel
                                 )
                                 system
                         with
-                        | CallProgress.Answered (_ : obj) -> false
+                        | CallProgress.Answered ((_ : obj), _) -> false
                         | CallProgress.NeedsCopyIn paused -> same sentinel paused
+            }
+            {
+                Name = "result (result fate), as kill answers"
+                Enter =
+                    fun requirement caller system seen ->
+                        let sentinel = obj ()
+                        let after = changed system
+
+                        match
+                            Entry.call
+                                operation
+                                requirement
+                                caller
+                                (Shape.result (Shape.result Shape.fate))
+                                (fun system ->
+                                    seen system
+                                    Ok (Ok (ProcessFate.Continues (sentinel, after)))
+                                )
+                                system
+                        with
+                        | Ok (Ok (ProcessFate.Continues (outcome, left))) -> same sentinel outcome && same after left
+                        | Ok (Ok (ProcessFate.ProcessEnded _))
+                        | Ok (Error (_ : UnixError))
+                        | Error (_ : obj) -> false
             }
         ]
 
-    /// Every requirement, through every way in, of a caller in the system's own
-    /// process and in another, naming a thread in each state. A caller in
-    /// another process is refused whatever its thread, before its thread is
-    /// asked about; one in the system's own is refused exactly where `refusal`
-    /// says. A refused call throws `InvalidOperationException`, naming the
+    /// Every requirement, through `Entry.call` with every shape, of a caller in
+    /// the system's own process and in another, naming a thread in each state.
+    /// A caller in another process is refused whatever its thread, before its
+    /// thread is asked about; one in the system's own is refused exactly where
+    /// `refusal` says. A refused call throws `InvalidOperationException`, naming the
     /// operation and why, and never runs the body; an admitted one runs it once,
     /// on the system it was given, and answers exactly what it answered.
     [<Test>]
@@ -259,12 +332,12 @@ module TestEntry =
                     let own = Lone.pid system
                     let other = ProcessId.parse (ProcessId.toInt32 own + 1) |> Option.get
 
-                    for shape in shapes do
+                    for way in ways do
                         for requirement in requirements do
                             for pid in [ own ; other ] do
                                 for thread, state in threads do
                                     let case =
-                                        $"%s{flavour}, %s{shape.Name}, %A{requirement}, thread %d{thread} (%A{state}) of process %O{pid}"
+                                        $"%s{flavour}, %s{way.Name}, %A{requirement}, thread %d{thread} (%A{state}) of process %O{pid}"
 
                                     let expected =
                                         if pid <> own then
@@ -276,7 +349,7 @@ module TestEntry =
 
                                     let outcome =
                                         try
-                                            Ok (shape.Enter requirement (Caller.make pid thread) system seen.Add)
+                                            Ok (way.Enter requirement (Caller.make pid thread) system seen.Add)
                                         with e ->
                                             Error e
 
@@ -305,6 +378,60 @@ module TestEntry =
             ]
 
         mismatches |> shouldEqual []
+
+    /// A resumed call answers what its resumption gave, with each system in
+    /// it the one the resumption left, in every shape a resumption answers.
+    [<Test>]
+    let ``a resumed call answers what its resumption gave`` () : unit =
+        for flavour, system, _ in systems () do
+            let sentinel = obj ()
+            let after = changed system
+            let ended = ended system
+
+            let answers : (string * bool) list =
+                [
+                    "withSystem",
+                    (let answer, left = Entry.resume Shape.withSystem (sentinel, after)
+                     same sentinel answer && same after left)
+
+                    "result (progress withSystem), Answered",
+                    (match
+                        Entry.resume
+                            (Shape.result (Shape.progress Shape.withSystem))
+                            (Ok (CallProgress.Answered (sentinel, after)))
+                     with
+                     | Ok (CallProgress.Answered (answer, left)) -> same sentinel answer && same after left
+                     | Ok (CallProgress.NeedsCopyIn (_ : obj))
+                     | Error (_ : obj) -> false)
+
+                    "result (progress withSystem), NeedsCopyIn",
+                    (match
+                        Entry.resume
+                            (Shape.result (Shape.progress Shape.withSystem))
+                            (Ok (CallProgress.NeedsCopyIn sentinel)
+                            : Result<CallProgress<obj, obj * UnixSystem<int, string>>, obj>)
+                     with
+                     | Ok (CallProgress.NeedsCopyIn paused) -> same sentinel paused
+                     | Ok (CallProgress.Answered ((_ : obj), _))
+                     | Error (_ : obj) -> false)
+
+                    "result fate, Continues",
+                    (match Entry.resume (Shape.result Shape.fate) (Ok (ProcessFate.Continues (sentinel, after))) with
+                     | Ok (ProcessFate.Continues (outcome, left)) -> same sentinel outcome && same after left
+                     | Ok (ProcessFate.ProcessEnded _)
+                     | Error (_ : obj) -> false)
+
+                    "result fate, ProcessEnded",
+                    (match Entry.resume (Shape.result Shape.fate) (Ok (ProcessFate.ProcessEnded ended)) with
+                     | Ok (ProcessFate.ProcessEnded answered) -> same ended answered
+                     | Ok (ProcessFate.Continues ((_ : obj), _))
+                     | Error (_ : obj) -> false)
+                ]
+
+            answers
+            |> List.filter (snd >> not)
+            |> List.map (fun (name, _) -> $"%s{flavour}, %s{name}")
+            |> shouldEqual []
 
     let private callerParts : Gen<int32 * int> =
         Gen.zip (Gen.choose (1, Int32.MaxValue)) (ArbMap.defaults |> ArbMap.generate<int>)
