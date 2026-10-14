@@ -1,0 +1,14 @@
+# Darwin 27.0.0 arm64, uid 501
+# flavour darwin TERM=15 TSTP=18 USR1=30
+sig=15(default) who=none main-pending=4000 second-pending=0 second-alive pending=0 main-alive pending=4000 end=exit0
+sig=15(default) who=main main-pending=4000 second-pending=0 end=signal15
+sig=15(default) who=second main-pending=4000 second-pending=0 second-returned second-alive pending=0 main-alive pending=4000 end=exit0
+sig=15(default) who=second-ss main-pending=4000 second-pending=0 main-alive pending=4000 end=exit0
+sig=18(default) who=none main-pending=20000 second-pending=0 second-alive pending=0 main-alive pending=20000 end=exit0
+sig=18(default) who=main main-pending=20000 second-pending=0 end=stopped18
+sig=18(default) who=second main-pending=20000 second-pending=0 second-returned second-alive pending=0 main-alive pending=20000 end=exit0
+sig=18(default) who=second-ss main-pending=20000 second-pending=0 main-alive pending=20000 end=exit0
+sig=30(caught) who=none main-pending=20000000 second-pending=0 second-alive pending=0 main-alive pending=20000000 end=exit0
+sig=30(caught) who=main main-pending=20000000 second-pending=0 handler-on=main main-returned second-alive pending=0 main-alive pending=0 end=exit0
+sig=30(caught) who=second main-pending=20000000 second-pending=0 second-returned second-alive pending=0 main-alive pending=20000000 end=exit0
+sig=30(caught) who=second-ss main-pending=20000000 second-pending=0 main-alive pending=20000000 end=exit0

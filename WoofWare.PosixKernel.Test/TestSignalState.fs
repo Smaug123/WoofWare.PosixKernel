@@ -1841,13 +1841,44 @@ module TestSignalState =
         (r : ReferenceState)
         : Result<SignalDelivery<TestThread, TestHandler> option * ReferenceState, SignalReceiverRefusal>
         =
+        // Under Linux, a thread that does not block it takes a signal pending on
+        // the process that the leader blocks, and whose default terminates or
+        // stops the process; every other such signal is refused.
+        let takenBeyondLeader (e : PendingSignal<TestThread>) : bool =
+            numbering = SignalNumbering.Linux
+            && referenceDisposition r e.Signal = SignalDisposition.Default
+            && (
+                match Signal.defaultDispositionUnder numbering e.Signal with
+                | DefaultDisposition.Terminate
+                | DefaultDisposition.Stop -> true
+                | DefaultDisposition.Ignore
+                | DefaultDisposition.Continue -> false
+            )
+
         let refused =
             referencePendingView numbering r
-            |> List.tryFind (fun e -> referenceReceiver threads r e = ReferenceReceiver.BeyondLeader)
+            |> List.tryFind (fun e ->
+                referenceReceiver threads r e = ReferenceReceiver.BeyondLeader
+                && not (takenBeyondLeader e)
+            )
 
         match refused with
         | Some e -> Error (SignalReceiverRefusal.LeaderBlocks e.Signal)
         | None ->
+
+        // What a thread other than the leader can take of the process's set, as
+        // it stood when the return began: those it is the only kind of thread to
+        // take, after its own.
+        let fromProcess =
+            if thread = referenceLeader then
+                []
+            else
+                referencePendingView numbering r
+                |> List.filter (fun e ->
+                    e.Target.IsNone
+                    && referenceReceiver threads r e = ReferenceReceiver.BeyondLeader
+                    && takenBeyondLeader e
+                )
 
         let rec go
             (pushed : HandlerFrame<TestThread, TestHandler> list)
@@ -1856,6 +1887,7 @@ module TestSignalState =
             =
             let next =
                 referenceCandidates numbering thread r
+                @ (fromProcess |> List.filter (fun e -> List.contains e r.Pending))
                 |> List.tryFind (fun e -> not (referenceBlocks r thread e.Signal))
 
             let removed (e : PendingSignal<TestThread>) : ReferenceState =
@@ -2382,6 +2414,7 @@ module TestSignalState =
     type private OracleLabel =
         | HandlerDeliveries
         | NonLeaderDeliveries
+        | NonLeaderTakesFromProcess
         | DefaultTerminates
         | CoreDumps
         | DefaultStopsAndContinues
@@ -2446,6 +2479,14 @@ module TestSignalState =
                     match referenceOnReturnToUser numbering coreDumps threads thread r with
                     | Error _ -> cover OracleLabel.DeliveryRefusals
                     | Ok (expected, r') ->
+
+                    // Only a default that ends or stops the process, under
+                    // Linux, is taken from the process's set by another thread.
+                    let processSet (state : ReferenceState) : int =
+                        state.Pending |> List.filter (fun e -> e.Target.IsNone) |> List.length
+
+                    if thread <> referenceLeader && processSet r' < processSet r then
+                        cover OracleLabel.NonLeaderTakesFromProcess
 
                     if Map.containsKey thread r.Restore then
                         if r'.NextFrame > r.NextFrame then
@@ -2598,6 +2639,13 @@ module TestSignalState =
         // over 60 runs per numbering), so 1000 walks clear it with room to spare.
         coverage.Count OracleLabel.HandlerDeliveries |> shouldBeGreaterThan 30
         coverage.Count OracleLabel.NonLeaderDeliveries |> shouldBeGreaterThan 10
+
+        // Only Linux's threads take from the process's set; the fixed sample
+        // reaches it 73 times.
+        match numbering with
+        | SignalNumbering.Linux -> coverage.Count OracleLabel.NonLeaderTakesFromProcess |> shouldBeGreaterThan 30
+        | SignalNumbering.Darwin -> coverage.Count OracleLabel.NonLeaderTakesFromProcess |> shouldEqual 0
+
         coverage.Count OracleLabel.DefaultTerminates |> shouldBeGreaterThan 50
         coverage.Count OracleLabel.CoreDumps |> shouldBeGreaterThan 20
         coverage.Count OracleLabel.DefaultStopsAndContinues |> shouldBeGreaterThan 20

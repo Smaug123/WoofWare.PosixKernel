@@ -366,7 +366,10 @@ module UnixSignal =
         )
 
     /// What `thread` takes as it returns to user mode: its own signals, and if it
-    /// is the process's leader, the process's too. A client asks this before
+    /// is the process's leader, the process's too; under Linux, a thread other
+    /// than the leader also takes a signal pending on the process that the
+    /// leader blocks and it does not, where the signal's default terminates or
+    /// stops the process. A client asks this before
     /// `thread` next runs its own code: after every system call it makes,
     /// `sigreturn` included.
     ///
@@ -421,7 +424,8 @@ module UnixSignal =
     ///
     /// Refuses, whichever thread is asked, while any signal pending on the
     /// process could be received by a thread other than the leader but not by
-    /// the leader; the refusal names the first such signal in
+    /// the leader, unless, under Linux, its default terminates or stops the
+    /// process; the refusal names the first such signal in
     /// `SignalState.pending`'s order. Refuses a stop or continue default
     /// reached after frames were pushed. A refusal changes nothing, a mask to
     /// restore included.
