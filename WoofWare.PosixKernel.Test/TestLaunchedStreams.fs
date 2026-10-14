@@ -434,7 +434,7 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
@@ -446,6 +446,7 @@ module TestLaunchedStreams =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     1
@@ -489,14 +490,16 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.Out ||| EpollEvents.EdgeTriggered
 
         for fd in [ 0 ; 1 ; 2 ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Changed, _) -> ()
             | other -> failwith $"fd %d{fd}: %A{other}"
 
@@ -505,7 +508,9 @@ module TestLaunchedStreams =
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%A{other}"
 
-        match UnixPoll.tryEpollCtl epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system with
+        match
+            UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system
+        with
         | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual readFd
         | other -> failwith $"%A{other}"
 

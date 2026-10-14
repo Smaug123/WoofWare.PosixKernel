@@ -300,7 +300,7 @@ module TestInotifyInvariants =
     [<Test>]
     let ``a read parked on something other than an instance is a defect`` () : unit =
         let fd, system =
-            match UnixPoll.tryEpollCreate1 0 linux with
+            match UnixPoll.tryEpollCreate1 (Callers.leader linux) 0 linux with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 

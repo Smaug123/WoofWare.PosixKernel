@@ -286,7 +286,7 @@ module TestDeviceDescriptorsAgainstHost =
                     hostPollOnce host events,
                     (match
                         UnixPoll.tryPoll
-                            0
+                            (Callers.thread 0 system)
                             [
                                 {
                                     Fd = fd
@@ -317,7 +317,15 @@ module TestDeviceDescriptorsAgainstHost =
 
                  let system = Lone.withFileDescriptors registry system
 
-                 match UnixPoll.tryEpollCtl queueFd 1 fd (EpollEventArgument.Readable (1u, 0UL)) system with
+                 match
+                     UnixPoll.tryEpollCtl
+                         (Callers.leader system)
+                         queueFd
+                         1
+                         fd
+                         (EpollEventArgument.Readable (1u, 0UL))
+                         system
+                 with
                  | Ok (EpollCtlAnswer.Changed, _) -> Ok 0L
                  | Ok (EpollCtlAnswer.Failed EpollCtlError.TargetNotPollable, _) -> Error UnixError.EPERM
                  | other -> failwith $"the model's epoll_ctl: %A{other}")

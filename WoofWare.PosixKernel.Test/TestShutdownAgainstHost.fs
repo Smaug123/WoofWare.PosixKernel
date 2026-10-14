@@ -2214,7 +2214,7 @@ module TestShutdownAgainstHost =
                 let revents, after =
                     match
                         UnixPoll.tryPoll
-                            (Lone.leader system)
+                            (Callers.leader system)
                             [
                                 {
                                     Fd = fd
@@ -2254,7 +2254,7 @@ module TestShutdownAgainstHost =
                         let events, s =
                             match
                                 UnixKqueue.tryKevent
-                                    (Lone.leader s)
+                                    (Callers.leader s)
                                     kq
                                     2
                                     changes
@@ -2300,7 +2300,7 @@ module TestShutdownAgainstHost =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
                     let ep, s =
-                        match UnixPoll.tryEpollCreate1 0 system with
+                        match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
@@ -2310,7 +2310,13 @@ module TestShutdownAgainstHost =
                             let fd = this.Fd e
 
                             match
-                                UnixPoll.tryEpollCtl ep 1 fd (EpollEventArgument.Readable (0x80002005u, uint64 fd)) s
+                                UnixPoll.tryEpollCtl
+                                    (Callers.leader s)
+                                    ep
+                                    1
+                                    fd
+                                    (EpollEventArgument.Readable (0x80002005u, uint64 fd))
+                                    s
                             with
                             | Ok (EpollCtlAnswer.Changed, s) -> s
                             | other -> failwith $"epoll_ctl: %A{other}"
@@ -2334,7 +2340,7 @@ module TestShutdownAgainstHost =
                     let s =
                         match
                             UnixKqueue.tryKevent
-                                (Lone.leader s)
+                                (Callers.leader s)
                                 kq
                                 changes.Length
                                 changes
@@ -2359,7 +2365,7 @@ module TestShutdownAgainstHost =
 
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    match UnixPoll.tryEpollWait (Lone.leader system) port 4 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.leader system) port 4 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, after) ->
                         system <- after
 
@@ -2374,7 +2380,7 @@ module TestShutdownAgainstHost =
                 | SimulatedUnixFlavour.Darwin ->
                     match
                         UnixKqueue.tryKevent
-                            (Lone.leader system)
+                            (Callers.leader system)
                             port
                             0
                             []

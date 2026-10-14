@@ -222,7 +222,7 @@ module TestCopyFileSyscalls =
             | Ok (Ok (fd, system)) -> fd, system
             | other -> failwith $"socket: %A{other}"
         | "port" ->
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (fd, system)) -> fd, system
             | other -> failwith $"epoll_create1: %A{other}"
         | "closed" -> 700, system

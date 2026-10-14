@@ -1310,22 +1310,28 @@ module TestPipe =
         let (r, w), system = pipeOrFail 0 (systemOn SimulatedUnixPlatform.linuxX64)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.EdgeTriggered
 
         for fd in [ r ; w ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual fd
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollCtl epoll 2 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 2 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, _) -> ()
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Threads.ensure 1 system) with
+            let system = Threads.ensure 1 system
+
+            match UnixPoll.tryEpollWait (Callers.thread 1 system) fd 1 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Failed UnixError.EINVAL, _) -> ()
             | other -> failwith $"%A{other}"
 

@@ -355,7 +355,7 @@ module TestSigcontGeneration =
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Ok other -> failwith $"finishSigsuspend: %A{other}"
             else
-                match UnixPoll.tryFinishPoll row.Sleeper r.System with
+                match UnixPoll.tryFinishPoll (Callers.thread row.Sleeper r.System) r.System with
                 | Error (PollRefusal.Interruption (SyscallInterruptionRefusal.Receiver refusal)) ->
                     Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishPoll: %A{other}")
@@ -374,7 +374,7 @@ module TestSigcontGeneration =
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | other -> failwith $"sigsuspend did not sleep: %A{other}"
             else
-                match UnixPoll.tryPoll row.Sleeper [] 300 r.System with
+                match UnixPoll.tryPoll (Callers.thread row.Sleeper r.System) [] 300 r.System with
                 | Ok (PollOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | other -> failwith $"poll did not sleep: %A{other}"
 

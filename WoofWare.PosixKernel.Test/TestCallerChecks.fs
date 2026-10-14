@@ -30,6 +30,10 @@ module TestCallerChecks =
             /// The name the function's refusals give it.
             Name : string
             Admits : Admits
+            /// The flavours under which it is made: every flavour, but for a
+            /// finishing function, only those whose `world` can park a thread
+            /// in the call it finishes.
+            On : SimulatedUnixFlavour list
             Make : Caller<int> -> UnixSystem<int, string> -> unit
         }
 
@@ -37,10 +41,21 @@ module TestCallerChecks =
     /// `accept` of.
     let private listenerFd : int = 20
 
+    /// The thread `world` parks in a `poll`, under every flavour.
+    let private poller : int = 4
+
+    /// The thread `world` parks in an `epoll_wait` under Linux, and in a
+    /// `kevent` under Darwin.
+    let private eventWaiter : int = 5
+
+    let private everyFlavour : SimulatedUnixFlavour list =
+        [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
+
     /// One call of each public function of the families that take a caller:
-    /// the descriptor, pipe, socket and inotify calls on the standard streams,
-    /// which every flavour gives as pipes, and the path and namespace calls on
-    /// the root directory, so that a call's `dirfd` is never looked up.
+    /// the descriptor, pipe, socket, poll, kqueue and inotify calls on the
+    /// standard streams, which every flavour gives as pipes, and the path and
+    /// namespace calls on the root directory, so that a call's `dirfd` is
+    /// never looked up.
     let private calls : Call list =
         let root = PathArg.ofText "/"
         let file = PathArg.ofText "/f"
@@ -49,6 +64,21 @@ module TestCallerChecks =
             {
                 Name = name
                 Admits = Admits.Running
+                On = everyFlavour
+                Make = make
+            }
+
+        let finishing
+            (name : string)
+            (sleeper : int)
+            (on : SimulatedUnixFlavour list)
+            (make : Caller<int> -> UnixSystem<int, string> -> unit)
+            : Call
+            =
+            {
+                Name = name
+                Admits = Admits.Finishing sleeper
+                On = on
                 Make = make
             }
 
@@ -107,11 +137,11 @@ module TestCallerChecks =
                     |> ignore<TerminalAttributesAnswer>
                 )
             running "UnixPipe.pipe2" (fun caller system -> UnixPipe.pipe2 caller 0 UserBuffer.Mapped system |> ignore)
-            {
-                Name = "UnixDescriptor.flockAcquire"
-                Admits = Admits.Finishing 2
-                Make = fun caller system -> UnixDescriptor.flockAcquire caller system |> ignore
-            }
+            finishing
+                "UnixDescriptor.flockAcquire"
+                2
+                everyFlavour
+                (fun caller system -> UnixDescriptor.flockAcquire caller system |> ignore)
             // AF_INET and SOCK_STREAM are 2 and 1 under both flavours.
             running "UnixSocket.socket" (fun caller system -> UnixSocket.socket caller 2 1 0 system |> ignore)
             running
@@ -153,11 +183,48 @@ module TestCallerChecks =
                 "UnixConnection.accept"
                 (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u system |> ignore)
             running "UnixConnection.shutdown" (fun caller system -> UnixConnection.shutdown caller 0 2 system |> ignore)
-            {
-                Name = "UnixConnection.finishAccept"
-                Admits = Admits.Finishing 3
-                Make = fun caller system -> UnixConnection.finishAccept caller system |> ignore
-            }
+            finishing
+                "UnixConnection.finishAccept"
+                3
+                everyFlavour
+                (fun caller system -> UnixConnection.finishAccept caller system |> ignore)
+            running "UnixPoll.poll" (fun caller system -> UnixPoll.poll caller [] 0 system |> ignore)
+            finishing
+                "UnixPoll.finishPoll"
+                poller
+                everyFlavour
+                (fun caller system -> UnixPoll.finishPoll caller system |> ignore)
+            // Each epoll call names the standard input, which is no epoll
+            // instance. Darwin refuses every one, but only once the caller is
+            // checked.
+            running "UnixPoll.epollCreate1" (fun caller system -> UnixPoll.epollCreate1 caller 0 system |> ignore)
+            running
+                "UnixPoll.epollCtl"
+                (fun caller system ->
+                    UnixPoll.epollCtl caller 0 1 1 (EpollEventArgument.Readable (EpollEvents.In, 0UL)) system
+                    |> ignore
+                )
+            running
+                "UnixPoll.epollWait"
+                (fun caller system -> UnixPoll.epollWait caller 0 1 UserBuffer.Mapped 0 system |> ignore)
+            finishing
+                "UnixPoll.finishEpollWait"
+                eventWaiter
+                [ SimulatedUnixFlavour.Linux ]
+                (fun caller system -> UnixPoll.finishEpollWait caller system |> ignore)
+            // Likewise each kqueue call, which Linux refuses.
+            running "UnixKqueue.kqueue" (fun caller system -> UnixKqueue.kqueue caller system |> ignore)
+            running
+                "UnixKqueue.kevent"
+                (fun caller system ->
+                    UnixKqueue.kevent caller 0 0 [] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    |> ignore
+                )
+            finishing
+                "UnixKqueue.finishKevent"
+                eventWaiter
+                [ SimulatedUnixFlavour.Darwin ]
+                (fun caller system -> UnixKqueue.finishKevent caller system |> ignore)
             running
                 "UnixPathResolution.stat"
                 (fun caller system ->
@@ -367,13 +434,15 @@ module TestCallerChecks =
         | Refused.Parked -> "and is making another call"
         | Refused.Unparked -> "is not parked, so there is no call to finish"
 
-    /// A machine of `platform` holding two processes, each with threads 0 to 4,
+    /// A machine of `platform` holding two processes, each with threads 0 to 5,
     /// and the view of the first, in which thread 2 is parked in an `flock` of
     /// a pipe it made (so that `flockAcquire` admits it), thread 3 in an
     /// `accept` of a listener at `listenerFd` (so that `finishAccept` admits
-    /// it), and thread 1 in a `sigsuspend`; and the IDs of the two processes.
+    /// it), `poller` in a `poll`, `eventWaiter` in an `epoll_wait` (Linux) or a
+    /// `kevent` (Darwin) of a queue the leader made, and thread 1 in a
+    /// `sigsuspend`; and the IDs of the two processes.
     let private world (platform : SimulatedUnixPlatform) : ProcessId * ProcessId * UnixSystem<int, string> =
-        let pids, machine = Machines.ofCount platform 2
+        let pids, machine = Machines.withThreads platform 2 6
         let own, other = pids.[0], pids.[1]
         let view = Machines.viewOf own machine
 
@@ -437,13 +506,38 @@ module TestCallerChecks =
             | AcceptOutcome.WouldBlock _, view -> view
             | other -> failwith $"the accept: expected it to sleep, got %A{other}"
 
+        // Nothing to watch and no deadline: it sleeps until a signal.
+        let view =
+            match UnixPoll.poll (Caller.make own poller) [] -1 view with
+            | PollOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the poll: expected it to sleep, got %A{other}"
+
+        let view =
+            let leader = Caller.make own 0
+            let waiter = Caller.make own eventWaiter
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux ->
+                match UnixPoll.epollCreate1 leader 0 view with
+                | Ok (epoll, view) ->
+                    match UnixPoll.epollWait waiter epoll 1 UserBuffer.Mapped -1 view with
+                    | EpollWaitOutcome.WouldBlock _, view -> view
+                    | other -> failwith $"the epoll_wait: expected it to sleep, got %A{other}"
+                | Error error -> failwith $"epoll_create1: %O{error}"
+            | SimulatedUnixFlavour.Darwin ->
+                let kq, view = UnixKqueue.kqueue leader view
+
+                match UnixKqueue.kevent waiter kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null view with
+                | KeventOutcome.WouldBlock _, view -> view
+                | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
+
         own, other, UnixWait.park 1 ParkedSyscall.SigSuspend view
 
     /// Every public function of the families that take a caller refuses each
     /// caller its requirement refuses, with `InvalidOperationException` naming
     /// it and saying why, before it does anything else, so even where the
-    /// flavour would refuse the call itself (`dup3` on Darwin); and does not
-    /// refuse the caller its requirement admits.
+    /// flavour would refuse the call itself (`dup3` and epoll on Darwin, kqueue
+    /// on Linux); and does not refuse the caller its requirement admits.
     [<Test>]
     let ``every function of a family that takes a caller checks it first`` () : unit =
         let mismatches =
@@ -451,7 +545,9 @@ module TestCallerChecks =
                 for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
                     let own, other, view = world platform
 
-                    for call in calls do
+                    let flavour = SimulatedUnixPlatform.flavour platform
+
+                    for call in calls |> List.filter (fun call -> List.contains flavour call.On) do
                         let cases : (Caller<int> * Refused option) list =
                             match call.Admits with
                             | Admits.Running ->

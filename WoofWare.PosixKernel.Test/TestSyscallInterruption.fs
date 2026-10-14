@@ -134,12 +134,13 @@ module TestSyscallInterruption =
             | SimulatedUnixFlavour.Linux ->
 
             let epoll, system =
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok (fd, system)) -> fd, system
                 | other -> failwith $"expected an epoll instance, got %A{other}"
 
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     listener
@@ -243,7 +244,7 @@ module TestSyscallInterruption =
             parked
                 "the poll"
                 (UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread world.System)
                     [
                         {
                             Fd = world.Listener
@@ -260,7 +261,7 @@ module TestSyscallInterruption =
             parked
                 "the poll of nothing"
                 (UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread world.System)
                     [
                         {
                             Fd = -1
@@ -276,7 +277,13 @@ module TestSyscallInterruption =
         | Sleep.EpollWait milliseconds ->
             parked
                 "the epoll_wait"
-                (UnixPoll.tryEpollWait thread world.Epoll 8 UserBuffer.Mapped milliseconds world.System)
+                (UnixPoll.tryEpollWait
+                    (Callers.thread thread world.System)
+                    world.Epoll
+                    8
+                    UserBuffer.Mapped
+                    milliseconds
+                    world.System)
                 (function
                 | EpollWaitOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -345,7 +352,7 @@ module TestSyscallInterruption =
             | other -> unexpected other
         | Sleep.Poll _
         | Sleep.PollOfNothing ->
-            match UnixPoll.tryFinishPoll thread system with
+            match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
             | Ok (PollOutcome.Answered (_, count), system) when count > 0 -> Ending.Completed, system
             | Ok (PollOutcome.Answered (_, 0), system) -> Ending.TimedOut, system
             | Ok (PollOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
@@ -353,7 +360,7 @@ module TestSyscallInterruption =
             | Error (PollRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.EpollWait _ ->
-            match UnixPoll.tryFinishEpollWait thread system with
+            match UnixPoll.tryFinishEpollWait (Callers.thread thread system) system with
             | Ok (EpollWaitOutcome.Answered (_ :: _), system) -> Ending.Completed, system
             | Ok (EpollWaitOutcome.Answered [], system) -> Ending.TimedOut, system
             | Ok (EpollWaitOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system

@@ -233,7 +233,7 @@ module TestWakeSweepMemo =
                             Events = 0x0001s
                         }
 
-                    match UnixPoll.tryPoll thread [ entry ] milliseconds view with
+                    match UnixPoll.tryPoll (Callers.thread thread view) [ entry ] milliseconds view with
                     | Ok (PollOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"poll by thread %d{thread}: %A{other}"
                 )

@@ -1051,7 +1051,7 @@ module TestDeviceDescriptors =
 
             match
                 UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread system)
                     [
                         {
                             Fd = fd
@@ -1088,7 +1088,15 @@ module TestDeviceDescriptors =
             let system = Lone.withFileDescriptors registry system
 
             for op in [ 1 ; 2 ; 3 ] do
-                match UnixPoll.tryEpollCtl queueFd op fd (EpollEventArgument.Readable (1u, 42UL)) system with
+                match
+                    UnixPoll.tryEpollCtl
+                        (Callers.leader system)
+                        queueFd
+                        op
+                        fd
+                        (EpollEventArgument.Readable (1u, 42UL))
+                        system
+                with
                 | Ok (EpollCtlAnswer.Failed EpollCtlError.TargetNotPollable, after) -> after |> shouldEqual system
                 | other -> failwith $"%O{device}, op %d{op}: expected EPERM, got %A{other}"
 

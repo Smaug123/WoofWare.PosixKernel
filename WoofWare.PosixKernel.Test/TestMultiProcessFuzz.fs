@@ -865,7 +865,7 @@ module TestMultiProcessFuzz =
             | Error _ -> Made.Refused
 
         let poll (entries : PollEntry list) (milliseconds : int) : Made =
-            match UnixPoll.tryPoll thread entries milliseconds view with
+            match UnixPoll.tryPoll (Caller.make pid thread) entries milliseconds view with
             | Ok (PollOutcome.WouldBlock _, after) ->
                 match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Darwin -> cover FuzzLabel.DarwinPollPark
@@ -1187,7 +1187,7 @@ module TestMultiProcessFuzz =
             UnixPathResolution.tryChdir (Caller.make pid thread) (PathArg.ofText standing.[dir % standing.Length]) view
             |> answered
         | Op.EpollCreate ->
-            match UnixPoll.tryEpollCreate1 0 view with
+            match UnixPoll.tryEpollCreate1 (Caller.make pid thread) 0 view with
             | Ok (Ok (_, after)) -> Made.Answered after
             | Ok (Error _) -> Made.Answered view
             | Error _ -> Made.Refused
@@ -1196,6 +1196,7 @@ module TestMultiProcessFuzz =
             | Some epoll, Some fd ->
                 match
                     UnixPoll.tryEpollCtl
+                        (Caller.make pid thread)
                         epoll
                         1
                         fd
@@ -1218,11 +1219,11 @@ module TestMultiProcessFuzz =
             match pick epoll (ofKind pid isEpoll view) with
             | None -> Made.Answered view
             | Some epoll ->
-                match UnixPoll.tryEpollWait thread epoll 8 UserBuffer.Mapped milliseconds view with
+                match UnixPoll.tryEpollWait (Caller.make pid thread) epoll 8 UserBuffer.Mapped milliseconds view with
                 | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
-        | Op.Kqueue -> Made.Answered (KeventWorld.kqueue view |> snd)
+        | Op.Kqueue -> Made.Answered (KeventWorld.kqueueAs (Caller.make pid thread) view |> snd)
         | Op.KeventAdd (kqueue, fd, write) ->
             match pick kqueue (ofKind pid isKqueue view), pick fd sockets with
             | Some kqueue, Some fd ->
@@ -1230,7 +1231,7 @@ module TestMultiProcessFuzz =
 
                 match
                     UnixKqueue.tryKevent
-                        thread
+                        (Caller.make pid thread)
                         kqueue
                         1
                         [ KeventWorld.change fd filter (KeventFlags.Add ||| KeventFlags.Clear) 0UL ]
@@ -1256,7 +1257,7 @@ module TestMultiProcessFuzz =
                     else
                         KeventTimeout.Readable (0L, int64 milliseconds * 1_000_000L)
 
-                match UnixKqueue.tryKevent thread kqueue 0 [] 8 UserBuffer.Mapped timeout view with
+                match UnixKqueue.tryKevent (Caller.make pid thread) kqueue 0 [] 8 UserBuffer.Mapped timeout view with
                 | Ok (KeventOutcome.WouldBlock _, after) ->
                     cover FuzzLabel.KeventPark
                     Made.Sleeps after
@@ -1396,18 +1397,18 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.EpollWait _) ->
-            match UnixPoll.tryFinishEpollWait thread view with
+            match UnixPoll.tryFinishEpollWait (Caller.make pid thread) view with
             | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Kevent _) ->
-            match UnixKqueue.tryFinishKevent thread view with
+            match UnixKqueue.tryFinishKevent (Caller.make pid thread) view with
             | Ok (KeventOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Poll _)
         | Some (ParkedSyscall.KqueuePoll _) ->
-            match UnixPoll.tryFinishPoll thread view with
+            match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
             | Ok (PollOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1780,12 +1781,13 @@ module TestMultiProcessFuzz =
             match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, view =
-                    match UnixPoll.tryEpollCreate1 0 view with
+                    match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid view)) 0 view with
                     | Ok (Ok created) -> created
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
                     UnixPoll.tryEpollCtl
+                        (Caller.make pid (Proc.leader pid view))
                         epoll
                         1
                         listener
@@ -1795,11 +1797,11 @@ module TestMultiProcessFuzz =
                 | Ok (EpollCtlAnswer.Changed, view) -> view
                 | other -> failwith $"epoll_ctl: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
-                let kq, view = KeventWorld.kqueue view
+                let kq, view = KeventWorld.kqueueIn pid view
 
                 match
                     UnixKqueue.tryKevent
-                        0
+                        (Caller.make pid 0)
                         kq
                         1
                         [

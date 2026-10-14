@@ -1248,7 +1248,9 @@ module TestSigsuspend =
     [<Test>]
     let ``a mask to restore beside a park in another call is a defect`` () : unit =
         let polling =
-            match UnixPoll.tryPoll main [] -1 (boot SimulatedUnixFlavour.Linux) with
+            let booted = boot SimulatedUnixFlavour.Linux
+
+            match UnixPoll.tryPoll (Callers.thread main booted) [] -1 booted with
             | Ok (PollOutcome.WouldBlock _, system) -> system
             | other -> failwith $"poll: %A{other}"
 

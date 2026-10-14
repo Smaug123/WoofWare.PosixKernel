@@ -800,7 +800,7 @@ module TestAttributeChangeAt =
                 | other -> failwith $"%s{context}: pipe2: %A{other}"
             | "socket" -> Some (NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system)
             | "epoll" ->
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok created) -> Some created
                 | other -> failwith $"%s{context}: epoll_create1: %A{other}"
             | "devnull" -> Some (opened "/dev/null" system)

@@ -369,7 +369,7 @@ module TestInotifyAgainstHost =
 
                                 match
                                     UnixPoll.tryPoll
-                                        0
+                                        (Callers.thread 0 system)
                                         [
                                             {
                                                 Fd = modelFd

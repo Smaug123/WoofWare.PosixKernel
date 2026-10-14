@@ -225,17 +225,18 @@ module TestUnblockForAnotherThread =
         let port, system =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
-                match UnixKqueue.tryKqueue system with
+                match UnixKqueue.tryKqueue (Callers.leader system) system with
                 | Ok (fd, system) -> fd, system
                 | other -> failwith $"kqueue: %A{other}"
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                     | Ok (Ok (fd, system)) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
                     UnixPoll.tryEpollCtl
+                        (Callers.leader system)
                         epoll
                         1
                         listener
@@ -347,7 +348,7 @@ module TestUnblockForAnotherThread =
         match sleep with
         | Sleep.PollOfNothing ->
             UnixPoll.tryPoll
-                thread
+                (Callers.thread thread system)
                 [
                     {
                         Fd = -1
@@ -359,7 +360,7 @@ module TestUnblockForAnotherThread =
             |> parkedOrNot "the poll of nothing"
         | Sleep.PollListener ->
             UnixPoll.tryPoll
-                thread
+                (Callers.thread thread system)
                 [
                     {
                         Fd = world.Listener
@@ -393,10 +394,18 @@ module TestUnblockForAnotherThread =
         | Sleep.EventPort ->
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
-                UnixPoll.tryEpollWait thread world.Port 8 UserBuffer.Mapped -1 system
+                UnixPoll.tryEpollWait (Callers.thread thread system) world.Port 8 UserBuffer.Mapped -1 system
                 |> parkedOrNot "the epoll_wait"
             | SimulatedUnixFlavour.Darwin ->
-                UnixKqueue.tryKevent thread world.Port 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent
+                    (Callers.thread thread system)
+                    world.Port
+                    0
+                    []
+                    1
+                    UserBuffer.Mapped
+                    KeventTimeout.Null
+                    system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
             let mask = SignalState.maskOf thread (Lone.proc system).Signals

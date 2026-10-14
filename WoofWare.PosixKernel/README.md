@@ -205,15 +205,15 @@ It gives back its answer with the system as the call left it, or the answer alon
 
 A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
 A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
-The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`), the entropy calls (`UnixEntropy`), and the socket calls (`UnixSocket` and `UnixConnection`) take the caller as their first argument.
+The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`), the entropy calls (`UnixEntropy`), the socket calls (`UnixSocket` and `UnixConnection`), and the calls that wait for several things (`UnixPoll` and `UnixKqueue`) take the caller as their first argument.
 A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength` and `UnixConnection.connectWithAddress`.
 Nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire` and `UnixConnection.finishAccept` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
+The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait` and `UnixKqueue.finishKevent` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
-The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixPoll`, `UnixKqueue`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
+The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
 One of them takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
 The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
@@ -486,12 +486,12 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `poll(2)` | `UnixPoll.poll (thread : 'Thread) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
-| `epoll_create1(2)` | `UnixPoll.epollCreate1 (flags : int)` | `Result<int * UnixSystem, UnixError>` |
-| `epoll_ctl(2)` | `UnixPoll.epollCtl (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
-| `epoll_wait(2)` | `UnixPoll.epollWait (thread : 'Thread) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
-| Darwin's `kqueue(2)` | `UnixKqueue.kqueue` | `int * UnixSystem` |
-| Darwin's `kevent(2)` | `UnixKqueue.kevent (thread : 'Thread) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
+| `poll(2)` | `UnixPoll.poll (caller : Caller) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
+| `epoll_create1(2)` | `UnixPoll.epollCreate1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
+| `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
+| Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
+| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
 
@@ -654,9 +654,9 @@ A woken thread finishes its call through its family's finishing function, which 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
 | `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (caller : Caller)` |
-| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (thread : 'Thread)` |
-| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (thread : 'Thread)` |
-| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (thread : 'Thread)` |
+| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (caller : Caller)` |
+| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (caller : Caller)` |
+| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (caller : Caller)` |
 | `ParkedSyscall.Accept` | `UnixConnection.finishAccept (caller : Caller)` |
 | `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (thread : 'Thread)` |
 | `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (thread : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |

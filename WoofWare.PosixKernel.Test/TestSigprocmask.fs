@@ -568,7 +568,7 @@ module TestSigprocmask =
             // A poll of nothing, with no deadline, sleeps until a signal ends
             // it.
             let parked =
-                match UnixPoll.tryPoll 1 [] -1 system with
+                match UnixPoll.tryPoll (Callers.thread 1 system) [] -1 system with
                 | Ok (_, system) when UnixThreadTable.parkOf 1 (Lone.threads system) |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 

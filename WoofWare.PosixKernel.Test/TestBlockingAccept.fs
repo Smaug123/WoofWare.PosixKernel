@@ -452,7 +452,7 @@ module TestBlockingAccept =
         let system =
             match
                 UnixPoll.tryPoll
-                    2
+                    (Callers.thread 2 system)
                     [
                         {
                             Fd = fd

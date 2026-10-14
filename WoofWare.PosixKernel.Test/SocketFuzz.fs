@@ -289,6 +289,7 @@ module SocketFuzz =
         =
         match
             UnixPoll.tryEpollCtl
+                (Callers.leader state.Kernel)
                 (slotFd epoll state)
                 op
                 (slotFd target state)
@@ -562,7 +563,7 @@ module SocketFuzz =
             // registered here for the call is never left behind in the state.
             let polling = Threads.ensure pollThread state.Kernel
 
-            match UnixPoll.tryPoll pollThread [ entry ] 0 polling with
+            match UnixPoll.tryPoll (Callers.thread pollThread polling) [ entry ] 0 polling with
             | Error refusal -> raise (ModelRefusal $"poll of fd %d{fd} refused: %s{PollRefusal.describe refusal}")
             | Ok (PollOutcome.WouldBlock condition, _) ->
                 failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 parked on %A{condition}."

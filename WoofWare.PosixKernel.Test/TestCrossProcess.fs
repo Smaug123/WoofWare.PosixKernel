@@ -34,8 +34,8 @@ module TestCrossProcess =
                         b
                         (fun view ->
                             let socket, view = KeventWorld.streamIn b true view
-                            let kq, view = KeventWorld.kqueue view
-                            KeventWorld.register kq socket -1s 0x1us 0UL view
+                            let kq, view = KeventWorld.kqueueIn b view
+                            KeventWorld.registerIn b kq socket -1s 0x1us 0UL view
                         )
 
             Machines.assertClean machine
@@ -86,7 +86,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match KeventWorld.apply kq [] room view with
+                match KeventWorld.applyIn pid kq [] room view with
                 | KeventOutcome.Answered events, view -> events, view
                 | other, _ -> failwith $"kevent on fd %d{kq}: %A{other}"
             )
@@ -106,8 +106,8 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     let listener, view = KeventWorld.listenerAtIn b 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
@@ -141,8 +141,8 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     let accepted, view = KeventWorld.acceptIn b listener view
-                    let kq, view = KeventWorld.kqueue view
-                    (accepted, kq), KeventWorld.register kq accepted KeventFilter.Read addClear 9UL view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (accepted, kq), KeventWorld.registerIn b kq accepted KeventFilter.Read addClear 9UL view
                 )
                 machine
 
@@ -169,8 +169,8 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     let listener, view = KeventWorld.listenerAtIn b 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
@@ -209,7 +209,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixPoll.tryPoll thread entries -1 view with
+                match UnixPoll.tryPoll (Caller.make pid thread) entries -1 view with
                 | Ok (PollOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"poll: expected to sleep, got %A{other}"
             )
@@ -225,7 +225,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixPoll.tryFinishPoll thread view with
+                match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishPoll: %A{refusal}"
             )
@@ -384,13 +384,14 @@ module TestCrossProcess =
                     let listener, view = KeventWorld.listenerAtIn b 8080us view
 
                     let epoll, view =
-                        match UnixPoll.tryEpollCreate1 0 view with
+                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
                         match
                             UnixPoll.tryEpollCtl
+                                (Caller.make b (Proc.leader b view))
                                 epoll
                                 1
                                 listener
@@ -408,7 +409,7 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixPoll.tryEpollWait 1 epoll 4 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait (Caller.make b 1) epoll 4 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 )
@@ -428,7 +429,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixPoll.tryFinishEpollWait 1 view with
+                    match UnixPoll.tryFinishEpollWait (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishEpollWait: %A{refusal}"
                 )
@@ -455,13 +456,14 @@ module TestCrossProcess =
                     let accepted, view = KeventWorld.acceptIn b listener view
 
                     let epoll, view =
-                        match UnixPoll.tryEpollCreate1 0 view with
+                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
                         match
                             UnixPoll.tryEpollCtl
+                                (Caller.make b (Proc.leader b view))
                                 epoll
                                 1
                                 accepted
@@ -479,7 +481,7 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixPoll.tryEpollWait 1 epoll 4 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait (Caller.make b 1) epoll 4 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 )
@@ -496,7 +498,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixPoll.tryFinishEpollWait 1 view with
+                    match UnixPoll.tryFinishEpollWait (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishEpollWait: %A{refusal}"
                 )
@@ -515,8 +517,8 @@ module TestCrossProcess =
                 b
                 (fun view ->
                     let listener, view = KeventWorld.listenerAtIn b 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
@@ -524,7 +526,9 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixKqueue.tryKevent 1 kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view with
+                    match
+                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view
+                    with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
                 )
@@ -544,7 +548,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixKqueue.tryFinishKevent 1 view with
+                    match UnixKqueue.tryFinishKevent (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishKevent: %A{refusal}"
                 )
@@ -881,7 +885,7 @@ module TestCrossProcess =
                                 b
                                 (fun view ->
                                     let epoll, view =
-                                        match UnixPoll.tryEpollCreate1 0 view with
+                                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                                         | Ok (Ok created) -> created
                                         | other -> failwith $"epoll_create1: %A{other}"
 
@@ -890,6 +894,7 @@ module TestCrossProcess =
                                         ||> List.fold (fun view (fd, data) ->
                                             match
                                                 UnixPoll.tryEpollCtl
+                                                    (Caller.make b (Proc.leader b view))
                                                     epoll
                                                     1
                                                     fd
@@ -913,7 +918,7 @@ module TestCrossProcess =
                             Machines.inProcess
                                 b
                                 (fun view ->
-                                    match UnixPoll.tryEpollWait 4 epoll 8 UserBuffer.Mapped 0 view with
+                                    match UnixPoll.tryEpollWait (Caller.make b 4) epoll 8 UserBuffer.Mapped 0 view with
                                     | Ok (EpollWaitOutcome.Answered events, view) -> List.map fst events, view
                                     | other -> failwith $"epoll_wait: %A{other}"
                                 )
@@ -925,12 +930,12 @@ module TestCrossProcess =
                             Machines.inProcess
                                 b
                                 (fun view ->
-                                    let kq, view = KeventWorld.kqueue view
+                                    let kq, view = KeventWorld.kqueueIn b view
 
                                     kq,
                                     (view, registered)
                                     ||> List.fold (fun view (fd, data) ->
-                                        KeventWorld.register kq fd KeventFilter.Read addClear data view
+                                        KeventWorld.registerIn b kq fd KeventFilter.Read addClear data view
                                     )
                                 )
                                 machine
@@ -1006,10 +1011,10 @@ module TestCrossProcess =
 
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
-                            match UnixPoll.tryEpollCreate1 0 view with
+                            match UnixPoll.tryEpollCreate1 (Caller.make a (Proc.leader a view)) 0 view with
                             | Ok (Ok (_, view)) -> view
                             | other -> failwith $"epoll_create1: %A{other}"
-                        | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueue view |> snd
+                        | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueueIn a view |> snd
                     )
                     machine
 
@@ -1089,7 +1094,7 @@ module TestCrossProcess =
                         match flavour with
                         | SimulatedUnixFlavour.Linux ->
                             let epoll, view =
-                                match UnixPoll.tryEpollCreate1 0 view with
+                                match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                                 | Ok (Ok created) -> created
                                 | other -> failwith $"epoll_create1: %A{other}"
 
@@ -1100,13 +1105,19 @@ module TestCrossProcess =
                                 ||| EpollEvents.EdgeTriggered
 
                             match
-                                UnixPoll.tryEpollCtl epoll 1 watched (EpollEventArgument.Readable (interest, 7UL)) view
+                                UnixPoll.tryEpollCtl
+                                    (Caller.make b (Proc.leader b view))
+                                    epoll
+                                    1
+                                    watched
+                                    (EpollEventArgument.Readable (interest, 7UL))
+                                    view
                             with
                             | Ok (EpollCtlAnswer.Changed, view) -> epoll, view
                             | other -> failwith $"epoll_ctl: %A{other}"
                         | SimulatedUnixFlavour.Darwin ->
-                            let kq, view = KeventWorld.kqueue view
-                            kq, KeventWorld.register kq watched KeventFilter.Read addClear 7UL view
+                            let kq, view = KeventWorld.kqueueIn b view
+                            kq, KeventWorld.registerIn b kq watched KeventFilter.Read addClear 7UL view
                     )
                     machine
 
@@ -1117,12 +1128,12 @@ module TestCrossProcess =
                     (fun view ->
                         match flavour with
                         | SimulatedUnixFlavour.Linux ->
-                            match UnixPoll.tryEpollWait 3 queue 8 UserBuffer.Mapped 0 view with
+                            match UnixPoll.tryEpollWait (Caller.make b 3) queue 8 UserBuffer.Mapped 0 view with
                             | Ok (EpollWaitOutcome.Answered events, view) ->
                                 events |> List.map (fun (data, events) -> $"%d{data} 0x%x{events}"), view
                             | other -> failwith $"epoll_wait: %A{other}"
                         | SimulatedUnixFlavour.Darwin ->
-                            match KeventWorld.apply queue [] 8 view with
+                            match KeventWorld.applyIn b queue [] 8 view with
                             | KeventOutcome.Answered events, view ->
                                 events
                                 |> List.map (fun event ->
@@ -1264,7 +1275,9 @@ module TestCrossProcess =
                             match flavour with
                             | SimulatedUnixFlavour.Linux ->
                                 let epoll, view =
-                                    match UnixPoll.tryEpollCreate1 0 view with
+                                    match
+                                        UnixPoll.tryEpollCreate1 (Caller.make parent (Proc.leader parent view)) 0 view
+                                    with
                                     | Ok (Ok created) -> created
                                     | other -> failwith $"epoll_create1: %A{other}"
 
@@ -1277,6 +1290,7 @@ module TestCrossProcess =
                                 let add (fd : int) (data : char) (view : UnixSystem<int, string>) =
                                     match
                                         UnixPoll.tryEpollCtl
+                                            (Caller.make parent (Proc.leader parent view))
                                             epoll
                                             1
                                             fd
@@ -1288,12 +1302,12 @@ module TestCrossProcess =
 
                                 epoll, view |> add c 'c' |> add q 'q'
                             | SimulatedUnixFlavour.Darwin ->
-                                let kq, view = KeventWorld.kqueue view
+                                let kq, view = KeventWorld.kqueueIn parent view
 
                                 kq,
                                 view
-                                |> KeventWorld.register kq c KeventFilter.Read addClear (uint64 'c')
-                                |> KeventWorld.register kq q KeventFilter.Read addClear (uint64 'q')
+                                |> KeventWorld.registerIn parent kq c KeventFilter.Read addClear (uint64 'c')
+                                |> KeventWorld.registerIn parent kq q KeventFilter.Read addClear (uint64 'q')
                         )
                         machine
 
@@ -1303,12 +1317,14 @@ module TestCrossProcess =
                         (fun view ->
                             match flavour with
                             | SimulatedUnixFlavour.Linux ->
-                                match UnixPoll.tryEpollWait 3 queue 4 UserBuffer.Mapped 0 view with
+                                match
+                                    UnixPoll.tryEpollWait (Caller.make parent 3) queue 4 UserBuffer.Mapped 0 view
+                                with
                                 | Ok (EpollWaitOutcome.Answered events, view) ->
                                     events |> List.map (fun (data, events) -> $"%c{char data}(0x%x{events})"), view
                                 | other -> failwith $"epoll_wait: %A{other}"
                             | SimulatedUnixFlavour.Darwin ->
-                                match KeventWorld.apply queue [] 4 view with
+                                match KeventWorld.applyIn parent queue [] 4 view with
                                 | KeventOutcome.Answered events, view ->
                                     events
                                     |> List.map (fun event ->

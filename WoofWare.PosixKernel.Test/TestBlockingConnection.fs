@@ -3183,13 +3183,14 @@ module TestBlockingConnection =
         let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3200,7 +3201,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 
@@ -3241,7 +3242,7 @@ module TestBlockingConnection =
         written |> shouldEqual (int64 fits)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
@@ -3250,6 +3251,7 @@ module TestBlockingConnection =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3260,7 +3262,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 
@@ -3320,13 +3322,14 @@ module TestBlockingConnection =
         let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3337,7 +3340,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 

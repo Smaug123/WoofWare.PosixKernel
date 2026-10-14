@@ -251,7 +251,7 @@ module TestSocketAddressLength =
 
                         match
                             UnixPoll.tryPoll
-                                0
+                                (Callers.thread 0 after)
                                 [
                                     {
                                         Fd = clientFd
@@ -321,7 +321,7 @@ module TestSocketAddressLength =
             let listenerFd, system = withListener SimulatedUnixPlatform.linuxX64
 
             let queueFd, system =
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok created) -> created
                 | other -> failwith $"epoll_create1: %A{other}"
 
@@ -354,6 +354,7 @@ module TestSocketAddressLength =
                         else
                             match
                                 UnixPoll.tryEpollCtl
+                                    (Callers.leader system)
                                     queueFd
                                     1
                                     clientFd

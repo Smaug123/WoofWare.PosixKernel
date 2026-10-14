@@ -533,13 +533,18 @@ module TestFcntlMeasured =
                         | "pipe" -> pipeOf 0 system
                         | "pipe2 bad flag" -> pipeOf (if linux then 1 else 0x10) system
                         | "kqueue" ->
-                            match UnixKqueue.tryKqueue system with
+                            match UnixKqueue.tryKqueue (Callers.leader system) system with
                             | Ok (fd, _) -> Ok (SyscallAnswer.Completed (int64 fd))
                             | Error (KqueueRefusal.DescriptorLimit refusal) -> Error refusal
                             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
                         | "epoll_create1"
                         | "epoll_create1 bad flag" ->
-                            match UnixPoll.tryEpollCreate1 (if call = "epoll_create1" then 0 else 1) system with
+                            match
+                                UnixPoll.tryEpollCreate1
+                                    (Callers.leader system)
+                                    (if call = "epoll_create1" then 0 else 1)
+                                    system
+                            with
                             | Ok (Ok (fd, _)) -> Ok (SyscallAnswer.Completed (int64 fd))
                             | Ok (Error error) -> Ok (SyscallAnswer.Failed error)
                             | Error (EpollCreateRefusal.DescriptorLimit refusal) -> Error refusal
@@ -790,7 +795,7 @@ module TestFcntlMeasured =
                 let source, system = FcntlWorld.openWith reading "f" system
 
                 let flock (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-                    match UnixDescriptor.tryFlock (Callers.thread (Lone.leader system) system) fd operation system with
+                    match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
                     | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
                     | other -> failwith $"flock: %A{other}"
 
@@ -885,7 +890,7 @@ module TestFcntlMeasured =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFlock (Callers.thread (Lone.leader system) system) fd operation system with
+        match UnixDescriptor.tryFlock (Callers.leader system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
         | other -> failwith $"flock(%d{fd}, %d{operation}): %A{other}"
 

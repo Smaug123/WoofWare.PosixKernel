@@ -106,7 +106,7 @@ module TestCallHolds =
 
             Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->
-            match UnixKqueue.tryKqueue system with
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"kqueue: %A{refusal}"
 
