@@ -436,13 +436,17 @@ module TestEphemeralPorts =
                     PortHold = PortHold.Reserved
                 }
 
-            UnixMachineState.allocateEphemeralPort
-                (EphemeralPortUse.ConnectTo destination)
-                socketId
-                socket
-                candidate
-                run.System.Machine
-            |> Option.isSome
+            match
+                UnixMachineState.allocateEphemeralPort
+                    run.System.Scheduling.NanosecondsSinceBoot
+                    (EphemeralPortUse.ConnectTo destination)
+                    socketId
+                    socket
+                    candidate
+                    run.System.Machine
+            with
+            | Ok found -> Option.isSome found
+            | Error refusal -> failwith $"slot fd %d{fd}'s search met %A{refusal}"
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     let private queueLength (listenerFd : int) (run : Run) : int =
@@ -579,7 +583,7 @@ module TestEphemeralPorts =
     /// at loopback and at the wildcard conflicts with, and which port an
     /// allocation for it chooses, for a bind and for a connect to either
     /// fixed listener.
-    let private invisibleTo (machine : UnixMachineState) (without : UnixMachineState) : bool =
+    let private invisibleTo (now : int64) (machine : UnixMachineState) (without : UnixMachineState) : bool =
         let probeId = SocketId 999999L
 
         let probe : SocketDescription =
@@ -607,7 +611,8 @@ module TestEphemeralPorts =
             |> List.forall (fun port ->
                 [ Ipv4Address.loopback ; Ipv4Address.any ]
                 |> List.forall (fun address ->
-                    UnixMachineState.bindingConflicts probeId probe (binding address port) machine = UnixMachineState.bindingConflicts
+                    UnixMachineState.bindingConflicts now probeId probe (binding address port) machine = UnixMachineState.bindingConflicts
+                        now
                         probeId
                         probe
                         (binding address port)
@@ -615,9 +620,12 @@ module TestEphemeralPorts =
                 )
             )
 
-        let chosen (use' : EphemeralPortUse) (machine : UnixMachineState) : uint16 option =
-            UnixMachineState.allocateEphemeralPort use' probeId probe (binding Ipv4Address.loopback) machine
-            |> Option.map (fun (binding, _) -> binding.Endpoint.Port)
+        let chosen (use' : EphemeralPortUse) (machine : UnixMachineState) : Result<uint16, TimeWaitRefusal> option =
+            match
+                UnixMachineState.allocateEphemeralPort now use' probeId probe (binding Ipv4Address.loopback) machine
+            with
+            | Ok found -> found |> Option.map (fun (binding, _) -> Ok binding.Endpoint.Port)
+            | Error refusal -> Some (Error refusal)
 
         let uses =
             [
@@ -728,7 +736,7 @@ module TestEphemeralPorts =
                                 Sockets = Map.remove socketId machine.Sockets
                             }
 
-                        if invisibleTo machine without |> not then
+                        if invisibleTo run'.System.Scheduling.NanosecondsSinceBoot machine without |> not then
                             failwith
                                 $"after %A{op}: socket %O{socketId}, whose port was given back, still holds something"
                     | _ -> ()

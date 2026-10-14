@@ -262,6 +262,8 @@
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeSweepMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
+    <Compile Include="TestTimeWait.fs" />
+    <Compile Include="TestTimeWaitMeasured.fs" />
     <Compile Include="TestListenerTeardown.fs" />
     <Compile Include="TestQueuedOptions.fs" />
     <Compile Include="TestShutdownAgainstHost.fs" />
@@ -374,6 +376,16 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.darwin.txt" />
+    <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
+         connect took its four-tuple over, measured per flavour by
+         docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-boot.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.boot-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound

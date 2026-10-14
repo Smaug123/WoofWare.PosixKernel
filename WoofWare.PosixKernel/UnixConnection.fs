@@ -270,6 +270,10 @@ type internal ConnectRefusal =
     /// the caller's length stopped short of `sin6_scope_id`, as Linux reads
     /// such a length.
     | Ipv6Destination of socket : SocketId * destination : Ipv6Endpoint
+    /// Whether an end in TIME_WAIT stands in the way of the port the
+    /// connect's implicit bind would take, or what the connect does to an
+    /// end in TIME_WAIT on its four-tuple, is unmeasured.
+    | TimeWait of refusal : TimeWaitRefusal
 
 [<RequireQualifiedAccess>]
 module internal ConnectRefusal =
@@ -311,6 +315,7 @@ module internal ConnectRefusal =
             $"AF_UNSPEC on stream socket %O{socket} in %A{phase} under Linux runs tcp_disconnect, whose consequences for this phase (a connected socket's peer, a listener's queue) are unmeasured and unmodelled."
         | ConnectRefusal.Ipv6Destination (socket, destination) ->
             $"IPv6 socket %O{socket} would connect to %s{Ipv6Endpoint.toString destination}. This kernel has no IPv6 transport: an IPv6 socket reaches only IPv4 peers, through v4-mapped addresses (::ffff:a.b.c.d), with IPV6_V6ONLY off."
+        | ConnectRefusal.TimeWait refusal -> TimeWaitRefusal.describe refusal
         | ConnectRefusal.DatagramGroupDestination (socket, destination) ->
             $"datagram socket %O{socket} would connect to %s{SocketAddress.toString destination}, a broadcast or multicast destination. This kernel models no group membership and no interface to broadcast on, so it does not record such a peer. Model multicast and broadcast before connecting to either."
 
@@ -331,6 +336,7 @@ module internal ConnectRefusal =
         | ConnectRefusal.LinuxUnspecOnPhase _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DatagramGroupDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.Ipv6Destination _ -> RefusalKind.Unmodelled
+        | ConnectRefusal.TimeWait refusal -> TimeWaitRefusal.kind refusal
 
 /// What `connect(2)`'s ladder reads out of the sockaddr it copied in, from a
 /// `struct sockaddr_in` on an IPv4 socket and a `struct sockaddr_in6` on an
@@ -597,20 +603,22 @@ module UnixConnection =
 
                 match
                     UnixMachineState.allocateEphemeralPort
+                        system.Scheduling.NanosecondsSinceBoot
                         (EphemeralPortUse.ConnectTo dest)
                         socketId
                         sock
                         candidate
                         system.Machine
                 with
-                | Some (binding, machine) ->
+                | Ok (Some (binding, machine)) ->
                     Ok (
                         binding,
                         { system with
                             Machine = machine
                         }
                     )
-                | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                | Ok None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
             | Some binding when binding.Endpoint.Port = 0us ->
                 // Half-bound: a datagram dissolve kept the locked address and
                 // dropped the port. Linux's `inet_autobind` gives it a port and
@@ -627,20 +635,22 @@ module UnixConnection =
 
                 match
                     UnixMachineState.allocateEphemeralPort
+                        system.Scheduling.NanosecondsSinceBoot
                         (EphemeralPortUse.ConnectTo dest)
                         socketId
                         sock
                         candidate
                         system.Machine
                 with
-                | Some (binding, machine) ->
+                | Ok (Some (binding, machine)) ->
                     Ok (
                         binding,
                         { system with
                             Machine = machine
                         }
                     )
-                | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                | Ok None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
             | Some binding when binding.Endpoint.Address <> Ipv4Address.any -> Ok (binding, system)
             | Some binding ->
                 // A client bound to the wildcard gets a concrete source
@@ -686,20 +696,22 @@ module UnixConnection =
 
             match
                 UnixMachineState.allocateEphemeralPort
+                    system.Scheduling.NanosecondsSinceBoot
                     (EphemeralPortUse.ConnectTo dest)
                     socketId
                     sock
                     candidate
                     system.Machine
             with
-            | Some (binding, machine) ->
+            | Ok (Some (binding, machine)) ->
                 Ok (
                     binding,
                     { system with
                         Machine = machine
                     }
                 )
-            | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+            | Ok None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+            | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
 
 
         let ensureBound
@@ -708,6 +720,47 @@ module UnixConnection =
             : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             ensureBoundFrom sock.Ipv4Binding dest system
+
+        // The ends in TIME_WAIT on the four-tuple from `source` to `dest`, as a
+        // stream connect meets them once its source is settled, measured on
+        // both (`docs/probes/time-wait`, tw-reuse.c rows E, V, Z, Q and Y).
+        // One at the destination, towards the source, ends, and the connect
+        // goes ahead. One at the source, towards the destination, is taken
+        // over and ends under Linux, and makes Darwin's connect fail with
+        // EADDRINUSE (`Ok (Error errno)`), leaving the socket as it was. A
+        // search reaches it only where Linux's takes the four-tuple over,
+        // which the rule for a socket bound there answers the same way.
+        let overTimeWaits
+            (source : Ipv4Endpoint)
+            (dest : Ipv4Endpoint)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Result<UnixSystem<'Thread, 'Handler>, UnixError>, ConnectRefusal>
+            =
+            let machine = UnixMachineState.endTimeWait dest source system.Machine
+
+            match UnixMachineState.timeWaitOn source dest machine with
+            | None ->
+                Ok (
+                    Ok
+                        { system with
+                            Machine = machine
+                        }
+                )
+            | Some timeWait ->
+
+            let clock =
+                UnixMachineState.timeWaitClock system.Scheduling.NanosecondsSinceBoot machine
+
+            match PortHolderRules.boundConnectOverTimeWait flavour clock timeWait with
+            | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
+            | Ok TimeWaitTakeover.AddressInUse -> Ok (Error UnixError.EADDRINUSE)
+            | Ok TimeWaitTakeover.TakesOver ->
+                Ok (
+                    Ok
+                        { system with
+                            Machine = UnixMachineState.endTimeWait source dest machine
+                        }
+                )
 
         // A stream connect's implicit bind, with the answer the platform gives
         // where it finds every port taken (`Ok (Error errno)`), which leaves the
@@ -817,6 +870,8 @@ module UnixConnection =
                     )
                 else
 
+                let asItWas = system
+
                 match ensureStreamBound dest system with
                 | Error refusal -> Error refusal
                 | Ok (Error error) -> failed error system
@@ -843,6 +898,11 @@ module UnixConnection =
                     )
                 else
 
+                match overTimeWaits clientBinding.Endpoint dest system with
+                | Error refusal -> Error refusal
+                | Ok (Error error) -> failed error asItWas
+                | Ok (Ok system) ->
+
                 let connectionId = system.Machine.NextConnectionId
                 let (ConnectionId rawConnectionId) = connectionId
 
@@ -854,6 +914,7 @@ module UnixConnection =
                         // transport, and a dual-mode socket's connection over
                         // it is sized as an IPv4 one (measured, G8).
                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+                        FinsExchangedAt = None
                     }
 
                 let clientPhase =
@@ -961,6 +1022,8 @@ module UnixConnection =
                 // socket has a concrete local endpoint too — measured,
                 // getsockname reports 127.0.0.1 and a nonzero port while the
                 // refusal is pending, on both kernels.
+                let asItWas = system
+
                 match ensureStreamBound dest system with
                 | Error refusal -> Error refusal
                 | Ok (Error error) -> failed error system
@@ -997,6 +1060,11 @@ module UnixConnection =
                                 }
                         }
                 | Ok (Ok (binding, system)) ->
+
+                match overTimeWaits binding.Endpoint dest system with
+                | Error refusal -> Error refusal
+                | Ok (Error error) -> failed error asItWas
+                | Ok (Ok system) ->
 
                 if not nonBlocking then
                     // The refusal is delivered inline, and the socket's fate
@@ -1278,14 +1346,16 @@ module UnixConnection =
 
                         match
                             UnixMachineState.allocateEphemeralPort
+                                system.Scheduling.NanosecondsSinceBoot
                                 EphemeralPortUse.Reserve
                                 socketId
                                 sock
                                 candidate
                                 system.Machine
                         with
-                        | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
-                        | Some (binding, machine) ->
+                        | Ok None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                        | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
+                        | Ok (Some (binding, machine)) ->
                             failed
                                 error
                                 { system with
@@ -1494,14 +1564,16 @@ module UnixConnection =
 
                         match
                             UnixMachineState.allocateEphemeralPort
+                                system.Scheduling.NanosecondsSinceBoot
                                 EphemeralPortUse.Reserve
                                 socketId
                                 sock
                                 candidate
                                 system.Machine
                         with
-                        | None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
-                        | Some (binding, machine) ->
+                        | Ok None -> Error (ConnectRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+                        | Error refusal -> Error (ConnectRefusal.TimeWait refusal)
+                        | Ok (Some (binding, machine)) ->
                             failed
                                 error
                                 { system with
@@ -2062,30 +2134,28 @@ module UnixConnection =
             else
                 TcpTransfer.close ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved transfer
 
-        let connections =
-            if List.isEmpty clients then
-                Map.remove connectionId system.Machine.Connections
-            else
-                system.Machine.Connections
-
         let system =
             { system with
                 Machine =
-                    { system.Machine with
+                    { UnixMachineState.withTransfer
+                          system.Scheduling.NanosecondsSinceBoot
+                          connectionId
+                          transfer
+                          system.Machine with
                         Sockets = sockets
-                        Connections = connections
                     }
             }
 
         if List.isEmpty clients then
-            system
+            // The client's socket has closed too, so the connection goes, and
+            // its end in TIME_WAIT, if either is, with it.
+            { system with
+                Machine = UnixMachineState.forgetConnection connectionId system.Machine
+            }
         else
             // The edge, raised once the tables reflect the close, as `close`
             // raises it.
-            { system with
-                Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
-            }
-            |> SocketWake.signalTransfer connectionId wakes
+            system |> SocketWake.signalTransfer connectionId wakes
 
     /// Hand the oldest connection on `socketId`'s queue over to the caller: the
     /// half of `accept(2)` that follows the choice of a connection, shared by a
@@ -2574,7 +2644,11 @@ module UnixConnection =
         let system =
             { system with
                 Machine =
-                    { UnixMachineState.withTransfer connectionId transfer system.Machine with
+                    { UnixMachineState.withTransfer
+                          system.Scheduling.NanosecondsSinceBoot
+                          connectionId
+                          transfer
+                          system.Machine with
                         Sockets =
                             Map.add
                                 socketId

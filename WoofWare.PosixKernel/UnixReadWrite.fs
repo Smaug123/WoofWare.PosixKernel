@@ -1368,16 +1368,22 @@ module UnixReadWrite =
 
                 match
                     UnixMachineState.allocateEphemeralPort
+                        system.Scheduling.NanosecondsSinceBoot
                         EphemeralPortUse.Reserve
                         socketId
                         socket
                         candidate
                         system.Machine
                 with
-                | None ->
+                | Error refusal ->
+                    // Only a TCP end is ever in TIME_WAIT, and a datagram
+                    // socket's ports are not TCP's.
+                    failwith
+                        $"UnixReadWrite: datagram socket %O{socketId}'s search for a port met an end in TIME_WAIT (this is a bug in this library): %s{TimeWaitRefusal.describe refusal}"
+                | Ok None ->
                     let low, high = system.Machine.EphemeralPortRange
                     Error (WriteRefusal.EphemeralPortsExhausted (socketId, low, high))
-                | Some (binding, machine) ->
+                | Ok (Some (binding, machine)) ->
                     Ok
                         { system with
                             Machine =
@@ -1488,7 +1494,12 @@ module UnixReadWrite =
 
         let committed () : UnixSystem<'Thread, 'Handler> =
             { system with
-                Machine = UnixMachineState.withTransfer connectionId after system.Machine
+                Machine =
+                    UnixMachineState.withTransfer
+                        system.Scheduling.NanosecondsSinceBoot
+                        connectionId
+                        after
+                        system.Machine
             }
             |> SocketWake.signalTransfer connectionId wakes
 
@@ -2292,7 +2303,12 @@ module UnixReadWrite =
 
             let committed () : UnixSystem<'Thread, 'Handler> =
                 { finished with
-                    Machine = UnixMachineState.withTransfer connectionId after finished.Machine
+                    Machine =
+                        UnixMachineState.withTransfer
+                            finished.Scheduling.NanosecondsSinceBoot
+                            connectionId
+                            after
+                            finished.Machine
                 }
                 |> SocketWake.signalTransfer connectionId wakes
 
@@ -3085,7 +3101,12 @@ module UnixReadWrite =
         let wakes, transfer = TcpTransfer.write writer bytes transfer
 
         { system with
-            Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
+            Machine =
+                UnixMachineState.withTransfer
+                    system.Scheduling.NanosecondsSinceBoot
+                    connectionId
+                    transfer
+                    system.Machine
         }
         |> SocketWake.signalTransfer connectionId wakes
 
@@ -3131,7 +3152,12 @@ module UnixReadWrite =
         =
         let withTransfer (transfer : TcpTransfer) : UnixSystem<'Thread, 'Handler> =
             { system with
-                Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
+                Machine =
+                    UnixMachineState.withTransfer
+                        system.Scheduling.NanosecondsSinceBoot
+                        connectionId
+                        transfer
+                        system.Machine
             }
 
         // The bytes taken now are read now; the rest only as room appears.
@@ -3600,7 +3626,12 @@ module UnixReadWrite =
 
         let withTransfer (transfer : TcpTransfer) (system : UnixSystem<'Thread, 'Handler>) =
             { system with
-                Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
+                Machine =
+                    UnixMachineState.withTransfer
+                        system.Scheduling.NanosecondsSinceBoot
+                        connectionId
+                        transfer
+                        system.Machine
             }
 
         // The end can send no more: a reset reached it, or its own

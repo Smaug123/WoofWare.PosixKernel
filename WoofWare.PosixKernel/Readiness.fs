@@ -184,6 +184,7 @@ module internal LinuxReadiness =
                 { system with
                     Machine =
                         UnixMachineState.withTransfer
+                            system.Scheduling.NanosecondsSinceBoot
                             connectionId
                             (TcpTransfer.polled connectionEnd transfer)
                             system.Machine

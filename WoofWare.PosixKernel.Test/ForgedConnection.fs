@@ -39,6 +39,7 @@ module internal ForgedConnection =
                             connection
                             {
                                 ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 40000us
+                                FinsExchangedAt = None
                                 ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                 Transfer = transfer
                             }
