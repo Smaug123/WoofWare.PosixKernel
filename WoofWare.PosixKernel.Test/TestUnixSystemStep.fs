@@ -613,7 +613,7 @@ module TestUnixSystemStep =
             |> shouldEqual
                 [
                     {
-                        Endpoint = ExternalEndpoint (UnixSystem.processId after, 1)
+                        Endpoint = ExternalEndpoint (Lone.pid after, 1)
                         Bytes = bytes
                     }
                 ]
@@ -2377,7 +2377,7 @@ module TestUnixSystemStep =
                 Syscall.ChDir (PathArg.ofPath (statPath "/d/inner")),
                 Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/inner")) system
             ] do
-            UnixSystem.tryStep leaderThread call system
+            UnixSystem.tryStep (Callers.thread leaderThread system) call system
             |> stepAnswered
             |> shouldEqual (Ok expected)
 
@@ -2394,7 +2394,10 @@ module TestUnixSystemStep =
             | other -> failwith $"open(/d/inner) did not open: %A{other}"
 
         let viaStep =
-            UnixSystem.tryStep leaderThread (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700)) system
+            UnixSystem.tryStep
+                (Callers.thread leaderThread system)
+                (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700))
+                system
             |> stepAnswered
 
         viaStep
@@ -2435,7 +2438,8 @@ module TestUnixSystemStep =
         let dFd, system = opened "/d" system
 
         let step (call : Syscall) (system : UnixSystem<int, string>) =
-            UnixSystem.tryStep leaderThread call system |> stepAnswered
+            UnixSystem.tryStep (Callers.thread leaderThread system) call system
+            |> stepAnswered
 
         let viaStep = step (Syscall.UnlinkAt (innerFd, PathArg.ofText "t", 0)) system
 
@@ -2491,7 +2495,7 @@ module TestUnixSystemStep =
         // calls `close` directly.
         let fd, system = withOpenFile linux
 
-        UnixSystem.tryStep leaderThread (Syscall.Close fd) system
+        UnixSystem.tryStep (Callers.thread leaderThread system) (Syscall.Close fd) system
         |> stepAnswered
         |> shouldEqual (
             UnixDescriptor.tryClose (Callers.leader system) fd system
@@ -2637,7 +2641,10 @@ module TestUnixSystemStep =
     let ``step agrees with the primitive it dispatches to`` () : unit =
         // The dispatcher is sugar. If the two ever disagree, the surface a client
         // logs and replays through is not the surface it computes through.
-        match UnixSystem.tryStep leaderThread Syscall.GetEffectiveUserId linux |> stepAnswered with
+        match
+            UnixSystem.tryStep (Callers.thread leaderThread linux) Syscall.GetEffectiveUserId linux
+            |> stepAnswered
+        with
         | Ok (SyscallAnswer.Completed answer, after) ->
             answer
             |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId (Callers.leader linux) linux)))
@@ -2647,7 +2654,8 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``getpid reports the configured process ID, through step as through the primitive`` () : unit =
-        UnixSystem.processId linux |> shouldEqual UnixSystem.defaultProcessId
+        UnixSystem.processId (Callers.leader linux) linux
+        |> shouldEqual UnixSystem.defaultProcessId
 
         // Away from the default, so that a primitive answering a constant fails.
         let configured =
@@ -2655,12 +2663,22 @@ module TestUnixSystemStep =
             |> Launched.processId (ProcessId.parseOrFail "test" 3)
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixSystem.processId configured |> ProcessId.toInt32 |> shouldEqual 3
+        UnixSystem.processIds configured
+        |> shouldEqual (Set.singleton (ProcessId.parseOrFail "test" 3))
+
+        UnixSystem.processId (Callers.leader configured) configured
+        |> ProcessId.toInt32
+        |> shouldEqual 3
 
         for system in [ linux ; configured ] do
-            match UnixSystem.tryStep leaderThread Syscall.GetProcessId system |> stepAnswered with
+            match
+                UnixSystem.tryStep (Callers.thread leaderThread system) Syscall.GetProcessId system
+                |> stepAnswered
+            with
             | Ok (SyscallAnswer.Completed answer, after) ->
-                answer |> shouldEqual (int64 (ProcessId.toInt32 (UnixSystem.processId system)))
+                answer
+                |> shouldEqual (int64 (ProcessId.toInt32 (UnixSystem.processId (Callers.leader system) system)))
+
                 after |> shouldEqual system
             | other -> failwith $"unexpected: %O{other}"
 
@@ -2786,7 +2804,7 @@ module TestUnixSystemStep =
         // client that catches one still holds the system it passed in.
         let fd, seeded = withOpenFile linux
 
-        UnixSystem.tryStep leaderThread (Syscall.LSeek (fd, 0L, 3)) seeded
+        UnixSystem.tryStep (Callers.thread leaderThread seeded) (Syscall.LSeek (fd, 0L, 3)) seeded
         |> shouldEqual (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
 
     [<Test>]
@@ -3297,13 +3315,13 @@ module TestUnixSystemStep =
             UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
             |> granted
 
-        UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) both
+        UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both
         |> shouldEqual (
             UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
             |> Result.mapError SyscallRefusal.FLock
         )
 
-        match UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) both with
+        match UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both with
         | Ok (SyscallOutcome.WouldBlock _, after) ->
             FileDescriptorRegistry.tryFind first (Lone.fileDescriptors after)
             |> Option.map (fun description -> description.Flock)
@@ -3763,18 +3781,18 @@ module TestUnixSystemStep =
             let first, second, system = withTwoDescriptions system
 
             let held =
-                match UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) system with
+                match UnixSystem.tryStep (Callers.thread holderThread system) (Syscall.FLock (first, 2)) system with
                 | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), held) -> held
                 | other -> failwith $"expected the first lock to be granted, got %A{other}"
 
             let condition, parkedIn =
-                match UnixSystem.tryStep waiterThread (Syscall.FLock (second, 2)) held with
+                match UnixSystem.tryStep (Callers.thread waiterThread held) (Syscall.FLock (second, 2)) held with
                 | Ok (SyscallOutcome.WouldBlock condition, parkedIn) -> condition, parkedIn
                 | other -> failwith $"expected the second lock to park, got %A{other}"
 
             UnixSystem.checkInvariants parkedIn |> shouldEqual []
 
-            match UnixSystem.tryStep thirdThread (Syscall.Close second) parkedIn with
+            match UnixSystem.tryStep (Callers.thread thirdThread parkedIn) (Syscall.Close second) parkedIn with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), closed) when linuxFlavour ->
                 UnixSystem.checkInvariants closed |> shouldEqual []
                 holds waiterThread condition closed |> shouldEqual false
@@ -3804,7 +3822,9 @@ module TestUnixSystemStep =
 
             for call in callsOfEveryShape do
                 let error =
-                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 99 call system |> ignore)
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        UnixSystem.step (Callers.thread 99 system) call system |> ignore
+                    )
 
                 error.Message
                 |> shouldContainText "thread 99 is not one of the process's threads"
@@ -3813,18 +3833,23 @@ module TestUnixSystemStep =
     let ``step by a thread asleep in another call throws, whatever the call`` () : unit =
         for system in [ linux ; darwin ] do
             let paused =
-                match UnixSignal.pause 0 (Threads.ensure 1 system) with
+                let ensured = Threads.ensure 1 system
+
+                match UnixSignal.pause (Callers.thread 0 ensured) ensured with
                 | SigsuspendOutcome.WouldBlock _, paused -> paused
                 | other -> failwith $"expected pause to sleep, got %A{other}"
 
             for call in callsOfEveryShape do
                 let error =
-                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 0 call paused |> ignore)
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        UnixSystem.step (Callers.thread 0 paused) call paused |> ignore
+                    )
 
-                error.Message |> shouldContainText "thread 0 is asleep in SigSuspend"
+                error.Message
+                |> shouldContainText "thread 0 is parked in SigSuspend, and is making another call"
 
             // The thread that is not asleep makes its calls as before.
-            match UnixSystem.step 1 (Syscall.Close 2) paused with
+            match UnixSystem.step (Callers.thread 1 paused) (Syscall.Close 2) paused with
             | SyscallOutcome.Answered (SyscallAnswer.Completed 0L), _ -> ()
             | other -> failwith $"expected thread 1's close to complete, got %A{other}"
 
@@ -6247,7 +6272,7 @@ module TestUnixSystemStep =
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected a success, got %A{other}"
 
-        UnixPathResolution.currentDirectoryPath moved
+        UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved
         |> shouldEqual (Some (AbsoluteUnixPath.parseOrFail context "/moved/sub"))
 
     /// The tree with the current directory `rmdir`'d out from under the process,
@@ -6560,7 +6585,7 @@ module TestUnixSystemStep =
     let private changedTo (path : string) (system : UnixSystem<int, string>) : Result<string option, UnixError> =
         match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath path)) system with
         | SyscallAnswer.Completed 0L, moved ->
-            UnixPathResolution.currentDirectoryPath moved
+            UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved
             |> Option.map PathText.ofAbsolute
             |> Ok
         | SyscallAnswer.Failed error, _ -> Error error
@@ -6667,7 +6692,8 @@ module TestUnixSystemStep =
             | SyscallAnswer.Completed 0L, removed -> removed
             | other -> failwith $"expected the rmdir to succeed, got %A{other}"
 
-        UnixPathResolution.currentDirectoryPath orphaned |> shouldEqual None
+        UnixPathResolution.currentDirectoryPath (Lone.pid orphaned) orphaned
+        |> shouldEqual None
 
         changedTo "." orphaned |> shouldEqual (Ok None)
         changedTo ".." orphaned |> shouldEqual (Ok (Some "/d"))

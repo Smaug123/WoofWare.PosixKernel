@@ -33,7 +33,7 @@ module TestMultiProcess =
 
         let machine = Machines.ofSystem first
 
-        ((([ UnixSystem.processId first ], machine)), [ 2..count ])
+        ((([ Lone.pid first ], machine)), [ 2..count ])
         ||> List.fold (fun (pids, machine) _ ->
             match Machines.tryLaunch (launchOn platform) machine with
             | Ok (pid, machine) -> pids @ [ pid ], machine
@@ -84,7 +84,7 @@ module TestMultiProcess =
         // A thread of the first process takes the next thread ID, so the
         // second process gets the one after.
         let worker, first =
-            match UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) first with
+            match UnixThreadLifecycle.trySpawn (Callers.thread 0 first) 1 (CpuId 0) first with
             | Ok (SpawnAnswer.Spawned worker, first) -> worker, first
             | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn: %O{error}"
             | Error refusal -> failwith $"spawn: %s{SpawnRefusal.describe refusal}"
@@ -99,14 +99,13 @@ module TestMultiProcess =
         ProcessId.toInt32 pid |> shouldEqual 4244
 
         let view = viewOf pid machine
-        UnixSystem.processId view |> shouldEqual pid
+        UnixSystem.processIds view |> shouldEqual (Set.singleton pid)
 
         UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid view))
         |> OsThreadId.toUInt64
         |> shouldEqual 4244UL
 
-        Machines.processIds machine
-        |> shouldEqual (Set.ofList [ UnixSystem.processId first ; pid ])
+        Machines.processIds machine |> shouldEqual (Set.ofList [ Lone.pid first ; pid ])
 
         assertClean machine
 

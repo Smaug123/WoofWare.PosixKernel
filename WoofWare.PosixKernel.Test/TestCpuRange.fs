@@ -79,7 +79,7 @@ module TestCpuRange =
 
             let spawned =
                 try
-                    Ok (UnixThreadLifecycle.trySpawn 0 1 (CpuId cpu) system)
+                    Ok (UnixThreadLifecycle.trySpawn (Callers.thread 0 system) 1 (CpuId cpu) system)
                 with e ->
                     Error e.Message
 

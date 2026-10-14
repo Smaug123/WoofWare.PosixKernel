@@ -215,7 +215,9 @@ module TestDescriptorBound =
         for run in runs do
             let bound = SimulatedUnixPlatform.descriptorBound run.Platform
 
-            match UnixSystem.tryStep 0 (Syscall.Dup 3) (filledTo (bound - 1) run) with
+            let full = filledTo (bound - 1) run
+
+            match UnixSystem.tryStep (Callers.thread 0 full) (Syscall.Dup 3) full with
             | Error (SyscallRefusal.Dup refusal) -> refusal |> shouldEqual (refusalAt bound bound)
             | other -> failwith $"%s{run.Name}: step Dup on a full table: %A{other}"
 

@@ -605,11 +605,11 @@ module TestBlockingConnection =
 
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -2272,7 +2272,7 @@ module TestBlockingConnection =
                 | SimulatedUnixFlavour.Darwin -> 1
 
             let blocking (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixSignal.pthreadSigmask thread sigBlock (Some usr1) system with
+                match UnixSignal.pthreadSigmask (Callers.thread thread system) sigBlock (Some usr1) system with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
@@ -2292,7 +2292,7 @@ module TestBlockingConnection =
                     after
                 | other -> failwith $"%O{platform}: the read came to %A{other}"
 
-            UnixSignal.sigpending 1 system |> shouldEqual usr1
+            UnixSignal.sigpending (Callers.thread 1 system) system |> shouldEqual usr1
 
             // The server's end full, so a write by it takes nothing.
             let _, system =
@@ -2318,7 +2318,14 @@ module TestBlockingConnection =
 
             let system = asleepWriting 2 server (payload 2 1000) system |> signalled 2
             wokenAmong [ 2 ] system |> shouldEqual []
-            UnixSignal.sigpending 2 system |> shouldEqual usr1
+
+            SignalState.pendingBlocked
+                (UnixSystemState.signalNumbering system)
+                (Lone.leader system)
+                2
+                (Lone.proc system).Signals
+            |> shouldEqual usr1
+
             UnixSystem.checkInvariants system |> shouldEqual []
 
     /// R-order: three readers asleep on one socket all wake for one byte, on

@@ -2550,6 +2550,14 @@ module UnixPathResolution =
         =
         Entry.call "UnixPathResolution.fstatfs" CallerRequirement.Running caller Shape.answer (fstatfsIn fd) system
 
+    /// `currentDirectoryPath` once `Entry` has admitted the process.
+    let private currentDirectoryPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : AbsoluteUnixPath option
+        =
+        // Measured on both flavours; see docs/probes/chdir.
+        VirtualFileSystem.pathOfDirectory system.Process.CurrentDirectoryInode system.Machine.FileSystem
+
     /// <summary>
     /// The absolute path of this process's current working directory, or <c>None</c> if
     /// no path reaches it any more.
@@ -2561,11 +2569,11 @@ module UnixPathResolution =
     /// directory and get a path again.
     /// </remarks>
     let currentDirectoryPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
-        // Measured on both flavours; see docs/probes/chdir.
-        VirtualFileSystem.pathOfDirectory system.Process.CurrentDirectoryInode system.Machine.FileSystem
+        Entry.query "UnixPathResolution.currentDirectoryPath" pid currentDirectoryPathIn system
 
     /// `tryGetcwd` once `Entry` has admitted its caller.
     let private tryGetcwdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2635,7 +2643,7 @@ module UnixPathResolution =
             Error GetCwdRefusal.FatalToTheProcess
         else
 
-        match currentDirectoryPath system with
+        match currentDirectoryPathIn system with
         | None ->
             // No path reaches the directory the process is in, so there is
             // nothing to measure against the buffer. What the buffer can still

@@ -1149,7 +1149,7 @@ module TestPermissionStanding =
             |> shouldEqual (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated))
         | Ok (answer, _) -> failwith $"ftruncate answered %A{answer}"
 
-        match UnixSystem.tryStep 0 (Syscall.FTruncate (fd, 0L)) opened with
+        match UnixSystem.tryStep (Callers.thread 0 opened) (Syscall.FTruncate (fd, 0L)) opened with
         | Error refusal ->
             refusal
             |> shouldEqual (SyscallRefusal.FTruncate (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated)))
@@ -1193,7 +1193,10 @@ module TestPermissionStanding =
 
         // Darwin's AT_FDCWD, with no flags for unlink and AT_REMOVEDIR for
         // rmdir.
-        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0))
+            system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1211,7 +1214,10 @@ module TestPermissionStanding =
             )
         )
 
-        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80))
+            system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1257,7 +1263,7 @@ module TestPermissionStanding =
                 // only 0o777 of 0o7777 on Linux.
                 let _, system =
                     systemOn SimulatedUnixPlatform.linuxX64 credentials vfs
-                    |> UnixSystem.umask umask
+                    |> fun system -> UnixSystem.umask (Callers.leader system) umask system
 
                 // From the same system each time, which leaves `/p` holding one
                 // entry at most.

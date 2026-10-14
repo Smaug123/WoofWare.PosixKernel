@@ -1896,7 +1896,10 @@ module TestConnectedTransfer =
                         Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
                 let ended =
-                    Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
+                    Machines.inProcess
+                        a
+                        (fun view -> UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 view, view)
+                        machine
                     |> fst
 
                 let machine =

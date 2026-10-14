@@ -3156,7 +3156,7 @@ module TestVirtualFileSystemAgainstHost =
 
         match Answered.chdir (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
         | SyscallAnswer.Completed 0L, moved ->
-            match UnixPathResolution.currentDirectoryPath moved with
+            match UnixPathResolution.currentDirectoryPath (Lone.pid moved) moved with
             | Some path -> ChDirOutcome.Entered (PathText.ofAbsolute path)
             | None ->
                 // No operand in this fixture removes a directory, so nothing

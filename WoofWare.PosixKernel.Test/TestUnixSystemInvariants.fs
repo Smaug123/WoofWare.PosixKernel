@@ -1104,14 +1104,11 @@ module TestUnixSystemInvariants =
     // `UnixSystem.initial`, `UnixThreadLifecycle.spawn` and the identity setters.
 
     let private spawned (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
-        match
-            UnixThreadLifecycle.trySpawn
-                0
-                1
-                (CpuId 0)
-                (UnixSystem.initial<int, string> platform
-                 |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-        with
+        let booted =
+            UnixSystem.initial<int, string> platform
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        match UnixThreadLifecycle.trySpawn (Callers.thread 0 booted) 1 (CpuId 0) booted with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn failed: %O{error}"
         | Error refusal -> failwith $"spawn was refused: %s{SpawnRefusal.describe refusal}"

@@ -116,7 +116,8 @@ module TestFifoOpenPark =
             // cannot be evaluated, and asking fails loudly rather than guessing.
             let error =
                 Assert.Throws<Exception> (fun () ->
-                    UnixWait.satisfied thread closed |> ignore<Set<WakePrimitive> option>
+                    UnixWait.satisfied (Callers.thread thread closed) closed
+                    |> ignore<Set<WakePrimitive> option>
                 )
 
             error.Message |> shouldContainText "FifoOpen"

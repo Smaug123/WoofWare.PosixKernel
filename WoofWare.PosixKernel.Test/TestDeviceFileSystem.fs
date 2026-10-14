@@ -239,14 +239,14 @@ module TestDeviceFileSystem =
         let _, system =
             Answered.chdir (Callers.leader system) (PathArg.ofText "/dev") system
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (AbsoluteUnixPath.parseOrFail context "/dev"))
 
         (reported "null" system) |> shouldEqual (reported "/dev/null" system)
 
         let _, system = Answered.chdir (Callers.leader system) (PathArg.ofText "..") system
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some AbsoluteUnixPath.root)
 
     // ------------------------------------------------------------------ statfs

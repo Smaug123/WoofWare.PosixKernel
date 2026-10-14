@@ -117,7 +117,7 @@ module TestWithFileSystemAndCurrentDirectory =
         // that refused everything.
         match startAt SimulatedUnixPlatform.linuxX64 seed "/outer/inner" with
         | Ok system ->
-            UnixPathResolution.currentDirectoryPath system
+            UnixPathResolution.currentDirectoryPath (Lone.pid system) system
             |> shouldEqual (Some (absolute "/outer/inner"))
         | Error fault -> failwith $"expected /outer/inner to be accepted, but it answered %O{fault}."
 
@@ -148,7 +148,7 @@ module TestWithFileSystemAndCurrentDirectory =
         (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (inodeOf system "/outer/inner")
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (absolute "/outer/inner"))
 
         UnixSystem.checkInvariants system |> shouldBeEmpty
@@ -364,7 +364,7 @@ module TestWithFileSystemAndCurrentDirectory =
 
         match startAt SimulatedUnixPlatform.macOsArm64 entries path with
         | Ok system ->
-            UnixPathResolution.currentDirectoryPath system
+            UnixPathResolution.currentDirectoryPath (Lone.pid system) system
             |> shouldEqual (Some (absolute path))
         | Error fault -> failwith $"Darwin's NAME_MAX admits this name, but it answered %O{fault}."
 
@@ -389,7 +389,7 @@ module TestWithFileSystemAndCurrentDirectory =
         | Error fault -> failwith $"Darwin's NAME_MAX admits this name, but it answered %A{fault}."
         | Ok system ->
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some (absolute path))
 
         system.Machine.UnixPlatform |> shouldEqual SimulatedUnixPlatform.macOsArm64
