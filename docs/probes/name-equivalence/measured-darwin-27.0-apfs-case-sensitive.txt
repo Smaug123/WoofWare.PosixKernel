@@ -1,0 +1,56 @@
+#	Darwin 27.0.0 arm64
+#fs	f_fstypename=apfs	f_fssubtype=0
+L	exact	c3a9	c3a9	stat=same	excl=EEXIST	names=c3a9
+L	another letter	c3a9	c3a8	stat=ENOENT	excl=OK	names=c3a8,c3a9
+L	another case	41	61	stat=ENOENT	excl=OK	names=41,61
+L	another case, non-ASCII	c389	c3a9	stat=ENOENT	excl=OK	names=c389,c3a9
+L	NFC then NFD	c3a9	65cc81	stat=same	excl=EEXIST	names=c3a9
+L	NFD then NFC	65cc81	c3a9	stat=same	excl=EEXIST	names=65cc81
+L	NFC then NFD, within a name	636166c3a92e747874	63616665cc812e747874	stat=same	excl=EEXIST	names=636166c3a92e747874
+L	mark order	61cc81cca7	61cca7cc81	stat=same	excl=EEXIST	names=61cc81cca7
+L	Hangul syllable then jamo	eab080	e18480e185a1	stat=same	excl=EEXIST	names=eab080
+L	Hangul jamo then syllable	e18480e185a1	eab080	stat=same	excl=EEXIST	names=e18480e185a1
+L	K then KELVIN SIGN	4b	e284aa	stat=same	excl=EEXIST	names=4b
+L	KELVIN SIGN then K	e284aa	4b	stat=same	excl=EEXIST	names=e284aa
+L	KELVIN SIGN then k	e284aa	6b	stat=ENOENT	excl=OK	names=6b,e284aa
+L	k then KELVIN SIGN	6b	e284aa	stat=ENOENT	excl=OK	names=6b,e284aa
+L	; then GREEK QUESTION MARK	3b	cdbe	stat=same	excl=EEXIST	names=3b
+L	GREEK QUESTION MARK then ;	cdbe	3b	stat=same	excl=EEXIST	names=cdbe
+L	` then GREEK VARIA	60	e1bfaf	stat=same	excl=EEXIST	names=60
+L	GREEK VARIA then `	e1bfaf	60	stat=same	excl=EEXIST	names=e1bfaf
+L	aKb then a KELVIN SIGN b	614b62	61e284aa62	stat=same	excl=EEXIST	names=614b62
+L	OHM SIGN then OMEGA	e284a6	cea9	stat=same	excl=EEXIST	names=e284a6
+L	OMEGA then OHM SIGN	cea9	e284a6	stat=same	excl=EEXIST	names=cea9
+L	ANGSTROM SIGN then A RING	e284ab	c385	stat=same	excl=EEXIST	names=e284ab
+L	A RING then A + RING	c385	41cc8a	stat=same	excl=EEXIST	names=c385
+L	CJK COMPATIBILITY IDEOGRAPH-F900 then U+8C48	efa480	e8b188	stat=same	excl=EEXIST	names=efa480
+L	fi ligature then fi	efac81	6669	stat=ENOENT	excl=OK	names=6669,efac81
+L	fi then fi ligature	6669	efac81	stat=ENOENT	excl=OK	names=6669,efac81
+L	fullwidth A then A	efbca1	41	stat=ENOENT	excl=OK	names=41,efbca1
+L	A then fullwidth A	41	efbca1	stat=ENOENT	excl=OK	names=41,efbca1
+L	vulgar half then 1 fraction-slash 2	c2bd	31e2818432	stat=ENOENT	excl=OK	names=31e2818432,c2bd
+L	NFC e-acute then Latin-1 e-acute	c3a9	e9	stat=ENOENT	excl=EILSEQ	names=c3a9
+L	emoji then its CESU-8	f09f9880	eda0bdedb880	stat=ENOENT	excl=EILSEQ	names=f09f9880
+L	e then an overlong e	65	c1a5	stat=ENOENT	excl=EILSEQ	names=65
+B	Latin-1 e-acute	e9	create=EILSEQ
+B	CESU-8 emoji	eda0bdedb880	create=EILSEQ
+B	overlong e	c1a5	create=EILSEQ
+I	NFC directory through NFD	c3a9	65cc81	stat(second/x)=same
+I	K directory through KELVIN SIGN	4b	e284aa	stat(second/x)=same
+O	mkdir	c3a9	65cc81	mkdir(second)=EEXIST	names=737263=src,c3a9=first
+O	link	c3a9	65cc81	link(src,second)=EEXIST	names=737263=src,c3a9=first
+O	symlink	c3a9	65cc81	symlink(t,second)=EEXIST	names=737263=src,c3a9=first
+O	unlink	c3a9	65cc81	unlink(second)=OK	names=737263=src
+O	rmdir	c3a9	65cc81	rmdir(second)=OK	names=737263=src
+O	chdir	c3a9	65cc81	chdir(second)=OK	cwd=first	names=737263=src,c3a9=first
+O	open O_CREAT	c3a9	65cc81	open(second,O_CREAT)=OK	opened=first	names=737263=src,c3a9=first
+O	rename onto	c3a9	65cc81	rename(src,second)=OK	names=c3a9=src
+O	rename from	c3a9	65cc81	rename(second,moved)=OK	names=6d6f766564=first,737263=src
+O	rename to its other spelling	c3a9	65cc81	rename(first,second)=OK	names=737263=src,c3a9=first
+O	rename to its other spelling	65cc81	c3a9	rename(first,second)=OK	names=65cc81=first,737263=src
+O	rename a directory to its other spelling	c3a9	65cc81	rename(firstdir,second)=OK	names=737263=src,c3a9=first
+O	rename to its other spelling	4b	e284aa	rename(first,second)=OK	names=4b=first,737263=src
+O	rename to its other spelling	e284aa	4b	rename(first,second)=OK	names=737263=src,e284aa=first
+O	rename to another case	41	61	rename(first,second)=OK	names=61=first,737263=src
+O	unlink	4b	e284aa	unlink(second)=OK	names=737263=src
+O	link	4b	e284aa	link(src,second)=EEXIST	names=4b=first,737263=src

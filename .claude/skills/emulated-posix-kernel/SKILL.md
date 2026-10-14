@@ -32,13 +32,15 @@ The test that separates the first two: **could two machines running the same
 kernel image disagree?** A sysctl, a mount option, a uid — yes, so it is
 configuration. `sizeof(struct sockaddr_un)` — no, so it is the platform.
 
-Two entries currently in `SimulatedUnixPlatform` do not pass that test, and are
+Three entries currently in `SimulatedUnixPlatform` do not pass that test, and are
 there as deliberate approximations rather than as precedent. `pathLimits` holds a
-`NAME_MAX` that varies per mount on Linux, and `bindableEntryNames` holds which
-names APFS will bind, because the library models exactly one filesystem a name
-can be created in per flavour (the device filesystem at `/dev` is closed: no name
-is created in it). Each has a named trigger for becoming configuration, stated
-beside it: a second filesystem. Do not cite either as a reason to put a
+`NAME_MAX` that varies per mount on Linux, `bindableEntryNames` holds which
+names APFS will bind, and `entryNameMatching` holds how APFS compares the names
+a lookup is given (by canonical equivalence; the filesystem built at boot keeps
+it), because the library models exactly one filesystem a name can be created in
+per flavour (the device filesystem at `/dev` is closed: no name is created in
+it). Each has a named trigger for becoming configuration, stated beside it: a
+second filesystem. Do not cite any of them as a reason to put a
 machine-dependent fact in the platform.
 
 A symbolic link's mode is a worked example of the line between the two: the

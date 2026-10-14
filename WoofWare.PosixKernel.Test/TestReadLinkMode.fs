@@ -158,7 +158,7 @@ module TestReadLinkMode =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials caller) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let vfs = VirtualFileSystem.empty epoch rootOwner
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch rootOwner
 
         let cellInode, vfs =
             match

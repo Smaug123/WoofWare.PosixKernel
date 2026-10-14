@@ -1061,6 +1061,24 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> BindableEntryNames.AnyBytes
         | SimulatedUnixFlavour.Darwin -> BindableEntryNames.StrictUtf8
 
+    /// Which entry a name looked up in a directory of this platform's
+    /// filesystem reaches.
+    ///
+    /// Like `bindableEntryNames`, this is really a property of the mounted
+    /// filesystem, and lives here because this library models one filesystem
+    /// per flavour; a second filesystem on one flavour is what would make it
+    /// configuration instead. It holds under `UnixBootImage.withMount`'s NFS
+    /// too, whose server decides how names compare: a Darwin kernel still
+    /// refuses wherever canonical equivalence could change the answer, and a
+    /// Linux one still compares bytes.
+    let internal entryNameMatching (platform : SimulatedUnixPlatform) : EntryNameMatching =
+        // Measured by `docs/probes/name-equivalence` on Darwin 27.0, on a
+        // fresh case-sensitive APFS volume and on the default case-insensitive
+        // one, and on Linux 6.18.5's tmpfs and ext4.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> EntryNameMatching.Bytes
+        | SimulatedUnixFlavour.Darwin -> EntryNameMatching.CanonicalEquivalence
+
     /// `sizeof(struct sockaddr_storage)`: the size of the largest socket address
     /// any Unix we model can hand back.
     ///

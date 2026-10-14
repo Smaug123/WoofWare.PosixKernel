@@ -1602,6 +1602,7 @@ module TestUnixSystemStep =
 
             let filesystem =
                 VirtualFileSystem.Unchecked.ofParts
+                    EntryNameMatching.Bytes
                     (Map.ofList
                         [
                             rootInode,

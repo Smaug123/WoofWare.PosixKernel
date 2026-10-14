@@ -56,7 +56,9 @@ module TestOpenDirRules =
     /// without both, a verdict that demanded the *search* bit instead of the read
     /// bit would answer every row correctly.
     let private tree : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let dir (parent : InodeNumber) (n : string) (bits : PermissionBits) (vfs : VirtualFileSystem) =
