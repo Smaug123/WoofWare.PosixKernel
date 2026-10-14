@@ -1,111 +1,111 @@
 uname: Linux 6.18.5 aarch64
-A	open	N=100	trial=0	returned	answer=100	elapsed_us=37	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	open	N=100	trial=1	returned	answer=100	elapsed_us=32	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	open	N=100	trial=2	returned	answer=100	elapsed_us=50	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	open	N=8388608	trial=0	asleep_at_300ms_then	answer=3910251	elapsed_us=300103	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	open	N=8388608	trial=1	asleep_at_300ms_then	answer=3910251	elapsed_us=300074	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	open	N=8388608	trial=2	asleep_at_300ms_then	answer=3910251	elapsed_us=300079	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=100	trial=0	returned	answer=100	elapsed_us=37	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=100	trial=1	returned	answer=100	elapsed_us=44	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=100	trial=2	returned	answer=100	elapsed_us=52	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=8388608	trial=0	returned	answer=524288	elapsed_us=209	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=8388608	trial=1	returned	answer=524288	elapsed_us=90	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	close	N=8388608	trial=2	returned	answer=524288	elapsed_us=106	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rd	N=100	trial=0	returned	answer=100	elapsed_us=44	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	shut_rd	N=100	trial=1	returned	answer=100	elapsed_us=45	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	shut_rd	N=100	trial=2	returned	answer=100	elapsed_us=47	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
-A	shut_rd	N=8388608	trial=0	asleep_at_300ms_then	answer=3910251	elapsed_us=300106	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rd	N=8388608	trial=1	asleep_at_300ms_then	answer=3910251	elapsed_us=300103	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rd	N=8388608	trial=2	asleep_at_300ms_then	answer=3910251	elapsed_us=300079	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=100	trial=0	returned	answer=100	elapsed_us=34	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=100	trial=1	returned	answer=100	elapsed_us=51	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=100	trial=2	returned	answer=100	elapsed_us=69	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=8388608	trial=0	returned	answer=524288	elapsed_us=154	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=8388608	trial=1	returned	answer=524288	elapsed_us=142	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-A	shut_rdwr	N=8388608	trial=2	returned	answer=524288	elapsed_us=141	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
-B	open	trial=0	answer=3910251	elapsed_us=592	sigusr1_sent=652	sigusr1_handled=4	sigpipe=0	so_error=0
-B	open	trial=1	answer=3910251	elapsed_us=647	sigusr1_sent=866	sigusr1_handled=6	sigpipe=0	so_error=0
-B	open	trial=2	answer=3910251	elapsed_us=764	sigusr1_sent=559	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=3	answer=3910251	elapsed_us=578	sigusr1_sent=832	sigusr1_handled=4	sigpipe=0	so_error=0
-B	open	trial=4	answer=3910251	elapsed_us=500	sigusr1_sent=723	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=5	answer=3910251	elapsed_us=761	sigusr1_sent=543	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=6	answer=3910251	elapsed_us=512	sigusr1_sent=757	sigusr1_handled=6	sigpipe=0	so_error=0
-B	open	trial=7	answer=3910251	elapsed_us=597	sigusr1_sent=793	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=8	answer=3910251	elapsed_us=628	sigusr1_sent=959	sigusr1_handled=164	sigpipe=0	so_error=0
-B	open	trial=9	answer=3910251	elapsed_us=555	sigusr1_sent=814	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=10	answer=3910251	elapsed_us=570	sigusr1_sent=835	sigusr1_handled=81	sigpipe=0	so_error=0
-B	open	trial=11	answer=3910251	elapsed_us=735	sigusr1_sent=545	sigusr1_handled=6	sigpipe=0	so_error=0
-B	open	trial=12	answer=3910251	elapsed_us=676	sigusr1_sent=605	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=13	answer=3910251	elapsed_us=597	sigusr1_sent=647	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=14	answer=3910251	elapsed_us=640	sigusr1_sent=576	sigusr1_handled=6	sigpipe=0	so_error=0
-B	open	trial=15	answer=3910251	elapsed_us=479	sigusr1_sent=914	sigusr1_handled=6	sigpipe=0	so_error=0
-B	open	trial=16	answer=3910251	elapsed_us=1225	sigusr1_sent=815	sigusr1_handled=149	sigpipe=0	so_error=0
-B	open	trial=17	answer=3910251	elapsed_us=717	sigusr1_sent=522	sigusr1_handled=4	sigpipe=0	so_error=0
-B	open	trial=18	answer=3910251	elapsed_us=907	sigusr1_sent=585	sigusr1_handled=5	sigpipe=0	so_error=0
-B	open	trial=19	answer=3910251	elapsed_us=514	sigusr1_sent=645	sigusr1_handled=5	sigpipe=0	so_error=0
+A	open	N=100	trial=0	returned	answer=100	elapsed_us=42	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	open	N=100	trial=1	returned	answer=100	elapsed_us=45	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	open	N=100	trial=2	returned	answer=100	elapsed_us=79	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	open	N=8388608	trial=0	asleep_at_300ms_then	answer=3910251	elapsed_us=300156	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	open	N=8388608	trial=1	asleep_at_300ms_then	answer=3910251	elapsed_us=300098	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	open	N=8388608	trial=2	asleep_at_300ms_then	answer=3910251	elapsed_us=300153	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=100	trial=0	returned	answer=100	elapsed_us=40	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=100	trial=1	returned	answer=100	elapsed_us=38	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=100	trial=2	returned	answer=100	elapsed_us=35	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=8388608	trial=0	returned	answer=524288	elapsed_us=146	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=8388608	trial=1	returned	answer=524288	elapsed_us=98	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	close	N=8388608	trial=2	returned	answer=524288	elapsed_us=121	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rd	N=100	trial=0	returned	answer=100	elapsed_us=52	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	shut_rd	N=100	trial=1	returned	answer=100	elapsed_us=36	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	shut_rd	N=100	trial=2	returned	answer=100	elapsed_us=31	slept=0	sigpipe=0	so_error=0	second_write=100	second_sigpipe=0
+A	shut_rd	N=8388608	trial=0	asleep_at_300ms_then	answer=3910251	elapsed_us=300099	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rd	N=8388608	trial=1	asleep_at_300ms_then	answer=3910251	elapsed_us=300089	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rd	N=8388608	trial=2	asleep_at_300ms_then	answer=3910251	elapsed_us=300333	slept=1	sigpipe=0	so_error=ECONNRESET	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=100	trial=0	returned	answer=100	elapsed_us=55	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=100	trial=1	returned	answer=100	elapsed_us=53	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=100	trial=2	returned	answer=100	elapsed_us=46	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=8388608	trial=0	returned	answer=524288	elapsed_us=109	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=8388608	trial=1	returned	answer=524288	elapsed_us=121	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+A	shut_rdwr	N=8388608	trial=2	returned	answer=524288	elapsed_us=102	slept=0	sigpipe=0	so_error=EPIPE	second_write=-1 EPIPE	second_sigpipe=1
+B	open	trial=0	answer=3910251	elapsed_us=535	sigusr1_sent=1183	sigusr1_handled=322	sigpipe=0	so_error=0
+B	open	trial=1	answer=3910251	elapsed_us=2282	sigusr1_sent=1696	sigusr1_handled=499	sigpipe=0	so_error=0
+B	open	trial=2	answer=3910251	elapsed_us=502	sigusr1_sent=892	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=3	answer=3910251	elapsed_us=1069	sigusr1_sent=1924	sigusr1_handled=6	sigpipe=0	so_error=0
+B	open	trial=4	answer=3910251	elapsed_us=501	sigusr1_sent=890	sigusr1_handled=6	sigpipe=0	so_error=0
+B	open	trial=5	answer=3910251	elapsed_us=645	sigusr1_sent=1255	sigusr1_handled=4	sigpipe=0	so_error=0
+B	open	trial=6	answer=3910251	elapsed_us=502	sigusr1_sent=968	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=7	answer=3910251	elapsed_us=481	sigusr1_sent=934	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=8	answer=3910251	elapsed_us=533	sigusr1_sent=951	sigusr1_handled=6	sigpipe=0	so_error=0
+B	open	trial=9	answer=3910251	elapsed_us=622	sigusr1_sent=831	sigusr1_handled=16	sigpipe=0	so_error=0
+B	open	trial=10	answer=3910251	elapsed_us=492	sigusr1_sent=878	sigusr1_handled=6	sigpipe=0	so_error=0
+B	open	trial=11	answer=3910251	elapsed_us=498	sigusr1_sent=943	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=12	answer=3910251	elapsed_us=509	sigusr1_sent=887	sigusr1_handled=12	sigpipe=0	so_error=0
+B	open	trial=13	answer=3910251	elapsed_us=498	sigusr1_sent=892	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=14	answer=3910251	elapsed_us=518	sigusr1_sent=912	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=15	answer=3910251	elapsed_us=468	sigusr1_sent=841	sigusr1_handled=4	sigpipe=0	so_error=0
+B	open	trial=16	answer=3910251	elapsed_us=847	sigusr1_sent=1033	sigusr1_handled=102	sigpipe=0	so_error=0
+B	open	trial=17	answer=3910251	elapsed_us=551	sigusr1_sent=900	sigusr1_handled=5	sigpipe=0	so_error=0
+B	open	trial=18	answer=3910251	elapsed_us=588	sigusr1_sent=987	sigusr1_handled=91	sigpipe=0	so_error=0
+B	open	trial=19	answer=3910251	elapsed_us=495	sigusr1_sent=880	sigusr1_handled=5	sigpipe=0	so_error=0
 B	open	tally	count=20 (3910251..3910251)	EPIPE=0	ECONNRESET=0	EINTR=0	other=0	unanswered_after_300ms=0
-B	close	trial=0	answer=524288	elapsed_us=117	sigusr1_sent=159	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	close	trial=1	answer=524288	elapsed_us=192	sigusr1_sent=202	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	close	trial=2	answer=524288	elapsed_us=205	sigusr1_sent=106	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	close	trial=3	answer=524288	elapsed_us=123	sigusr1_sent=168	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=4	answer=524288	elapsed_us=122	sigusr1_sent=165	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=5	answer=524288	elapsed_us=121	sigusr1_sent=172	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=6	answer=524288	elapsed_us=221	sigusr1_sent=129	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	close	trial=7	answer=524288	elapsed_us=96	sigusr1_sent=194	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	close	trial=8	answer=524288	elapsed_us=188	sigusr1_sent=74	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	close	trial=9	answer=524288	elapsed_us=125	sigusr1_sent=139	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=10	answer=524288	elapsed_us=180	sigusr1_sent=118	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=11	answer=524288	elapsed_us=118	sigusr1_sent=237	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	close	trial=12	answer=524288	elapsed_us=120	sigusr1_sent=141	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	close	trial=13	answer=524288	elapsed_us=114	sigusr1_sent=151	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	close	trial=14	answer=524288	elapsed_us=108	sigusr1_sent=239	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=15	answer=524288	elapsed_us=94	sigusr1_sent=212	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=16	answer=524288	elapsed_us=95	sigusr1_sent=214	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=17	answer=524288	elapsed_us=93	sigusr1_sent=209	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	close	trial=18	answer=524288	elapsed_us=133	sigusr1_sent=137	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	close	trial=19	answer=524288	elapsed_us=151	sigusr1_sent=138	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=0	answer=524288	elapsed_us=114	sigusr1_sent=196	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=1	answer=524288	elapsed_us=111	sigusr1_sent=188	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=2	answer=524288	elapsed_us=111	sigusr1_sent=164	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=3	answer=524288	elapsed_us=115	sigusr1_sent=194	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	close	trial=4	answer=524288	elapsed_us=115	sigusr1_sent=186	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	close	trial=5	answer=524288	elapsed_us=129	sigusr1_sent=184	sigusr1_handled=1	sigpipe=0	so_error=EPIPE
+B	close	trial=6	answer=524288	elapsed_us=115	sigusr1_sent=187	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=7	answer=524288	elapsed_us=107	sigusr1_sent=176	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	close	trial=8	answer=524288	elapsed_us=102	sigusr1_sent=173	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=9	answer=524288	elapsed_us=188	sigusr1_sent=323	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	close	trial=10	answer=524288	elapsed_us=146	sigusr1_sent=247	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	close	trial=11	answer=524288	elapsed_us=128	sigusr1_sent=209	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=12	answer=524288	elapsed_us=154	sigusr1_sent=256	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=13	answer=524288	elapsed_us=115	sigusr1_sent=189	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=14	answer=524288	elapsed_us=120	sigusr1_sent=203	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=15	answer=524288	elapsed_us=145	sigusr1_sent=243	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=16	answer=524288	elapsed_us=153	sigusr1_sent=226	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=17	answer=524288	elapsed_us=144	sigusr1_sent=239	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
+B	close	trial=18	answer=524288	elapsed_us=183	sigusr1_sent=295	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	close	trial=19	answer=524288	elapsed_us=142	sigusr1_sent=234	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
 B	close	tally	count=20 (524288..524288)	EPIPE=0	ECONNRESET=0	EINTR=0	other=0	unanswered_after_300ms=0
-B	shut_rd	trial=0	answer=3910251	elapsed_us=545	sigusr1_sent=667	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=1	answer=3910251	elapsed_us=583	sigusr1_sent=664	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=2	answer=3910251	elapsed_us=908	sigusr1_sent=654	sigusr1_handled=4	sigpipe=0	so_error=0
-B	shut_rd	trial=3	answer=3910251	elapsed_us=777	sigusr1_sent=656	sigusr1_handled=59	sigpipe=0	so_error=0
-B	shut_rd	trial=4	answer=3910251	elapsed_us=564	sigusr1_sent=705	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=5	answer=3910251	elapsed_us=733	sigusr1_sent=517	sigusr1_handled=4	sigpipe=0	so_error=0
-B	shut_rd	trial=6	answer=3910251	elapsed_us=696	sigusr1_sent=762	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=7	answer=3910251	elapsed_us=645	sigusr1_sent=1259	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=8	answer=3910251	elapsed_us=512	sigusr1_sent=1120	sigusr1_handled=16	sigpipe=0	so_error=0
-B	shut_rd	trial=9	answer=3910251	elapsed_us=730	sigusr1_sent=536	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=10	answer=3910251	elapsed_us=554	sigusr1_sent=691	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=11	answer=3910251	elapsed_us=752	sigusr1_sent=533	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=12	answer=3910251	elapsed_us=407	sigusr1_sent=972	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=13	answer=3910251	elapsed_us=383	sigusr1_sent=920	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=14	answer=3910251	elapsed_us=468	sigusr1_sent=981	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=15	answer=3910251	elapsed_us=549	sigusr1_sent=760	sigusr1_handled=6	sigpipe=0	so_error=0
-B	shut_rd	trial=16	answer=3910251	elapsed_us=716	sigusr1_sent=509	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=17	answer=3910251	elapsed_us=378	sigusr1_sent=913	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=18	answer=3910251	elapsed_us=755	sigusr1_sent=552	sigusr1_handled=5	sigpipe=0	so_error=0
-B	shut_rd	trial=19	answer=3910251	elapsed_us=545	sigusr1_sent=906	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=0	answer=3910251	elapsed_us=622	sigusr1_sent=1044	sigusr1_handled=6	sigpipe=0	so_error=0
+B	shut_rd	trial=1	answer=3910251	elapsed_us=785	sigusr1_sent=1382	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=2	answer=3910251	elapsed_us=596	sigusr1_sent=1057	sigusr1_handled=4	sigpipe=0	so_error=0
+B	shut_rd	trial=3	answer=3910251	elapsed_us=670	sigusr1_sent=1187	sigusr1_handled=7	sigpipe=0	so_error=0
+B	shut_rd	trial=4	answer=3910251	elapsed_us=539	sigusr1_sent=954	sigusr1_handled=6	sigpipe=0	so_error=0
+B	shut_rd	trial=5	answer=3910251	elapsed_us=509	sigusr1_sent=894	sigusr1_handled=6	sigpipe=0	so_error=0
+B	shut_rd	trial=6	answer=3910251	elapsed_us=569	sigusr1_sent=1057	sigusr1_handled=46	sigpipe=0	so_error=0
+B	shut_rd	trial=7	answer=3910251	elapsed_us=715	sigusr1_sent=1113	sigusr1_handled=4	sigpipe=0	so_error=0
+B	shut_rd	trial=8	answer=3910251	elapsed_us=557	sigusr1_sent=994	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=9	answer=3910251	elapsed_us=501	sigusr1_sent=886	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=10	answer=3910251	elapsed_us=560	sigusr1_sent=1002	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=11	answer=3910251	elapsed_us=786	sigusr1_sent=1366	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=12	answer=3910251	elapsed_us=788	sigusr1_sent=1383	sigusr1_handled=7	sigpipe=0	so_error=0
+B	shut_rd	trial=13	answer=3910251	elapsed_us=545	sigusr1_sent=971	sigusr1_handled=6	sigpipe=0	so_error=0
+B	shut_rd	trial=14	answer=3910251	elapsed_us=603	sigusr1_sent=977	sigusr1_handled=32	sigpipe=0	so_error=0
+B	shut_rd	trial=15	answer=3910251	elapsed_us=613	sigusr1_sent=1168	sigusr1_handled=5	sigpipe=0	so_error=0
+B	shut_rd	trial=16	answer=3910251	elapsed_us=846	sigusr1_sent=1537	sigusr1_handled=70	sigpipe=0	so_error=0
+B	shut_rd	trial=17	answer=3910251	elapsed_us=880	sigusr1_sent=1594	sigusr1_handled=7	sigpipe=0	so_error=0
+B	shut_rd	trial=18	answer=3910251	elapsed_us=1235	sigusr1_sent=1917	sigusr1_handled=19	sigpipe=0	so_error=0
+B	shut_rd	trial=19	answer=3910251	elapsed_us=733	sigusr1_sent=1155	sigusr1_handled=2	sigpipe=0	so_error=0
 B	shut_rd	tally	count=20 (3910251..3910251)	EPIPE=0	ECONNRESET=0	EINTR=0	other=0	unanswered_after_300ms=0
-B	shut_rdwr	trial=0	answer=524288	elapsed_us=186	sigusr1_sent=122	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=1	answer=524288	elapsed_us=191	sigusr1_sent=124	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=2	answer=524288	elapsed_us=193	sigusr1_sent=127	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=3	answer=524288	elapsed_us=181	sigusr1_sent=118	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=4	answer=524288	elapsed_us=233	sigusr1_sent=257	sigusr1_handled=19	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=5	answer=524288	elapsed_us=189	sigusr1_sent=128	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=6	answer=524288	elapsed_us=127	sigusr1_sent=159	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=7	answer=524288	elapsed_us=197	sigusr1_sent=106	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=8	answer=524288	elapsed_us=145	sigusr1_sent=141	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=9	answer=524288	elapsed_us=100	sigusr1_sent=224	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=10	answer=524288	elapsed_us=108	sigusr1_sent=143	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=11	answer=524288	elapsed_us=130	sigusr1_sent=149	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=12	answer=524288	elapsed_us=146	sigusr1_sent=160	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=13	answer=524288	elapsed_us=96	sigusr1_sent=214	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=14	answer=524288	elapsed_us=102	sigusr1_sent=234	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=15	answer=524288	elapsed_us=113	sigusr1_sent=247	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=16	answer=524288	elapsed_us=102	sigusr1_sent=227	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=17	answer=524288	elapsed_us=113	sigusr1_sent=251	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=18	answer=524288	elapsed_us=125	sigusr1_sent=234	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
-B	shut_rdwr	trial=19	answer=524288	elapsed_us=204	sigusr1_sent=132	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=0	answer=524288	elapsed_us=156	sigusr1_sent=225	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=1	answer=524288	elapsed_us=170	sigusr1_sent=285	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=2	answer=524288	elapsed_us=142	sigusr1_sent=232	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=3	answer=524288	elapsed_us=143	sigusr1_sent=251	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=4	answer=524288	elapsed_us=151	sigusr1_sent=255	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=5	answer=524288	elapsed_us=133	sigusr1_sent=223	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=6	answer=524288	elapsed_us=157	sigusr1_sent=284	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=7	answer=524288	elapsed_us=142	sigusr1_sent=261	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=8	answer=524288	elapsed_us=124	sigusr1_sent=230	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=9	answer=524288	elapsed_us=164	sigusr1_sent=289	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=10	answer=524288	elapsed_us=104	sigusr1_sent=184	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=11	answer=524288	elapsed_us=222	sigusr1_sent=368	sigusr1_handled=7	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=12	answer=524288	elapsed_us=169	sigusr1_sent=304	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=13	answer=524288	elapsed_us=131	sigusr1_sent=221	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=14	answer=524288	elapsed_us=134	sigusr1_sent=228	sigusr1_handled=6	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=15	answer=524288	elapsed_us=132	sigusr1_sent=237	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=16	answer=524288	elapsed_us=163	sigusr1_sent=303	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=17	answer=524288	elapsed_us=154	sigusr1_sent=282	sigusr1_handled=4	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=18	answer=524288	elapsed_us=119	sigusr1_sent=193	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
+B	shut_rdwr	trial=19	answer=524288	elapsed_us=111	sigusr1_sent=185	sigusr1_handled=5	sigpipe=0	so_error=EPIPE
 B	shut_rdwr	tally	count=20 (524288..524288)	EPIPE=0	ECONNRESET=0	EINTR=0	other=0	unanswered_after_300ms=0
 C	trial=0	asleep_at_200ms=1	taken_before=3910251	drained=3910251	left_in_p=0	left_in_c=0	writer_done_during_hog=0	answer=4499598	taken_after_wake=589347	sigpipe=0	so_error=EPIPE	sndbuf=4194304
 C	trial=1	asleep_at_200ms=1	taken_before=3910251	drained=3910251	left_in_p=0	left_in_c=0	writer_done_during_hog=0	answer=4499598	taken_after_wake=589347	sigpipe=0	so_error=EPIPE	sndbuf=4194304

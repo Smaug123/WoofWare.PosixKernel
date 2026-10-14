@@ -63,8 +63,9 @@
 //          side) either sleeps until the reset arrives, then answers EPIPE and
 //          raises SIGPIPE (slept=1), or meets the reset while still copying
 //          and answers ECONNRESET without SIGPIPE (slept=0); SO_ERROR reads
-//          ECONNRESET either way. A signal reaching the sleeping writer
-//          first ends the write with the count it took, 327212 (B). After a
+//          ECONNRESET either way. Under a stream of signals (B), the
+//          write answered either of those or, a signal reaching the
+//          sleeping writer first, the count it took, 327212. After a
 //          write of 100 bytes, which returns 100, whether SO_ERROR and a
 //          second write see the reset yet depends on how soon they ask: it
 //          arrives on another thread.
@@ -257,6 +258,10 @@ typedef struct
     int64_t elapsed;
     long nvcsw;
     int fifo;
+    // Why the writer could not take SCHED_FIFO on CPU 0, or 0; written
+    // before `started`, so that the starter may read it once `started` is
+    // set.
+    int pin_error;
 } call;
 
 #ifdef __linux__
@@ -295,7 +300,7 @@ static void *run_write(void *arg)
         int pinned = pin_fifo(10);
         if (pinned != 0)
         {
-            k->rv = -100 - pinned;
+            k->pin_error = pinned;
             atomic_store(&k->started, 1);
             atomic_store(&k->done, 1);
             return NULL;
@@ -312,6 +317,14 @@ static void *run_write(void *arg)
     k->nvcsw = switches < 0 ? -1 : voluntary_switches() - switches;
     atomic_store(&k->done, 1);
     return NULL;
+}
+
+// A writer that will not return: the probe cannot go on, since the thread
+// still writes into `k`, which the caller's next trial reuses.
+static void stuck(const char *what)
+{
+    printf("%s\tthe writer will not return; stopping\n", what);
+    exit(3);
 }
 
 static void start(call *k, pthread_t *t, int fd, size_t len, int fifo)
@@ -355,13 +368,7 @@ static void section_a(void)
                 pthread_t t;
                 start(&k, &t, c, sizes[s], 0);
                 int asleep = end_if_asleep(&k, c, &p);
-                if (!atomic_load(&k.done))
-                {
-                    printf("A\t%s\tN=%zu\ttrial=%d\tstill asleep after its peer's close; leaving it\n",
-                           peer_names[state], sizes[s], trial);
-                    pthread_detach(t);
-                    continue;
-                }
+                if (!atomic_load(&k.done)) stuck("A");
                 pthread_join(t, NULL);
                 int pipes = atomic_load(&sigpipes);
                 char first[64], second[64];
@@ -409,12 +416,7 @@ static void section_b(void)
                 slept++;
                 end_if_asleep(&k, c, &p);
             }
-            if (!atomic_load(&k.done))
-            {
-                printf("B\t%s\ttrial=%d\tstill asleep; leaving it\n", peer_names[state], trial);
-                pthread_detach(t);
-                continue;
-            }
+            if (!atomic_load(&k.done)) stuck("B");
             pthread_join(t, NULL);
             char first[64];
             answer(k.rv, k.error, first, sizeof first);
@@ -450,9 +452,9 @@ static void section_c(void)
         call k;
         pthread_t t;
         start(&k, &t, c, 8 << 20, 1);
-        if (k.rv <= -100)
+        if (k.pin_error != 0)
         {
-            printf("C\tthe writer could not take SCHED_FIFO on CPU 0: error %zd\n", -100 - k.rv);
+            printf("C\tthe writer could not take SCHED_FIFO on CPU 0: error %d\n", k.pin_error);
             pthread_join(t, NULL);
             return;
         }
@@ -492,12 +494,7 @@ static void section_c(void)
             pthread_setaffinity_np(pthread_self(), sizeof all, &all);
         }
         sleep_ms(100);
-        if (!atomic_load(&k.done))
-        {
-            printf("C\ttrial=%d\tthe writer is still asleep 100 ms after the hog; leaving it\n", trial);
-            pthread_detach(t);
-            continue;
-        }
+        if (!atomic_load(&k.done)) stuck("C");
         pthread_join(t, NULL);
         char first[64];
         answer(k.rv, k.error, first, sizeof first);

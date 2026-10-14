@@ -373,7 +373,7 @@ module TestConnectionWriteResetMeasured =
                 | Ok (WriteStep.Returns (WriteAnswer.Completed n, _)) when raced = 0 && counts = 20 ->
                     n |> shouldBeGreaterThan 0L
                 | Error (WriteRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) when
-                    raced > 0 && counts > 0
+                    raced > 0
                     ->
                     ()
                 | other -> failwith $"%O{platform}: %s{line.Text}\nmodelled %A{other}"
