@@ -209,7 +209,7 @@ module TestConnectedTransfer =
 
     /// `shutdown(fd, how)`, which must answer 0.
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 
@@ -1316,7 +1316,7 @@ module TestConnectedTransfer =
         let system = sentAll client 10 system
 
         let system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1356,7 +1356,9 @@ module TestConnectedTransfer =
             let system = ReuseAddress.set (not listenerReuse) listener system
 
             let system =
-                match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+                match
+                    UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system
+                with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
                 | other -> failwith $"accept: %A{other}"
 
@@ -1406,7 +1408,7 @@ module TestConnectedTransfer =
         let _, system = KeventWorld.connect client 40000us system
 
         let system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 0xFFFFFFFFu system with
             | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
             | other -> failwith $"accept: %A{other}"
 
@@ -1577,7 +1579,7 @@ module TestConnectedTransfer =
                         else
                             KeventWorld.close accepted system
 
-                    match UnixSocket.tryListen listener 8 system with
+                    match UnixSocket.tryListen (Callers.leader system) listener 8 system with
                     | Ok (ListenAnswer.Listening _, system) -> assertClean system
                     | other ->
                         failwith $"%O{platform}, listener SO_REUSEADDR %b{listenerReuse}, child %s{child}: %A{other}"
@@ -1706,14 +1708,16 @@ module TestConnectedTransfer =
         (machine : SimulatedMachine<int, string>)
         : int * int * SimulatedMachine<int, string>
         =
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b port) machine
+
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a port) machine
 
         let accepted, machine =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
+                    let accepted, view = KeventWorld.acceptIn b listener view
 
                     accepted,
                     UnixDescriptor.setNonBlocking (Caller.make b (Proc.leader b view)) accepted true view

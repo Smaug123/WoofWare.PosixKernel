@@ -279,8 +279,8 @@ module TestUnmodelledException =
                 agrees
                     SocketRefusal.kind
                     SocketRefusal.describe
-                    (fun () -> UnixSocket.trySocket domain kind protocol system)
-                    (fun () -> UnixSocket.socket domain kind protocol system)
+                    (fun () -> UnixSocket.trySocket (Callers.leader system) domain kind protocol system)
+                    (fun () -> UnixSocket.socket (Callers.leader system) domain kind protocol system)
             )
             [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]
 

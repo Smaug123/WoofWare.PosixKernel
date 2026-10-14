@@ -101,7 +101,7 @@ module TestSimulatedMachine =
             match pick fd (openFds system) with
             | None -> system
             | Some fd ->
-                match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
                 | Ok (_, system) -> system
                 // Outside what the kernel models, so the step changes nothing.
                 | Error _ -> system

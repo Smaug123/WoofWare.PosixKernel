@@ -218,7 +218,7 @@ module TestCopyFileSyscalls =
                 (if kind = "pipe-r" then readFd else writeFd), system
             | other -> failwith $"pipe2: %A{other}"
         | "socket" ->
-            match UnixSocket.trySocket 2 1 0 system with
+            match UnixSocket.trySocket (Callers.leader system) 2 1 0 system with
             | Ok (Ok (fd, system)) -> fd, system
             | other -> failwith $"socket: %A{other}"
         | "port" ->

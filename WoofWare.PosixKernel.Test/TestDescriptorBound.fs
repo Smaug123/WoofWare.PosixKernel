@@ -140,7 +140,7 @@ module TestDescriptorBound =
             let listening, system = FcntlWorld.listener 5000us false system
 
             let system =
-                match UnixConnection.tryAccept 1 listening UserBuffer.Mapped 16u system with
+                match UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u system with
                 | Ok (AcceptOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"accept on an empty listener: %A{other}"
 
@@ -159,7 +159,7 @@ module TestDescriptorBound =
 
             UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
 
-            match UnixConnection.tryFinishAccept 1 system with
+            match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
             | Error (AcceptRefusal.DescriptorLimit refusal) -> refusal |> shouldEqual (refusalAt bound bound)
             | other -> failwith $"%s{run.Name}: finishing the accept on a full table: %A{other}"
 

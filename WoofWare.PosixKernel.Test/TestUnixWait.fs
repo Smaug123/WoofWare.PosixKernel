@@ -549,7 +549,9 @@ module TestUnixWait =
                 | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
             let socketFd, system =
-                match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 system with
+                match
+                    UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system
+                with
                 | Ok (fd, system) -> fd, system
                 | Error error -> failwith $"socket failed with %O{error}"
 

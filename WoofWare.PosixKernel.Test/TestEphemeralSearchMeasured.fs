@@ -82,7 +82,7 @@ module TestEphemeralSearchMeasured =
                     | Ok (BindAnswer.Bound _, system) -> system
                     | other -> failwith $"binding the listener at %d{port}: %A{other}"
 
-                match UnixSocket.tryListen fd 128 system with
+                match UnixSocket.tryListen (Callers.leader system) fd 128 system with
                 | Ok (ListenAnswer.Listening _, system) -> system
                 | other -> failwith $"listening at %d{port}: %A{other}"
             )
@@ -111,7 +111,7 @@ module TestEphemeralSearchMeasured =
         | Error refusal -> Refused (BindRefusal.describe refusal), system
 
     let private listen (fd : int) (system : UnixSystem<int, string>) : Outcome * UnixSystem<int, string> =
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> Answered None, system
         | Ok (ListenAnswer.Failed error, system) -> Answered (Some error), system
         | Error refusal -> Refused (ListenRefusal.describe refusal), system
@@ -131,7 +131,7 @@ module TestEphemeralSearchMeasured =
 
     /// What `getsockname(2)` reports, as the probe prints it.
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint

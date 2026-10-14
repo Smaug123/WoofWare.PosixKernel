@@ -143,7 +143,7 @@ module TestConnectionWriteResetMeasured =
         client, server, system
 
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 

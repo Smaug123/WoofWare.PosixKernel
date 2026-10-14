@@ -215,7 +215,7 @@ module TestQueuedOptions =
         let client, system = connectTo system
         let system = set listener (level, option) (valueOf accepted) system
 
-        match UnixConnection.tryAccept 1 listener UserBuffer.Mapped UInt32.MaxValue system with
+        match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped UInt32.MaxValue system with
         | Error refusal ->
             match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socket) -> Error (refusal, socket)

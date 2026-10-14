@@ -105,7 +105,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
                     let kq, view = KeventWorld.kqueue view
                     (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
                 )
@@ -131,7 +131,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
@@ -139,7 +140,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
+                    let accepted, view = KeventWorld.acceptIn b listener view
                     let kq, view = KeventWorld.kqueue view
                     (accepted, kq), KeventWorld.register kq accepted KeventFilter.Read addClear 9UL view
                 )
@@ -167,7 +168,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
                     let kq, view = KeventWorld.kqueue view
                     (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
                 )
@@ -235,7 +236,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         Machines.assertClean machine
@@ -258,10 +260,14 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
-        let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
+
+        let accepted, machine =
+            Machines.inProcess b (KeventWorld.acceptIn b listener) machine
+
         let machine = sleepInPoll b 1 [ entry accepted pollIn ] machine
 
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
@@ -279,7 +285,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         let own, machine = Machines.inProcess a (KeventWorld.streamIn a true) machine
@@ -319,7 +326,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept thread listener UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -334,7 +341,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixConnection.tryFinishAccept thread view with
+                match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
             )
@@ -346,7 +353,8 @@ module TestCrossProcess =
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
 
-            let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+            let listener, machine =
+                Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
             let machine = sleepInAccept b 1 listener machine
             Machines.assertClean machine
@@ -373,7 +381,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 0 view with
@@ -435,7 +443,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
@@ -443,7 +452,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
+                    let accepted, view = KeventWorld.acceptIn b listener view
 
                     let epoll, view =
                         match UnixPoll.tryEpollCreate1 0 view with
@@ -505,7 +514,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
                     let kq, view = KeventWorld.kqueue view
                     (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
                 )
@@ -629,10 +638,10 @@ module TestCrossProcess =
             let a, b = pids.[0], pids.[1]
 
             let listenerA, machine =
-                Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+                Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
             let listenerB, machine =
-                Machines.inProcess b (KeventWorld.listenerAt 8081us) machine
+                Machines.inProcess b (KeventWorld.listenerAtIn b 8081us) machine
 
             // Parked in this order: b's 1, a's 1, b's 2, the last two on the
             // listeners the first two are not.
@@ -831,12 +840,16 @@ module TestCrossProcess =
                 let pids, machine = Machines.ofCount platform 2
                 let a, b = pids.[0], pids.[1]
 
-                let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+                let listener, machine =
+                    Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
                 let connect (target : int) (machine : SimulatedMachine<int, string>) =
                     let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
                     let machine = Machines.doIn a (dup2 a client target) machine
-                    let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
+
+                    let accepted, machine =
+                        Machines.inProcess b (KeventWorld.acceptIn b listener) machine
+
                     accepted, machine
 
                 let s1, machine = connect layout.[0] machine
@@ -1041,7 +1054,7 @@ module TestCrossProcess =
             let flavour = SimulatedUnixPlatform.flavour platform
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
-            let _, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+            let _, machine = Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
             // A blocking client, whose read sleeps.
             let reader, machine =
@@ -1176,7 +1189,7 @@ module TestCrossProcess =
             )
 
             // The listener's port is free again.
-            let _, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+            let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
             Machines.assertClean machine
 
     /// The measured lines of `listener-exit-order.c`
@@ -1219,13 +1232,13 @@ module TestCrossProcess =
                 let child, parent = pids.[0], pids.[1]
 
                 let parentListener, machine =
-                    Machines.inProcess parent (KeventWorld.listenerAt 8081us) machine
+                    Machines.inProcess parent (KeventWorld.listenerAtIn parent 8081us) machine
 
                 let machine =
                     Machines.doIn
                         child
                         (fun view ->
-                            let listener, view = KeventWorld.listenerAt 8080us view
+                            let listener, view = KeventWorld.listenerAtIn child 8080us view
                             let connected, view = KeventWorld.streamIn child false view
 
                             let view =
@@ -1239,7 +1252,7 @@ module TestCrossProcess =
                         machine
 
                 let c, machine =
-                    Machines.inProcess parent (KeventWorld.accept parentListener) machine
+                    Machines.inProcess parent (KeventWorld.acceptIn parent parentListener) machine
 
                 let q, machine =
                     Machines.inProcess parent (KeventWorld.clientIn parent 8080us) machine
@@ -1342,7 +1355,7 @@ module TestCrossProcess =
                     Machines.doIn
                         a
                         (fun view ->
-                            let listener, view = KeventWorld.listenerAt 8080us view
+                            let listener, view = KeventWorld.listenerAtIn a 8080us view
                             let client, view = KeventWorld.clientIn a 8080us view
 
                             if listenerHigher then
@@ -1362,7 +1375,8 @@ module TestCrossProcess =
 
         // Under Linux a sleeping accept holds its listener past the close of
         // its last descriptor.
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let machine = sleepInAccept a 1 listener machine
         let machine = Machines.doIn a (KeventWorld.closeIn a listener) machine
@@ -1406,7 +1420,7 @@ module TestCrossProcess =
         VirtualFileSystem.tryGet standing view.Machine.FileSystem |> shouldEqual None
 
         // The listener's port is free again.
-        let _, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
         Machines.assertClean machine
 
     [<Test>]
@@ -1445,7 +1459,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let shared = 9
 
@@ -1628,7 +1643,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a = pids.[0]
 
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let machine = sleepInAccept a 1 listener machine
         let machine = Machines.doIn a (KeventWorld.closeIn a listener) machine

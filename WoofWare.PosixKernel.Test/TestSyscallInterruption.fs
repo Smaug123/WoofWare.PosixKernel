@@ -124,7 +124,7 @@ module TestSyscallInterruption =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -229,7 +229,12 @@ module TestSyscallInterruption =
         | Sleep.Accept ->
             parked
                 "the accept"
-                (UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u world.System)
+                (UnixConnection.tryAccept
+                    (Callers.thread thread world.System)
+                    world.Listener
+                    UserBuffer.Mapped
+                    16u
+                    world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -289,14 +294,19 @@ module TestSyscallInterruption =
         | Sleep.Accept
         | Sleep.Poll _
         | Sleep.EpollWait _ ->
+            // The holder makes the socket and connects: the leader may be the
+            // sleeper, and a thread asleep in one call makes no other.
             let client, system =
-                NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+                NewSocket.createAs
+                    (Callers.thread holder system)
+                    SocketDomain.Inet
+                    SocketKind.Stream
+                    SocketProtocol.Tcp
+                    system
 
-            // The holder connects: the leader may be the sleeper, and a thread
-            // asleep in one call makes no other.
             match
                 CopyIn.connectAs
-                    holder
+                    (Callers.thread holder system)
                     client
                     UserBuffer.Mapped
                     16u
@@ -326,7 +336,7 @@ module TestSyscallInterruption =
             | Error (FLockRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.Accept ->
-            match UnixConnection.tryFinishAccept thread system with
+            match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
             | Ok (AcceptOutcome.Accepted _, system) -> Ending.Completed, system
             | Ok (AcceptOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
             | Ok (AcceptOutcome.Restarts, system) -> Ending.Restart, system

@@ -46,7 +46,7 @@ module TestWakeSweepMemo =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept thread listener UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept by thread %d{thread}: %A{other}"
             )
@@ -107,7 +107,7 @@ module TestWakeSweepMemo =
         let pid = pids.[0]
 
         let listener, machine =
-            Machines.inProcess pid (KeventWorld.listenerAt 8080us) machine
+            Machines.inProcess pid (KeventWorld.listenerAtIn pid 8080us) machine
 
         let machine =
             machine
@@ -220,7 +220,7 @@ module TestWakeSweepMemo =
         let pid = pids.[0]
 
         let listener, machine =
-            Machines.inProcess pid (KeventWorld.listenerAt 8080us) machine
+            Machines.inProcess pid (KeventWorld.listenerAtIn pid 8080us) machine
 
         // Threads 0 and 1 poll the idle listener, for 5 ms and for 10 ms.
         let pollFor (thread : int) (milliseconds : int) (machine : SimulatedMachine<int, string>) =

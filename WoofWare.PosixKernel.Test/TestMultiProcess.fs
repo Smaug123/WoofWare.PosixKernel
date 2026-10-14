@@ -263,7 +263,8 @@ module TestMultiProcess =
         let fd, view = KeventWorld.streamIn pid true view
 
         match
-            CopyIn.bind
+            CopyIn.bindAs
+                (Caller.make pid (Proc.leader pid view))
                 fd
                 UserBuffer.Mapped
                 16u

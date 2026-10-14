@@ -82,6 +82,11 @@ module TestBlockingConnection =
 
     let private threads : int list = [ 0 ; 1 ; 2 ; 3 ]
 
+    /// The thread the reference fuzzer's probes of the kernel's ports are made
+    /// by: one of none of its calls, so awake whenever every one of `threads`
+    /// is asleep.
+    let private prober : int = 4
+
     let private port : uint16 = 6100us
 
     /// What a call came to, in a shape both the library and the reference can
@@ -1018,14 +1023,21 @@ module TestBlockingConnection =
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
-    /// Whether a fresh socket, with `SO_REUSEADDR` if `reuse`, is refused
-    /// `EADDRINUSE` binding loopback at `port`; any other answer fails.
-    let private bindRefused (reuse : bool) (port : uint16) (system : UnixSystem<int, string>) : bool =
-        let fresh, system = KeventWorld.stream false system
+    /// Whether a fresh socket, made by `caller` with `SO_REUSEADDR` if `reuse`,
+    /// is refused `EADDRINUSE` binding loopback at `port`; any other answer
+    /// fails.
+    let private bindRefused
+        (caller : Caller<int>)
+        (reuse : bool)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : bool
+        =
+        let fresh, system = KeventWorld.streamAs caller false system
         let system = if reuse then ReuseAddress.set true fresh system else system
         let address = CopyIn.inet system.Machine.UnixPlatform (KeventWorld.loopback port)
 
-        match CopyIn.bind fresh UserBuffer.Mapped 16u address system with
+        match CopyIn.bindAs caller fresh UserBuffer.Mapped 16u address system with
         | Ok (BindAnswer.Bound _, _) -> false
         | Ok (BindAnswer.Failed UnixError.EADDRINUSE, _) -> true
         | other -> failwith $"a bind of port %d{port}: %A{other}"
@@ -1096,6 +1108,7 @@ module TestBlockingConnection =
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
             let flavourName = if linux then "Linux" else "Darwin"
             let client, server, start = pair (systemOn platform restart)
+            let start = Threads.ensure prober start
             let connection = connectionOf client start
 
             let clientPort =
@@ -1167,9 +1180,9 @@ module TestBlockingConnection =
                 let woken (thread : int) =
                     Map.tryFind thread reference.Parks |> Option.exists (fun park -> park.Woken)
 
-                // A call of the descriptor family names no thread of its own, and
-                // is made by the first thread in no call, and by none while every
-                // thread is in one.
+                // A call of the descriptor family, or a shutdown, names no thread
+                // of its own, and is made by the first thread in no call, and by
+                // none while every thread is in one.
                 let idleCaller = List.tryFind idle threads
 
                 let caller (system : UnixSystem<int, string>) : Caller<int> =
@@ -1200,7 +1213,7 @@ module TestBlockingConnection =
                     | BlockingConnectionOp.Linger (fd, on, seconds) ->
                         fdAt fd |> Option.map (fun fd -> BlockingConnectionOp.Linger (fd, on, seconds))
                     | BlockingConnectionOp.Shutdown (fd, how) ->
-                        fdAt fd |> Option.map (fun fd -> BlockingConnectionOp.Shutdown (fd, how))
+                        Option.map2 (fun _ fd -> BlockingConnectionOp.Shutdown (fd, how)) idleCaller (fdAt fd)
                     | BlockingConnectionOp.Signal index -> pick inCall index |> Option.map BlockingConnectionOp.Signal
                     | BlockingConnectionOp.Finish index -> pick woken index |> Option.map BlockingConnectionOp.Finish
                     | BlockingConnectionOp.Wake -> Some op
@@ -1568,7 +1581,7 @@ module TestBlockingConnection =
                         | Some (TcpShutdownAnswer.NotConnected, _, model) -> Seen.Failed UnixError.ENOTCONN, model
 
                     let seen, actual =
-                        match UnixConnection.tryShutdown fd how system with
+                        match UnixConnection.tryShutdown (caller system) fd how system with
                         | Ok (ShutdownAnswer.Shut, after) -> Seen.Shut, Some after
                         | Ok (ShutdownAnswer.Failed error, after) -> Seen.Failed error, Some after
                         | Error (ShutdownRefusal.ReceiveShutBeforeUnsentBytes _) -> Seen.RefusedShutdown, None
@@ -1818,7 +1831,7 @@ module TestBlockingConnection =
                                     own.FinArrived && not own.FinPassive && ends.[connectionEnd].FinArrived)
 
                         for reuse in [ false ; true ] do
-                            let refused = bindRefused reuse endPort system
+                            let refused = bindRefused (Callers.thread prober system) reuse endPort system
 
                             if refused <> (held && (linux || not reuse)) then
                                 failwith
@@ -2493,7 +2506,7 @@ module TestBlockingConnection =
 
     /// `shutdown(fd, how)`, which must answer 0.
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 
@@ -3091,7 +3104,9 @@ module TestBlockingConnection =
         for platform in Machines.platforms do
             let pids, machine = Machines.withThreadsOn small platform 2 5
             let a, b = pids.[0], pids.[1]
-            let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
+
+            let listener, machine =
+                Machines.inProcess b (KeventWorld.listenerAtIn b port) machine
 
             let client, machine =
                 Machines.inProcess
@@ -3106,7 +3121,7 @@ module TestBlockingConnection =
                     machine
 
             let accepted, machine =
-                Machines.inProcess b (fun view -> KeventWorld.accept listener view) machine
+                Machines.inProcess b (fun view -> KeventWorld.acceptIn b listener view) machine
 
             let machine = Machines.doIn a (asleepReading 1 client 4096) machine
             let asleep = Map.ofList [ a, Set.singleton 1 ]

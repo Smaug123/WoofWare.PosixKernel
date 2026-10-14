@@ -1007,7 +1007,8 @@ module TestMultiProcessFuzz =
                 let port = ports.[port % ports.Length]
 
                 match
-                    CopyIn.bind
+                    CopyIn.bindAs
+                        (Caller.make pid thread)
                         fd
                         UserBuffer.Mapped
                         16u
@@ -1024,7 +1025,7 @@ module TestMultiProcessFuzz =
         | Op.Listen fd ->
             match pick fd (socketsWhere pid boundIdle view) with
             | None -> Made.Answered view
-            | Some fd -> UnixSocket.tryListen fd 8 view |> answered
+            | Some fd -> UnixSocket.tryListen (Caller.make pid thread) fd 8 view |> answered
         | Op.Connect (fd, port) ->
             match pick fd (socketsWhere pid idle view) with
             | None -> Made.Answered view
@@ -1036,7 +1037,7 @@ module TestMultiProcessFuzz =
                 // sleeps: no connect sleeps yet.
                 match
                     CopyIn.connectAs
-                        thread
+                        (Caller.make pid thread)
                         fd
                         UserBuffer.Mapped
                         16u
@@ -1056,7 +1057,7 @@ module TestMultiProcessFuzz =
             match pick fd (socketsWhere pid listening view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.Accepted _, after) ->
                     cover FuzzLabel.Accept
                     Made.Answered after
@@ -1390,7 +1391,7 @@ module TestMultiProcessFuzz =
         =
         match UnixThreadTable.parkedFor thread (Proc.threads pid view) with
         | Some (ParkedSyscall.Accept _) ->
-            match UnixConnection.tryFinishAccept thread view with
+            match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1773,7 +1774,7 @@ module TestMultiProcessFuzz =
     /// The process's listener at `port`, the flavour's event queue watching
     /// it, and `/f0` open.
     let private prepare (pid : ProcessId) (port : uint16) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let listener, view = KeventWorld.listenerAt port view
+        let listener, view = KeventWorld.listenerAtIn pid port view
 
         let view =
             match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
@@ -2000,7 +2001,7 @@ module TestMultiProcessFuzz =
                         pids.[next]
                         (fun view ->
                             let listener = socketsWhere pids.[next] listening view |> List.head
-                            let accepted, view = KeventWorld.accept listener view
+                            let accepted, view = KeventWorld.acceptIn pids.[next] listener view
                             let server = pids.[next]
 
                             UnixDescriptor.setNonBlocking

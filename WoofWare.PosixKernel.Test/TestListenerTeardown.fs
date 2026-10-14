@@ -570,7 +570,7 @@ module TestListenerTeardown =
         let bound = bindFree clientPort system
 
         let accepted, system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"%s{row}: the accept answered %A{other}"
 
@@ -582,7 +582,7 @@ module TestListenerTeardown =
         let soerr, system = socketError accepted system
 
         let peer =
-            match UnixSocket.tryGetpeername accepted UserBuffer.Mapped 16u system with
+            match UnixSocket.tryGetpeername (Callers.leader system) accepted UserBuffer.Mapped 16u system with
             | Ok (GetSockNameAnswer.Reported _) -> "ok"
             | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
             | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"

@@ -463,7 +463,7 @@ module TestFcntlMeasured =
             let mutable refused : (string * string) list = []
 
             let socket (domain : int) (kind : int) (protocol : int) (system : UnixSystem<int, string>) =
-                match UnixSocket.trySocket domain kind protocol system with
+                match UnixSocket.trySocket (Callers.leader system) domain kind protocol system with
                 | Ok (Ok (fd, _)) -> Ok (SyscallAnswer.Completed (int64 fd))
                 | Ok (Error error) -> Ok (SyscallAnswer.Failed error)
                 | Error (SocketRefusal.DescriptorLimit refusal) -> Error refusal
@@ -484,7 +484,7 @@ module TestFcntlMeasured =
                 | Error refusal -> failwith $"pipe2: %s{Pipe2Refusal.describe refusal}"
 
             let acceptOf (fd : int) (system : UnixSystem<int, string>) =
-                match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
                 | Ok (AcceptOutcome.Accepted (accepted, _, _), _) -> Ok (SyscallAnswer.Completed (int64 accepted))
                 | Ok (AcceptOutcome.Failed error, _) -> Ok (SyscallAnswer.Failed error)
                 | Error (AcceptRefusal.DescriptorLimit refusal) -> Error refusal
@@ -1165,7 +1165,7 @@ module TestFcntlMeasured =
                         system
 
                 let system =
-                    match UnixConnection.tryAccept 1 listening UserBuffer.Mapped 16u system with
+                    match UnixConnection.tryAccept (Callers.thread 1 system) listening UserBuffer.Mapped 16u system with
                     | Ok (AcceptOutcome.WouldBlock _, system) -> system
                     | other -> failwith $"accept on an empty listener: %A{other}"
 
@@ -1179,7 +1179,7 @@ module TestFcntlMeasured =
                 match darwin, UnixWait.wakes (Set.singleton 1) system with
                 | false, [] -> ()
                 | true, [ 1, _ ] ->
-                    match UnixConnection.tryFinishAccept 1 system with
+                    match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
                     | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, _) -> ()
                     | other -> failwith $"the ended accept answered %A{other}"
                 | _, woken -> failwith $"%s{run.Name}, dup kept %b{keepDup}: the accept woke %A{woken}"

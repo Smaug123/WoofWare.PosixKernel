@@ -205,15 +205,15 @@ It gives back its answer with the system as the call left it, or the answer alon
 
 A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
 A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
-The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`) and the entropy calls (`UnixEntropy`) take the caller as their first argument.
-A function that finishes a call its caller has already begun, given what the call paused to copy in, takes none: `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination` and `UnixInotify.inotifyAddWatchWithPath` (see "Calls that copy in from the caller's memory").
+The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`), the entropy calls (`UnixEntropy`), and the socket calls (`UnixSocket` and `UnixConnection`) take the caller as their first argument.
+A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength` and `UnixConnection.connectWithAddress`.
 Nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing function `UnixDescriptor.flockAcquire` requires the thread to be parked instead, in the call it finishes (see "Sleeping and waking").
+The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire` and `UnixConnection.finishAccept` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
-The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixSocket`, `UnixConnection`, `UnixPoll`, `UnixKqueue`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
+The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixPoll`, `UnixKqueue`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
 One of them takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
 The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
@@ -260,9 +260,12 @@ let system : UnixSystem<int, unit> =
 
     UnixSystem.initial SimulatedUnixPlatform.linuxX64 |> UnixBootImage.boot launch
 
+// Thread 0 of the process, its leader, makes each call.
+let caller = Caller.make (UnixSystem.processId system) 0
+
 // socket(AF_INET, SOCK_STREAM, 0), in Linux's numbering.
 let fd, socketSystem =
-    match UnixSocket.socket 2 1 0 system with
+    match UnixSocket.socket caller 2 1 0 system with
     | Ok (fd, system) -> fd, system
     | Error error -> failwith $"socket failed with %O{error}"
 
@@ -273,7 +276,7 @@ let sockaddr (address : byte[]) : byte[] =
 // bind(fd, &sockaddr, 16): the call stops where the kernel copies the sockaddr in, and
 // bindWithAddress takes the bytes copyRange names.
 let bind (address : byte[]) (system : UnixSystem<int, unit>) : BindAnswer * UnixSystem<int, unit> =
-    match UnixSocket.bind fd UserBuffer.Mapped 16u system with
+    match UnixSocket.bind caller fd UserBuffer.Mapped 16u system with
     | CallProgress.Answered answered -> answered
     | CallProgress.NeedsCopyIn paused ->
         let range = PausedBind.copyRange paused
@@ -446,19 +449,19 @@ The cases exist so that a client's matches already handle them when pathname soc
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `socket(2)` | `UnixSocket.socket (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
-| `bind(2)` | `UnixSocket.bind (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
+| `socket(2)` | `UnixSocket.socket (caller : Caller) (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
+| `bind(2)` | `UnixSocket.bind (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
 | `bind(2)`, given the bytes | `UnixSocket.bindWithAddress (copied : ImmutableArray<byte>) (paused : PausedBind)` | `BindAnswer * UnixSystem` |
-| `connect(2)` | `UnixConnection.connect (thread : 'Thread) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
+| `connect(2)` | `UnixConnection.connect (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
 | `connect(2)`, given the bytes | `UnixConnection.connectWithAddress (copied : ImmutableArray<byte>) (paused : PausedConnect)` | `SyscallOutcome * UnixSystem` |
-| `listen(2)` | `UnixSocket.listen (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
-| `accept(2)` | `UnixConnection.accept (thread : 'Thread) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
-| `shutdown(2)` | `UnixConnection.shutdown (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
-| `getsockname(2)` | `UnixSocket.getsockname (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
-| `getpeername(2)` | `UnixSocket.getpeername (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
-| `setsockopt(2)` | `UnixSocket.setsockopt (fd : int) (level : int) (optionName : int) (value : UserBuffer) (optionLength : uint32)` | `CallProgress<PausedSetSockOpt, SetSockOptAnswer * UnixSystem>` |
+| `listen(2)` | `UnixSocket.listen (caller : Caller) (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
+| `accept(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
+| `shutdown(2)` | `UnixConnection.shutdown (caller : Caller) (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
+| `getsockname(2)` | `UnixSocket.getsockname (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
+| `getpeername(2)` | `UnixSocket.getpeername (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
+| `setsockopt(2)` | `UnixSocket.setsockopt (caller : Caller) (fd : int) (level : int) (optionName : int) (value : UserBuffer) (optionLength : uint32)` | `CallProgress<PausedSetSockOpt, SetSockOptAnswer * UnixSystem>` |
 | `setsockopt(2)`, given the bytes | `UnixSocket.setsockoptWithValue (copied : ImmutableArray<byte>) (paused : PausedSetSockOpt)` | `SetSockOptAnswer * UnixSystem` |
-| `getsockopt(2)` | `UnixSocket.getsockopt (fd : int) (level : int) (optionName : int) (value : UserBuffer) (length : UserBuffer)` | `CallProgress<PausedGetSockOpt, GetSockOptAnswer * UnixSystem>` |
+| `getsockopt(2)` | `UnixSocket.getsockopt (caller : Caller) (fd : int) (level : int) (optionName : int) (value : UserBuffer) (length : UserBuffer)` | `CallProgress<PausedGetSockOpt, GetSockOptAnswer * UnixSystem>` |
 | `getsockopt(2)`, given the length | `UnixSocket.getsockoptWithLength (declaredLength : uint32) (paused : PausedGetSockOpt)` | `GetSockOptAnswer * UnixSystem` |
 
 An address crosses the syscall boundary as bytes, laid out as the platform's `struct sockaddr`: `bind` and `connect` take them, and `getsockname`, `getpeername` and `accept` answer them.
@@ -466,7 +469,7 @@ Where the kernel hands out an address already decoded, in an answer or a socket'
 `BindAnswer.Bound` and `ListenAnswer.Listening` carry the address as `getsockname` would report it at once, and so in the socket's own family: a dual-mode IPv6 socket (`IPV6_V6ONLY` off) bound to an IPv4 address answers it v4-mapped, `::ffff:a.b.c.d`.
 This kernel's IPv6 sockets reach only IPv4 peers, through v4-mapped addresses, so a refused `connect` names the IPv4 endpoint it resolved, even from an IPv6 socket.
 A refused TCP `connect` gives the socket's port back (`PortHold.GivenBack`), which `getsockname` goes on reporting: on Linux unless `bind` chose the port, and on Darwin whatever chose it. Another socket may then bind that port. A Linux socket that has given its port back binds, listens and connects as one with no port would, at the address it reports; a refused Darwin socket answers `EINVAL` to `bind` and `listen` and `EISCONN` to `connect`, as any refused Darwin socket does.
-`UnixConnection.connect` takes the thread because a connect can sleep: under Linux, a blocking connect to a listener whose accept queue is full waits for room. The paused call holds the thread, so the connect `UnixConnection.connectWithAddress` finishes is the one that would park it. No connect sleeps in this version (that one is refused), so both always answer `SyscallOutcome.Answered`, with 0 or the errno the call leaves; `EINPROGRESS` is such an errno, and the connection it defers is already settled on the socket.
+A connect can sleep: under Linux, a blocking connect to a listener whose accept queue is full waits for room. The paused call holds the caller's thread, so the connect `UnixConnection.connectWithAddress` finishes is the one that would park it. No connect sleeps in this version (that one is refused), so both always answer `SyscallOutcome.Answered`, with 0 or the errno the call leaves; `EINPROGRESS` is such an errno, and the connection it defers is already settled on the socket.
 A Linux TCP connect left in flight against a full listener, non-blocking or interrupted by a signal without `SA_RESTART`, will put its socket in `SocketPhase.Connecting`, whose `ConnectAttempt` has an internal representation. The phase is reserved: nothing puts a socket in it yet, and `UnixSystem.checkInvariants` reports a socket in it as a defect.
 It binds no Unix-domain socket yet, so nothing it hands out holds a `UnixSocketName`.
 A socket's own state, which `UnixSystem.socket` reads, keeps its local address in its domain's own types: `SocketAddressing.Inet` holds an IPv4 binding, `SocketAddressing.Inet6DualMode` a `DualModeBinding`, `SocketAddressing.Inet6V6Only` an IPv6 binding, and `SocketAddressing.Unix` a `UnixSocketName`, each as an option that is `None` while the socket is unbound. An IP binding is an `InetBinding` over the family's endpoint and address types, so an IPv4 socket cannot hold an IPv6 address.
@@ -654,7 +657,7 @@ A woken thread finishes its call through its family's finishing function, which 
 | `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (thread : 'Thread)` |
 | `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (thread : 'Thread)` |
 | `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (thread : 'Thread)` |
-| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (thread : 'Thread)` |
+| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (caller : Caller)` |
 | `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (thread : 'Thread)` |
 | `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (thread : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
 | `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (thread : 'Thread)` |

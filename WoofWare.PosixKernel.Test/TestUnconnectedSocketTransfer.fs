@@ -399,7 +399,7 @@ module TestUnconnectedSocketTransfer =
                 | other -> failwith $"the kernel would not bind %A{row}: %A{other}"
 
         let listening (system : UnixSystem<int, string>) =
-            match UnixSocket.tryListen fd 4 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 4 system with
             | Ok (ListenAnswer.Listening _, system) -> Some system
             | Ok (ListenAnswer.Failed _, _)
             | Error _ -> None

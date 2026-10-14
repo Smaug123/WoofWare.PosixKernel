@@ -14,20 +14,33 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestCallerChecks =
 
+    /// Which callers a public function admits.
+    [<RequireQualifiedAccess>]
+    type private Admits =
+        /// A call: a thread parked in no syscall.
+        | Running
+        /// A finishing function: a thread parked in the call it finishes, which
+        /// `world` parks `thread` in.
+        | Finishing of thread : int
+
     /// A public function, made by a caller in a system: what it answers is
     /// thrown away, since only whether it throws matters here.
     type private Call =
         {
             /// The name the function's refusals give it.
             Name : string
-            Requirement : CallerRequirement
+            Admits : Admits
             Make : Caller<int> -> UnixSystem<int, string> -> unit
         }
 
+    /// The descriptor `world` gives a listener that thread 3 is parked in an
+    /// `accept` of.
+    let private listenerFd : int = 20
+
     /// One call of each public function of the families that take a caller:
-    /// the descriptor, pipe and inotify calls on the standard streams, which
-    /// every flavour gives as pipes, and the path and namespace calls on the
-    /// root directory, so that a call's `dirfd` is never looked up.
+    /// the descriptor, pipe, socket and inotify calls on the standard streams,
+    /// which every flavour gives as pipes, and the path and namespace calls on
+    /// the root directory, so that a call's `dirfd` is never looked up.
     let private calls : Call list =
         let root = PathArg.ofText "/"
         let file = PathArg.ofText "/f"
@@ -35,9 +48,13 @@ module TestCallerChecks =
         let running (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
             {
                 Name = name
-                Requirement = CallerRequirement.Running
+                Admits = Admits.Running
                 Make = make
             }
+
+        let socketOption (system : UnixSystem<int, string>) : int * int =
+            let platform = system.Machine.UnixPlatform
+            SimulatedUnixPlatform.socketOptionLevel platform, SimulatedUnixPlatform.reuseAddressOption platform
 
         [
             running
@@ -90,6 +107,57 @@ module TestCallerChecks =
                     |> ignore<TerminalAttributesAnswer>
                 )
             running "UnixPipe.pipe2" (fun caller system -> UnixPipe.pipe2 caller 0 UserBuffer.Mapped system |> ignore)
+            {
+                Name = "UnixDescriptor.flockAcquire"
+                Admits = Admits.Finishing 2
+                Make = fun caller system -> UnixDescriptor.flockAcquire caller system |> ignore
+            }
+            // AF_INET and SOCK_STREAM are 2 and 1 under both flavours.
+            running "UnixSocket.socket" (fun caller system -> UnixSocket.socket caller 2 1 0 system |> ignore)
+            running
+                "UnixSocket.bind"
+                (fun caller system -> UnixSocket.bind caller 0 UserBuffer.Mapped 16u system |> ignore)
+            running "UnixSocket.listen" (fun caller system -> UnixSocket.listen caller 0 8 system |> ignore)
+            running
+                "UnixSocket.getsockname"
+                (fun caller system ->
+                    UnixSocket.getsockname caller 0 UserBuffer.Mapped 16u system
+                    |> ignore<GetSockNameAnswer>
+                )
+            running
+                "UnixSocket.getpeername"
+                (fun caller system ->
+                    UnixSocket.getpeername caller 0 UserBuffer.Mapped 16u system
+                    |> ignore<GetSockNameAnswer>
+                )
+            running
+                "UnixSocket.setsockopt"
+                (fun caller system ->
+                    let level, option = socketOption system
+
+                    UnixSocket.setsockopt caller 0 level option UserBuffer.Mapped 4u system
+                    |> ignore
+                )
+            running
+                "UnixSocket.getsockopt"
+                (fun caller system ->
+                    let level, option = socketOption system
+
+                    UnixSocket.getsockopt caller 0 level option UserBuffer.Mapped UserBuffer.Mapped system
+                    |> ignore
+                )
+            running
+                "UnixConnection.connect"
+                (fun caller system -> UnixConnection.connect caller 0 UserBuffer.Mapped 16u system |> ignore)
+            running
+                "UnixConnection.accept"
+                (fun caller system -> UnixConnection.accept caller 0 UserBuffer.Mapped 16u system |> ignore)
+            running "UnixConnection.shutdown" (fun caller system -> UnixConnection.shutdown caller 0 2 system |> ignore)
+            {
+                Name = "UnixConnection.finishAccept"
+                Admits = Admits.Finishing 3
+                Make = fun caller system -> UnixConnection.finishAccept caller system |> ignore
+            }
             running
                 "UnixPathResolution.stat"
                 (fun caller system ->
@@ -281,11 +349,6 @@ module TestCallerChecks =
             running
                 "UnixInotify.inotifyRmWatch"
                 (fun caller system -> UnixInotify.inotifyRmWatch caller 0 1 system |> ignore)
-            {
-                Name = "UnixDescriptor.flockAcquire"
-                Requirement = CallerRequirement.Woken
-                Make = fun caller system -> UnixDescriptor.flockAcquire caller system |> ignore
-            }
         ]
 
     /// What each requirement refuses, by the thread the caller names: what the
@@ -306,8 +369,9 @@ module TestCallerChecks =
 
     /// A machine of `platform` holding two processes, each with threads 0 to 4,
     /// and the view of the first, in which thread 2 is parked in an `flock` of
-    /// a pipe it made (so that `flockAcquire` admits it) and thread 1 in a
-    /// `sigsuspend`; and the IDs of the two processes.
+    /// a pipe it made (so that `flockAcquire` admits it), thread 3 in an
+    /// `accept` of a listener at `listenerFd` (so that `finishAccept` admits
+    /// it), and thread 1 in a `sigsuspend`; and the IDs of the two processes.
     let private world (platform : SimulatedUnixPlatform) : ProcessId * ProcessId * UnixSystem<int, string> =
         let pids, machine = Machines.ofCount platform 2
         let own, other = pids.[0], pids.[1]
@@ -344,6 +408,35 @@ module TestCallerChecks =
                     | other -> failwith $"the second flock: expected it to sleep, got %A{other}"
                 | other -> failwith $"the first flock: %A{other}"
 
+        let view =
+            let leader = Caller.make own 0
+
+            let listener, view =
+                NewSocket.createAs leader SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp view
+
+            let address =
+                CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 8080us)
+
+            let view =
+                match CopyIn.bindAs leader listener UserBuffer.Mapped 16u address view with
+                | Ok (BindAnswer.Bound _, view) -> view
+                | other -> failwith $"bind of the listener: %A{other}"
+
+            let view =
+                match UnixSocket.listen leader listener 8 view with
+                | ListenAnswer.Listening _, view -> view
+                | other -> failwith $"listen: %A{other}"
+
+            // Out of the way of the descriptors the calls above name.
+            let view =
+                match UnixDescriptor.dup2 leader listener listenerFd view with
+                | SyscallAnswer.Completed _, view -> UnixDescriptor.close leader listener view |> snd
+                | other -> failwith $"dup2 of the listener: %A{other}"
+
+            match UnixConnection.accept (Caller.make own 3) listenerFd UserBuffer.Mapped 16u view with
+            | AcceptOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the accept: expected it to sleep, got %A{other}"
+
         own, other, UnixWait.park 1 ParkedSyscall.SigSuspend view
 
     /// Every public function of the families that take a caller refuses each
@@ -360,23 +453,21 @@ module TestCallerChecks =
 
                     for call in calls do
                         let cases : (Caller<int> * Refused option) list =
-                            match call.Requirement with
-                            | CallerRequirement.Running ->
+                            match call.Admits with
+                            | Admits.Running ->
                                 [
                                     Caller.make own 0, None
                                     Caller.make other 0, Some Refused.OtherProcess
                                     Caller.make own 7, Some Refused.Absent
                                     Caller.make own 1, Some Refused.Parked
                                 ]
-                            | CallerRequirement.Woken ->
+                            | Admits.Finishing sleeper ->
                                 [
-                                    Caller.make own 2, None
-                                    Caller.make other 2, Some Refused.OtherProcess
+                                    Caller.make own sleeper, None
+                                    Caller.make other sleeper, Some Refused.OtherProcess
                                     Caller.make own 7, Some Refused.Absent
                                     Caller.make own 0, Some Refused.Unparked
                                 ]
-                            | CallerRequirement.Returning
-                            | CallerRequirement.Exists -> failwith $"%s{call.Name}: no case for %A{call.Requirement}"
 
                         for caller, expected in cases do
                             let case = $"%O{platform}, %s{call.Name} by %O{caller}"

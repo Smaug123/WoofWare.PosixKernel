@@ -1261,7 +1261,7 @@ module TestPipe =
             answer 99 system |> shouldEqual UnixError.EBADF
 
             let socket domain kind system =
-                match UnixSocket.trySocket domain kind 0 system with
+                match UnixSocket.trySocket (Callers.leader system) domain kind 0 system with
                 | Ok (Ok (fd, system)) -> fd, system
                 | other -> failwith $"%A{other}"
 

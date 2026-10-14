@@ -72,7 +72,7 @@ module TestSocketSyscall =
                 disagreements.Add
                     $"socket(%d{domain}, 0x%x{socketType}, %d{protocol}): measured %A{answer}, %s{message}"
 
-            match UnixSocket.trySocket domain socketType protocol system, answer with
+            match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system, answer with
             | Ok (Error error), MeasuredSocketAnswer.Failed measured ->
                 if errno error <> measured then
                     describe $"library %O{error}"
@@ -280,7 +280,7 @@ module TestSocketSyscall =
             | Error _ -> failwith $"closing descriptor %d{first} was refused"
 
         let property (domain : int, socketType : int, protocol : int) : unit =
-            match UnixSocket.trySocket domain socketType protocol before with
+            match UnixSocket.trySocket (Callers.leader before) domain socketType protocol before with
             | Ok (Ok (fd, after)) ->
                 fd |> shouldEqual hole
 
@@ -310,7 +310,7 @@ module TestSocketSyscall =
             let baseType = baseType &&& 0xf
 
             let answer (socketType : int) =
-                match UnixSocket.trySocket domain socketType protocol system with
+                match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system with
                 | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
                 | Ok (Error error) -> Ok (Error error)
                 | Error refusal -> Error (refusalKind refusal)

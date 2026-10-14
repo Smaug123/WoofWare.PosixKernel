@@ -128,11 +128,12 @@ module internal CopyIn =
 
         prefix blob range.ByteCount
 
-    /// `bind(2)` as a client makes it, through the library's public protocol:
+    /// `bind(2)` as `caller` makes it, through the library's public protocol:
     /// `UnixSocket.bind`, and if it stops at the copy, `bindWithAddress` of the
     /// bytes of `blob` its `copyRange` names. Held to the internal steps it is
     /// made of: admitting the copy, then `tryBindBytes` of what it takes.
-    let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let bindAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
@@ -149,18 +150,29 @@ module internal CopyIn =
                 system
 
         let actual =
-            UnixSocket.tryBind fd destination declaredLength system
+            UnixSocket.tryBind caller fd destination declaredLength system
             |> CallProgress.resumeWith (fun paused ->
                 UnixSocket.tryBindWithAddress (copied "bind" (PausedBind.copyRange paused) blob) paused
             )
 
         agreeing "bind" expected actual
 
-    /// `connect(2)` as `thread` makes it, through the library's public
-    /// protocol, held to the internal steps it is made of, as `bind` is, and
+    /// `bind(2)` as the process's leader makes it: `bindAs`.
+    let bind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (blob : byte[])
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
+        =
+        bindAs (Callers.leader system) fd destination declaredLength blob system
+
+    /// `connect(2)` as `caller` makes it, through the library's public
+    /// protocol, held to the internal steps it is made of, as `bindAs` is, and
     /// failing the test if the call sleeps.
     let connectAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
@@ -177,7 +189,7 @@ module internal CopyIn =
                 system
 
         let actual =
-            UnixConnection.tryConnect thread fd destination declaredLength system
+            UnixConnection.tryConnect caller fd destination declaredLength system
             |> CallProgress.resumeWith (fun paused ->
                 UnixConnection.tryConnectWithAddress (copied "connect" (PausedConnect.copyRange paused) blob) paused
             )
@@ -194,7 +206,7 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
-        connectAs (Lone.leader system) fd destination declaredLength blob system
+        connectAs (Callers.leader system) fd destination declaredLength blob system
 
 /// What `getsockname(2)` and `accept(2)` copy out, read back and predicted
 /// without the library's own encoder.
