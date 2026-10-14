@@ -4831,7 +4831,8 @@ module TestMkDirRules =
 
     let private linuxPlatform : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
-    let private darwinPlatform : SimulatedUnixPlatform = SimulatedUnixPlatform.macOsArm64
+    let private darwinPlatform : SimulatedUnixPlatform =
+        SimulatedUnixPlatform.macOsArm64
 
     let private mode (raw : int) : PermissionBits = PermissionBits.parseOrFail "test" raw
 

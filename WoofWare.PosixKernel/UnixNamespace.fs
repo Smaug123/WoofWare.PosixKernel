@@ -2958,6 +2958,7 @@ module UnixNamespace =
         CallProgress.requirePaused "UnixNamespace.symlinkWithPath" "UnixNamespace.symlinkat or symlink" paused
 
         let system = paused.System
+
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
         | Ok path ->
