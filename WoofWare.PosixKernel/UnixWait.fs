@@ -124,6 +124,42 @@ module UnixWait =
         }
         |> UnixParkState.setPark thread threadPark
 
+    /// Park `thread` in `parked`, as `park` does, for a call that sleeps
+    /// because nothing its wake condition waits for, a signal aside, holds
+    /// yet. A Debug build fails loudly if something does.
+    let internal parkWaiting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (parked : ParkedSyscall)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let asleep = park thread parked system
+
+#if DEBUG
+        // A call whose own condition held as it parked would be woken at once,
+        // and its finishing call would find what it waited for, or, if the
+        // finisher and the condition disagreed, park it again for ever. A
+        // signal is the exception: a call parks whatever signal is pending,
+        // and its finishing call decides what one does to it.
+        match
+            WakeCondition.ofPark parked
+            |> WakeCondition.primitives
+            |> List.filter (fun primitive -> primitive <> WakePrimitive.SignalDeliverable)
+        with
+        | [] -> ()
+        | first :: rest ->
+            let unsignalled =
+                WakeCondition.AnyOf (WakeCondition.Primitive first, List.map WakeCondition.Primitive rest)
+
+            let held = WakeCondition.satisfied thread unsignalled asleep
+
+            if not (Set.isEmpty held) then
+                failwith
+                    $"UnixWait.parkWaiting: thread %O{thread} parks in %A{parked}, but %A{held} of its own wake condition already hold, so a client would wake it at once (this is a bug in this library)."
+#endif
+
+        asleep
+
     /// The primitives of the wake condition of the call `thread` is parked in
     /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `thread` is
     /// not parked in a call, including when the process has no thread by that

@@ -155,9 +155,12 @@ type WriteAnswer =
     /// `TransferCountLimit` and `PausedWrite.copyRange`), or the write was a
     /// non-blocking one into a pipe with room for only some of them, or a
     /// blocking one into a pipe that a signal or (on Linux) the reader leaving
-    /// ended after some of it had gone in. Nothing else makes a write short
-    /// here: this kernel's filesystem cannot run out of space, and a pipe the
-    /// client drains has room for the whole of a blocking write.
+    /// ended after some of it had gone in, or one to a connected socket that
+    /// took only some: a non-blocking one, or a blocking one that a signal or
+    /// (on Linux) a reset or the shutdown of its send side ended. Nothing else
+    /// makes a write short here: this kernel's filesystem cannot run out of
+    /// space, and a pipe the client drains has room for the whole of a
+    /// blocking write.
     | Completed of written : int64
     /// The entry point returns -1 and the caller stores `error` wherever its
     /// libc keeps errno.
@@ -501,7 +504,8 @@ type internal PausedWriteCall =
     /// A `write` through `fd`, which puts every byte in and returns.
     | Write of fd : int
     /// A blocking `write` of `total` bytes through `fd`, which puts these
-    /// bytes, the first of them, in and sleeps for the rest.
+    /// bytes, the first of them, in and sleeps for the rest, or returns their
+    /// count where they reset a Linux connection.
     | WriteThenSleep of fd : int * total : int
     /// A `write` or `send` that slept, woken with room, which puts these bytes
     /// in and returns, or sleeps again for the rest.
@@ -1441,7 +1445,10 @@ module UnixReadWrite =
                             Call = call
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked (committed ()))
+                Ok (
+                    ReadOutcome.WouldBlock (WakeCondition.ofPark parked),
+                    UnixWait.parkWaiting thread parked (committed ())
+                )
         | TcpReadAnswer.EndOfFile -> answered (ReadAnswer.Completed ImmutableArray.Empty)
         | TcpReadAnswer.Failed error -> answered (ReadAnswer.Failed (TcpError.toUnixError error))
         | TcpReadAnswer.Bytes bytes when bytes.IsEmpty -> answered (ReadAnswer.Completed bytes)
@@ -1980,7 +1987,7 @@ module UnixReadWrite =
                                 Count = count
                             }
 
-                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked asleep)
+                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked asleep)
             else
 
             match buffer with
@@ -2020,7 +2027,7 @@ module UnixReadWrite =
                             Count = count
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
         | ReadTarget.File (inode, offset) ->
 
         match readAnsweredByPosition (positionCheck platform offset count) with
@@ -2255,7 +2262,11 @@ module UnixReadWrite =
         | Ok None when nonBlockingNow reader system -> Error (ReadRefusal.ConnectionBecameNonBlocking socketId)
         | Ok None ->
             let parkedAgain = ParkedSyscall.ConnectionRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2325,7 +2336,11 @@ module UnixReadWrite =
             // Measured on both (pipe-blocking.c section A3): a reader that
             // finds the pipe empty again sleeps at the back of the queue.
             let parkedAgain = ParkedSyscall.PipeRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishInotifyRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2361,7 +2376,11 @@ module UnixReadWrite =
         | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
         | Ok None ->
             let parkedAgain = ParkedSyscall.InotifyRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishReadHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2903,11 +2922,23 @@ module UnixReadWrite =
                     ReadsSeen = reads
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.parkWaiting thread parked system)
 
-    /// `thread` asleep in `call`, writing `count` bytes to a connected socket
-    /// through `writer`, made through the descriptor `fd`, the first `written`
-    /// of them taken already.
+    /// Whether the bytes a write has just put into `connectionEnd` of
+    /// `connectionId` reset the connection: they reached a peer that had
+    /// closed, or one that answers an arrival with a reset. The end could
+    /// still send when the write took them, so the reset is theirs.
+    let private resetByOwnBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (connectionId : ConnectionId)
+        (connectionEnd : ConnectionEnd)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        TcpTransfer.hasBeenReset connectionEnd (UnixMachineState.connection connectionId system.Machine).Transfer
+
+    /// `thread` asleep in `call`, writing `count` bytes to `connectionEnd` of
+    /// `connectionId` through `writer`, made through the descriptor `fd`, the
+    /// first `written` of them taken already.
     let private parkConnectionWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (call : TcpSendCall)
@@ -2916,6 +2947,8 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : int)
         (written : int)
+        (connectionId : ConnectionId)
+        (connectionEnd : ConnectionEnd)
         (system : UnixSystem<'Thread, 'Handler>)
         : WriteStep<'Answer, 'Thread, 'Handler>
         =
@@ -2929,7 +2962,47 @@ module UnixReadWrite =
                     Call = call
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
+        let asleep =
+            if not (resetByOwnBytes connectionId connectionEnd system) then
+                UnixWait.parkWaiting thread parked system
+            else
+
+            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux ->
+                failwith
+                    $"UnixReadWrite: thread %O{thread}'s write to %A{connectionEnd} of connection %O{connectionId} parks, but its own bytes have reset the connection, and a Linux write answers that rather than sleeping (this is a bug in this library)."
+            // Measured on Darwin 27.0.0 (`connection-write-reset.c`, sections
+            // A and B): a write whose own bytes reset the connection sleeps
+            // until the reset arrives, on another thread, and then answers
+            // EPIPE; a signal before it ends the write with its count. This
+            // kernel delivers the reset with the bytes, so the call's wake
+            // condition already holds as it parks: the reset has arrived, and
+            // the client wakes it at once into the reset's answer.
+            | SimulatedUnixFlavour.Darwin -> UnixWait.park thread parked system
+
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, asleep)
+
+    /// Whether a blocking write that has just put bytes into `connectionEnd`
+    /// of `connectionId`, with more of its own still to take, returns the
+    /// count it has taken rather than sleeping for the rest: under Linux, when
+    /// those bytes reset the connection, the reset's error left pending and
+    /// no signal raised.
+    let private returnsOnOwnReset<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (connectionId : ConnectionId)
+        (connectionEnd : ConnectionEnd)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        // Measured on Linux 6.18.5 (`connection-write-reset.c`, sections A
+        // and C): such a write, made fresh or woken, never slept, and returned
+        // the count it took, with EPIPE in SO_ERROR. By its source,
+        // `tcp_sendmsg` takes the reset from the socket's backlog, which it
+        // flushes every sixteen segments it queues, before it would wait for
+        // room. How far it gets first (524288 bytes, measured) is not
+        // modelled: this kernel's write takes the room there is.
+        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux -> resetByOwnBytes connectionId connectionEnd system
+        | SimulatedUnixFlavour.Darwin -> false
 
     /// `bytes`, which `writer` writes to `connectionId`, taken by the
     /// connection, and the wakes they raise signalled.
@@ -2947,6 +3020,27 @@ module UnixReadWrite =
             Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
         }
         |> SocketWake.signalTransfer connectionId wakes
+
+    /// A blocking `call` by `thread`, of `count` bytes to `connectionEnd` of
+    /// `connectionId` through `writer` and `fd`, once it has put the first
+    /// `taken` of them, fewer than all, in: the count it has taken if
+    /// `returnsOnOwnReset`, and otherwise `thread` asleep for the rest.
+    let private tookPart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (call : TcpSendCall)
+        (writer : OpenFileDescriptionId)
+        (fd : int)
+        (count : int)
+        (taken : int)
+        (connectionId : ConnectionId)
+        (connectionEnd : ConnectionEnd)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
+        =
+        if returnsOnOwnReset connectionId connectionEnd system then
+            WriteStep.Returns (WriteAnswer.Completed (int64 taken), system)
+        else
+            parkConnectionWrite thread call writer fd UserBuffer.Mapped count taken connectionId connectionEnd system
 
     /// What `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `count` bytes (one call's worth) to `connectionEnd`
@@ -3003,7 +3097,7 @@ module UnixReadWrite =
         // looked at until there is room.
         | ConnectionWriteStep.Sleeps transfer ->
             withTransfer transfer
-            |> parkConnectionWrite thread call descriptionId fd buffer count 0
+            |> parkConnectionWrite thread call descriptionId fd buffer count 0 connectionId connectionEnd
             |> Ok
 
     /// `call` by `thread`, through the descriptor `fd` and the description
@@ -3058,11 +3152,20 @@ module UnixReadWrite =
         | ConnectionWriteStep.TakesThenSleeps (taken, transfer) ->
             system
             |> intoConnection connectionId connectionEnd (prefix taken) transfer
-            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped bytes.Length taken
+            |> tookPart thread call descriptionId fd bytes.Length taken connectionId connectionEnd
             |> Ok
         | ConnectionWriteStep.Sleeps transfer ->
             withTransfer transfer
-            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped bytes.Length 0
+            |> parkConnectionWrite
+                thread
+                call
+                descriptionId
+                fd
+                UserBuffer.Mapped
+                bytes.Length
+                0
+                connectionId
+                connectionEnd
             |> Ok
 
     /// `call` by `thread`, a blocking write of `total` bytes to `connectionEnd`
@@ -3090,7 +3193,7 @@ module UnixReadWrite =
         | ConnectionWriteStep.TakesThenSleeps (taken, transfer) when taken = bytes.Length ->
             system
             |> intoConnection connectionId connectionEnd bytes transfer
-            |> parkConnectionWrite thread call descriptionId fd UserBuffer.Mapped total taken
+            |> tookPart thread call descriptionId fd total taken connectionId connectionEnd
         | step -> mismatch $"is not the blocking write that takes part of it and sleeps (%A{step})"
 
     /// Every answer `write(2)` by `thread` gives *without* reading the caller's
@@ -3705,6 +3808,8 @@ module UnixReadWrite =
                     parked.Buffer
                     parked.Count
                     parked.Written
+                    connectionId
+                    connectionEnd
                     (withTransfer after system)
             )
 
@@ -3739,15 +3844,30 @@ module UnixReadWrite =
         let system = intoConnection connectionId connectionEnd bytes transfer system
         let written = parked.Written + taking
 
-        // With more left, the room is gone, so the write sleeps again. No
-        // signal is pending to end it: `tryAdmitFinishWrite` answers one before
-        // it names any bytes.
+        // With more left, the room is gone, so the write sleeps again; or the
+        // bytes reset the connection, and it returns under Linux and sleeps
+        // until the reset under Darwin. No signal is pending to end it:
+        // `tryAdmitFinishWrite` answers one before it names any bytes.
         if written = parked.Count then
             Ok (WriteStep.Returns (WriteAnswer.Completed (int64 parked.Count), UnixParkState.unpark thread system))
+        elif returnsOnOwnReset connectionId connectionEnd system then
+            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 written), UnixParkState.unpark thread system))
         elif nonBlockingNow writer system then
             Error (WriteRefusal.ConnectionBecameNonBlocking socketId)
         else
-            Ok (parkConnectionWrite thread parked.Call writer fd parked.Buffer parked.Count written system)
+            Ok (
+                parkConnectionWrite
+                    thread
+                    parked.Call
+                    writer
+                    fd
+                    parked.Buffer
+                    parked.Count
+                    written
+                    connectionId
+                    connectionEnd
+                    system
+            )
 
     let private admitFinishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -3989,8 +4109,9 @@ module UnixReadWrite =
 
     /// A blocking `write` of `total` bytes by `thread`, given the first of them,
     /// which `WriteAdmission.TransferThenSleep` named: they go into the pipe or
-    /// the connection, and the call sleeps for the rest. `bytes` must be
-    /// exactly those, against the system the admission answered with.
+    /// the connection, and the call sleeps for the rest, or returns their
+    /// count where they reset a Linux connection. `bytes` must be exactly
+    /// those, against the system the admission answered with.
     let internal tryWriteBytesThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -4636,9 +4757,10 @@ module UnixReadWrite =
     /// answers from its connection: how many bytes it takes now, `EAGAIN`, or
     /// a reset's error, whose `EPIPE` raises `SIGPIPE`. A blocking write it has
     /// no room for the whole of takes what fits and sleeps for the rest, as
-    /// one into a pipe does. One that would copy from an unmapped buffer is
-    /// refused. A socket with a datagram peer, or with a refused connection's
-    /// error, is refused.
+    /// one into a pipe does; under Linux, if what it takes resets the
+    /// connection, it returns their count instead. One that would copy from
+    /// an unmapped buffer is refused. A socket with a datagram peer, or with a
+    /// refused connection's error, is refused.
     ///
     /// Fails loudly if `thread` is not one of the process's threads, or is already
     /// asleep in a syscall.
@@ -4778,7 +4900,9 @@ module UnixReadWrite =
     /// A write `write` stopped returns the count it put in, as `write`
     /// describes, unless it was a blocking one with room for only part of it,
     /// which puts that part in and sleeps for the rest
-    /// (`WriteOutcome.WouldBlock`).
+    /// (`WriteOutcome.WouldBlock`). Under Linux, one to a connected socket
+    /// whose part resets the connection, because the peer has closed or
+    /// resets what reaches it, returns the part's count instead.
     ///
     /// A woken write or `send` (`finishWrite`) returns its whole count if
     /// that was the last of it. Otherwise a signal with a handler pending for
@@ -4786,8 +4910,9 @@ module UnixReadWrite =
     /// ends it with the count it has put in by now, and with neither, it
     /// sleeps again for the rest. A write to a connected socket sleeps again
     /// for the rest, or is refused if its description has become
-    /// non-blocking; a signal never reaches it here, `finishWrite` having
-    /// answered one first.
+    /// non-blocking, unless, under Linux, the bytes it put in reset the
+    /// connection, when it returns the count it has put in by now. A signal
+    /// never reaches it here, `finishWrite` having answered one first.
     ///
     /// Resuming the same paused call twice resumes it twice from the same
     /// system, which is what a value is.
@@ -4906,7 +5031,9 @@ module UnixReadWrite =
     /// The call returns the count the connection took, unless it was a
     /// blocking one with room for only part of it, which puts that part in and
     /// sleeps for the rest (`WriteOutcome.WouldBlock`), to be woken by
-    /// `finishWrite`.
+    /// `finishWrite`. Under Linux, one whose part resets the connection,
+    /// because the peer has closed or resets what reaches it, returns the
+    /// part's count instead.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`bytes` is not exactly `PausedSend.copyRange`'s count long.</exception>
     let sendWithBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

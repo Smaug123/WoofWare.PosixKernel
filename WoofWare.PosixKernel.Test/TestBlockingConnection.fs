@@ -324,6 +324,14 @@ module TestBlockingConnection =
         | TcpSendCall.Write
         | TcpSendCall.Send _ -> r
 
+    /// Whether a blocking write at `connectionEnd` that has just taken part of
+    /// its bytes returns the count it has taken rather than sleeping for the
+    /// rest: on Linux, when those bytes reset the connection
+    /// (`connection-write-reset.c`, sections A and C). Darwin's sleeps until
+    /// the reset wakes it.
+    let private returnsOnOwnReset (connectionEnd : ConnectionEnd) (r : Reference) : bool =
+        r.Linux && r.Model.Ends.[connectionEnd].GotReset
+
     /// A write by `call` of `count` bytes; `dontWait` makes a Linux `send`
     /// non-blocking whatever the description says.
     let private referenceWrite
@@ -362,7 +370,7 @@ module TestBlockingConnection =
                     Model = model
                 }
 
-            if n < count && blocking then
+            if n < count && blocking && not (returnsOnOwnReset connectionEnd r) then
                 Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, n, call)) r
             else
                 Seen.Wrote (int64 n), marking connectionEnd call (n > 0) r
@@ -504,6 +512,8 @@ module TestBlockingConnection =
 
                     if written = count then
                         Seen.Wrote (int64 count), answered thread r |> marking connectionEnd call true
+                    elif returnsOnOwnReset connectionEnd r then
+                        Seen.Wrote (int64 written), answered thread r |> marking connectionEnd call true
                     elif r.NonBlocking.[connectionEnd] then
                         Seen.RefusedNonBlocking, r
                     else
