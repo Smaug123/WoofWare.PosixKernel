@@ -408,11 +408,11 @@ type UnixSystemDefect<'Thread> =
     /// process's `RLIMIT_NOFILE` reaches (`SimulatedUnixPlatform.descriptorBound`),
     /// which no call hands out.
     | DescriptorAtOrAboveBound of fd : int * bound : int
-    /// A descriptor's flags are another flavour's than the machine's
-    /// `flavour` (`DescriptorFlags.flavour`).
+    /// A descriptor's flags are the other flavour's, not those of the
+    /// machine's `flavour` (`DescriptorFlags.flavour`).
     | DescriptorFlagsNotOfFlavour of fd : int * flags : DescriptorFlags * flavour : SimulatedUnixFlavour
-    /// A description's status is another flavour's than the machine's
-    /// `flavour` (`OpenFileStatus.flavour`).
+    /// A description's status is the other flavour's, not that of the
+    /// machine's `flavour` (`OpenFileStatus.flavour`).
     | StatusNotOfFlavour of
         description : OpenFileDescriptionId *
         status : OpenFileStatus *
