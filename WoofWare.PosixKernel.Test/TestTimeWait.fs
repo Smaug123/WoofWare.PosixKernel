@@ -102,9 +102,7 @@ module TestTimeWait =
         let firstServer, system = accept system
 
         let system =
-            match
-                UnixReadWrite.tryWriteBytes 0 first (System.Collections.Immutable.ImmutableArray.Create 1uy) system
-            with
+            match WriteOutcomes.writeBytes 0 first (System.Collections.Immutable.ImmutableArray.Create 1uy) system with
             | Ok (WriteStep.Returns (_, system)) -> system
             | other -> failwith $"write: %A{other}"
 

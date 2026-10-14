@@ -753,7 +753,7 @@ module TestTimeWaitMeasured =
             Collections.Immutable.ImmutableArray.CreateRange (Array.create 4096 'x'B)
 
         let rec go (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixReadWrite.tryWriteBytes 0 fd chunk system with
+            match WriteOutcomes.writeBytes 0 fd chunk system with
             | Ok (WriteStep.Returns (WriteAnswer.Completed _, system)) -> go system
             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> system
             | other -> failwith $"write on fd %d{fd}: %A{other}"
