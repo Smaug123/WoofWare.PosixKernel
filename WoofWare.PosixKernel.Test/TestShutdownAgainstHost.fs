@@ -26,7 +26,11 @@ open WoofWare.PosixKernel
 /// connection once neither socket refers to it, so the `TIME_WAIT` an end
 /// whose FIN was made first leaves once both sockets have closed is
 /// unmodelled, and F's lines that bind after both have closed are the
-/// host's alone.
+/// host's alone. The probe's fill and settles do not always bring a Darwin
+/// pair to the state its rows were measured in (`fill-settling.c` beside
+/// it), so a host pair waits for every byte to be acknowledged before it
+/// closes an end, and a scenario whose pair still left that state is run
+/// again on fresh pairs.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestShutdownAgainstHost =
@@ -67,6 +71,9 @@ module TestShutdownAgainstHost =
 
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
+
+    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
+    extern int private hostGetSockOptBytes(int fd, int level, int optionName, byte[] value, uint32& length)
 
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
@@ -132,6 +139,67 @@ module TestShutdownAgainstHost =
     /// How long a host drain waits, past the probe's three dry reads, for
     /// more to read before it takes EAGAIN as its answer.
     let private drainPatienceMs : int = 5000
+
+    /// How long a Darwin host pair waits, before an end closes, for every
+    /// byte an open end has sent to be acknowledged.
+    let private acknowledgementPatienceMs : int = 2000
+
+    /// Darwin's `SO_RCVBUF`, which reads back the receive buffer's size as
+    /// the kernel has grown it.
+    let private darwinReceiveBufferOption : int = 0x1002
+
+    /// What Darwin's `TCP_CONNECTION_INFO` (`struct tcp_connection_info` of
+    /// `<netinet/tcp.h>`) says of what an end has sent.
+    type private DarwinSending =
+        {
+            /// `tcpi_state`, a `TCPS_*` of `<netinet/tcp_fsm.h>`.
+            State : int
+            /// `tcpi_snd_sbbytes`: the bytes in the send buffer, sent or not,
+            /// that the peer has not acknowledged.
+            Buffered : int64
+            /// `tcpi_txbytes` less `tcpi_txretransmitbytes`: each byte sent
+            /// counted once.
+            Sent : int64
+        }
+
+    let private darwinSendingOf (fd : int) : DarwinSending =
+        // sizeof (struct tcp_connection_info) on Darwin 27.0 arm64, whose
+        // tcpi_snd_sbbytes is at 32, tcpi_txbytes at 64 and
+        // tcpi_txretransmitbytes at 72.
+        let info = Array.zeroCreate<byte> 112
+        let mutable length = uint32 info.Length
+
+        // IPPROTO_TCP, TCP_CONNECTION_INFO
+        if hostGetSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
+            failwith $"getsockopt(TCP_CONNECTION_INFO) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+        if length <> uint32 info.Length then
+            failwith $"getsockopt(TCP_CONNECTION_INFO) gave %d{length} bytes, not %d{info.Length}"
+
+        {
+            State = int info.[0]
+            Buffered = int64 (BitConverter.ToUInt32 (info, 32))
+            Sent = int64 (BitConverter.ToUInt64 (info, 64) - BitConverter.ToUInt64 (info, 72))
+        }
+
+    /// The bytes a Darwin end has sent that its peer has not acknowledged,
+    /// `written` being all that its writes took; `None` once its connection
+    /// has been reset (`TCPS_CLOSED`) or is in `TIME_WAIT`, whose counters
+    /// Darwin zeroes.
+    let private darwinUnacknowledged (fd : int) (written : int64) : int64 option =
+        let sending = darwinSendingOf fd
+
+        // TCPS_ESTABLISHED (4) through TCPS_FIN_WAIT_2 (9)
+        if sending.State < 4 || sending.State > 9 then
+            None
+        else
+            let unacknowledged = sending.Sent - (written - sending.Buffered)
+
+            if unacknowledged < 0L then
+                failwith
+                    $"fd %d{fd} has sent %d{sending.Sent} bytes, fewer than the %d{written - sending.Buffered} its peer has acknowledged"
+
+            Some unacknowledged
 
     let private hostBuffer : byte[] = Array.zeroCreate (1 <<< 20)
 
@@ -318,6 +386,94 @@ module TestShutdownAgainstHost =
         // c's port and p's, read once the pair has connected.
         let mutable connection : int * int = 0, 0
         let mutable foreignHolders : string list = []
+        // What each end's writes have taken.
+        let mutable written : Map<ConnectionEnd, int64> = Map.empty
+        let mutable unsettled : string list = []
+        // On Darwin, the end that the last fill left unable to take more,
+        // and the size of its receive buffer when the fill ended.
+        let mutable filled : (ConnectionEnd * int) option = None
+
+        let noteWritten (e : ConnectionEnd) (count : int64) : unit =
+            written <- Map.add e ((Map.tryFind e written |> Option.defaultValue 0L) + count) written
+
+        let receiveBuffer (fd : int) : int =
+            let mutable value = 0
+            let mutable length = 4u
+
+            check
+                "getsockopt(SO_RCVBUF)"
+                (hostGetSockOpt (
+                    fd,
+                    SimulatedUnixPlatform.socketOptionLevel platform,
+                    darwinReceiveBufferOption,
+                    &value,
+                    &length
+                ))
+
+            value
+
+        // The probe's fill stops once three writes 30 ms apart take nothing,
+        // and its rows were measured where that left bytes the reader could
+        // not take. Darwin sometimes grows the reader's receive buffer after
+        // the fill has ended, and the reader then takes them all, and the
+        // FIN queued behind them: in fill-settling.c's section G, the buffer
+        // grew in exactly the runs where the FIN got through. Stops watching
+        // the end.
+        let checkFilled () : unit =
+            match filled with
+            | None -> ()
+            | Some (e, size) ->
+                filled <- None
+
+                match Map.tryFind e fds with
+                | None -> ()
+                | Some fd ->
+                    let grown = receiveBuffer fd
+
+                    if grown > size then
+                        unsettled <-
+                            unsettled
+                            @ [
+                                $"the %A{e} end's receive buffer grew from %d{size} to %d{grown} bytes after a fill had left it unable to take more"
+                            ]
+
+        // A Darwin close that resets while the peer has yet to acknowledge
+        // bytes the closer sent usually never reaches the peer: in
+        // fill-settling.c's section A, every reset sent with everything
+        // acknowledged arrived, and nearly every other did not. The probe's
+        // rows were measured where its settles had let the acknowledgements
+        // out first. That probe never found a Linux end with bytes
+        // unacknowledged at a close.
+        let awaitAcknowledged () : unit =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> ()
+            | SimulatedUnixFlavour.Darwin ->
+                let deadline = Environment.TickCount64 + int64 acknowledgementPatienceMs
+
+                let outstanding () : (ConnectionEnd * int64) list =
+                    [
+                        for KeyValue (e, fd) in fds do
+                            match darwinUnacknowledged fd (Map.tryFind e written |> Option.defaultValue 0L) with
+                            | Some count when count > 0L -> e, count
+                            | Some _
+                            | None -> ()
+                    ]
+
+                let rec go () =
+                    match outstanding () with
+                    | [] -> ()
+                    | waiting when Environment.TickCount64 >= deadline ->
+                        for e, count in waiting do
+                            unsettled <-
+                                unsettled
+                                @ [
+                                    $"the %A{e} end had %d{count} bytes still unacknowledged %d{acknowledgementPatienceMs} ms after a close was due"
+                                ]
+                    | _ ->
+                        Thread.Sleep 1
+                        go ()
+
+                go ()
 
         // Linux's `connect` chooses a local port that a socket outside the
         // pair already holds, provided their remote endpoints differ, and such
@@ -399,6 +555,13 @@ module TestShutdownAgainstHost =
         /// empty on Darwin, whose `connect` never shares a port.
         member _.ForeignHolders : string list = foreignHolders
 
+        /// Each way this pair was found to have moved on from the state the
+        /// probe measured before a call depending on it (fill-settling.c): an
+        /// end whose receive buffer grew after a fill had left it unable to
+        /// take more, or an end with bytes still unacknowledged when a close
+        /// was due. Empty on Linux, where neither was ever found.
+        member _.Unsettled : string list = unsettled
+
         member _.Fd (e : ConnectionEnd) : int =
             match Map.tryFind e fds with
             | Some fd -> fd
@@ -415,6 +578,9 @@ module TestShutdownAgainstHost =
             let result, errno =
                 call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, unativeint count)))
 
+            if result > 0L then
+                noteWritten e result
+
             settle ()
 
             if result < 0L then
@@ -425,6 +591,7 @@ module TestShutdownAgainstHost =
         /// Close what is still open, with `SO_LINGER` {1, 0}, as the probe's
         /// `discard` does, and the edge registration's port.
         member _.Discard () : unit =
+            checkFilled ()
             let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
             for fd in Map.values fds do
@@ -473,6 +640,10 @@ module TestShutdownAgainstHost =
                 ans result errno
 
             member this.Close e =
+                if filled |> Option.exists (fun (watched, _) -> watched = e) then
+                    checkFilled ()
+
+                awaitAcknowledged ()
                 let result, errno = call (fun () -> int64 (hostClose (this.Fd e)))
                 fds <- Map.remove e fds
                 settle ()
@@ -555,6 +726,8 @@ module TestShutdownAgainstHost =
                 $"poll=0x%x{revents} %s{waiters} fionread=%d{(this :> IShutdownPair).Fionread e}"
 
             member this.Fill e =
+                checkFilled ()
+
                 let rec go (total : int64) (dry : int) =
                     if dry >= 3 || total >= (64L <<< 20) then
                         total
@@ -574,7 +747,22 @@ module TestShutdownAgainstHost =
                         else
                             total
 
-                go 0L 0
+                let total = go 0L 0
+                noteWritten e total
+
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> ()
+                | SimulatedUnixFlavour.Darwin ->
+                    let reader =
+                        match e with
+                        | ConnectionEnd.Client -> ConnectionEnd.Server
+                        | ConnectionEnd.Server -> ConnectionEnd.Client
+
+                    match Map.tryFind reader fds with
+                    | Some fd -> filled <- Some (reader, receiveBuffer fd)
+                    | None -> ()
+
+                total
 
             // The probe's three dry reads 30 ms apart, and then, before an
             // EAGAIN is taken as the answer, a wait of up to
@@ -583,6 +771,9 @@ module TestShutdownAgainstHost =
             // pauses. Waiting longer changes only an answer that would
             // otherwise have depended on how soon the bytes came.
             member this.Drain e =
+                if filled |> Option.exists (fun (watched, _) -> watched = e) then
+                    checkFilled ()
+
                 let eagain =
                     UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) UnixError.EAGAIN
 
@@ -766,20 +957,22 @@ module TestShutdownAgainstHost =
 
             member _.KeepsTimeWaitOnceBothClosed = true
 
-    /// How many times `hostReplay` runs a scenario whose bind another socket
-    /// refused before it fails.
+    /// How many times `hostReplay` runs a scenario whose answers came from a
+    /// state the probe did not measure before it fails.
     let private hostScenarioAttempts : int = 5
 
     /// Each scenario on a pair of its own, `concurrently` or one at a time; their
     /// lines in order. A scenario in which a pair's bind was refused while a
     /// socket outside that pair held the port (`HostPair.ForeignHolders`) is run
     /// again on fresh pairs, since that refusal is the other socket's and not
-    /// the answer the scenario measures; this fails once
-    /// `hostScenarioAttempts` runs have each been refused so. A foreign
-    /// socket can only refuse a bind that would otherwise have succeeded, so
-    /// a line that survives is the pairs' own answer, except where a foreign
-    /// holder came and went in the moment between the refusal and the
-    /// listing of sockets, which leaves the refusal in place.
+    /// the answer the scenario measures; so is one in which a pair moved on
+    /// from the state the probe measured before a call that depended on it
+    /// (`HostPair.Unsettled`). This fails once `hostScenarioAttempts` runs
+    /// have each been spoilt so. A foreign socket can only refuse a bind
+    /// that would otherwise have succeeded, so a line that survives is the
+    /// pairs' own answer, except where a foreign holder came and went in the
+    /// moment between the refusal and the listing of sockets, which leaves
+    /// the refusal in place.
     let private hostReplay
         (flavour : SimulatedUnixFlavour)
         (concurrently : bool)
@@ -801,14 +994,23 @@ module TestShutdownAgainstHost =
                     for pair in made do
                         pair.Discard ()
 
-            match made |> List.collect (fun pair -> pair.ForeignHolders) with
+            let spoilt =
+                [
+                    for pair in made do
+                        for holder in pair.ForeignHolders do
+                            $"another socket held a port whose bind was refused: %s{holder}"
+
+                        yield! pair.Unsettled
+                ]
+
+            match spoilt with
             | [] -> lines
             | _ when attempt < hostScenarioAttempts -> run (attempt + 1) scenario
-            | holders ->
-                let listed = String.concat "\n" holders
+            | spoilt ->
+                let listed = String.concat "\n" spoilt
 
                 failwith
-                    $"in each of %d{hostScenarioAttempts} runs of a scenario, another socket held a port whose bind was refused; in the last:\n%s{listed}"
+                    $"each of %d{hostScenarioAttempts} runs of a scenario answered from a state the probe did not measure; in the last:\n%s{listed}"
 
         let scenarios = List.toArray scenarios
 
@@ -1112,6 +1314,87 @@ module TestShutdownAgainstHost =
             |> shouldEqual [ ShutdownLine.Line "bind-EADDRINUSE" ]
 
             attempts.Value |> shouldEqual 1
+        )
+
+    /// Only a Darwin pair is watched for having moved on from the state the
+    /// probe measured (`fill-settling.c`).
+    let private onDarwinHost (action : unit -> unit) : unit =
+        HostPlatform.onUnixHost (fun flavour ->
+            match flavour with
+            | SimulatedUnixFlavour.Darwin -> action ()
+            | SimulatedUnixFlavour.Linux -> Assert.Ignore "a pair is watched for settling on Darwin only"
+        )
+
+    /// `c` fills; on the attempts `growOn` names, `p`'s receive buffer is
+    /// then doubled, as Darwin's own growth of it can be once more bytes
+    /// reach it (`fill-settling.c`'s section G). Each run of the scenario is
+    /// counted in `attempts`.
+    let private filledThenGrown (growOn : int -> bool) (attempts : int ref) : ShutdownProbe.Scenario =
+        fun pairOf ->
+            attempts.Value <- attempts.Value + 1
+            let pair = pairOf ShutdownPairShape.Plain
+            let s = ShutdownRecorder pair
+            s.Fill c |> ignore<int64>
+
+            if growOn attempts.Value then
+                let fd =
+                    match pair with
+                    | :? HostPair as host -> host.Fd p
+                    | _ -> failwith "hostReplay makes only host pairs"
+
+                let level =
+                    SimulatedUnixPlatform.socketOptionLevel (HostPlatform.platformOf SimulatedUnixFlavour.Darwin)
+
+                let sizeOf () : int =
+                    let mutable value = 0
+                    let mutable length = 4u
+
+                    if hostGetSockOpt (fd, level, darwinReceiveBufferOption, &value, &length) <> 0 then
+                        failwith $"getsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+                    value
+
+                let before = sizeOf ()
+                let doubled = BitConverter.GetBytes (2 * before)
+
+                if hostSetSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
+                    failwith $"setsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+                sizeOf () |> shouldBeGreaterThan before
+
+            s.Emit "filled"
+            s.Lines
+
+    [<Test>]
+    let ``a host scenario whose filled end's receive buffer grew is run again`` () =
+        onDarwinHost (fun () ->
+            let attempts = ref 0
+
+            hostReplay SimulatedUnixFlavour.Darwin false [ filledThenGrown ((=) 1) attempts ]
+            |> shouldEqual [ ShutdownLine.Line "filled" ]
+
+            attempts.Value |> shouldBeGreaterThan 1
+        )
+
+    [<Test>]
+    let ``a host scenario whose filled end's receive buffer always grows fails the replay`` () =
+        onDarwinHost (fun () ->
+            let attempts = ref 0
+
+            let error =
+                try
+                    hostReplay SimulatedUnixFlavour.Darwin false [ filledThenGrown (fun _ -> true) attempts ]
+                    |> ignore<ShutdownLine list>
+
+                    None
+                with error ->
+                    Some error
+
+            match error with
+            | None -> Assert.Fail "the replay returned although every run's receive buffer grew"
+            | Some error -> error.Message |> shouldContainText "receive buffer grew"
+
+            attempts.Value |> shouldEqual hostScenarioAttempts
         )
 
     // The shape of Linux 6.18.5's /proc/net/netstat, with most of each

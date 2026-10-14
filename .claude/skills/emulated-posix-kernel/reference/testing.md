@@ -121,6 +121,21 @@ transcripts must agree. Each has two halves:
 A divergence the live run finds belongs in the corpus once it is fixed, so that
 every later run replays it without a container.
 
+## A host replay that flakes: run its probe first
+
+When a replay of a committed probe against the host fails now and then, run
+the probe itself many times, several copies at once, and compare each run with
+its recording before suspecting the replay's timing. A recording is one run of
+the probe's procedure, and that procedure may not pin the state it meant to
+measure: `TestShutdownAgainstHost`'s flakes on a loaded Mac were the probe's
+own, reproduced by `tcp-shutdown.c` alone in a few runs in a hundred, where
+its fill sometimes left Darwin free to grow the reader's buffer, or its settles
+left an acknowledgement still to go out before a reset. Find what separates
+the runs that answer as recorded (count it against the answer, as
+`fill-settling.c` does), then have the replay wait for it where time brings it
+about, or detect it and run the scenario again on fresh sockets where time does
+not, failing after a bounded number of runs.
+
 ## The set-ID caveat that looks like a flake
 
 A host-touching test can run in two environments: unsandboxed (`nix develop
