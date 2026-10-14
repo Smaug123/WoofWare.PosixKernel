@@ -28,4 +28,6 @@ module TestGcHeapHardLimit =
     let ``the test host runs server GC`` () : unit =
         // ServerGarbageCollection in WoofWare.PosixKernel.Test.fsproj, which roughly halves the
         // suite's time; a DOTNET_gcServer environment variable of 0 overrides it, and fails this.
-        System.Runtime.GCSettings.IsServerGC |> shouldEqual true
+        // On one processor the runtime falls back to workstation GC whatever it is configured with.
+        System.Runtime.GCSettings.IsServerGC
+        |> shouldEqual (Environment.ProcessorCount > 1)
