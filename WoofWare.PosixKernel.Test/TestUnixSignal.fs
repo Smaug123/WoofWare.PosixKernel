@@ -320,7 +320,7 @@ module TestUnixSignal =
         match UnixSignal.tryOnReturnToUser 0 before with
         | Ok (ProcessFate.ProcessEnded ended) ->
             let onMachine, machine =
-                match SimulatedMachine.tryEndProcess ended (SimulatedMachine.ofSystem (EndedProcess.endedIn ended)) with
+                match SimulatedMachine.tryEndLoneProcess ended with
                 | Ok ended -> ended
                 | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
 
@@ -607,7 +607,7 @@ module TestUnixSignal =
                 SignalState.pending death.FinalProcess.Signals
                 |> shouldEqual (SignalState.pending signals |> List.filter (fun entry -> entry.Target.IsNone))
 
-                match SimulatedMachine.tryEndProcess death (SimulatedMachine.ofSystem (EndedProcess.endedIn death)) with
+                match SimulatedMachine.tryEndLoneProcess death with
                 | Ok (termination, machine) ->
                     termination |> shouldEqual (EndedProcess.termination death)
                     SimulatedMachine.processIds machine |> shouldBeEmpty

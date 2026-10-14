@@ -3,10 +3,11 @@ namespace WoofWare.PosixKernel
 /// A process that has ended, and how. Only a syscall that ends the process makes
 /// one. `EndedProcess.termination` and `EndedProcess.processId` read it, and
 /// `SimulatedMachine.endProcess` ends the process on its machine, closing its
-/// descriptors.
+/// descriptors (`SimulatedMachine.endLoneProcess` for a process alone on its
+/// machine).
 ///
-/// Not a `UnixSystem`: it has no threads, so nothing can make a syscall in it, and no
-/// function that answers one accepts it.
+/// Not a `UnixSystem`: it has no threads, so nothing can make a syscall in it, no
+/// function that answers one accepts it, and nothing hands one back from it.
 type EndedProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
@@ -54,16 +55,6 @@ module EndedProcess =
         : ProcessId
         =
         ended.FinalProcess.ProcessId
-
-    /// The process as the call that ended it found it, threads and all: a view of
-    /// the machine the process ran on, from before it ended. For a process
-    /// alone on its machine, `SimulatedMachine.ofSystem` of it is the machine
-    /// to end the process on with `SimulatedMachine.endProcess`.
-    let endedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
-        =
-        ended.EndedIn
 
 /// What a syscall that can end the whole process did to it: the call's own
 /// outcome and the system it left the process in, or the process ended.

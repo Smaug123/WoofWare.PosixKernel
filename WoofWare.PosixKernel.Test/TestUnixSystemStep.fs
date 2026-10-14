@@ -30,6 +30,10 @@ module TestUnixSystemStep =
     let private withThread (name : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Threads.ensure name system
 
+    /// The process's leader, which every system here is booted with, and which
+    /// makes the calls no other thread needs to.
+    let private leaderThread : int = 0
+
     /// The threads the syscalls here are made by. The flock rows need three:
     /// `holderThread` through `first`, `waiterThread` through `second`, and
     /// `thirdThread` through any further descriptor. A blocked `flock` is recorded
@@ -2268,7 +2272,7 @@ module TestUnixSystemStep =
                 Syscall.ChDir (PathArg.ofPath (statPath "/d/inner")),
                 Answered.chdir (PathArg.ofPath (statPath "/d/inner")) system
             ] do
-            UnixSystem.tryStep holderThread call system
+            UnixSystem.tryStep leaderThread call system
             |> stepAnswered
             |> shouldEqual (Ok expected)
 
@@ -2285,7 +2289,7 @@ module TestUnixSystemStep =
             | other -> failwith $"open(/d/inner) did not open: %A{other}"
 
         let viaStep =
-            UnixSystem.tryStep holderThread (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700)) system
+            UnixSystem.tryStep leaderThread (Syscall.MkDirAt (fd, PathArg.ofText "new", 0o700)) system
             |> stepAnswered
 
         viaStep
@@ -2320,7 +2324,7 @@ module TestUnixSystemStep =
         let dFd, system = opened "/d" system
 
         let step (call : Syscall) (system : UnixSystem<int, string>) =
-            UnixSystem.tryStep holderThread call system |> stepAnswered
+            UnixSystem.tryStep leaderThread call system |> stepAnswered
 
         let viaStep = step (Syscall.UnlinkAt (innerFd, PathArg.ofText "t", 0)) system
 
@@ -2376,7 +2380,7 @@ module TestUnixSystemStep =
         // calls `close` directly.
         let fd, system = withOpenFile linux
 
-        UnixSystem.tryStep holderThread (Syscall.Close fd) system
+        UnixSystem.tryStep leaderThread (Syscall.Close fd) system
         |> stepAnswered
         |> shouldEqual (UnixDescriptor.tryClose fd system |> Result.mapError SyscallRefusal.Close)
 
@@ -2519,7 +2523,7 @@ module TestUnixSystemStep =
     let ``step agrees with the primitive it dispatches to`` () : unit =
         // The dispatcher is sugar. If the two ever disagree, the surface a client
         // logs and replays through is not the surface it computes through.
-        match UnixSystem.tryStep holderThread Syscall.GetEffectiveUserId linux |> stepAnswered with
+        match UnixSystem.tryStep leaderThread Syscall.GetEffectiveUserId linux |> stepAnswered with
         | Ok (SyscallAnswer.Completed answer, after) ->
             answer
             |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId linux)))
@@ -2540,7 +2544,7 @@ module TestUnixSystemStep =
         UnixSystem.processId configured |> ProcessId.toInt32 |> shouldEqual 3
 
         for system in [ linux ; configured ] do
-            match UnixSystem.tryStep holderThread Syscall.GetProcessId system |> stepAnswered with
+            match UnixSystem.tryStep leaderThread Syscall.GetProcessId system |> stepAnswered with
             | Ok (SyscallAnswer.Completed answer, after) ->
                 answer |> shouldEqual (int64 (ProcessId.toInt32 (UnixSystem.processId system)))
                 after |> shouldEqual system
@@ -2668,7 +2672,7 @@ module TestUnixSystemStep =
         // client that catches one still holds the system it passed in.
         let fd, seeded = withOpenFile linux
 
-        UnixSystem.tryStep holderThread (Syscall.LSeek (fd, 0L, 3)) seeded
+        UnixSystem.tryStep leaderThread (Syscall.LSeek (fd, 0L, 3)) seeded
         |> shouldEqual (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
 
     [<Test>]
@@ -3450,6 +3454,48 @@ module TestUnixSystemStep =
                 thread |> shouldEqual waiterThread
                 holds waiterThread condition parkedIn |> shouldEqual false
             | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{other}"
+
+    /// One call of each shape `step` dispatches: answered at once whatever the
+    /// state, lifted from its own function's answer, and one that can block.
+    let private callsOfEveryShape : Syscall list =
+        [
+            Syscall.GetProcessId
+            Syscall.UMask 0o022
+            Syscall.Close 2
+            Syscall.Dup 0
+            Syscall.FLock (0, 2)
+        ]
+
+    [<Test>]
+    let ``step by a name that is no thread of the process throws, whatever the call`` () : unit =
+        for system in [ linux ; darwin ] do
+            Map.containsKey 99 system.Threads |> shouldEqual false
+
+            for call in callsOfEveryShape do
+                let error =
+                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 99 call system |> ignore)
+
+                error.Message
+                |> shouldContainText "thread 99 is not one of the process's threads"
+
+    [<Test>]
+    let ``step by a thread asleep in another call throws, whatever the call`` () : unit =
+        for system in [ linux ; darwin ] do
+            let paused =
+                match UnixSignal.pause 0 (Threads.ensure 1 system) with
+                | SigsuspendOutcome.WouldBlock _, paused -> paused
+                | other -> failwith $"expected pause to sleep, got %A{other}"
+
+            for call in callsOfEveryShape do
+                let error =
+                    Assert.Throws<System.InvalidOperationException> (fun () -> UnixSystem.step 0 call paused |> ignore)
+
+                error.Message |> shouldContainText "thread 0 is asleep in SigSuspend"
+
+            // The thread that is not asleep makes its calls as before.
+            match UnixSystem.step 1 (Syscall.Close 2) paused with
+            | SyscallOutcome.Answered (SyscallAnswer.Completed 0L), _ -> ()
+            | other -> failwith $"expected thread 1's close to complete, got %A{other}"
 
     /// `operation` by `thread` through `fd`, which must be answered at once: the
     /// answer.

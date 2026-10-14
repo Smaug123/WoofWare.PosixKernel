@@ -1553,22 +1553,22 @@ module TestOwnerChange =
 
         let memberGroup = Some (gid 2000u)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
+        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
         |> answered
         |> shouldEqual (chownAnswer "/p/lf" None memberGroup system)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
+        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
         |> answered
         |> shouldEqual (lchownAnswer "/p/lf" None memberGroup system)
 
         UnixSystem.tryStep
-            1
+            0
             (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/theirs"), Some (uid 1002u), None, 0))
             system
         |> answered
         |> shouldEqual (chownAnswer "/p/theirs" (Some (uid 1002u)) None system)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwn (fd, None, memberGroup)) withFd
+        UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, memberGroup)) withFd
         |> answered
         |> shouldEqual (fchownAnswer fd None memberGroup withFd)
 
@@ -1584,7 +1584,7 @@ module TestOwnerChange =
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0)
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0x20)
             ] do
-            match UnixSystem.tryStep 1 call darwin with
+            match UnixSystem.tryStep 0 call darwin with
             | Error (SyscallRefusal.FChOwnAt refusal) ->
                 Error refusal
                 |> shouldEqual (
@@ -1594,7 +1594,7 @@ module TestOwnerChange =
                 )
             | other -> failwith $"step %A{call} as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 1 (Syscall.FChOwn (fd, None, None)) withFd with
+        match UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, None)) withFd with
         | Error (SyscallRefusal.FChOwn refusal) ->
             Error refusal
             |> shouldEqual (UnixPathResolution.tryFchown fd None None withFd |> Result.map ignore)

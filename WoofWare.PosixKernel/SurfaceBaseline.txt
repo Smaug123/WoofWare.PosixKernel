@@ -839,7 +839,6 @@ WoofWare.PosixKernel.EmulatedMountModule.defaultFor [static method]: WoofWare.Po
 WoofWare.PosixKernel.EmulatedMountModule.defaultOf [static method]: WoofWare.PosixKernel.EmulatedFileSystemType -> WoofWare.PosixKernel.EmulatedMount
 WoofWare.PosixKernel.EmulatedMountModule.fileSystemType [static method]: WoofWare.PosixKernel.EmulatedMount -> WoofWare.PosixKernel.EmulatedFileSystemType
 WoofWare.PosixKernel.EndedProcess inherit obj
-WoofWare.PosixKernel.EndedProcess.endedIn [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.EndedProcess.processId [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessId
 WoofWare.PosixKernel.EndedProcess.termination [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessTermination
 WoofWare.PosixKernel.EndedProcess`2 inherit obj, implements WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
@@ -3996,6 +3995,7 @@ WoofWare.PosixKernel.SigsuspendOutcome.NewWouldBlock [static method]: WoofWare.P
 WoofWare.PosixKernel.SigsuspendOutcome.Tag [property]: [read-only] int
 WoofWare.PosixKernel.SimulatedMachine inherit obj
 WoofWare.PosixKernel.SimulatedMachine.checkInvariants [static method]: WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.SimulatedMachineDefect list
+WoofWare.PosixKernel.SimulatedMachine.endLoneProcess [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> (WoofWare.PosixKernel.ProcessTermination * WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler>)
 WoofWare.PosixKernel.SimulatedMachine.endProcess [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler> -> (WoofWare.PosixKernel.ProcessTermination * WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler>)
 WoofWare.PosixKernel.SimulatedMachine.focus [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> option
 WoofWare.PosixKernel.SimulatedMachine.holdsProcessOf [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.SimulatedMachine<'Thread, 'Handler> -> bool

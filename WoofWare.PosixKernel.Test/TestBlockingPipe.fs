@@ -511,6 +511,10 @@ module TestBlockingPipe =
             elif signalled || (givesUp && written > 0) then
                 if written > 0 then
                     Seen.Wrote (int64 written), answered thread r
+                // Linux's write looks at O_NONBLOCK before it looks for a
+                // signal (`docs/probes/nonblocking-asleep`, row P-write0).
+                elif r.Linux && r.NonBlocking.[description] then
+                    Seen.Failed UnixError.EAGAIN, answered thread r
                 else
                     interrupted r, answered thread r
             elif givesUp then
@@ -656,11 +660,32 @@ module TestBlockingPipe =
             BlockingPipeOp.Finish 0
         ]
 
+    /// A pipe filled by one write, then a 1-byte write through fd 1 that
+    /// sleeps having put nothing in; fd 1's description made non-blocking; a
+    /// signal to the sleeper; and its finish, which on Linux answers EAGAIN.
+    /// Threads are named by index as in `interruptedWrite`.
+    let private nonBlockingInterruptedWrite : BlockingPipeOp list =
+        [
+            BlockingPipeOp.Write (0, 1, 65536, true)
+            BlockingPipeOp.Write (0, 1, 1, true)
+            BlockingPipeOp.SetNonBlocking (1, true)
+            BlockingPipeOp.Signal 0
+            BlockingPipeOp.Wake
+            BlockingPipeOp.Finish 0
+        ]
+
     /// Openings that reach what a random run reaches only now and then: a
     /// write's finish with the count already in, which needs a signal to a
-    /// writer asleep with part of its payload in the buffer.
+    /// writer asleep with part of its payload in the buffer; and the finish
+    /// of a write with nothing in, signalled once its description has become
+    /// non-blocking.
     let private openingGen : Gen<BlockingPipeOp list> =
-        Gen.frequency [ 7, Gen.constant [] ; 1, Gen.constant interruptedWrite ]
+        Gen.frequency
+            [
+                7, Gen.constant []
+                1, Gen.constant interruptedWrite
+                1, Gen.constant nonBlockingInterruptedWrite
+            ]
 
     /// The label the test below covers for a call that came to `seen`.
     let private label (flavour : string) (what : string) (seen : Seen) : string =
@@ -1263,6 +1288,10 @@ module TestBlockingPipe =
                 "Linux wake: fewer than could proceed"
                 "Darwin finish read: refused"
                 "Darwin finish write: refused"
+                // A write with nothing in, signalled once its description has
+                // become non-blocking (`nonBlockingInterruptedWrite`).
+                "Linux finish write: EAGAIN"
+                "Darwin finish write: EINTR"
                 "Darwin close: ends a read"
                 "Darwin close: ends a write"
                 "Darwin close: ends a transfer, one through a dup sleeping on"

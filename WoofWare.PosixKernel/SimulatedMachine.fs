@@ -567,6 +567,7 @@ module SimulatedMachine =
     /// what the call did, and the machine after it. `None` if no process on the
     /// machine has that ID.
     /// </summary>
+    /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall, as `UnixSystem.step` says.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The machine's flavour has no such call, as `UnixSystem.step` says.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)
@@ -760,8 +761,8 @@ module SimulatedMachine =
     ///
     /// Refuses where a close would be refused.
     ///
-    /// Fails loudly, as `unfocus` does, if the view the process ended in
-    /// (`EndedProcess.endedIn`) is not a view of `machine` as it stands.
+    /// Fails loudly, as `unfocus` does, if the view the process ended in is not
+    /// a view of `machine` as it stands.
     let endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (ended : EndedProcess<'Thread, 'Handler>)
         (machine : SimulatedMachine<'Thread, 'Handler>)
@@ -769,6 +770,39 @@ module SimulatedMachine =
         =
         tryEndProcess ended machine
         |> Refusal.orRaise "SimulatedMachine.endProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe
+
+    /// `endLoneProcess`, with a refusal answered as the `Error` rather than raised.
+    let internal tryEndLoneProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : Result<ProcessTermination * SimulatedMachine<'Thread, 'Handler>, ProcessEndRefusal>
+        =
+        let view = ended.EndedIn
+
+        let others =
+            Set.remove view.Process.ProcessId (ProcessIdTable.live view.Machine.ProcessIds)
+
+        if not others.IsEmpty then
+            failwith
+                $"SimulatedMachine.endLoneProcess: process %O{view.Process.ProcessId} ended on a machine holding the processes %A{Set.toList others} besides, so it is not alone on its machine; end it with `endProcess` on the machine that holds them (this is a bug in the client)."
+
+        tryEndProcess ended (ofSystem view)
+
+    /// End a process that ran alone on its machine, as `endProcess` ends it on
+    /// that machine: how it ended, and the machine without it, which holds no
+    /// process.
+    ///
+    /// For a client that runs one process as a `UnixSystem`, with no
+    /// `SimulatedMachine` to hand. Refuses where `endProcess` refuses.
+    ///
+    /// Fails loudly if the machine the process ended on holds other processes
+    /// besides, which is a bug in the client: `endProcess` ends it on the
+    /// machine that holds them.
+    let endLoneProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : ProcessTermination * SimulatedMachine<'Thread, 'Handler>
+        =
+        tryEndLoneProcess ended
+        |> Refusal.orRaise "SimulatedMachine.endLoneProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe
 
     /// The threads `asleep` names that the machine wakes now, each with its
     /// process and the primitives of its wake condition which hold, in the
