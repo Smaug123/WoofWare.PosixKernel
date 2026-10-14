@@ -1002,12 +1002,12 @@ module TestKqueue =
         let _, parked = parks 1 fd KeventTimeout.Null system
 
         let exn =
-            Assert.Throws<exn> (fun () -> waits 1 fd KeventTimeout.Null parked |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () -> waits 1 fd KeventTimeout.Null parked |> ignore)
 
         exn.Message |> shouldContainText "is parked"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixKqueue.tryFinishKevent 1 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () -> UnixKqueue.tryFinishKevent 1 system |> ignore)
 
         exn.Message |> shouldContainText "is not parked"
 

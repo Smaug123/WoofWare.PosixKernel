@@ -530,12 +530,14 @@ module TestPollTimeout =
         let _, parked = parks [ entry listener pollIn ] 10 idle
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryPoll thread [ entry listener pollIn ] 0 parked |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryPoll thread [ entry listener pollIn ] 0 parked |> ignore
+            )
 
         exn.Message |> shouldContainText "is parked in"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread idle |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () -> UnixPoll.tryFinishPoll thread idle |> ignore)
 
         exn.Message |> shouldContainText "is not parked"
 

@@ -273,7 +273,7 @@ module TestStreamReaderGone =
 
             for fd in [ 1 ; 99 ] do
                 let admit =
-                    Assert.Throws (fun () ->
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
                         UnixReadWrite.tryAdmitWrite 7 fd UserBuffer.Mapped 1UL system
                         |> ignore<Result<WriteStep<WriteAdmission, int, string>, WriteRefusal>>
                     )
@@ -282,7 +282,7 @@ module TestStreamReaderGone =
                 |> shouldContainText "thread 7 is not one of the process's threads"
 
                 let write =
-                    Assert.Throws (fun () ->
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
                         WriteOutcomes.writeBytes 7 fd (payload 0 1) system
                         |> ignore<Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>>
                     )

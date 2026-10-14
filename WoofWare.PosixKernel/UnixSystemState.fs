@@ -268,3 +268,181 @@ type SyscallAnswer =
     /// A failure still changes the system in general: `flock` advances the
     /// descriptor table before it can discover the conflict that fails it.
     | Failed of error : UnixError
+
+/// A process that has ended, and how. Only a syscall that ends the process makes
+/// one. `EndedProcess.termination` and `EndedProcess.processId` read it, and
+/// `SimulatedMachine.endProcess` ends the process on its machine, closing its
+/// descriptors (`SimulatedMachine.endLoneProcess` for a process alone on its
+/// machine).
+///
+/// Not a `UnixSystem`: it has no threads, so nothing can make a syscall in it, no
+/// function that answers one accepts it, and nothing hands one back from it.
+type EndedProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    internal
+        {
+            /// How the process ended, which is what its parent's `wait` reads.
+            Termination : ProcessTermination
+            /// The machine the process ran on, as the process's end left it: its
+            /// threads' thread IDs are no longer live, the holds its threads' calls
+            /// in flight had on open file descriptions are let go of, so is the
+            /// hold its current directory had on its inode, and its process ID is
+            /// no live process's (no `wait` is modelled, so nothing keeps it).
+            ///
+            /// Its descriptors are not closed, so every description they name is
+            /// still counted as named, and a description no descriptor named,
+            /// which only a call held, is still in the table. On a
+            /// `SimulatedMachine`, `SimulatedMachine.endProcess` closes them, as a
+            /// real kernel does at exit, where another process can see it.
+            Machine : UnixMachineState
+            /// The machine's scheduling state as the process's end left it: no
+            /// processor runs one of its threads.
+            Scheduling : UnixSchedulingState
+            /// The process's own state as it stood when it ended. It holds nothing for
+            /// any thread: no signal mask, and no signal pending on one thread alone.
+            FinalProcess : UnixProcessState<'Thread, 'Handler>
+            /// The process as the call that ended it found it, threads and all: what
+            /// `SimulatedMachine.endProcess` checks against the machine it ends the
+            /// process on, as `SimulatedMachine.unfocus` checks a view, and reads
+            /// the calls the process's threads had in flight from.
+            EndedIn : UnixSystem<'Thread, 'Handler>
+        }
+
+[<RequireQualifiedAccess>]
+module EndedProcess =
+
+    /// How the process ended, which is what its parent's `wait` reads.
+    let termination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : ProcessTermination
+        =
+        ended.Termination
+
+    /// The ID of the process that ended. The machine no longer counts it as
+    /// any live process's.
+    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : ProcessId
+        =
+        ended.FinalProcess.ProcessId
+
+/// What a syscall that can end the whole process did to it: the call's own
+/// outcome and the system it left the process in, or the process ended.
+///
+/// `'Outcome` is what the call says besides, which never includes the process
+/// ending: a `WriteOutcome` for a write, a `KillOutcome` for `kill(2)`, a
+/// `ReturnToUserOutcome` for a return to user mode, and `unit` for a thread's
+/// exit, which says nothing more.
+[<RequireQualifiedAccess>]
+type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// The process carries on, as `system`.
+    | Continues of outcome : 'Outcome * system : UnixSystem<'Thread, 'Handler>
+    /// The process has ended, and never returns from the call.
+    | ProcessEnded of EndedProcess<'Thread, 'Handler>
+
+/// What the thread making a call must be doing as it makes it, which `Entry`
+/// checks before the call runs.
+[<RequireQualifiedAccess>]
+type internal CallerRequirement =
+    /// Running its own code, so parked in no syscall: what a call requires of
+    /// the thread making it.
+    | Running
+    /// Parked in a syscall: what a finishing function requires of the thread
+    /// whose call it finishes.
+    | Woken
+    /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
+    /// thread returning to user mode.
+    | Returning
+    /// Any thread of the process, parked or not.
+    | Exists
+
+/// The way into a call. Each function fails with `InvalidOperationException`
+/// unless `caller` is a thread of the system's process that meets
+/// `requirement`, and otherwise answers what `body` answers for the system:
+/// `operation` names the function the client called. There is one function
+/// for each shape of answer.
+[<RequireQualifiedAccess>]
+module internal Entry =
+
+    let private require<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : unit
+        =
+        if Caller.processId caller <> system.Process.ProcessId then
+            invalidOp
+                $"%s{operation}: the caller is %O{caller}, but the system holds process %O{system.Process.ProcessId} and no other, so the call cannot be made in it (this is a bug in the client)."
+
+        let thread = Caller.thread caller
+
+        match requirement with
+        | CallerRequirement.Running -> UnixThreadTable.requireIssuer operation thread system.Threads
+        | CallerRequirement.Woken ->
+            UnixThreadTable.requireParked operation thread system.Threads
+            |> ignore<ParkedSyscall>
+        | CallerRequirement.Returning -> UnixThreadTable.requireReturning operation thread system.Threads
+        | CallerRequirement.Exists ->
+            UnixThreadTable.requireThread operation thread system.Threads
+            |> ignore<UnixThreadState>
+
+    /// A call whose answer holds no system.
+    let answer<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (body : UnixSystem<'Thread, 'Handler> -> 'Answer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'Answer
+        =
+        require operation requirement caller system
+        body system
+
+    /// A call that answers with the system it leaves.
+    let withSystem<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (body : UnixSystem<'Thread, 'Handler> -> 'Answer * UnixSystem<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'Answer * UnixSystem<'Thread, 'Handler>
+        =
+        require operation requirement caller system
+        body system
+
+    /// A call that answers with the system it leaves, or with an error.
+    let result<'Thread, 'Handler, 'Answer, 'Error when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (body : UnixSystem<'Thread, 'Handler> -> Result<'Answer * UnixSystem<'Thread, 'Handler>, 'Error>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<'Answer * UnixSystem<'Thread, 'Handler>, 'Error>
+        =
+        require operation requirement caller system
+        body system
+
+    /// A call that can end the process.
+    let fate<'Thread, 'Handler, 'Outcome when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (body : UnixSystem<'Thread, 'Handler> -> ProcessFate<'Outcome, 'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessFate<'Outcome, 'Thread, 'Handler>
+        =
+        require operation requirement caller system
+        body system
+
+    /// A call that can stop where the kernel copies from the caller's memory,
+    /// whose paused value holds the system.
+    let progress<'Thread, 'Handler, 'Paused, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (requirement : CallerRequirement)
+        (caller : Caller<'Thread>)
+        (body : UnixSystem<'Thread, 'Handler> -> CallProgress<'Paused, 'Answer>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CallProgress<'Paused, 'Answer>
+        =
+        require operation requirement caller system
+        body system

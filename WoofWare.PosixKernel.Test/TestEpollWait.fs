@@ -545,11 +545,15 @@ module TestEpollWait =
     let ``a parked thread cannot wait again, and an unparked one cannot finish`` () : unit =
         let _, parked = parks -1 idle
 
-        let exn = Assert.Throws<exn> (fun () -> waits -1 parked |> ignore)
+        let exn =
+            Assert.Throws<System.InvalidOperationException> (fun () -> waits -1 parked |> ignore)
+
         exn.Message |> shouldContainText "is parked"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishEpollWait thread idle |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryFinishEpollWait thread idle |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 

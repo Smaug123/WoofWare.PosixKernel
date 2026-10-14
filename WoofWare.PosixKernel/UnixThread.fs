@@ -955,34 +955,77 @@ module UnixThreadTable =
         =
         (get name threads).Parked
 
-    /// Fails loudly unless `name` is a thread asleep in no syscall, as the
-    /// thread making a call must be: `operation` names the function the client
-    /// called. A thread blocks in one syscall at a time, and a call it is asleep
-    /// in is finished, not made again.
-    let internal requireIssuer<'Thread when 'Thread : comparison>
+    /// The thread `name` is, failing with `InvalidOperationException` unless it
+    /// is one of `threads`: `operation` names the function the client called,
+    /// which only one of the process's threads may call.
+    let internal requireThread<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
         (threads : Map<'Thread, UnixThreadState>)
-        : unit
+        : UnixThreadState
         =
         // `TryGetValue` rather than `Map.tryFind`, as in `get`: every read and
         // write asks this.
         let mutable thread = Unchecked.defaultof<UnixThreadState>
 
         if not (threads.TryGetValue (name, &thread)) then
-            failwith
-                $"%s{operation}: thread %O{name} is not one of the process's threads, so it cannot be making the call: the thread table names no thread %O{name}, which was never created or has already exited (this is a bug in the client)."
+            invalidOp
+                $"%s{operation}: thread %O{name} is not one of the process's threads: the thread table names no thread %O{name}, which was never created or has already exited (this is a bug in the client)."
 
-        match thread.Parked with
+        thread
+
+    /// Fails with `InvalidOperationException` unless `name` is a thread asleep
+    /// in no syscall, as the thread making a call must be: `operation` names
+    /// the function the client called. A thread blocks in one syscall at a
+    /// time, and a call it is asleep in is finished, not made again.
+    let internal requireIssuer<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : unit
+        =
+        match (requireThread operation name threads).Parked with
         | Some park ->
-            failwith
+            invalidOp
                 $"%s{operation}: thread %O{name} is parked in %A{park.Syscall}, and is making another call. A thread blocks in one syscall at a time: the call it is parked in is finished by that call's finishing function, not made again, and that call's completion must clear its record before the thread makes any other (this is a bug in the client)."
         | None -> ()
 
-    /// What `choose` answers for the syscall `name` is parked in, failing loudly
-    /// if `name` is parked in none, or in one `choose` answers `None` for:
-    /// `operation` names the finishing function the client called, which only
-    /// a thread whose call answered `WouldBlock` may call.
+    /// Fails with `InvalidOperationException` unless `name` is a thread asleep
+    /// in no syscall, as a thread returning to user mode must be: `operation`
+    /// names the function the client called. A thread asleep in a syscall
+    /// returns to user mode only once the syscall has answered.
+    let internal requireReturning<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : unit
+        =
+        match (requireThread operation name threads).Parked with
+        | Some park ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is asleep in %A{park.Syscall}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
+        | None -> ()
+
+    /// The syscall `name` is parked in, failing with `InvalidOperationException`
+    /// unless it is a thread parked in one: `operation` names the finishing
+    /// function the client called, which only a thread whose call answered
+    /// `WouldBlock` may call.
+    let internal requireParked<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : ParkedSyscall
+        =
+        match (requireThread operation name threads).Parked with
+        | None ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock` finishes one here (this is a bug in the client)."
+        | Some park -> park.Syscall
+
+    /// What `choose` answers for the syscall `name` is parked in, failing with
+    /// `InvalidOperationException` as `requireParked` does, or if `choose`
+    /// answers `None` for that syscall: `operation` names the finishing function
+    /// the client called.
     let internal expectParked<'Thread, 'Expected when 'Thread : comparison>
         (operation : string)
         (choose : ParkedSyscall -> 'Expected option)
@@ -990,16 +1033,13 @@ module UnixThreadTable =
         (threads : Map<'Thread, UnixThreadState>)
         : 'Expected
         =
-        match parkedFor name threads with
+        let parked = requireParked operation name threads
+
+        match choose parked with
+        | Some expected -> expected
         | None ->
-            failwith
-                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock` finishes one here (this is a bug in the client)."
-        | Some parked ->
-            match choose parked with
-            | Some expected -> expected
-            | None ->
-                failwith
-                    $"%s{operation}: thread %O{name} is parked in %A{parked}, which is not a call this finishes (this is a bug in the client)."
+            invalidOp
+                $"%s{operation}: thread %O{name} is parked in %A{parked}, which is not a call this finishes (this is a bug in the client)."
 
     /// Record that `name` is in `park`.
     ///
