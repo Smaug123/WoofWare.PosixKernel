@@ -93,7 +93,7 @@ module TestCallHolds =
             )
 
         let system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created _, system) -> system
             | other -> failwith $"pipe2: %A{other}"
 
@@ -109,6 +109,13 @@ module TestCallHolds =
             match UnixKqueue.tryKqueue system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"kqueue: %A{refusal}"
+
+    /// The first of the process's threads parked in no call, to make a call
+    /// that names no thread of its own; `None` while every thread is parked.
+    let private awake (system : UnixSystem<int, string>) : Caller<int> option =
+        Lone.threads system
+        |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+        |> Option.map (fun thread -> Callers.thread thread system)
 
     let private fds (system : UnixSystem<int, string>) : (int * OpenFileDescriptionId * OpenFileTarget) list =
         let registry = Lone.fileDescriptors system
@@ -428,12 +435,13 @@ module TestCallHolds =
                             Holds = Map.remove thread model.Holds
                         }
                 | Op.Close i ->
-                    match fds system with
-                    | [] -> system, model
-                    | all ->
+                    match fds system, awake system with
+                    | [], _
+                    | _, None -> system, model
+                    | all, Some caller ->
                         let fd, id, _ = all.[i % all.Length]
 
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose caller fd system with
                         | Error _ -> system, model
                         | Ok (_, after) ->
                             // Under Darwin a close of the descriptor a pipe transfer
@@ -469,12 +477,13 @@ module TestCallHolds =
 
                             after, model
                 | Op.Dup i ->
-                    match fds system with
-                    | [] -> system, model
-                    | all ->
+                    match fds system, awake system with
+                    | [], _
+                    | _, None -> system, model
+                    | all, Some caller ->
                         let fd, _, _ = all.[i % all.Length]
 
-                        match UnixDescriptor.tryDup fd system with
+                        match UnixDescriptor.tryDup caller fd system with
                         | Ok (_, after) -> after, model
                         | Error refusal -> failwith $"dup: %A{refusal}"
                 | Op.Spawn c ->

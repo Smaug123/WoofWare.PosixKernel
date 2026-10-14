@@ -46,15 +46,37 @@ module KeventWorld =
         | Ok created -> created
         | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
 
-    /// A new stream socket, non-blocking when `nonBlocking`.
-    let stream (nonBlocking : bool) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system =
-            NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+    /// A new blocking stream socket.
+    let private blockingStream (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+
+    /// A new stream socket, which `caller` makes non-blocking when
+    /// `nonBlocking`.
+    let streamAs
+        (caller : Caller<int>)
+        (nonBlocking : bool)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        let fd, system = blockingStream system
 
         if nonBlocking then
-            fd, UnixDescriptor.setNonBlocking fd true system |> snd
+            fd, UnixDescriptor.setNonBlocking caller fd true system |> snd
         else
             fd, system
+
+    /// `streamAs` the leader of the process `pid`.
+    let streamIn
+        (pid : ProcessId)
+        (nonBlocking : bool)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        streamAs (Caller.make pid (Proc.leader pid system)) nonBlocking system
+
+    /// `streamIn` the only process on the machine.
+    let stream (nonBlocking : bool) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        streamIn (Lone.pid system) nonBlocking system
 
     let bind (fd : int) (port : uint16) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match
@@ -70,7 +92,7 @@ module KeventWorld =
 
     /// A new listener at `port`.
     let listenerAt (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system = stream false system
+        let fd, system = blockingStream system
         fd, system |> bind fd port |> listen fd
 
     /// A connect of `fd` to `port`, made by `thread`, which must be awake.
@@ -113,15 +135,20 @@ module KeventWorld =
         connectIn (Lone.pid system) fd port system
 
     /// A new non-blocking socket connecting to `port`, as the probe's `client`
-    /// makes, connected by `thread`, which must be awake.
-    let clientAs (thread : int) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system = stream true system
-        let _, system = connectAs thread fd port system
+    /// makes, made non-blocking and connected by `caller`, which must be awake.
+    let clientAs
+        (caller : Caller<int>)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        let fd, system = streamAs caller true system
+        let _, system = connectAs (Caller.thread caller) fd port system
         fd, system
 
     /// `clientAs` the leader of the process `pid`.
     let clientIn (pid : ProcessId) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        clientAs (Proc.leader pid system) port system
+        clientAs (Caller.make pid (Proc.leader pid system)) port system
 
     /// `clientIn` the only process on the machine.
     let client (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
@@ -133,15 +160,33 @@ module KeventWorld =
         | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{fd}: %A{other}"
 
-    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+    /// A close of `fd` by `caller`, which must succeed.
+    let closeAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixDescriptor.tryClose caller fd system with
         | Ok (SyscallAnswer.Completed 0L, closed) -> closed
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
-    let dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.dup fd system with
+    /// `closeAs` the leader of the process `pid`.
+    let closeIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        closeAs (Caller.make pid (Proc.leader pid system)) fd system
+
+    /// `closeIn` the only process on the machine.
+    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        closeIn (Lone.pid system) fd system
+
+    /// A `dup` of `fd` by `caller`, which must succeed.
+    let dupAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match Answered.dup caller fd system with
         | SyscallAnswer.Completed copy, system -> int copy, system
         | other, _ -> failwith $"dup of fd %d{fd}: %A{other}"
+
+    /// `dupAs` the leader of the process `pid`.
+    let dupIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        dupAs (Caller.make pid (Proc.leader pid system)) fd system
+
+    /// `dupIn` the only process on the machine.
+    let dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        dupIn (Lone.pid system) fd system
 
     /// `getsockopt(SO_ERROR)` on `fd`.
     let readSocketError (fd : int) (system : UnixSystem<int, string>) : GetSockOptAnswer * UnixSystem<int, string> =

@@ -103,7 +103,7 @@ module TestLinkCount =
                 Answered.openPath creating (rooted path) 0o644 system
                 |> completed $"creat %s{path}"
 
-            match UnixDescriptor.tryClose (int fd) system with
+            match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
             | Ok (SyscallAnswer.Completed _, system) -> held, system
             | other -> failwith $"close %d{fd}: %A{other}"
         | LinkCountStep.Unlink path -> held, Answered.unlink (rooted path) system |> completed $"unlink %s{path}" |> snd
@@ -429,7 +429,7 @@ module TestLinkCount =
                 |> List.fold applyToModel (Map.empty, systemOn platform)
 
             let (readFd, writeFd), system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                 | other -> failwith $"pipe2: %A{other}"
 
@@ -460,7 +460,7 @@ module TestLinkCount =
             let system = systemOn platform
 
             let (readFd, writeFd), system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                 | other -> failwith $"pipe2: %A{other}"
 
@@ -471,7 +471,7 @@ module TestLinkCount =
             |> shouldEqual expected
 
             let system =
-                match UnixDescriptor.tryClose writeFd system with
+                match UnixDescriptor.tryClose (Callers.leader system) writeFd system with
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"close: %A{other}"
 
@@ -589,7 +589,7 @@ module TestLinkCount =
                 let system = systemOn (HostPlatform.platformOf flavour)
 
                 let (readFd, writeFd), system =
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                     | other -> failwith $"pipe2: %A{other}"
 

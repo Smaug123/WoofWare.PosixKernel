@@ -162,7 +162,7 @@ module internal FcntlWorld =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFcntl fd command argument system with
+        match UnixDescriptor.tryFcntl (Callers.leader system) fd command argument system with
         | Ok answered -> answered
         | Error refusal ->
             failwith $"fcntl(%d{fd}, %d{command}, 0x%x{argument}) was refused: %s{FcntlRefusal.describe refusal}"
@@ -216,7 +216,7 @@ module internal FcntlWorld =
 
     /// A pipe made with the raw `pipe2` word `flags`: its read and write ends.
     let pipe (flags : int) (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 flags UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (r, w), system) -> (r, w), system
         | other -> failwith $"pipe2(0x%x{flags}): %A{other}"
 
@@ -247,7 +247,7 @@ module internal FcntlWorld =
             | other -> failwith $"listen: %A{other}"
 
         if nonBlocking then
-            fd, snd (UnixDescriptor.setNonBlocking fd true system)
+            fd, snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd true system)
         else
             fd, system
 

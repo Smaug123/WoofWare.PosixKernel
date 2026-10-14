@@ -262,7 +262,7 @@ module TestStreamReaderGone =
             assertSound "launched" system
 
             let closed =
-                match UnixDescriptor.tryClose 1 system with
+                match UnixDescriptor.tryClose (Callers.leader system) 1 system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close 1: %A{other}"
 

@@ -197,7 +197,7 @@ module TestDeviceDescriptorsAgainstHost =
                     for offset in [ 0L ; -5L ; System.Int64.MaxValue ] do
                         $"lseek %d{offset} %d{whence}",
                         hostAnswer (hostLSeek (host, offset, whence)),
-                        (match UnixDescriptor.tryLseek fd offset whence system with
+                        (match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
                          | Ok (answer, _) -> ofSyscall answer
                          | Error refusal -> failwith $"the model's lseek: %A{refusal}")
 
@@ -252,7 +252,7 @@ module TestDeviceDescriptorsAgainstHost =
                 for length in [ 0L ; 10L ; -1L ] do
                     $"ftruncate %d{length}",
                     hostAnswer (int64 (hostFTruncate (host, length))),
-                    (match UnixDescriptor.tryFtruncate fd length system with
+                    (match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
                      | Ok (answer, _) -> ofSyscall answer
                      | Error refusal -> failwith $"the model's ftruncate: %A{refusal}")
 
@@ -264,21 +264,21 @@ module TestDeviceDescriptorsAgainstHost =
                     ] do
                     $"posix_fadvise %d{offset} %d{length} %d{advice}",
                     fromErrno (hostFadvise (host, offset, length, advice)),
-                    (match UnixDescriptor.tryPosixFadvise fd offset length advice system with
+                    (match UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system with
                      | Ok FileAdviceAnswer.Completed -> Ok 0L
                      | Ok (FileAdviceAnswer.Failed error) -> Error error
                      | Error refusal -> failwith $"the model's posix_fadvise: %A{refusal}")
 
                 "FIONREAD",
                 hostFionread host,
-                (match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+                (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
                  | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
                  | Ok (BytesAvailableAnswer.Failed error) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",
                 hostAnswer (int64 (hostTcGetAttr (host, Array.zeroCreate 256))),
-                (match UnixDescriptor.terminalAttributes fd system with
+                (match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
                  | TerminalAttributesAnswer.NotATerminal error -> Error error)
 
                 for events in [ 0s ; 1s ; 4s ; 0x7FFFs ] do
@@ -327,9 +327,9 @@ module TestDeviceDescriptorsAgainstHost =
                  let second = hostAnswer (int64 (hostFlock (hostWriteOnly, 6)))
                  hostFlock (host, 8) |> ignore<int>
                  first |> Result.bind (fun _ -> second)),
-                (match UnixDescriptor.tryFlock 0 fd 6 system with
+                (match UnixDescriptor.tryFlock (Callers.thread 0 system) fd 6 system with
                  | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), locked) ->
-                     match UnixDescriptor.tryFlock 0 writeOnly 6 locked with
+                     match UnixDescriptor.tryFlock (Callers.thread 0 locked) writeOnly 6 locked with
                      | Ok (SyscallOutcome.Answered answer, _) -> ofSyscall answer
                      | other -> failwith $"the model's second flock: %A{other}"
                  | other -> failwith $"the model's first flock: %A{other}")

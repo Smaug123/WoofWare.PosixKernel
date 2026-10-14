@@ -287,12 +287,12 @@ module TestUnblockForAnotherThread =
             |> Lone.withFileDescriptors registry
 
         let system =
-            match UnixDescriptor.tryFlock holder lockedThrough 2 system with
+            match UnixDescriptor.tryFlock (Callers.thread holder system) lockedThrough 2 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"the holder's lock: %A{other}"
 
         let pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readEnd, writeEnd), system) -> readEnd, writeEnd, system
             | other -> failwith $"pipe2: %A{other}"
 
@@ -301,7 +301,8 @@ module TestUnblockForAnotherThread =
 
         // Filled by non-blocking writes, a page and then a byte at a time,
         // until nothing more fits.
-        let _, system = UnixDescriptor.setNonBlocking fullWrite true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) fullWrite true system
 
         let rec fill (chunk : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match
@@ -318,7 +319,9 @@ module TestUnblockForAnotherThread =
             | other -> failwith $"filling the pipe: %A{other}"
 
         let system = fill 4096 system
-        let _, system = UnixDescriptor.setNonBlocking fullWrite false system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) fullWrite false system
 
         {
             System = system
@@ -370,7 +373,7 @@ module TestUnblockForAnotherThread =
             UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u system
             |> parkedOrNot "the accept"
         | Sleep.Flock ->
-            UnixDescriptor.tryFlock thread world.WaitingThrough 2 system
+            UnixDescriptor.tryFlock (Callers.thread thread system) world.WaitingThrough 2 system
             |> parkedOrNot "the flock"
         | Sleep.PipeRead ->
             UnixReadWrite.tryRead thread world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system

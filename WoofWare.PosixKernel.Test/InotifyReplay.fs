@@ -185,10 +185,15 @@ module internal InotifyReplay =
         | Ok answered -> answered
         | Error refusal -> failwith $"inotify_rm_watch(%d{fd}, %d{wd}) refused: %s{InotifyRefusal.describe refusal}"
 
-    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+    /// A close of `fd` by the leader of the process `pid`, which must succeed.
+    let closeIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixDescriptor.tryClose (Caller.make pid (Proc.leader pid system)) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"close(%d{fd}): %A{other}"
+
+    /// `closeIn` the only process on the machine.
+    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        closeIn (Lone.pid system) fd system
 
     let private completed (call : string) (result : Result<SyscallAnswer * UnixSystem<int, string>, 'r>) =
         match result with
@@ -280,7 +285,8 @@ module internal InotifyReplay =
         | other -> failwith $"pwrite(%d{fd}): %A{other}"
 
     let ftruncate (fd : int) (length : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixDescriptor.tryFtruncate fd length system |> completed $"ftruncate(%d{fd})"
+        UnixDescriptor.tryFtruncate (Callers.leader system) fd length system
+        |> completed $"ftruncate(%d{fd})"
 
     let fchmod (fd : int) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         UnixPathResolution.tryFchmod fd mode system |> completed $"fchmod(%d{fd})"
@@ -367,7 +373,7 @@ module internal InotifyReplay =
         let fd, system =
             openFdIn pid (openFlags FileAccessMode.WriteOnly true false true) path 0o644 system
 
-        system |> write fd text |> close fd
+        system |> write fd text |> closeIn pid fd
 
     /// `writeFileIn` the only process on the machine.
     let writeFile (path : string) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

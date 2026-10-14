@@ -96,7 +96,7 @@ module SocketFuzz =
     /// `close(2)`. A refusal is the model's, and is reported as one; an errno
     /// comes back, because that is an answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> raise (ModelRefusal $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}")
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system

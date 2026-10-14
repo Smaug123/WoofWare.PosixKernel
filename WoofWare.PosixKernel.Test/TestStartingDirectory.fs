@@ -172,11 +172,11 @@ module TestStartingDirectory =
         | "dir" -> Some (opened "d" system)
         | "file" -> Some (opened "f2" system)
         | "pipe" ->
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), system) -> Some (readFd, system)
             | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
         | "pipe-write" ->
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (_, writeFd), system) -> Some (writeFd, system)
             | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
         | "unlinked" ->
@@ -909,7 +909,7 @@ module TestStartingDirectory =
         let file, system = opened "f" system
 
         let pipe, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
 
@@ -927,7 +927,7 @@ module TestStartingDirectory =
         let full = fill 0 system
 
         let oneLeft =
-            match UnixDescriptor.tryClose (bound - 1) full with
+            match UnixDescriptor.tryClose (Callers.leader full) (bound - 1) full with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | other -> failwith $"%s{context}: closing the last descriptor: %A{other}"
 
@@ -2273,7 +2273,7 @@ module TestStartingDirectory =
                 let fd, system = opened "f" system
                 fd, PathArg.ofText (named "f" "new"), system
             | "pipefd" ->
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, PathArg.ofText (named "f" "new"), system
                 | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
             | "nodir" -> atFdCwd flavour, PathArg.ofText (named "nxdir/f" "nxdir/new"), system
@@ -3629,7 +3629,7 @@ module TestStartingDirectory =
             if held = "closed" then
                 999, asRoot
             elif held = "pipe" then
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped asRoot with
+                match UnixPipe.tryPipe2 (Callers.leader asRoot) 0 UserBuffer.Mapped asRoot with
                 | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
                 | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
             elif held = "epoll" then

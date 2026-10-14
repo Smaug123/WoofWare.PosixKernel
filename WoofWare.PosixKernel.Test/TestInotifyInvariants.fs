@@ -737,7 +737,7 @@ module TestInotifyInvariants =
                 | Op.Dup slot ->
                     match slots.[slot], Array.tryFindIndex Option.isNone slots with
                     | Some fd, Some free ->
-                        match UnixDescriptor.tryDup fd system with
+                        match UnixDescriptor.tryDup (Callers.leader system) fd system with
                         | Ok (SyscallAnswer.Completed copy, after) ->
                             system <- after
                             slots.[free] <- Some (int copy)
@@ -750,7 +750,7 @@ module TestInotifyInvariants =
                         if asleep then
                             cover Label.ClosedUnderSleepingReader
 
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
                         | Ok (_, after) ->
                             system <- after
                             slots.[slot] <- None

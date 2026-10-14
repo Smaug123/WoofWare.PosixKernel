@@ -613,7 +613,7 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostFtruncate (hostFd, 0L)))
-                                (UnixDescriptor.tryFtruncate modelFd 0L system.Value)
+                                (UnixDescriptor.tryFtruncate (Callers.leader system.Value) modelFd 0L system.Value)
                         | Op.Fchmod (slot, mode) ->
                             let hostFd, modelFd = kept.[slot % kept.Count]
 
@@ -626,7 +626,10 @@ module TestInotifyDeliveryAgainstHost =
                             let hostFd, modelFd = kept.[index]
                             kept.RemoveAt index
 
-                            answered op (hostAnswer (hostClose hostFd)) (UnixDescriptor.tryClose modelFd system.Value)
+                            answered
+                                op
+                                (hostAnswer (hostClose hostFd))
+                                (UnixDescriptor.tryClose (Callers.leader system.Value) modelFd system.Value)
                         | Op.RmWatch (instance, wd) ->
                             answered
                                 op

@@ -201,7 +201,16 @@ Each syscall is a function in the module for its family, listed under "The sysca
 It takes its arguments as the kernel does, raw where the kernel validates them (a descriptor, a flag word, a mode, a `whence`, in the flavour's own numbering), and the system last.
 It gives back its answer with the system as the call left it, or the answer alone for a call that cannot change anything.
 
-A function takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
+A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
+A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
+The descriptor calls (`UnixDescriptor`) and `UnixPipe.pipe2` take the caller as their first argument.
+
+Each of those calls checks its caller before it does anything else.
+The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing function `UnixDescriptor.flockAcquire` requires the thread to be parked instead, in the call it finishes (see "Sleeping and waking").
+A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
+
+The other families' functions take no caller yet.
+One of them takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
 The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
 Every other call answers the same whichever thread makes it, and takes no thread.
@@ -291,7 +300,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
-A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, a name that is no thread, or `UnixScheduling.getcpu` of a thread that is not running.
+A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, a name that is no thread, a caller in a process other than the system's, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
 
 ### Unions that gain cases
@@ -321,23 +330,23 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `dup(2)` | `UnixDescriptor.dup (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup2(2)` | `UnixDescriptor.dup2 (oldFd : int) (newFd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup3(2)` | `UnixDescriptor.dup3 (oldFd : int) (newFd : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `fcntl(2)`: `F_DUPFD`, `F_DUPFD_CLOEXEC`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL` | `UnixDescriptor.fcntl (fd : int) (command : int) (argument : int)` | `SyscallAnswer * UnixSystem` |
-| `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
-| `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (fd : int)` | `bool option` |
-| `lseek(2)` | `UnixDescriptor.lseek (fd : int) (offset : int64) (whence : int)` | `SyscallAnswer * UnixSystem` |
-| `flock(2)` | `UnixDescriptor.flock (thread : 'Thread) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
-| `ftruncate(2)` | `UnixDescriptor.ftruncate (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
-| `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
-| `close(2)` | `UnixDescriptor.close (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
-| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (destination : int) (source : int)` | `UnixError` |
-| `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (fd : int)` | `TerminalAttributesAnswer` |
-| `geteuid(2)` | `UnixDescriptor.effectiveUserId` | `UserId` |
-| `getegid(2)` | `UnixDescriptor.effectiveGroupId` | `GroupId` |
-| `getgroups(2)` | `UnixDescriptor.getgroups (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
+| `dup(2)` | `UnixDescriptor.dup (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
+| `dup2(2)` | `UnixDescriptor.dup2 (caller : Caller) (oldFd : int) (newFd : int)` | `SyscallAnswer * UnixSystem` |
+| `dup3(2)` | `UnixDescriptor.dup3 (caller : Caller) (oldFd : int) (newFd : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `fcntl(2)`: `F_DUPFD`, `F_DUPFD_CLOEXEC`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL` | `UnixDescriptor.fcntl (caller : Caller) (fd : int) (command : int) (argument : int)` | `SyscallAnswer * UnixSystem` |
+| `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (caller : Caller) (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
+| `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (caller : Caller) (fd : int)` | `bool option` |
+| `lseek(2)` | `UnixDescriptor.lseek (caller : Caller) (fd : int) (offset : int64) (whence : int)` | `SyscallAnswer * UnixSystem` |
+| `flock(2)` | `UnixDescriptor.flock (caller : Caller) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
+| `ftruncate(2)` | `UnixDescriptor.ftruncate (caller : Caller) (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
+| `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (caller : Caller) (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
+| `close(2)` | `UnixDescriptor.close (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
+| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
+| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `UnixError` |
+| `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (caller : Caller) (fd : int)` | `TerminalAttributesAnswer` |
+| `geteuid(2)` | `UnixDescriptor.effectiveUserId (caller : Caller)` | `UserId` |
+| `getegid(2)` | `UnixDescriptor.effectiveGroupId (caller : Caller)` | `GroupId` |
+| `getgroups(2)` | `UnixDescriptor.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 
 #### Paths and their files
 
@@ -427,7 +436,7 @@ The cases exist so that a client's matches already handle them when pathname soc
 | `pwrite(2)` | `UnixReadWrite.pwrite (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
 | `pwrite(2)`, given the bytes | `UnixReadWrite.pwriteWithBytes (bytes : ImmutableArray<byte>) (paused : PausedPWrite)` | `WriteAnswer * UnixSystem` |
 | `copy_file_range(2)` | `UnixReadWrite.copyFileRange (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
+| `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (caller : Caller) (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
 
 #### Sockets
 
@@ -637,7 +646,7 @@ A woken thread finishes its call through its family's finishing function, which 
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
-| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (thread : 'Thread)` |
+| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (caller : Caller)` |
 | `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (thread : 'Thread)` |
 | `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (thread : 'Thread)` |
 | `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (thread : 'Thread)` |
@@ -680,9 +689,12 @@ let resume (thread : int) (system : UnixSystem<int, unit>) : UnixSystem<int, uni
     | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
-// pipe2(fds, 0) by thread 0. UserBuffer.Mapped: the array for the two descriptors is writable.
+// pipe2(fds, 0) by thread 0 of the process. UserBuffer.Mapped: the array for the two
+// descriptors is writable.
 let readFd, writeFd, piped =
-    match UnixPipe.pipe2 0 UserBuffer.Mapped booted with
+    let caller = Caller.make (UnixSystem.processId booted) 0
+
+    match UnixPipe.pipe2 caller 0 UserBuffer.Mapped booted with
     | Pipe2Answer.Created (readFd, writeFd), system -> readFd, writeFd, resume 0 system
     | answer, _ -> failwith $"unexpected from pipe2: %A{answer}"
 

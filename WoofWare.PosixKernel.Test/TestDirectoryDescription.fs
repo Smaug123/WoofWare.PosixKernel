@@ -78,7 +78,7 @@ module TestDirectoryDescription =
         | SyscallAnswer.Failed error -> failwith $"%s{what} failed with %O{error}"
 
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"close %d{fd}: %A{other}"
 
@@ -104,7 +104,9 @@ module TestDirectoryDescription =
         int fd, system
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system = Answered.dup fd system |> completed $"dup %d{fd}"
+        let fd, system =
+            Answered.dup (Callers.leader system) fd system |> completed $"dup %d{fd}"
+
         int fd, system
 
     let private read (fd : int) (system : UnixSystem<int, string>) =
@@ -113,7 +115,7 @@ module TestDirectoryDescription =
         | Error refusal -> failwith $"read of fd %d{fd} was refused: %s{ReadDirectoryRefusal.describe refusal}"
 
     let private seek (fd : int) (offset : int64) (whence : int) (system : UnixSystem<int, string>) =
-        match UnixDescriptor.tryLseek fd offset whence system with
+        match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
         | Ok result -> result
         | Error refusal ->
             failwith $"lseek(%d{fd}, %d{offset}, %d{whence}) was refused: %s{LSeekRefusal.describe refusal}"
@@ -419,7 +421,7 @@ module TestDirectoryDescription =
 
             let _, system = read fd system
 
-            match UnixDescriptor.tryLseek fd 0L 1 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 1 system with
             | Error (LSeekRefusal.DirectoryPosition _) -> ()
             | other -> failwith $"%O{platform}: SEEK_CUR part of the way through: %A{other}"
 
@@ -891,6 +893,6 @@ module TestDirectoryDescription =
         let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
         let _, system = read fd system
 
-        match UnixDescriptor.tryLseek fd 0L 1 system with
+        match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 1 system with
         | Error (LSeekRefusal.DirectoryPosition _) -> ()
         | other -> failwith $"%A{other}"

@@ -115,7 +115,7 @@ module TestWakeSweepMemo =
             |> parkInAccept pid 1 listener
             // Thread 2 connects: threads 0 and 1 are asleep, and a thread asleep in
             // one call makes no other.
-            |> Machines.doIn pid (fun view -> KeventWorld.clientAs 2 8080us view |> snd)
+            |> Machines.doIn pid (fun view -> KeventWorld.clientAs (Caller.make pid 2) 8080us view |> snd)
 
         Machines.wakes (Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]) machine
         |> List.map fst

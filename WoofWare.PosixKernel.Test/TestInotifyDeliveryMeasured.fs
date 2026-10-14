@@ -320,7 +320,7 @@ module TestInotifyDeliveryMeasured =
         fill ()
 
         let available =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (BytesAvailableAnswer.Reported count) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
@@ -424,7 +424,7 @@ module TestInotifyDeliveryMeasured =
             (system, [ 0 .. limit - 2 ])
             ||> List.fold (fun system i -> chmod (if i % 2 = 1 then a else b) (0o600 + i % 2) system)
 
-        match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (BytesAvailableAnswer.Reported count) when count = (limit - 1) * 32 -> system
         | other -> failwith $"filled to %A{other}, not %d{(limit - 1) * 32} bytes"
 

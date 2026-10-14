@@ -51,7 +51,7 @@ module TestKqueueTimerReserved =
              let idle, system = KeventWorld.stream true system
 
              let (readEnd, writeEnd), system =
-                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                 match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                  | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                  | other -> failwith $"pipe did not make a pipe: %A{other}"
 

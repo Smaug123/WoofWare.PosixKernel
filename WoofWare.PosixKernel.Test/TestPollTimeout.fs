@@ -415,13 +415,13 @@ module TestPollTimeout =
         let withDup = withRegistry registry idle
         let _, parked = parks [ entry listener pollIn ] 10 withDup
 
-        match UnixDescriptor.tryClose listener parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) listener parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual listener
             waiter |> shouldEqual thread
         | other -> failwith $"expected the close to be refused, got %A{other}"
 
-        match UnixDescriptor.tryClose dupFd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) dupFd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             UnixSystem.checkInvariants closed |> shouldEqual []
             let reported, count, _ = closed |> ready |> finishes
@@ -444,7 +444,7 @@ module TestPollTimeout =
         let _, parked = parks [ entry directory 0x0002s ] 10 (withRegistry registry idle)
         UnixSystem.checkInvariants parked |> shouldEqual []
 
-        match UnixDescriptor.tryClose directory parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) directory parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual directory
             waiter |> shouldEqual thread

@@ -228,7 +228,7 @@ module TestUnixSystemInvariants =
             let system, fd, id = withOpenFile platform
 
             let locked =
-                match UnixDescriptor.tryFlock 0 fd lockExclusive system with
+                match UnixDescriptor.tryFlock (Callers.thread 0 system) fd lockExclusive system with
                 | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
                 | other -> failwith $"flock: %A{other}"
 

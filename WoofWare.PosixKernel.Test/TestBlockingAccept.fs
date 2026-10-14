@@ -90,12 +90,12 @@ module TestBlockingAccept =
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.dup fd system with
+        match Answered.dup (Callers.leader system) fd system with
         | SyscallAnswer.Completed newFd, system -> int newFd, system
         | other, _ -> failwith $"dup of %d{fd} answered %A{other}"
 
     let private setNonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixDescriptor.setNonBlocking fd value system |> snd
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd value system |> snd
 
     /// `thread` parks in an accept through `fd`, whose queue must be empty.
     let private parkIn (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -363,7 +363,8 @@ module TestBlockingAccept =
             | SimulatedUnixFlavour.Linux -> false
             | SimulatedUnixFlavour.Darwin -> true
 
-        UnixDescriptor.isNonBlocking accepted system |> shouldEqual (Some expected)
+        UnixDescriptor.isNonBlocking (Callers.leader system) accepted system
+        |> shouldEqual (Some expected)
 
     // ------------------------------------------------------------------
     // Several accepters
@@ -610,7 +611,7 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -649,7 +650,7 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -671,7 +672,7 @@ module TestBlockingAccept =
         let system = parkIn 1 fd system
 
         let system =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -717,7 +718,7 @@ module TestBlockingAccept =
             let system = parkIn 1 fd system
 
             let system =
-                match UnixDescriptor.tryClose (if closeEntered then fd else other) system with
+                match UnixDescriptor.tryClose (Callers.leader system) (if closeEntered then fd else other) system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -749,7 +750,7 @@ module TestBlockingAccept =
         )
 
     let private closed (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 
@@ -1296,7 +1297,7 @@ module TestBlockingAccept =
                     | Ok (SetSockOptAnswer.Set, system) -> system
                     | other -> failwith $"%s{where ()}: turning the accepted fd %d{fd}'s linger off: %A{other}"
 
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"%s{where ()}: closing the accepted fd %d{fd}: %A{other}"
 
@@ -1422,7 +1423,7 @@ module TestBlockingAccept =
                 | AcceptOp.Close fd ->
                     match Map.tryFind fd reference.Fds with
                     | None ->
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
                         | Ok (SyscallAnswer.Failed UnixError.EBADF, _) -> ()
                         | other -> failwith $"%s{where ()}: %A{other}"
                     | Some _ ->
@@ -1449,7 +1450,7 @@ module TestBlockingAccept =
 
                     let dies = reference.Alive && not (listenerHeld after)
 
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (SyscallAnswer.Completed 0L, closed) ->
                         if dies && not reference.Queue.IsEmpty then
                             cover $"%s{flavourName} close: resets the queued clients"
@@ -1475,7 +1476,7 @@ module TestBlockingAccept =
                         reference <- releasedIfUnheld after
                     | other -> failwith $"%s{where ()}: dies %b{dies}, %A{other}"
                 | AcceptOp.Dup fd ->
-                    let answer, after = Answered.dup fd system
+                    let answer, after = Answered.dup (Callers.leader system) fd system
 
                     match Map.tryFind fd reference.Fds with
                     | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)

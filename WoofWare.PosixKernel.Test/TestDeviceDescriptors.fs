@@ -640,7 +640,7 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
             let nonBlocking =
-                match UnixDescriptor.setNonBlocking fd true system with
+                match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
                 | SetNonBlockingAnswer.Set, system -> system
                 | other -> failwith $"F_SETFL O_NONBLOCK: %A{other}"
 
@@ -866,7 +866,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (whence : int) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixDescriptor.tryLseek fd offset whence system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
             | Ok (answer, after) ->
                 if whence >= 0 && whence <= 4 then
                     answer |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -895,7 +895,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (access : FileAccessMode) (length : int64) =
             let fd, system = openDevice device access booted
 
-            match UnixDescriptor.tryFtruncate fd length system with
+            match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
@@ -919,7 +919,7 @@ module TestDeviceDescriptors =
                 else
                     FileAdviceAnswer.Completed
 
-            UnixDescriptor.tryPosixFadvise fd offset length advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system
             |> shouldEqual (Ok expected)
 
         let int64Gen =
@@ -945,10 +945,10 @@ module TestDeviceDescriptors =
                 let fd, system = openDevice device access booted
 
                 for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Opaque ] do
-                    UnixDescriptor.tryBytesAvailable fd destination system
+                    UnixDescriptor.tryBytesAvailable (Callers.leader system) fd destination system
                     |> shouldEqual (Ok (BytesAvailableAnswer.Failed expected))
 
-                UnixDescriptor.terminalAttributes fd system
+                UnixDescriptor.terminalAttributes (Callers.leader system) fd system
                 |> shouldEqual (TerminalAttributesAnswer.NotATerminal expected)
 
     [<Test>]
@@ -959,16 +959,16 @@ module TestDeviceDescriptors =
         let urandomFd, system =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
-        UnixDescriptor.tryFileClone nullFd fileFd system
+        UnixDescriptor.tryFileClone (Callers.leader system) nullFd fileFd system
         |> shouldEqual (Ok UnixError.EXDEV)
 
-        UnixDescriptor.tryFileClone fileFd nullFd system
+        UnixDescriptor.tryFileClone (Callers.leader system) fileFd nullFd system
         |> shouldEqual (Ok UnixError.EXDEV)
 
-        UnixDescriptor.tryFileClone urandomFd nullFd system
+        UnixDescriptor.tryFileClone (Callers.leader system) urandomFd nullFd system
         |> shouldEqual (Ok UnixError.EINVAL)
 
-        UnixDescriptor.tryFileClone nullFd nullFd system
+        UnixDescriptor.tryFileClone (Callers.leader system) nullFd nullFd system
         |> shouldEqual (Ok UnixError.EINVAL)
 
     [<Test>]
@@ -1002,7 +1002,7 @@ module TestDeviceDescriptors =
         let lockExclusiveNonBlocking = 2 ||| 4
 
         let flock (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryFlock thread fd lockExclusiveNonBlocking system with
+            match UnixDescriptor.tryFlock (Callers.thread thread system) fd lockExclusiveNonBlocking system with
             | Ok (SyscallOutcome.Answered answer, system) -> answer, system
             | other -> failwith $"flock(%d{fd}): %A{other}"
 
@@ -1082,12 +1082,12 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadWrite booted
 
             let copy, system =
-                match Answered.dup fd system with
+                match Answered.dup (Callers.leader system) fd system with
                 | SyscallAnswer.Completed copy, system -> int copy, system
                 | other -> failwith $"dup: %A{other}"
 
             let closed =
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"close: %A{other}"
 

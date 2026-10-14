@@ -332,7 +332,7 @@ module TestDirectoryReadAgainstHost =
                                     Answered.openPath creating (rooted $"d/%s{name}") 0o644 system
                                     |> completed $"creat %s{name}"
 
-                                match UnixDescriptor.tryClose (int fd) system with
+                                match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
                                 | Ok (SyscallAnswer.Completed _, system) -> system
                                 | other -> failwith $"model close: %A{other}"
                         )
@@ -408,7 +408,8 @@ module TestDirectoryReadAgainstHost =
                                     let hostFd = hostDup target.HostFd
                                     hostSucceeded "dup" hostFd
 
-                                    let modelFd, system = Answered.dup target.ModelFd system |> completed "dup"
+                                    let modelFd, system =
+                                        Answered.dup (Callers.leader system) target.ModelFd system |> completed "dup"
 
                                     live <-
                                         live
@@ -427,7 +428,9 @@ module TestDirectoryReadAgainstHost =
                                     hostLSeek (target.HostFd, 0L, 0) |> shouldEqual 0L
 
                                     let answer, system =
-                                        match UnixDescriptor.tryLseek target.ModelFd 0L 0 system with
+                                        match
+                                            UnixDescriptor.tryLseek (Callers.leader system) target.ModelFd 0L 0 system
+                                        with
                                         | Ok result -> result
                                         | Error refusal -> failwith $"model rewind refused: %A{refusal}"
 
@@ -442,7 +445,7 @@ module TestDirectoryReadAgainstHost =
                                     hostClose target.HostFd |> hostSucceeded "close"
                                     live <- live |> List.filter (fun l -> l.HostFd <> target.HostFd)
 
-                                    match UnixDescriptor.tryClose target.ModelFd system with
+                                    match UnixDescriptor.tryClose (Callers.leader system) target.ModelFd system with
                                     | Ok (SyscallAnswer.Completed _, system) -> system
                                     | other -> failwith $"model close: %A{other}"
                             | HostDirectoryStep.Read which ->
@@ -602,7 +605,7 @@ module TestDirectoryReadAgainstHost =
                     Answered.openPath creating (rooted "f") 0o644 system |> completed "creat f"
 
                 let system =
-                    match UnixDescriptor.tryClose (int fd) system with
+                    match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"%A{refusal}"
 

@@ -106,7 +106,7 @@ module TestSimulatedMachine =
                 // Outside what the kernel models, so the step changes nothing.
                 | Error _ -> system
         | Op.Pipe ->
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"pipe: %A{refusal}"
         | Op.Dup fd ->
@@ -117,7 +117,7 @@ module TestSimulatedMachine =
             match pick fd (openFds system) with
             | None -> system
             | Some fd ->
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (_, system) -> system
                 // Outside what the kernel models, so the step changes nothing.
                 | Error _ -> system

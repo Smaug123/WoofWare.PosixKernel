@@ -191,7 +191,7 @@ module TestSyscallInterruption =
             |> withRegistry registry
 
         let system =
-            match UnixDescriptor.tryFlock holder lockedThrough 2 system with
+            match UnixDescriptor.tryFlock (Callers.thread holder system) lockedThrough 2 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"expected the holder's lock, got %A{other}"
 
@@ -221,7 +221,7 @@ module TestSyscallInterruption =
         | Sleep.Flock ->
             parked
                 "the flock"
-                (UnixDescriptor.tryFlock thread world.WaitingThrough 2 world.System)
+                (UnixDescriptor.tryFlock (Callers.thread thread world.System) world.WaitingThrough 2 world.System)
                 (function
                 | SyscallOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -282,7 +282,7 @@ module TestSyscallInterruption =
     let private makeReady (world : World) (sleep : Sleep) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match sleep with
         | Sleep.Flock ->
-            match UnixDescriptor.tryFlock holder world.LockedThrough 8 system with
+            match UnixDescriptor.tryFlock (Callers.thread holder system) world.LockedThrough 8 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"expected the holder's release, got %A{other}"
         | Sleep.PollOfNothing -> failwith "a poll of nothing is never ready"
@@ -318,7 +318,7 @@ module TestSyscallInterruption =
 
         match sleep with
         | Sleep.Flock ->
-            match UnixDescriptor.tryFlockAcquire thread system with
+            match UnixDescriptor.tryFlockAcquire (Callers.thread thread system) system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> Ending.Completed, system
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), system) -> Ending.Eintr, system
             | Ok (SyscallOutcome.Restarts, system) -> Ending.Restart, system
@@ -559,7 +559,15 @@ module TestSyscallInterruption =
 
             let system =
                 if closedUnder then
-                    match UnixDescriptor.tryClose (Option.get (enteredThrough world sleep)) system with
+                    // Another thread closes it: `thread` is asleep.
+                    let closer = if thread = 0 then 1 else 0
+
+                    match
+                        UnixDescriptor.tryClose
+                            (Callers.thread closer system)
+                            (Option.get (enteredThrough world sleep))
+                            system
+                    with
                     | Ok (SyscallAnswer.Completed 0L, system) -> system
                     | other -> failwith $"%O{sleep}: expected the close to succeed, got %A{other}"
                 else

@@ -1075,7 +1075,8 @@ module TestPermissionStanding =
             [
                 "write", (fun fd system -> WriteOutcomes.write fd one system |> ok |> snd)
                 "pwrite", (fun fd system -> WriteOutcomes.admitThenPwrite 0 fd one 0L system |> ok |> snd)
-                "ftruncate", (fun fd system -> UnixDescriptor.tryFtruncate fd 0L system |> ok |> snd)
+                "ftruncate",
+                (fun fd system -> UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system |> ok |> snd)
             ]
 
         for label, change in changes do
@@ -1132,7 +1133,7 @@ module TestPermissionStanding =
         | Error refusal -> refusal |> shouldEqual (PWriteRefusal.UnmeasuredSetIdChange (inode, written))
         | Ok (answer, _) -> failwith $"pwrite answered %A{answer}"
 
-        match UnixDescriptor.tryFtruncate fd 0L opened with
+        match UnixDescriptor.tryFtruncate (Callers.leader opened) fd 0L opened with
         | Error refusal ->
             refusal
             |> shouldEqual (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated))
@@ -1372,8 +1373,8 @@ module TestPermissionStanding =
                 [
                     WriteOutcomes.write fd one opened |> refused
                     WriteOutcomes.admitThenPwrite 0 fd one 0L opened |> refused
-                    UnixDescriptor.tryFtruncate fd 0L opened |> refused
-                    UnixDescriptor.tryFtruncate fd 4L opened |> refused
+                    UnixDescriptor.tryFtruncate (Callers.leader opened) fd 0L opened |> refused
+                    UnixDescriptor.tryFtruncate (Callers.leader opened) fd 4L opened |> refused
                 ]
             | Ok (SyscallAnswer.Failed _, _) -> []
             | Error refusal -> [ Some $"%A{refusal}" ]

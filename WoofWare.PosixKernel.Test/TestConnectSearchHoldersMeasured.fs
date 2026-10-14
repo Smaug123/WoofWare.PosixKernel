@@ -129,7 +129,7 @@ module TestConnectSearchHoldersMeasured =
         | other -> failwith $"accepting on fd %d{listener}: %A{other}"
 
     let private closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 

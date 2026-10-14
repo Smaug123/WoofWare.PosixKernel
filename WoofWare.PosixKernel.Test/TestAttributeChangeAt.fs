@@ -739,11 +739,11 @@ module TestAttributeChangeAt =
             | "dir" -> Some (opened "d" system)
             | "file" -> Some (opened "f" system)
             | "pipe-read" ->
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, _), system) -> Some (readFd, system)
                 | other -> failwith $"%s{context}: pipe2: %A{other}"
             | "pipe-write" ->
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (_, writeFd), system) -> Some (writeFd, system)
                 | other -> failwith $"%s{context}: pipe2: %A{other}"
             | "socket" -> Some (NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system)

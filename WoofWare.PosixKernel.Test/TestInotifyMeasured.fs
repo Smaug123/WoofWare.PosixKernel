@@ -173,7 +173,7 @@ module TestInotifyMeasured =
         | Error refusal -> failwith $"inotify_rm_watch(%d{fd}, %d{wd}) refused: %s{InotifyRefusal.describe refusal}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok answered -> answered
         | Error refusal -> failwith $"close(%d{fd}): %A{refusal}"
 
@@ -307,7 +307,7 @@ module TestInotifyMeasured =
         | records, system -> String.concat " | " records, system
 
     let private fionread (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (BytesAvailableAnswer.Reported count) -> $"%d{count}"
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
@@ -359,7 +359,7 @@ module TestInotifyMeasured =
         objectOf ep |> shouldEqual (objectOf a)
 
         let flock (fd : int) (operation : int) =
-            match UnixDescriptor.tryFlock 0 fd operation system with
+            match UnixDescriptor.tryFlock (Callers.thread 0 system) fd operation system with
             | Ok (SyscallOutcome.Answered answer, s) ->
                 system <- s
                 rc answer
@@ -378,7 +378,7 @@ module TestInotifyMeasured =
         )
 
         let lseek (offset : int64) (whence : int) =
-            match UnixDescriptor.tryLseek a offset whence system with
+            match UnixDescriptor.tryLseek (Callers.leader system) a offset whence system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -722,7 +722,7 @@ module TestInotifyMeasured =
         let fd2, s = init1 nonblock s
 
         let d, s =
-            match UnixDescriptor.tryDup fd s with
+            match UnixDescriptor.tryDup (Callers.leader s) fd s with
             | Ok (SyscallAnswer.Completed d, s) -> int d, s
             | other -> failwith $"%A{other}"
 
@@ -1467,7 +1467,7 @@ module TestInotifyMeasured =
         system <- s
 
         let isatty =
-            match UnixDescriptor.terminalAttributes fd system with
+            match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
 
         let pread () =
@@ -1494,22 +1494,22 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let fionreadNull =
-            match UnixDescriptor.tryBytesAvailable fd (UserBuffer.Unmapped 0UL) system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd (UserBuffer.Unmapped 0UL) system with
             | Ok (BytesAvailableAnswer.Failed error) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
         let fadvise =
-            match UnixDescriptor.tryPosixFadvise fd 0L 0L 0 system with
+            match UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L 0 system with
             | Ok FileAdviceAnswer.Completed -> "0"
             | other -> failwith $"%A{other}"
 
         let ftruncate =
-            match UnixDescriptor.tryFtruncate fd 0L system with
+            match UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
         let ficlone =
-            match UnixDescriptor.tryFileClone fd other system with
+            match UnixDescriptor.tryFileClone (Callers.leader system) fd other system with
             | Ok error -> $"-1 %O{error}"
             | Error refusal -> failwith $"%A{refusal}"
 

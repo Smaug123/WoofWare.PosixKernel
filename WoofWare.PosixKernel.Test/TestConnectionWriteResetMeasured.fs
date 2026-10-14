@@ -136,7 +136,10 @@ module TestConnectionWriteResetMeasured =
 
         let server, system = KeventWorld.accept listener system
         let system = KeventWorld.close listener system
-        let _, system = UnixDescriptor.setNonBlocking server false system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server false system
+
         client, server, system
 
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -265,7 +268,9 @@ module TestConnectionWriteResetMeasured =
 
         let system = returnToUser 1 system
         let soError, system = soError client system
-        let _, system = UnixDescriptor.setNonBlocking client true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
         let second, secondSigPipe, _ =
             WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped (bytesOf 100) system
@@ -414,7 +419,8 @@ module TestConnectionWriteResetMeasured =
 
         // The hog's drain: everything the reader holds, and everything still
         // on its way to it, read without blocking.
-        let _, system = UnixDescriptor.setNonBlocking server true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
         let rec drain (total : int64) (system : UnixSystem<int, string>) =
             match UnixReadWrite.tryRead 0 server UserBuffer.Mapped (uint64 (1 <<< 22)) system with

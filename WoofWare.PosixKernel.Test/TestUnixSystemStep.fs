@@ -1733,7 +1733,8 @@ module TestUnixSystemStep =
             imageOn SimulatedUnixPlatform.linuxX64
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        UnixDescriptor.effectiveUserId system |> shouldEqual credentials.EffectiveUser
+        UnixDescriptor.effectiveUserId (Callers.leader system) system
+        |> shouldEqual credentials.EffectiveUser
 
     [<Test>]
     let ``fstat of a descriptor that is not open is EBADF`` () : unit =
@@ -2219,7 +2220,7 @@ module TestUnixSystemStep =
         | other -> failwith $"expected the contents, got %A{other}"
 
         // And closing that last descriptor is what finally reaps it.
-        match UnixDescriptor.tryClose fd after with
+        match UnixDescriptor.tryClose (Callers.leader after) fd after with
         | Ok (SyscallAnswer.Completed _, closed) -> UnixPathResolution.statOf target closed |> shouldEqual None
         | other -> failwith $"expected a close, got %A{other}"
 
@@ -2391,14 +2392,14 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``close of a descriptor that is not open is EBADF and changes nothing`` () : unit =
-        UnixDescriptor.tryClose 7 linux
+        UnixDescriptor.tryClose (Callers.leader linux) 7 linux
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, linux))
 
     [<Test>]
     let ``close drops the descriptor and answers zero`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed answer, after) ->
             // Zero rather than the descriptor number: `close(2)` reports success,
             // not what it closed.
@@ -2417,7 +2418,10 @@ module TestUnixSystemStep =
 
         UnixSystem.tryStep leaderThread (Syscall.Close fd) system
         |> stepAnswered
-        |> shouldEqual (UnixDescriptor.tryClose fd system |> Result.mapError SyscallRefusal.Close)
+        |> shouldEqual (
+            UnixDescriptor.tryClose (Callers.leader system) fd system
+            |> Result.mapError SyscallRefusal.Close
+        )
 
     [<Test>]
     let ``close reaps the inode whose last name had already gone`` () : unit =
@@ -2455,7 +2459,7 @@ module TestUnixSystemStep =
         (VirtualFileSystem.tryGet inode unnamed.Machine.FileSystem).IsSome
         |> shouldEqual true
 
-        match UnixDescriptor.tryClose fd unnamed with
+        match UnixDescriptor.tryClose (Callers.leader unnamed) fd unnamed with
         | Ok (SyscallAnswer.Completed _, after) ->
             (VirtualFileSystem.tryGet inode after.Machine.FileSystem).IsSome
             |> shouldEqual false
@@ -2551,7 +2555,7 @@ module TestUnixSystemStep =
         // Not a `SyscallAnswer`: `geteuid(2)` cannot fail, so a shape that
         // admitted `Failed` would make an unreachable state representable. The
         // per-syscall function is the primitive for exactly this reason.
-        UnixDescriptor.effectiveUserId linux
+        UnixDescriptor.effectiveUserId (Callers.leader linux) linux
         |> shouldEqual (UserId.parseOrFail "test" 1000u)
 
     [<Test>]
@@ -2561,7 +2565,7 @@ module TestUnixSystemStep =
         match UnixSystem.tryStep leaderThread Syscall.GetEffectiveUserId linux |> stepAnswered with
         | Ok (SyscallAnswer.Completed answer, after) ->
             answer
-            |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId linux)))
+            |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId (Callers.leader linux) linux)))
 
             after |> shouldEqual linux
         | other -> failwith $"unexpected: %O{other}"
@@ -2597,14 +2601,14 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``dup of a closed descriptor is EBADF and changes nothing`` () : unit =
-        let answer, after = Answered.dup 7 linux
+        let answer, after = Answered.dup (Callers.leader linux) 7 linux
         answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
         after |> shouldEqual linux
 
     [<Test>]
     let ``dup shares the description and takes the lowest free descriptor`` () : unit =
         let fd, system = withOpenFile linux
-        let answer, after = Answered.dup fd system
+        let answer, after = Answered.dup (Callers.leader system) fd system
 
         let duplicated =
             match answer with
@@ -2623,7 +2627,7 @@ module TestUnixSystemStep =
         // that are not portable at all.
         for system in [ linux ; darwin ] do
             for whence in [ 0 ; 1 ; 2 ; 3 ; 4 ; 99 ] do
-                UnixDescriptor.tryLseek 7 0L whence system
+                UnixDescriptor.tryLseek (Callers.leader system) 7 0L whence system
                 |> answered
                 |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
@@ -2637,11 +2641,11 @@ module TestUnixSystemStep =
         // unseekable on both.
         let unseekableFd = 0
 
-        UnixDescriptor.tryLseek unseekableFd 0L 99 linux
+        UnixDescriptor.tryLseek (Callers.leader linux) unseekableFd 0L 99 linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-        UnixDescriptor.tryLseek unseekableFd 0L 99 darwin
+        UnixDescriptor.tryLseek (Callers.leader darwin) unseekableFd 0L 99 darwin
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.ESPIPE)
 
@@ -2650,14 +2654,14 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
 
         let after =
-            match UnixDescriptor.tryLseek fd 3L 0 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd 3L 0 system with
             | Ok (SyscallAnswer.Completed 3L, after) -> after
             | other -> failwith $"expected to land at 3, got %O{other}"
 
         // A failed seek does not move the description — measured.
-        match UnixDescriptor.tryLseek fd -1L 0 after with
+        match UnixDescriptor.tryLseek (Callers.leader after) fd -1L 0 after with
         | Ok (SyscallAnswer.Failed UnixError.EINVAL, unmoved) ->
-            match UnixDescriptor.tryLseek fd 0L 1 unmoved with
+            match UnixDescriptor.tryLseek (Callers.leader unmoved) fd 0L 1 unmoved with
             | Ok (SyscallAnswer.Completed position, _) -> position |> shouldEqual 3L
             | other -> failwith $"expected the offset to be where it was, got %O{other}"
         | other -> failwith $"expected EINVAL, got %O{other}"
@@ -2669,7 +2673,7 @@ module TestUnixSystemStep =
         for system, expected in [ linux, UnixError.EINVAL ; darwin, UnixError.EOVERFLOW ] do
             let fd, seeded = withOpenFile system
 
-            UnixDescriptor.tryLseek fd (System.Int64.MaxValue - 4L) 2 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd (System.Int64.MaxValue - 4L) 2 seeded
             |> answered
             |> shouldEqual (SyscallAnswer.Failed expected)
 
@@ -2684,10 +2688,10 @@ module TestUnixSystemStep =
             ] do
             let fd, seeded = withOpenFile system
 
-            UnixDescriptor.tryLseek fd 0L 3 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd 0L 3 seeded
             |> shouldEqual (Error (LSeekRefusal.Sparseness (3, three)))
 
-            UnixDescriptor.tryLseek fd 0L 4 seeded
+            UnixDescriptor.tryLseek (Callers.leader seeded) fd 0L 4 seeded
             |> shouldEqual (Error (LSeekRefusal.Sparseness (4, four)))
 
     [<Test>]
@@ -2715,11 +2719,11 @@ module TestUnixSystemStep =
         // Measured on both: the same unknown fd is EBADF at length 0 and EINVAL
         // at length -1, so the length really is checked first rather than the two
         // faults merely sharing an errno. A row per fault alone could not tell.
-        UnixDescriptor.tryFtruncate 99 0L linux
+        UnixDescriptor.tryFtruncate (Callers.leader linux) 99 0L linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
-        UnixDescriptor.tryFtruncate 99 -1L linux
+        UnixDescriptor.tryFtruncate (Callers.leader linux) 99 -1L linux
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
@@ -2730,7 +2734,7 @@ module TestUnixSystemStep =
         // a directory can only ever be opened read-only.
         let fd, system = withOpenDirectory linux
 
-        UnixDescriptor.tryFtruncate fd 0L system
+        UnixDescriptor.tryFtruncate (Callers.leader system) fd 0L system
         |> answered
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
@@ -2739,12 +2743,12 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
 
         let after =
-            match UnixDescriptor.tryFtruncate fd 2L system with
+            match UnixDescriptor.tryFtruncate (Callers.leader system) fd 2L system with
             | Ok (SyscallAnswer.Completed 0L, after) -> after
             | other -> failwith $"expected success, got %O{other}"
 
         // Seeking to the end is how the length is read back without a `stat`.
-        UnixDescriptor.tryLseek fd 0L 2 after
+        UnixDescriptor.tryLseek (Callers.leader after) fd 0L 2 after
         |> answered
         |> shouldEqual (SyscallAnswer.Completed 2L)
 
@@ -2827,12 +2831,14 @@ module TestUnixSystemStep =
         // Darwin is laxer *and* answers differently per input, which is why the
         // whole of it is refused rather than one row of it modelled.
         let shAndEx = 1 ||| 2
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
 
-        UnixDescriptor.tryFlock holderThread 0 shAndEx (withThread holderThread linux)
+        UnixDescriptor.tryFlock (Callers.thread holderThread linux) 0 shAndEx linux
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
-        UnixDescriptor.tryFlock holderThread 0 shAndEx (withThread holderThread darwin)
+        UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 shAndEx darwin
         |> shouldEqual (Error (FLockRefusal.DarwinMalformedOperation shAndEx))
 
     /// `LOCK_MAND` (bit 32): Linux removed mandatory locking in 5.15 and now
@@ -2841,11 +2847,12 @@ module TestUnixSystemStep =
     /// the lock table changes. Measured (`docs/probes/flock/lock-mand.py`).
     [<Test>]
     let ``a LOCK_MAND request is ignored on Linux, closed descriptors included`` () : unit =
+        let linux = withThread holderThread linux
+
         for operation in [ 32 ; 32 ||| 1 ; 32 ||| 2 ; 32 ||| 8 ; 32 ||| 4 ] do
             for fd in [ 0 ; 99 ] do
-                match UnixDescriptor.tryFlock holderThread fd operation (withThread holderThread linux) with
-                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), after) ->
-                    after |> shouldEqual (withThread holderThread linux)
+                match UnixDescriptor.tryFlock (Callers.thread holderThread linux) fd operation linux with
+                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), after) -> after |> shouldEqual linux
                 | other -> failwith $"flock(%d{fd}, %d{operation}) on Linux: expected 0, got %A{other}"
 
     /// Darwin looks the descriptor up before it screens the operation, so a
@@ -2853,19 +2860,22 @@ module TestUnixSystemStep =
     /// first and answers EINVAL. Measured on both.
     [<Test>]
     let ``a closed descriptor is EBADF on Darwin and EINVAL on Linux for a malformed operation`` () : unit =
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
+
         for operation in [ 0 ; 4 ; 1 ||| 2 ; 16 ; 32 ] do
-            UnixDescriptor.tryFlock holderThread 99 operation (withThread holderThread darwin)
+            UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 99 operation darwin
             |> answeredOutcome
             |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
 
         for operation in [ 0 ; 4 ; 1 ||| 2 ; 16 ] do
-            UnixDescriptor.tryFlock holderThread 99 operation (withThread holderThread linux)
+            UnixDescriptor.tryFlock (Callers.thread holderThread linux) 99 operation linux
             |> answeredOutcome
             |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
 
         // ...and a malformed operation on an *open* Darwin descriptor is still
         // refused, since what it leaves the lock table as is unmeasured.
-        UnixDescriptor.tryFlock holderThread 0 (32 ||| 1) (withThread holderThread darwin)
+        UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 (32 ||| 1) darwin
         |> shouldEqual (Error (FLockRefusal.DarwinMalformedOperation (32 ||| 1)))
 
     [<Test>]
@@ -2873,11 +2883,14 @@ module TestUnixSystemStep =
         // The standard streams are pipes. Linux permits `flock` on one and
         // returns 0; Darwin answers ENOTSUP, and what that leaves the lock state
         // as is unmeasured.
-        UnixDescriptor.tryFlock holderThread 0 2 (withThread holderThread linux)
+        let linux = withThread holderThread linux
+        let darwin = withThread holderThread darwin
+
+        UnixDescriptor.tryFlock (Callers.thread holderThread linux) 0 2 linux
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Completed 0L)
 
-        match UnixDescriptor.tryFlock holderThread 0 2 (withThread holderThread darwin) with
+        match UnixDescriptor.tryFlock (Callers.thread holderThread darwin) 0 2 darwin with
         | Error (FLockRefusal.DarwinPipe (PipeId 0L)) -> ()
         | other -> failwith $"expected a Darwin pipe refusal, got %O{other}"
 
@@ -2888,13 +2901,17 @@ module TestUnixSystemStep =
         // that would hand a caller an EWOULDBLOCK no kernel would have produced.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
-        UnixDescriptor.tryFlock waiterThread second (2 ||| 4) held
+        UnixDescriptor.tryFlock (Callers.thread waiterThread held) second (2 ||| 4) held
         |> answeredOutcome
         |> shouldEqual (SyscallAnswer.Failed UnixError.EAGAIN)
 
-        let condition, _ = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let condition, _ =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         // Keyed on the description rather than on the descriptor: a `dup` of
         // `second` waits on the same lock.
@@ -2917,17 +2934,25 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
 
         for holder, requester in [ 1, 2 ; 2, 1 ] do
-            let held = UnixDescriptor.tryFlock holderThread first holder system |> granted
+            let held =
+                UnixDescriptor.tryFlock (Callers.thread holderThread system) first holder system
+                |> granted
 
             let condition, parkedIn =
-                UnixDescriptor.tryFlock waiterThread second requester held |> parked
+                UnixDescriptor.tryFlock (Callers.thread waiterThread held) second requester held
+                |> parked
 
             holds waiterThread condition parkedIn |> shouldEqual false
 
         // ...and shared-on-shared is the control: it is granted, so there is no
         // condition for the predicate to be wrong about.
-        let held = UnixDescriptor.tryFlock holderThread first 1 system |> granted
-        UnixDescriptor.tryFlock waiterThread second 1 held |> granted |> ignore
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 1 system
+            |> granted
+
+        UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 1 held
+        |> granted
+        |> ignore
 
     [<Test>]
     let ``a release satisfies the condition it was blocking`` () : unit =
@@ -2935,12 +2960,17 @@ module TestUnixSystemStep =
         // is simply always false.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         holds waiterThread condition released |> shouldEqual true
 
@@ -2952,17 +2982,25 @@ module TestUnixSystemStep =
         // this one into a lock it cannot have.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         // A third description takes the lock in the window between the release
         // and the wake, which on a real kernel puts the waiter back to sleep.
         let third, opened = withAnotherDescription first released
-        let contended = UnixDescriptor.tryFlock thirdThread third 2 opened |> granted
+
+        let contended =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread opened) third 2 opened
+            |> granted
 
         holds waiterThread condition contended |> shouldEqual false
 
@@ -2974,16 +3012,26 @@ module TestUnixSystemStep =
         let third, system = withAnotherDescription first system
 
         // `first` and `second` both hold shared locks; `third` wants exclusive.
-        let held = UnixDescriptor.tryFlock holderThread first 1 system |> granted
-        let held = UnixDescriptor.tryFlock waiterThread second 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 1 system
+            |> granted
 
-        let condition, parkedIn = UnixDescriptor.tryFlock thirdThread third 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 1 held
+            |> granted
 
-        let oneReleased = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let condition, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread held) third 2 held |> parked
+
+        let oneReleased =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+
         holds thirdThread condition oneReleased |> shouldEqual false
 
         let bothReleased =
-            UnixDescriptor.tryFlock waiterThread second 8 oneReleased |> granted
+            UnixDescriptor.tryFlock (Callers.thread waiterThread oneReleased) second 8 oneReleased
+            |> granted
 
         holds thirdThread condition bothReleased |> shouldEqual true
 
@@ -2998,10 +3046,17 @@ module TestUnixSystemStep =
         // nothing to begin with, so the advanced table is the one that went in.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
 
-        let _, parkedIn = UnixDescriptor.tryFlock holderThread first 2 both |> parked
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> parked
 
         // `None` rather than merely "not what it was": an implementation that
         // established the exclusive lock and *then* reported the contention
@@ -3020,18 +3075,29 @@ module TestUnixSystemStep =
         // the same question asked at two different times.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
+
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock holderThread first 2 both |> parked
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> parked
 
         // The parked description takes a shared lock again while it waits, which
         // a `dup` of its descriptor could do from another thread (the parked thread
         // itself cannot: it is in one syscall). That lock is its own, so it must
         // not stand in the way of the exclusive one it wants.
-        let reacquired = UnixDescriptor.tryFlock thirdThread first 1 parkedIn |> granted
-        let released = UnixDescriptor.tryFlock waiterThread second 8 reacquired |> granted
+        let reacquired =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread parkedIn) first 1 parkedIn
+            |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread reacquired) second 8 reacquired
+            |> granted
 
         holds holderThread condition released |> shouldEqual true
 
@@ -3058,15 +3124,18 @@ module TestUnixSystemStep =
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let waitedOn = descriptionOf second parkedIn
 
         let closed =
-            match UnixDescriptor.tryClose second parkedIn with
+            match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
             | Ok (SyscallAnswer.Completed 0L, closed) -> closed
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3088,7 +3157,10 @@ module TestUnixSystemStep =
             )
         )
 
-        let released = UnixDescriptor.tryFlock holderThread first 8 opened |> granted
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread opened) first 8 opened
+            |> granted
+
         holds waiterThread condition released |> shouldEqual true
 
     [<Test>]
@@ -3100,10 +3172,13 @@ module TestUnixSystemStep =
         // that says so out loud rather than picking one of two wrong answers.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         // The forgery lets go of the park's hold behind its back as well.
         let secondId =
@@ -3139,12 +3214,17 @@ module TestUnixSystemStep =
         // dispatcher that forwarded the wrong one would be invisible here.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
+
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
 
         UnixSystem.tryStep holderThread (Syscall.FLock (first, 2)) both
         |> shouldEqual (
-            UnixDescriptor.tryFlock holderThread first 2 both
+            UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
             |> Result.mapError SyscallRefusal.FLock
         )
 
@@ -3164,11 +3244,16 @@ module TestUnixSystemStep =
 
         // `second` holds a shared lock; `first` takes one too, then tries to
         // convert to exclusive, which cannot be granted while `second` holds its.
-        let held = UnixDescriptor.tryFlock waiterThread second 1 system |> granted
-        let both = UnixDescriptor.tryFlock holderThread first 1 held |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread system) second 1 system
+            |> granted
+
+        let both =
+            UnixDescriptor.tryFlock (Callers.thread holderThread held) first 1 held
+            |> granted
 
         let afterFailedConversion =
-            match UnixDescriptor.tryFlock holderThread first (2 ||| 4) both with
+            match UnixDescriptor.tryFlock (Callers.thread holderThread both) first (2 ||| 4) both with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) -> after
             | other -> failwith $"expected EAGAIN, got %A{other}"
 
@@ -3182,17 +3267,25 @@ module TestUnixSystemStep =
         // its wake predicate answers true.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         holds waiterThread condition released |> shouldEqual true
 
-        let finished = UnixDescriptor.tryFlockAcquire waiterThread released |> granted
+        let finished =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
+            |> granted
 
         FileDescriptorRegistry.tryFind second (Lone.fileDescriptors finished)
         |> Option.map (fun description -> description.Flock)
@@ -3206,18 +3299,28 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let third, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         // Somebody else takes it in the window between the wake and the resume.
-        let taken = UnixDescriptor.tryFlock thirdThread third 2 released |> granted
+        let taken =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) third 2 released
+            |> granted
 
-        let again, _ = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
+        let again, _ =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread taken) taken
+            |> parked
 
         again |> shouldEqual condition
 
@@ -3229,13 +3332,21 @@ module TestUnixSystemStep =
         // descriptor would have to decide the flavour's rules all over again.
         let first, second, system = withTwoDescriptions darwin
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
 
-        UnixDescriptor.tryFlockAcquire waiterThread released
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
+
+        UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
         |> granted
         |> ignore<UnixSystem<int, string>>
 
@@ -3260,16 +3371,26 @@ module TestUnixSystemStep =
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let requester = descriptionOf second parkedIn
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         // The alias names the same description, so this is a first acquisition on it.
-        let aliased = UnixDescriptor.tryFlock thirdThread alias 1 released |> granted
+        let aliased =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) alias 1 released
+            |> granted
 
-        UnixDescriptor.tryFlockAcquire waiterThread aliased
+        UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread aliased) aliased
         |> shouldEqual (Error FLockRefusal.DarwinConversion)
 
     [<Test>]
@@ -3279,10 +3400,13 @@ module TestUnixSystemStep =
         // and nothing would notice.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         condition
         |> shouldEqual (
@@ -3312,11 +3436,14 @@ module TestUnixSystemStep =
     let ``a granted or failed flock records no park`` () : unit =
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
         UnixThreadTable.parkedFor holderThread (Lone.threads held) |> shouldEqual None
 
         // A non-blocking contended acquisition fails rather than parks.
-        match UnixDescriptor.tryFlock waiterThread second (2 ||| 4) held with
+        match UnixDescriptor.tryFlock (Callers.thread waiterThread held) second (2 ||| 4) held with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EAGAIN), after) ->
             UnixThreadTable.parkedFor waiterThread (Lone.threads after) |> shouldEqual None
         | other -> failwith $"expected EAGAIN, got %A{other}"
@@ -3328,12 +3455,18 @@ module TestUnixSystemStep =
         // descriptor would be a thread in two syscalls at once.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let exn =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixDescriptor.tryFlock waiterThread second 2 parkedIn |> ignore
+                UnixDescriptor.tryFlock (Callers.thread waiterThread parkedIn) second 2 parkedIn
+                |> ignore
             )
 
         exn.Message |> shouldContainText "is parked in"
@@ -3346,7 +3479,7 @@ module TestUnixSystemStep =
 
         let exn =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixDescriptor.tryFlock 99 first 1 system |> ignore
+                UnixDescriptor.tryFlock (Callers.thread 99 system) first 1 system |> ignore
             )
 
         exn.Message |> shouldContainText "names no thread"
@@ -3357,8 +3490,14 @@ module TestUnixSystemStep =
         // that is already parked or is not a thread at all.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
         let root = PathArg.ofText "/"
 
         let opens : (string * (int -> UnixSystem<int, string> -> unit)) list =
@@ -3395,8 +3534,13 @@ module TestUnixSystemStep =
         // it looks at the descriptor.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         let connect (thread : int) : unit =
             UnixConnection.tryConnect thread first UserBuffer.Mapped 0u parkedIn |> ignore
@@ -3423,25 +3567,43 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let another, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
-        let released = UnixDescriptor.tryFlock holderThread first 8 parkedIn |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
+        let released =
+            UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+            |> granted
 
         // Beaten: the thread is parked on the same record, so it can be woken again later.
-        let taken = UnixDescriptor.tryFlock thirdThread another 2 released |> granted
-        let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread taken |> parked
+        let taken =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread released) another 2 released
+            |> granted
+
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread taken) taken
+            |> parked
 
         UnixThreadTable.parkedFor waiterThread (Lone.threads beaten)
         |> shouldEqual (UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn))
 
         // Granted: the record is gone, and the thread may issue an flock again.
-        let freed = UnixDescriptor.tryFlock thirdThread another 8 beaten |> granted
-        let finished = UnixDescriptor.tryFlockAcquire waiterThread freed |> granted
+        let freed =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread beaten) another 8 beaten
+            |> granted
+
+        let finished =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread freed) freed
+            |> granted
 
         UnixThreadTable.parkedFor waiterThread (Lone.threads finished)
         |> shouldEqual None
 
-        UnixDescriptor.tryFlock waiterThread second 8 finished
+        UnixDescriptor.tryFlock (Callers.thread waiterThread finished) second 8 finished
         |> granted
         |> ignore<UnixSystem<int, string>>
 
@@ -3452,21 +3614,38 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions linux
         let another, system = withAnotherDescription first system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
-        let _, parkedIn = UnixDescriptor.tryFlock thirdThread another 2 parkedIn |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread thirdThread parkedIn) another 2 parkedIn
+            |> parked
 
         let retaken =
-            UnixDescriptor.tryFlock holderThread first 8 parkedIn
-            |> granted
-            |> UnixDescriptor.tryFlock holderThread first 2
+            let released =
+                UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
+                |> granted
+
+            UnixDescriptor.tryFlock (Callers.thread holderThread released) first 2 released
             |> granted
 
         // Resumed in the opposite order to the one they parked in, and both beaten.
-        let _, beaten = UnixDescriptor.tryFlockAcquire thirdThread retaken |> parked
-        let _, beaten = UnixDescriptor.tryFlockAcquire waiterThread beaten |> parked
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread thirdThread retaken) retaken
+            |> parked
 
-        let freed = UnixDescriptor.tryFlock holderThread first 8 beaten |> granted
+        let _, beaten =
+            UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread beaten) beaten
+            |> parked
+
+        let freed =
+            UnixDescriptor.tryFlock (Callers.thread holderThread beaten) first 8 beaten
+            |> granted
 
         let firedFor (fd : int) : Set<WakePrimitive> =
             Set.singleton (WakePrimitive.FlockGrantable (descriptionOf fd freed, FlockMode.Exclusive))
@@ -3480,7 +3659,8 @@ module TestUnixSystemStep =
 
         let exn =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixDescriptor.tryFlockAcquire holderThread system |> ignore
+                UnixDescriptor.tryFlockAcquire (Callers.thread holderThread system) system
+                |> ignore
             )
 
         exn.Message |> shouldContainText "is not parked"
@@ -3563,7 +3743,7 @@ module TestUnixSystemStep =
     /// `operation` by `thread` through `fd`, which must be answered at once: the
     /// answer.
     let private flockAnswer (thread : int) (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-        match UnixDescriptor.tryFlock thread fd operation system with
+        match UnixDescriptor.tryFlock (Callers.thread thread system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"expected flock %d{operation} on fd %d{fd} to be answered, got %A{other}"
 
@@ -3582,21 +3762,24 @@ module TestUnixSystemStep =
 
             let system =
                 if dupKept then
-                    match Answered.dup second system with
+                    match Answered.dup (Callers.leader system) second system with
                     | SyscallAnswer.Completed _, system -> system
                     | other -> failwith $"%A{other}"
                 else
                     system
 
-            let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+            let held =
+                UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+                |> granted
 
             let condition, parkedIn =
-                UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+                UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+                |> parked
 
             let requester = descriptionOf second parkedIn
 
             let closed =
-                match UnixDescriptor.tryClose second parkedIn with
+                match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
                 | Ok (SyscallAnswer.Completed 0L, closed) -> closed
                 | other -> failwith $"%s{where}: expected the close to succeed, got %A{other}"
 
@@ -3624,14 +3807,16 @@ module TestUnixSystemStep =
                             }
                         )
 
-                    match UnixDescriptor.tryFlockAcquire waiterThread signalled with
+                    match UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread signalled) signalled with
                     | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), ended) ->
                         flockAnswer holderThread first 8 ended |> snd
                     | other -> failwith $"%s{where}: expected EINTR, got %A{other}"
                 else
                     let released = flockAnswer holderThread first 8 closed |> snd
                     holds waiterThread condition released |> shouldEqual true
-                    UnixDescriptor.tryFlockAcquire waiterThread released |> granted
+
+                    UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
+                    |> granted
 
             OpenFileTable.descriptions ended.Machine.OpenFiles
             |> Map.containsKey requester
@@ -3658,16 +3843,22 @@ module TestUnixSystemStep =
         let first, second, system = withTwoDescriptions darwin
 
         let alias, system =
-            match Answered.dup second system with
+            match Answered.dup (Callers.leader system) second system with
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"%A{other}"
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
-        let _, parkedIn = UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
+
+        let _, parkedIn =
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
+
         let requester = descriptionOf second parkedIn
 
         for fd in [ second ; alias ] do
-            match UnixDescriptor.tryClose fd parkedIn with
+            match UnixDescriptor.tryClose (Callers.leader parkedIn) fd parkedIn with
             | Error (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread)) ->
                 description |> shouldEqual requester
                 thread |> shouldEqual waiterThread
@@ -3690,12 +3881,15 @@ module TestUnixSystemStep =
 
         let system = Lone.withFileDescriptors registry system
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
-        match UnixDescriptor.tryClose second parkedIn with
+        match UnixDescriptor.tryClose (Callers.leader parkedIn) second parkedIn with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             holds waiterThread condition closed |> shouldEqual false
 
@@ -3742,7 +3936,7 @@ module TestUnixSystemStep =
         let description = descriptionOf fd system
         let parked = parkedInEpollWait fd system
 
-        match UnixDescriptor.tryClose fd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) fd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors closed)
             |> shouldEqual None
@@ -3774,7 +3968,7 @@ module TestUnixSystemStep =
 
         let parked = parkedInEpollWait fd system
 
-        match UnixDescriptor.tryClose fd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) fd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             // The description really did survive, which is what the waiter needs.
             FileDescriptorRegistry.tryFindId alias (Lone.fileDescriptors closed)
@@ -3806,7 +4000,7 @@ module TestUnixSystemStep =
             | Ok (KeventOutcome.WouldBlock _, parked) -> parked
             | other -> failwith $"expected the wait to park, got %A{other}"
 
-        match UnixDescriptor.tryClose alias parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) alias parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             UnixWait.wakes (Set.singleton 7) closed |> shouldEqual []
             UnixSystem.checkInvariants closed |> shouldEqual []
@@ -3819,7 +4013,9 @@ module TestUnixSystemStep =
         for system in [ linux ; darwin ] do
             let fd, system = withEventQueue system
 
-            match UnixDescriptor.tryClose fd (withThread 7 system) with
+            let system = withThread 7 system
+
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, _) -> ()
             | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -3946,10 +4142,13 @@ module TestUnixSystemStep =
         // between them is a thread waiting for one thing while the sweep watches another.
         let first, second, system = withTwoDescriptions linux
 
-        let held = UnixDescriptor.tryFlock holderThread first 2 system |> granted
+        let held =
+            UnixDescriptor.tryFlock (Callers.thread holderThread system) first 2 system
+            |> granted
 
         let condition, parkedIn =
-            UnixDescriptor.tryFlock waiterThread second 2 held |> parked
+            UnixDescriptor.tryFlock (Callers.thread waiterThread held) second 2 held
+            |> parked
 
         match UnixThreadTable.parkedFor waiterThread (Lone.threads parkedIn) with
         | Some parked -> WakeCondition.ofPark parked |> shouldEqual condition
@@ -5773,7 +5972,7 @@ module TestUnixSystemStep =
         // ...and closing the descriptor is what finally frees it, which is the
         // half a test that only checked survival would leave unpinned.
         let closed =
-            match UnixDescriptor.tryClose fd moved with
+            match UnixDescriptor.tryClose (Callers.leader moved) fd moved with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"expected the close to succeed, got %A{other}"
 

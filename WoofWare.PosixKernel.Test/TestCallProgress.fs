@@ -43,7 +43,7 @@ module TestCallProgress =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte (i % 251)))
 
     let private nonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        snd (UnixDescriptor.setNonBlocking fd value system)
+        snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd value system)
 
     /// A pipe on `platform`, `prefill` bytes into it as far as it takes them
     /// without blocking, and its write end blocking or not as `writeNonBlocking`
@@ -55,7 +55,9 @@ module TestCallProgress =
         : int * UnixSystem<int, string>
         =
         let writeFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped (systemOn platform) with
+            let system = systemOn platform
+
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (_, writeFd), system) -> writeFd, system
             | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 

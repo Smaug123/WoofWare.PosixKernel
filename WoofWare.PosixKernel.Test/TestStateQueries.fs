@@ -182,7 +182,7 @@ module TestStateQueries =
             |> shouldEqual None
 
             let system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (3, 4), system) -> system
                 | other -> failwith $"pipe2: %A{other}"
 

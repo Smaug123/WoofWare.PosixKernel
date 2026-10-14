@@ -144,7 +144,7 @@ module TestTotalQueries =
                         let socketId = socketIdOf fd system
 
                         if close then
-                            match UnixDescriptor.tryClose fd system with
+                            match UnixDescriptor.tryClose (Callers.leader system) fd system with
                             | Ok (SyscallAnswer.Completed _, system) -> live, Set.add socketId closed, system
                             | other -> failwith $"closing socket descriptor %d{fd}: %A{other}"
                         else

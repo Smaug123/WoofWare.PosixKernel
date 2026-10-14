@@ -999,7 +999,7 @@ module TestMultiProcessFuzz =
             | Error errno -> failwith $"pthread_sigmask of %O{signal} failed with %O{errno}"
 
         match op with
-        | Op.Socket nonBlocking -> Made.Answered (KeventWorld.stream nonBlocking view |> snd)
+        | Op.Socket nonBlocking -> Made.Answered (KeventWorld.streamAs (Caller.make pid thread) nonBlocking view |> snd)
         | Op.Bind (fd, port) ->
             match pick fd (socketsWhere pid unbound view) with
             | None -> Made.Answered view
@@ -1066,7 +1066,7 @@ module TestMultiProcessFuzz =
         | Op.MakeNonBlocking fd ->
             match pick fd (socketsWhere pid connected view) with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking fd true view |> snd)
+            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view |> snd)
         | Op.Receive (fd, size, nonBlocking) ->
             match pick fd (connectedFds pid nonBlocking view) with
             | None -> Made.Answered view
@@ -1086,11 +1086,11 @@ module TestMultiProcessFuzz =
         | Op.CloseThrough port ->
             match connectedThrough pid port view with
             | None -> Made.Answered view
-            | Some fd -> UnixDescriptor.tryClose fd view |> answered
+            | Some fd -> UnixDescriptor.tryClose (Caller.make pid thread) fd view |> answered
         | Op.MakeNonBlockingThrough port ->
             match connectedThrough pid port view with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking fd true view |> snd)
+            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view |> snd)
         | Op.ReceiveNewest size ->
             match newestConnected pid view with
             | None -> Made.Answered view
@@ -1105,8 +1105,8 @@ module TestMultiProcessFuzz =
 
             match socketsWhere pid listeningAt view with
             | [] -> Made.Answered view
-            | listener :: _ -> UnixDescriptor.tryClose listener view |> answered
-        | Op.Pipe -> UnixPipe.tryPipe2 0 UserBuffer.Mapped view |> answered
+            | listener :: _ -> UnixDescriptor.tryClose (Caller.make pid thread) listener view |> answered
+        | Op.Pipe -> UnixPipe.tryPipe2 (Caller.make pid thread) 0 UserBuffer.Mapped view |> answered
         | Op.PipeRead fd ->
             match pick fd (ofKind pid (isPipeEnd PipeEnd.Read) view) with
             | None -> Made.Answered view
@@ -1140,16 +1140,16 @@ module TestMultiProcessFuzz =
         | Op.Close fd ->
             match pick fd any with
             | None -> Made.Answered view
-            | Some fd -> UnixDescriptor.tryClose fd view |> answered
+            | Some fd -> UnixDescriptor.tryClose (Caller.make pid thread) fd view |> answered
         | Op.Dup fd ->
             match pick fd any with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (Answered.dup fd view |> snd)
+            | Some fd -> Made.Answered (Answered.dup (Caller.make pid thread) fd view |> snd)
         | Op.Flock (fd, operation) ->
             match pick fd (ofKind pid isFile view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixDescriptor.tryFlock thread fd operation view with
+                match UnixDescriptor.tryFlock (Caller.make pid thread) fd operation view with
                 | Ok (SyscallOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
@@ -1388,7 +1388,7 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Flock _) ->
-            match UnixDescriptor.tryFlockAcquire thread view with
+            match UnixDescriptor.tryFlockAcquire (Caller.make pid thread) view with
             | Ok (SyscallOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1963,7 +1963,13 @@ module TestMultiProcessFuzz =
                             client
                             (fun view ->
                                 let fd, view = KeventWorld.clientIn client ports.[next] view
-                                UnixDescriptor.setNonBlocking fd false view |> snd
+
+                                UnixDescriptor.setNonBlocking
+                                    (Caller.make client (Proc.leader client view))
+                                    fd
+                                    false
+                                    view
+                                |> snd
                             )
                             machine
 
@@ -1972,7 +1978,14 @@ module TestMultiProcessFuzz =
                         (fun view ->
                             let listener = socketsWhere pids.[next] listening view |> List.head
                             let accepted, view = KeventWorld.accept listener view
-                            UnixDescriptor.setNonBlocking accepted true view |> snd
+                            let server = pids.[next]
+
+                            UnixDescriptor.setNonBlocking
+                                (Caller.make server (Proc.leader server view))
+                                accepted
+                                true
+                                view
+                            |> snd
                         )
                         machine
                 )

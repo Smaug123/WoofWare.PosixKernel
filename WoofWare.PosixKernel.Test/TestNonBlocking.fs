@@ -52,7 +52,7 @@ module TestNonBlocking =
         (system : UnixSystem<int, string>)
         : SetNonBlockingAnswer * UnixSystem<int, string>
         =
-        UnixDescriptor.setNonBlocking fd value system
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd value system
 
     /// What `poll` would report for `fd` right now.
     let private readinessOf (fd : int) (system : UnixSystem<int, string>) : uint32 =
@@ -95,7 +95,8 @@ module TestNonBlocking =
         socket.ReuseAddress |> shouldEqual false
 
         // ...and it is not born non-blocking.
-        UnixDescriptor.isNonBlocking fd system |> shouldEqual (Some false)
+        UnixDescriptor.isNonBlocking (Callers.leader system) fd system
+        |> shouldEqual (Some false)
 
     /// Each socket gets its own identity: the counter advances, so a second
     /// socket cannot overwrite the first in the table.
@@ -140,15 +141,19 @@ module TestNonBlocking =
         let system = Lone.withFileDescriptors registry system
 
         let system = set fd true system
-        UnixDescriptor.isNonBlocking duplicate system |> shouldEqual (Some true)
+
+        UnixDescriptor.isNonBlocking (Callers.leader system) duplicate system
+        |> shouldEqual (Some true)
 
         // ...and clearing it through the *other* number clears it for both.
         let system = set duplicate false system
-        UnixDescriptor.isNonBlocking fd system |> shouldEqual (Some false)
+
+        UnixDescriptor.isNonBlocking (Callers.leader system) fd system
+        |> shouldEqual (Some false)
 
     [<Test>]
     let ``a descriptor that is not open has no flag and cannot be set`` () : unit =
-        UnixDescriptor.isNonBlocking 99 linux |> shouldEqual None
+        UnixDescriptor.isNonBlocking (Callers.leader linux) 99 linux |> shouldEqual None
 
         setOrFail 99 true linux
         |> fst
@@ -179,7 +184,9 @@ module TestNonBlocking =
 
         for fd in [ socketFd ; fileFd ] do
             let after = set fd true system
-            UnixDescriptor.isNonBlocking fd after |> shouldEqual (Some true)
+
+            UnixDescriptor.isNonBlocking (Callers.leader after) fd after
+            |> shouldEqual (Some true)
 
     // ------------------------------------------------------------------
     // The standard streams
@@ -247,7 +254,9 @@ module TestNonBlocking =
                 model.[op.Index % 3] <- op.Value
 
                 fds
-                |> List.mapi (fun index fd -> UnixDescriptor.isNonBlocking fd system, Some model.[index % 3])
+                |> List.mapi (fun index fd ->
+                    UnixDescriptor.isNonBlocking (Callers.leader system) fd system, Some model.[index % 3]
+                )
                 |> List.iter (fun (actual, expected) -> actual |> shouldEqual expected)
 
                 UnixSystem.checkInvariants system |> shouldEqual []
@@ -279,16 +288,21 @@ module TestNonBlocking =
             for fd in [ 0 ; 1 ; 2 ] do
                 let answer, after = setOrFail fd true (systemOn platform)
                 answer |> shouldEqual SetNonBlockingAnswer.Set
-                UnixDescriptor.isNonBlocking fd after |> shouldEqual (Some true)
+
+                UnixDescriptor.isNonBlocking (Callers.leader after) fd after
+                |> shouldEqual (Some true)
 
                 // Only the description `fd` names carries it: the launch
                 // shape's three streams are three descriptions.
                 for other in [ 0 ; 1 ; 2 ] |> List.filter ((<>) fd) do
-                    UnixDescriptor.isNonBlocking other after |> shouldEqual (Some false)
+                    UnixDescriptor.isNonBlocking (Callers.leader after) other after
+                    |> shouldEqual (Some false)
 
                 let answer, after = setOrFail fd false after
                 answer |> shouldEqual SetNonBlockingAnswer.Set
-                UnixDescriptor.isNonBlocking fd after |> shouldEqual (Some false)
+
+                UnixDescriptor.isNonBlocking (Callers.leader after) fd after
+                |> shouldEqual (Some false)
 
     let private bufferGen : Gen<UserBuffer> =
         Gen.oneof
@@ -383,7 +397,7 @@ module TestNonBlocking =
             let bytes = ImmutableArray.Create<byte> (Array.init count byte)
 
             let unflag (system : UnixSystem<int, string>) =
-                match UnixDescriptor.setNonBlocking fd false system with
+                match UnixDescriptor.setNonBlocking (Callers.leader system) fd false system with
                 | SetNonBlockingAnswer.Set, system -> system
                 | SetNonBlockingAnswer.Failed error, _ -> failwith $"could not clear the flag: %O{error}"
 
@@ -480,5 +494,8 @@ module TestNonBlocking =
 
             for value in [ true ; false ; true ] do
                 let answer, after = setOrFail queueFd value system
-                UnixDescriptor.isNonBlocking queueFd after |> shouldEqual (Some value)
+
+                UnixDescriptor.isNonBlocking (Callers.leader after) queueFd after
+                |> shouldEqual (Some value)
+
                 answer |> shouldEqual expected

@@ -589,7 +589,7 @@ module TestConnectedTransferAgainstHost =
         CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback kernelPort)
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -645,8 +645,13 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"accept: %A{other}"
 
         let system = kernelClose listener system
-        let _, system = UnixDescriptor.setNonBlocking client true system
-        let _, system = UnixDescriptor.setNonBlocking server true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server true system
+
         client, server, system
 
     /// A write of `count` bytes of the payload through `fd`: what it answered,
@@ -747,7 +752,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"poll: %A{other}"
 
         let readable =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (BytesAvailableAnswer.Reported count) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 

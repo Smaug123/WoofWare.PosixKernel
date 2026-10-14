@@ -316,21 +316,29 @@ module TestLaunchedStreams =
             | Ok (ReadOutcome.Restarts, _) -> failwith "a read that never slept restarted"
             | Error _ -> None
         | Op.Dup fd ->
-            let answer, after = Answered.dup fd system
+            let answer, after = Answered.dup (Callers.leader system) fd system
             Some (Answer.Syscall answer, after)
         | Op.Close fd ->
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (answer, after) -> Some (Answer.Syscall answer, after)
             | Error _ -> None
         | Op.SetNonBlocking (fd, value) ->
-            let answer, after = UnixDescriptor.setNonBlocking fd value system
+            let answer, after =
+                UnixDescriptor.setNonBlocking (Callers.leader system) fd value system
+
             Some (Answer.NonBlocking answer, after)
         | Op.Poll fd ->
             match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
             | None -> Some (Answer.Level 0u, system)
             | Some id -> Some (Answer.Level (LinuxReadiness.ofDescription id system), system)
         | Op.Pipe2 ->
-            match UnixPipe.tryPipe2 (flavourNonBlock system.Machine.UnixPlatform) UserBuffer.Mapped system with
+            match
+                UnixPipe.tryPipe2
+                    (Callers.leader system)
+                    (flavourNonBlock system.Machine.UnixPlatform)
+                    UserBuffer.Mapped
+                    system
+            with
             | Ok (Pipe2Answer.Created _, after) -> Some (Answer.Syscall (SyscallAnswer.Completed 0L), after)
             | Ok (Pipe2Answer.Failed error, after) -> Some (Answer.Syscall (SyscallAnswer.Failed error), after)
             | Error _ -> None
@@ -493,7 +501,7 @@ module TestLaunchedStreams =
             | other -> failwith $"fd %d{fd}: %A{other}"
 
         let readFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%A{other}"
 
@@ -521,7 +529,7 @@ module TestLaunchedStreams =
             let closed =
                 (system, [ 0 ; 1 ; 2 ])
                 ||> List.fold (fun system fd ->
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (SyscallAnswer.Completed 0L, system) -> system
                     | other -> failwith $"close %d{fd}: %A{other}"
                 )

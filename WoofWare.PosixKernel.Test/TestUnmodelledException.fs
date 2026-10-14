@@ -325,20 +325,20 @@ module TestUnmodelledException =
                     agrees
                         FcntlRefusal.kind
                         FcntlRefusal.describe
-                        (fun () -> UnixDescriptor.tryFcntl fd word other system)
-                        (fun () -> UnixDescriptor.fcntl fd word other system)
+                        (fun () -> UnixDescriptor.tryFcntl (Callers.leader system) fd word other system)
+                        (fun () -> UnixDescriptor.fcntl (Callers.leader system) fd word other system)
                 | 1 ->
                     agrees
                         Dup3Refusal.kind
                         Dup3Refusal.describe
-                        (fun () -> UnixDescriptor.tryDup3 fd other word system)
-                        (fun () -> UnixDescriptor.dup3 fd other word system)
+                        (fun () -> UnixDescriptor.tryDup3 (Callers.leader system) fd other word system)
+                        (fun () -> UnixDescriptor.dup3 (Callers.leader system) fd other word system)
                 | _ ->
                     agrees
                         PosixFadviseRefusal.kind
                         PosixFadviseRefusal.describe
-                        (fun () -> UnixDescriptor.tryPosixFadvise fd 0L 0L word system)
-                        (fun () -> UnixDescriptor.posixFadvise fd 0L 0L word system)
+                        (fun () -> UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L word system)
+                        (fun () -> UnixDescriptor.posixFadvise (Callers.leader system) fd 0L 0L word system)
             )
             [
                 Observed.Answered

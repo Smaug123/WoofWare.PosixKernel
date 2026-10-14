@@ -273,7 +273,7 @@ module TestNonBlockingAsleepMeasured =
     /// Non-blocking writes of `chunk` bytes through `fd` by the leader until
     /// EAGAIN.
     let private filled (where : string) (fd : int) (chunk : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec fill (system : UnixSystem<int, string>) =
             match writeCall where system.Leader fd chunk system with
@@ -282,11 +282,11 @@ module TestNonBlockingAsleepMeasured =
             | other, _ -> failwith $"%s{where}: filling fd %d{fd} came to %A{other}"
 
         let system = fill system
-        UnixDescriptor.setNonBlocking fd false system |> snd
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd false system |> snd
 
     /// Non-blocking reads through `fd` by the leader until EAGAIN.
     let private drained (where : string) (fd : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec drain (system : UnixSystem<int, string>) =
             match readCall where system.Leader fd 65536 system with
@@ -304,7 +304,7 @@ module TestNonBlockingAsleepMeasured =
         | Transfer.PipeWritePartlyIn
         | Transfer.PipeRead ->
             let readFd, writeFd, system =
-                match UnixPipe.pipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.pipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Pipe2Answer.Created (r, w), system -> r, w, system
                 | other -> failwith $"%s{where}: pipe2 came to %A{other}"
 
@@ -328,7 +328,9 @@ module TestNonBlockingAsleepMeasured =
 
             let server, system = KeventWorld.accept listener system
             let system = KeventWorld.close listener system
-            let _, system = UnixDescriptor.setNonBlocking server false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server false system
 
             match transfer with
             | Transfer.ConnectionWriteNothingTaken -> client, server, filled where client 65536 system
@@ -381,7 +383,7 @@ module TestNonBlockingAsleepMeasured =
 
         let system =
             if row.NonBlock then
-                UnixDescriptor.setNonBlocking callFd true system |> snd
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system |> snd
             else
                 system
 
@@ -436,7 +438,8 @@ module TestNonBlockingAsleepMeasured =
         match row.Then with
         | None -> ()
         | Some measured ->
-            let _, system = UnixDescriptor.setNonBlocking callFd true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system
 
             match issue where row.Transfer sleeper callFd 1 system with
             | Step.Answered answer, _ when answer = measured -> ()
