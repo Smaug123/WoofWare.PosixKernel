@@ -139,7 +139,7 @@ module TestEphemeralPorts =
 
     /// The local port the socket behind `fd` holds.
     let private localPort (fd : int) (system : UnixSystem<int, string>) : uint16 =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
             | Some binding -> binding.Endpoint.Port
@@ -381,7 +381,7 @@ module TestEphemeralPorts =
     /// the generator is constructive, so an op that the model refuses
     /// outright (rather than answering an errno) is never generated.
     let private phaseOf (fd : int) (run : Run) : SocketPhase * bool =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             let socket = UnixMachineState.socket socketId run.System.Machine
             socket.Phase, socket.Ipv4Binding.IsSome
@@ -390,7 +390,7 @@ module TestEphemeralPorts =
     /// Whether `connect` from the unbound socket behind `fd` towards
     /// `destination` would find a port to take.
     let private implicitBindHasAPort (fd : int) (destination : Ipv4Endpoint) (run : Run) : bool =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             let socket = UnixMachineState.socket socketId run.System.Machine
 

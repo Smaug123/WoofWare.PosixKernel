@@ -231,7 +231,7 @@ module TestSigcontGeneration =
     let private advance (actor : int) : Step =
         fun r ->
             let others =
-                r.System.Threads
+                (Lone.threads r.System)
                 |> Map.keys
                 |> Seq.filter (fun thread -> thread <> actor)
                 |> List.ofSeq
@@ -338,7 +338,7 @@ module TestSigcontGeneration =
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
-            match UnixThreadTable.parkedFor row.Sleeper r.System.Threads with
+            match UnixThreadTable.parkedFor row.Sleeper (Lone.threads r.System) with
             | None -> Ok r
             | Some _ ->
 

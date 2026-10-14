@@ -69,7 +69,7 @@ module TestBind =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -82,7 +82,7 @@ module TestBind =
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     /// A fresh unbound TCP socket, and the descriptor onto it, in a process
     /// booted with `credentials` if there are any.

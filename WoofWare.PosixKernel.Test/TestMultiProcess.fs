@@ -56,11 +56,6 @@ module TestMultiProcess =
         | Some answered -> answered
         | None -> failwith $"no process %O{pid}"
 
-    let private fdsOf (view : UnixSystem<int, string>) : Set<int> =
-        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors view)
-        |> Map.keys
-        |> Set.ofSeq
-
     let private assertClean (machine : SimulatedMachine<int, string>) : unit =
         SimulatedMachine.checkInvariants machine |> shouldEqual []
 
@@ -106,7 +101,7 @@ module TestMultiProcess =
         let view = viewOf pid machine
         UnixSystem.processId view |> shouldEqual pid
 
-        UnixThreadState.osThreadId (UnixThreadTable.get 0 view.Threads)
+        UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid view))
         |> OsThreadId.toUInt64
         |> shouldEqual 4244UL
 
@@ -140,7 +135,7 @@ module TestMultiProcess =
 
         pids
         |> List.map (fun pid ->
-            UnixThreadState.osThreadId (UnixThreadTable.get 0 (viewOf pid machine).Threads)
+            UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid (viewOf pid machine)))
             |> OsThreadId.toUInt64
         )
         |> shouldEqual [ 9001UL ; 9002UL ]
@@ -198,7 +193,7 @@ module TestMultiProcess =
             | Ok launched -> launched
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
 
-        UnixThreadState.osThreadId (UnixThreadTable.get 0 (viewOf pid machine).Threads)
+        UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid (viewOf pid machine)))
         |> OsThreadId.toUInt64
         |> shouldEqual (System.UInt64.MaxValue - 1UL)
 
@@ -302,9 +297,10 @@ module TestMultiProcess =
         for platform in platforms do
             let pids, machine = machineOf platform 2
 
-            let opened (view : UnixSystem<int, string>) =
+            let opened (pid : ProcessId) (view : UnixSystem<int, string>) =
                 match
-                    OpenFlagWords.openPath
+                    OpenFlagWords.openPathIn
+                        pid
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -326,7 +322,7 @@ module TestMultiProcess =
             let fds, machine =
                 (([], machine), pids)
                 ||> List.fold (fun (fds, machine) pid ->
-                    let fd, machine = inProcess pid opened machine
+                    let fd, machine = inProcess pid (opened pid) machine
                     fds @ [ fd ], machine
                 )
 
@@ -382,7 +378,7 @@ module TestMultiProcess =
 
             let _, machine = inProcess a (mkdir "/d") machine
             let _, machine = inProcess a (chdir "/d") machine
-            let standing = (viewOf a machine).Process.CurrentDirectoryInode
+            let standing = (Proc.state a (viewOf a machine)).CurrentDirectoryInode
 
             let answer, machine = inProcess b (rmdir "/d") machine
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
@@ -418,7 +414,9 @@ module TestMultiProcess =
         |> shouldContainText "was not focused from the machine as it stands"
 
         // ...and the written-back process's change is the only one.
-        (viewOf pids.[1] machine').Process |> shouldEqual second.Process
+        Proc.state pids.[1] (viewOf pids.[1] machine')
+        |> shouldEqual (Proc.state pids.[1] second)
+
         machine'.Processes.[pids.[0]] |> shouldEqual machine.Processes.[pids.[0]]
 
     [<Test>]
@@ -498,7 +496,7 @@ module TestMultiProcess =
     [<Test>]
     let ``the machine reports a current directory hold no process stands in, and a missing one`` () : unit =
         let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
-        let root = (viewOf pids.[0] machine).Process.CurrentDirectoryInode
+        let root = (Proc.state pids.[0] (viewOf pids.[0] machine)).CurrentDirectoryInode
 
         machine.Machine.CurrentDirectories |> shouldEqual (Map.ofList [ root, 2 ])
 

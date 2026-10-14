@@ -125,13 +125,15 @@ module TestWithFileSystemAndCurrentDirectory =
     let ``the inode stood in is the one the configured path names`` () : unit =
         let system = booted "/outer/inner"
 
-        system.Process.CurrentDirectoryInode
+        (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (inodeOf system "/outer/inner")
 
         // ...and not merely *some* inode: the two directories in the seed are
         // distinct, so a resolver that stopped at the first component would
         // pass every other assertion here.
-        system.Process.CurrentDirectoryInode |> shouldNotEqual (inodeOf system "/outer")
+        (Lone.proc system).CurrentDirectoryInode
+        |> shouldNotEqual (inodeOf system "/outer")
+
         UnixSystem.checkInvariants system |> shouldBeEmpty
 
     [<Test>]
@@ -143,7 +145,7 @@ module TestWithFileSystemAndCurrentDirectory =
         // `getcwd() == ".../outer/inner"`.
         let system = booted "/outer/lnk"
 
-        system.Process.CurrentDirectoryInode
+        (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (inodeOf system "/outer/inner")
 
         UnixPathResolution.currentDirectoryPath system
@@ -176,7 +178,7 @@ module TestWithFileSystemAndCurrentDirectory =
             | Ok replaced -> replaced
             | Error fault -> failwith $"the deeper seed did not boot: %A{fault}."
 
-        replaced.Process.CurrentDirectoryInode
+        (Lone.proc replaced).CurrentDirectoryInode
         |> shouldEqual (inodeOf replaced "/outer/inner")
 
         UnixSystem.checkInvariants replaced |> shouldBeEmpty
@@ -184,8 +186,8 @@ module TestWithFileSystemAndCurrentDirectory =
         // The seeds mint inodes in a different order, so the two graphs really
         // do disagree about which number `/outer/inner` is -- which is what
         // makes "it was re-resolved" distinguishable from "it was carried over".
-        replaced.Process.CurrentDirectoryInode
-        |> shouldNotEqual system.Process.CurrentDirectoryInode
+        (Lone.proc replaced).CurrentDirectoryInode
+        |> shouldNotEqual (Lone.proc system).CurrentDirectoryInode
 
     /// A seed name past the flavour's NAME_MAX describes a filesystem no
     /// kernel of that flavour could have mounted, so the seed is refused

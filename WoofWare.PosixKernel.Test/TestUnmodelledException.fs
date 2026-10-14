@@ -573,16 +573,16 @@ module TestUnmodelledException =
             let create =
                 match SimulatedUnixPlatform.flavour platform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-            let fd, registry = create (UnixSystemState.fileDescriptors system)
+            let fd, registry = create (Lone.fileDescriptors system)
 
             let queue =
                 match FileDescriptorRegistry.tryFindWithId fd registry with
                 | Some (id, _) -> id
                 | None -> failwith $"fd %d{fd} names no description"
 
-            UnixSystemState.withFileDescriptors registry system
+            Lone.withFileDescriptors registry system
             |> Threads.ensure 1
             |> Threads.ensure 2
             |> UnixWait.park

@@ -178,7 +178,7 @@ module TestCredentialChange =
             row.[5] |> shouldEqual $"fsuid=%d{measuredEffective}"
 
             let privileged =
-                match UnixProcessState.callerPrivilege after.Process with
+                match UnixProcessState.callerPrivilege (Lone.proc after) with
                 | CallerPrivilege.Privileged -> "yes"
                 | CallerPrivilege.Unprivileged -> "no"
 
@@ -186,15 +186,15 @@ module TestCredentialChange =
                 failwith $"%s{label}: the model's privilege is %s{privileged}"
 
             // Nothing but the user IDs moves.
-            groupTriple after.Process.Credentials
-            |> shouldEqual (groupTriple before.Process.Credentials)
+            groupTriple (Lone.proc after).Credentials
+            |> shouldEqual (groupTriple (Lone.proc before).Credentials)
 
-            { after with
-                Process =
-                    { after.Process with
-                        Credentials = before.Process.Credentials
-                    }
-            }
+            after
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials = (Lone.proc before).Credentials
+                }
+            )
             |> shouldEqual before
 
     [<Test>]
@@ -211,13 +211,13 @@ module TestCredentialChange =
             | "dumpable=1->1", Ok (answer, after) ->
                 let suppressedAnswer, _ = call CoreDumps.Suppressed |> ok
                 answer |> shouldEqual suppressedAnswer
-                after.Process.CoreDumps |> shouldEqual CoreDumps.Written
+                (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Written
             | measured, outcome -> failwith $"%s{label}: measured %s{measured}, the model gave %A{outcome}"
 
             // A process that writes no core dump goes on writing none, whatever
             // `fs.suid_dumpable` says: a cleared flag only ever removes a dump.
             match call CoreDumps.Suppressed with
-            | Ok (_, after) -> after.Process.CoreDumps |> shouldEqual CoreDumps.Suppressed
+            | Ok (_, after) -> (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Suppressed
             | Error refusal -> failwith $"%s{label}: refused a process that writes no core dumps: %A{refusal}"
 
     // ------------------------------------------------------------- setresgid
@@ -268,17 +268,17 @@ module TestCredentialChange =
             let _, measuredEffective, _ = expectedAfter
             row.[6] |> shouldEqual $"fsgid=%d{measuredEffective}"
 
-            { after with
-                Process =
-                    { after.Process with
-                        Credentials =
-                            { after.Process.Credentials with
-                                RealGroup = before.Process.Credentials.RealGroup
-                                EffectiveGroup = before.Process.Credentials.EffectiveGroup
-                                SavedGroup = before.Process.Credentials.SavedGroup
-                            }
-                    }
-            }
+            after
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials =
+                        { proc.Credentials with
+                            RealGroup = (Lone.proc before).Credentials.RealGroup
+                            EffectiveGroup = (Lone.proc before).Credentials.EffectiveGroup
+                            SavedGroup = (Lone.proc before).Credentials.SavedGroup
+                        }
+                }
+            )
             |> shouldEqual before
 
     [<Test>]
@@ -295,11 +295,11 @@ module TestCredentialChange =
             | "dumpable=1->1", Ok (answer, after) ->
                 let suppressedAnswer, _ = call CoreDumps.Suppressed |> ok
                 answer |> shouldEqual suppressedAnswer
-                after.Process.CoreDumps |> shouldEqual CoreDumps.Written
+                (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Written
             | measured, outcome -> failwith $"%s{label}: measured %s{measured}, the model gave %A{outcome}"
 
             match call CoreDumps.Suppressed with
-            | Ok (_, after) -> after.Process.CoreDumps |> shouldEqual CoreDumps.Suppressed
+            | Ok (_, after) -> (Lone.proc after).CoreDumps |> shouldEqual CoreDumps.Suppressed
             | Error refusal -> failwith $"%s{label}: refused a process that writes no core dumps: %A{refusal}"
 
     // ------------------------------------------------------------- setgroups
@@ -366,7 +366,7 @@ module TestCredentialChange =
                 failwith $"%s{label}: answered %s{answerText answer}"
 
             let reported =
-                Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport linux) after.Process.Credentials
+                Credentials.reportedGroups (SimulatedUnixPlatform.groupListReport linux) (Lone.proc after).Credentials
                 |> Option.get
 
             if $"after=%s{groupsText reported}" <> row.[5] then
@@ -376,15 +376,15 @@ module TestCredentialChange =
             // dumps goes on writing them, and is not refused.
             row.[7] |> shouldEqual "dumpable=1->1"
 
-            { after with
-                Process =
-                    { after.Process with
-                        Credentials =
-                            { after.Process.Credentials with
-                                SupplementaryGroups = before.Process.Credentials.SupplementaryGroups
-                            }
-                    }
-            }
+            after
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials =
+                        { proc.Credentials with
+                            SupplementaryGroups = (Lone.proc before).Credentials.SupplementaryGroups
+                        }
+                }
+            )
             |> shouldEqual before
 
     [<Test>]
@@ -657,7 +657,7 @@ module TestCredentialChange =
         let property (credentials : Credentials, requests : uint32 option list) : unit =
             let system = systemWith linux CoreDumps.Suppressed credentials
 
-            match UnixProcessState.callerPrivilege system.Process with
+            match UnixProcessState.callerPrivilege (Lone.proc system) with
             | CallerPrivilege.Privileged -> ()
             | CallerPrivilege.Unprivileged ->
 
@@ -675,7 +675,7 @@ module TestCredentialChange =
                     system
                 |> ok
 
-            let after = afterUsers.Process.Credentials
+            let after = (Lone.proc afterUsers).Credentials
 
             Set.isSubset (Set.ofList [ after.RealUser ; after.EffectiveUser ; after.SavedUser ]) heldUsers
             |> shouldEqual true
@@ -688,7 +688,7 @@ module TestCredentialChange =
                     system
                 |> ok
 
-            let after = afterGroups.Process.Credentials
+            let after = (Lone.proc afterGroups).Credentials
 
             Set.isSubset (Set.ofList [ after.RealGroup ; after.EffectiveGroup ; after.SavedGroup ]) heldGroups
             |> shouldEqual true

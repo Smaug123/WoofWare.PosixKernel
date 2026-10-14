@@ -59,7 +59,7 @@ module TestListenerTeardown =
         |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -133,7 +133,7 @@ module TestListenerTeardown =
     let private write (fd : int) (count : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
         let bytes = ImmutableArray.Create<byte> (Array.zeroCreate<byte> count)
 
-        match WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped bytes system with
+        match WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system with
         | Ok (WriteStep.Returns (WriteAnswer.Completed written, system)) -> answer (Ok written), system
         | Ok (WriteStep.Returns (WriteAnswer.Failed error, system)) -> answer (Error error), system
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed error, entry, system)) when entry.Signal = Signal.SIGPIPE ->
@@ -294,13 +294,12 @@ module TestListenerTeardown =
         let system = systemOn (platformOf flavour)
 
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                }
+            )
 
         let listener, system = listenerAt system
         let q0, system = connectTo system
@@ -508,13 +507,12 @@ module TestListenerTeardown =
 
         // The probe ignores SIGPIPE.
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                }
+            )
 
         let listener, system = listenerAt system
         let client, system = connectTo system

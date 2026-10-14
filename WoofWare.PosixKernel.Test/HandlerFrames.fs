@@ -110,11 +110,11 @@ module HandlerFrames =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = enter handler system.Leader threads thread mask system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = enter handler (Lone.leader system) threads thread mask proc.Signals
+            }
+        )

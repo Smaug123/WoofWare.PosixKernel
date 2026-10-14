@@ -313,12 +313,12 @@ module TestUTimensAt =
     /// `system` with the caller's credentials, as the probe's child had once it
     /// dropped.
     let private dropped (caller : Caller) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Credentials = caller.Credentials
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = caller.Credentials
+            }
+        )
 
     let private readOnly : OpenFlags =
         {
@@ -1333,12 +1333,12 @@ module TestUTimensAt =
         let system : UnixSystem<int, string> =
             boot user
             |> fun system ->
-                { system with
-                    Process =
-                        { system.Process with
-                            Umask = PermissionBits.parseOrFail context 0
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Umask = PermissionBits.parseOrFail context 0
+                    }
+                )
 
         let system =
             match UnixNamespace.trySymlinkatEager (PathArg.ofText "f") (atFdCwd user) (PathArg.ofText "wl") system with

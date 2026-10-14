@@ -1141,7 +1141,7 @@ module TestStartingDirectory =
                         failwith $"%s{context}: the new directory's parent %O{content.Parent} is not in the filesystem"
                 | other -> failwith $"%s{context}: mkdir made something other than a directory: %A{other}"
 
-            let egid = after.Process.Credentials.EffectiveGroup
+            let egid = (Lone.proc after).Credentials.EffectiveGroup
 
             let group =
                 if made.Owner.Group = parent.Owner.Group then
@@ -2779,13 +2779,13 @@ module TestStartingDirectory =
             | Ok inode -> inode
             | Error failure -> failwith $"%s{context}: %s{cwd} does not resolve: %A{failure}"
 
-        { system with
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = inode
-                }
-        }
-        |> Launched.restand
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = inode
+            }
+        )
+        |> Lone.restand
 
     let private walkPaths : Gen<UnixPath> =
         let pathComponent =
@@ -2861,7 +2861,7 @@ module TestStartingDirectory =
             let limits = SimulatedUnixPlatform.pathLimits platform
             let vfs = system.Machine.FileSystem
             let protection = system.Machine.ProtectedFiles.Symlinks
-            let start = system.Process.CurrentDirectoryInode
+            let start = (Lone.proc system).CurrentDirectoryInode
 
             UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
             |> shouldEqual (PathWalk.resolveFull limits credentials protection start policy trailing path vfs)
@@ -2891,14 +2891,14 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             let inCwd = walkSystem platform credentials cwd
 
@@ -2950,24 +2950,24 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             // The tree was built by root, so its unowned entries are root's:
             // compare with stat from the same tree, by the same caller.
             let heldInCwd =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                    }
+                )
 
             UnixPathResolution.tryFstatat fd argument flags atRoot
             |> shouldEqual (
@@ -3008,22 +3008,22 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             let heldInCwd =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                    }
+                )
 
             UnixNamespace.tryReadlinkat fd argument UserBuffer.Mapped 64 atRoot
             |> shouldEqual (UnixNamespace.tryReadlink argument UserBuffer.Mapped 64 heldInCwd)
@@ -3087,22 +3087,21 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
+                |> Lone.restand
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) =
                 match result with
-                | Ok (answer, system) ->
-                    Ok (answer, system.Machine.FileSystem, (UnixSystemState.fileDescriptors system))
+                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem, (Lone.fileDescriptors system))
                 | Error refusal -> Error refusal
 
             OpenOutcomes.openat fd argument flags 0o644 atRoot
@@ -3149,16 +3148,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, PathRefusal>) =
                 match result with
@@ -3216,16 +3215,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, MkNodRefusal>) =
                 match result with
@@ -3290,16 +3289,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, UnlinkAtRefusal>) =
                 match result with
@@ -3366,16 +3365,16 @@ module TestStartingDirectory =
             let newFd, held = openedAsRoot newDirectory held
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, RenameRefusal>) =
                 match result with
@@ -3433,15 +3432,17 @@ module TestStartingDirectory =
             | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
         let withCaller (cwdInode : InodeNumber) =
-            { held with
-                Process =
-                    { held.Process with
-                        Credentials = credentials
-                        CurrentDirectoryInode = cwdInode
-                    }
-            }
+            held
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials = credentials
+                    CurrentDirectoryInode = cwdInode
+                }
+            )
 
-        fd, withCaller (VirtualFileSystem.root held.Machine.FileSystem), withCaller held.Process.CurrentDirectoryInode
+        fd,
+        withCaller (VirtualFileSystem.root held.Machine.FileSystem),
+        withCaller (Lone.proc held).CurrentDirectoryInode
 
     [<Test>]
     let ``chmod is fchmodat from AT_FDCWD, and fchmodat from a descriptor on a directory is fchmodat from that directory``
@@ -3659,12 +3660,12 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
         fd,
-        { system with
-            Process =
-                { system.Process with
-                    Credentials = credentials
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = credentials
+            }
+        )
 
     [<Test>]
     let ``Linux's utimensat of a null pathname is AT_EMPTY_PATH's of the empty one, from any descriptor`` () : unit =

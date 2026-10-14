@@ -90,18 +90,3 @@ module internal Launched =
         =
         UnixBootImage.tryWithFileSystem createdAt defaultOwner seed image
         |> Configured.expectOk (sprintf "%A")
-
-    /// `system` with the machine's record of the directories processes stand
-    /// in saying where its process stands: for a test that has moved the
-    /// process's current directory by hand, on a machine holding that process
-    /// alone.
-    let restand<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
-        =
-        { system with
-            Machine =
-                { system.Machine with
-                    CurrentDirectories = Map.ofList [ system.Process.CurrentDirectoryInode, 1 ]
-                }
-        }

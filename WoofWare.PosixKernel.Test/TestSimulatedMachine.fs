@@ -57,7 +57,7 @@ module TestSimulatedMachine =
     let private ports : uint16 list = [ 8080us ; 8081us ]
 
     let private openFds (system : UnixSystem<int, string>) : int list =
-        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system)
+        FileDescriptorRegistry.fds (Lone.fileDescriptors system)
         |> Map.keys
         |> List.ofSeq
 
@@ -369,7 +369,8 @@ module TestSimulatedMachine =
                     Processes = Map.add other machine.Processes.[pid] machine.Processes
                 }
 
-            let leaderTid = UnixThreadState.osThreadId (UnixThreadTable.get 0 system.Threads)
+            let leaderTid =
+                UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads system))
 
             // The launched pipes' three descriptions are each named once by the
             // machine's record and twice by the two tables.
@@ -390,7 +391,11 @@ module TestSimulatedMachine =
                     [
                         SimulatedMachineDefect.Machine (UnixSystemDefect.DuplicateOsThreadId (leaderTid, [ 0 ; 0 ]))
                         SimulatedMachineDefect.Machine (
-                            UnixSystemDefect.CurrentDirectoryHoldMismatch (system.Process.CurrentDirectoryInode, 1, 2)
+                            UnixSystemDefect.CurrentDirectoryHoldMismatch (
+                                (Lone.proc system).CurrentDirectoryInode,
+                                1,
+                                2
+                            )
                         )
                         SimulatedMachineDefect.SlotUnderAnotherProcessId (other, pid)
                         SimulatedMachineDefect.DuplicateProcessId pid
@@ -431,7 +436,7 @@ module TestSimulatedMachine =
             }
 
         let withOwner (owner : ProcessId) =
-            UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState id (state owner)) system
+            Lone.mapOpenFiles (OpenFileTable.setKqueueState id (state owner)) system
             |> fun system ->
                 { system with
                     Machine =

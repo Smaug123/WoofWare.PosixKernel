@@ -68,7 +68,7 @@ module TestDarwinPoll =
     let private write (fd : int) (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match
             WriteOutcomes.returned (
-                WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped (payload count) system
+                WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped (payload count) system
             )
         with
         | Ok (WriteAnswer.Completed written, system) when written = int64 count -> system
@@ -609,7 +609,7 @@ module TestDarwinPoll =
     let private finishAnswer (system : UnixSystem<int, string>) : int16 list * int =
         match finish system with
         | Ok (PollOutcome.Answered (revents, count), after) ->
-            UnixThreadTable.parkedFor poller after.Threads |> shouldEqual None
+            UnixThreadTable.parkedFor poller (Lone.threads after) |> shouldEqual None
             revents, count
         | other -> failwith $"the finish did not answer: %A{other}"
 
@@ -755,7 +755,7 @@ module TestDarwinPoll =
         let closed = KeventWorld.close listener parked
         sound closed
 
-        match UnixThreadTable.parkedFor poller closed.Threads with
+        match UnixThreadTable.parkedFor poller (Lone.threads closed) with
         | Some (ParkedSyscall.KqueuePoll poll) ->
             (UnixMachineState.pollQueue poll.Queue closed.Machine).Registrations
             |> shouldEqual Map.empty
@@ -821,7 +821,7 @@ module TestDarwinPoll =
         // again.
         match finish early with
         | Ok (PollOutcome.WouldBlock _, again) ->
-            UnixThreadTable.parkedFor poller again.Threads
+            UnixThreadTable.parkedFor poller (Lone.threads again)
             |> Option.isSome
             |> shouldEqual true
         | other -> failwith $"expected a re-park, got %A{other}"
@@ -923,12 +923,12 @@ module TestDarwinPoll =
         sound parked
 
         let queueId, queue =
-            match UnixThreadTable.parkedFor poller parked.Threads with
+            match UnixThreadTable.parkedFor poller (Lone.threads parked) with
             | Some (ParkedSyscall.KqueuePoll poll) -> poll.Queue, UnixMachineState.pollQueue poll.Queue parked.Machine
             | other -> failwith $"expected a Darwin poll, got %A{other}"
 
         let socket =
-            match FileDescriptorRegistry.tryFindTarget listener (UnixSystemState.fileDescriptors parked) with
+            match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors parked) with
             | Some (OpenFileTarget.Socket socket) -> socket
             | other -> failwith $"the listener's descriptor names %A{other}"
 

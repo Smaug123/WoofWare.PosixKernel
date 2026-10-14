@@ -111,7 +111,7 @@ module TestUnixProcessState =
                         0
                         (CpuId 0))
 
-            system.Process.Environment |> shouldEqual after
+            (Lone.proc system).Environment |> shouldEqual after
 
             if List.length (List.distinct after) < List.length after then
                 cover EnvironmentLabel.WithDuplicates
@@ -167,7 +167,7 @@ module TestUnixProcessState =
                     0
                     (CpuId 0))
 
-        system.Process.ProcessPath |> shouldEqual None
+        (Lone.proc system).ProcessPath |> shouldEqual None
 
     [<Test>]
     let ``the process's privilege is its credentials' privilege`` () : unit =

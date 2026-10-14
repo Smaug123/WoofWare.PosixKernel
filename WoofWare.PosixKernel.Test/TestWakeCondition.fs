@@ -30,10 +30,10 @@ module TestWakeCondition =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -45,17 +45,17 @@ module TestWakeCondition =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
         let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
 
         // Two kqueues, for `KqueueDrained`'s two live answers: fds 5 and 6. The world is
         // Linux's, which has no kqueue; the primitive asks only of the description.
         let _, registry =
-            FileDescriptorRegistry.createKqueue system.Process.ProcessId registry
+            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
 
         let drainedFd, registry =
-            FileDescriptorRegistry.createKqueue system.Process.ProcessId registry
+            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
 
         let registry =
             match FileDescriptorRegistry.tryFindId drainedFd registry with
@@ -104,15 +104,15 @@ module TestWakeCondition =
             let key = listenerFd, KqueueFilter.Read
 
             let listenerSocket =
-                match FileDescriptorRegistry.tryFindTarget listenerFd (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget listenerFd (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Socket socket) -> socket
                 | other -> failwith $"the listener's descriptor names %A{other}"
 
-            UnixSystemState.mapOpenFiles
+            Lone.mapOpenFiles
                 (OpenFileTable.setKqueueState
                     (idOf 5 system)
                     {
-                        Owner = system.Process.ProcessId
+                        Owner = (Lone.proc system).ProcessId
                         Drained = false
                         Registrations =
                             Map.ofList
@@ -131,21 +131,21 @@ module TestWakeCondition =
                 system
 
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            system.Process.Signals
-                            |> SignalState.setDisposition
-                                Signal.SIGUSR1
-                                (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                            |> SignalState.enqueue
-                                {
-                                    Signal = Signal.SIGUSR1
-                                    Target = ValueSome 1
-                                }
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition
+                            Signal.SIGUSR1
+                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                        |> SignalState.enqueue
+                            {
+                                Signal = Signal.SIGUSR1
+                                Target = ValueSome 1
+                            }
+                }
+            )
 
         system, idOf lockerFd system, idOf blockedFd system
 

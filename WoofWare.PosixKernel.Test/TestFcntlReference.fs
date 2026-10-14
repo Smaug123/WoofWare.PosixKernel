@@ -348,13 +348,12 @@ module TestFcntlReference =
                 (Launched.bootWith (Launched.credentials Owners.root) UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
 
             // SIGPIPE ignored, so that a write with no reader answers EPIPE.
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                }
+            )
         | Error fault -> failwith $"could not build the system: %A{fault}"
 
     /// The library's answer to `op`.
@@ -428,7 +427,12 @@ module TestFcntlReference =
             | Error refusal -> failwith $"dup3 refused: %s{Dup3Refusal.describe refusal}"
         | FcntlOp.Write fd ->
             match
-                WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped (ImmutableArray.Create 1uy) system
+                WriteOutcomes.admitThenWrite
+                    (Lone.leader system)
+                    fd
+                    UserBuffer.Mapped
+                    (ImmutableArray.Create 1uy)
+                    system
             with
             | Ok (WriteStep.Returns (WriteAnswer.Completed n, system))
             | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, _, system)) ->
@@ -619,7 +623,7 @@ module TestFcntlReference =
                 system <- afterSystem
 
                 // The whole table, through the queries a client has.
-                let registry = UnixSystemState.fileDescriptors system
+                let registry = Lone.fileDescriptors system
                 let libraryFds = FileDescriptorRegistry.fds registry
 
                 (where, libraryFds |> Map.keys |> Set.ofSeq)

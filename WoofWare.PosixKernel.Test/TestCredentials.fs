@@ -176,15 +176,15 @@ module TestCredentials =
                 image
                 |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-            after.Process.Credentials |> shouldEqual credentials
+            (Lone.proc after).Credentials |> shouldEqual credentials
 
             // Nothing else about the system moves.
-            { after with
-                Process =
-                    { after.Process with
-                        Credentials = initial.Process.Credentials
-                    }
-            }
+            after
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials = (Lone.proc initial).Credentials
+                }
+            )
             |> shouldEqual initial
 
         Check.One (config, Prop.forAll (Arb.fromGen eitherKind) property)
@@ -201,8 +201,9 @@ module TestCredentials =
         let property (credentials : Credentials) : unit =
             if agreeing credentials then
                 (image
-                 |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                    .Process.Credentials
+                 |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                 |> Lone.proc)
+                    .Credentials
                 |> shouldEqual credentials
             else
                 Launched.launch SimulatedUnixPlatform.macOsArm64 UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -277,7 +278,7 @@ module TestCredentials =
             image
             |> Launched.bootWith (Launched.credentials atLimit) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        held.Process.Credentials |> shouldEqual atLimit
+        (Lone.proc held).Credentials |> shouldEqual atLimit
         UnixSystem.checkInvariants held |> shouldEqual []
 
         let aboveLimit = Credentials.ofIds (uid 1000u) (gid 1000u) (groups (limit + 1))
@@ -292,11 +293,11 @@ module TestCredentials =
         )
 
         // A state assembled without the setter is caught by the invariants.
-        { initial with
-            Process =
-                { initial.Process with
-                    Credentials = aboveLimit
-                }
-        }
+        initial
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = aboveLimit
+            }
+        )
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.TooManySupplementaryGroups (limit + 1, limit) ]

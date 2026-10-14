@@ -777,12 +777,13 @@ module TestOwnerChange =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
         match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
@@ -1134,7 +1135,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private opened
         (p : string)
@@ -1147,7 +1148,7 @@ module TestOwnerChange =
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -1156,7 +1157,7 @@ module TestOwnerChange =
             FileDescriptorRegistry.openDirectory
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -1286,9 +1287,9 @@ module TestOwnerChange =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-            let fd, registry = create (UnixSystemState.fileDescriptors system)
+            let fd, registry = create (Lone.fileDescriptors system)
 
             fd, withDescriptors registry system
 
@@ -1327,7 +1328,7 @@ module TestOwnerChange =
                 let fd, withSocket = NewSocket.create domain kind protocol linux
 
                 let socket =
-                    match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors withSocket) with
+                    match FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors withSocket) with
                     | Some (OpenFileObject.Socket socket) -> socket
                     | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
@@ -1425,7 +1426,7 @@ module TestOwnerChange =
     /// The pipe `fd` names given the bits `bits`, nothing else moving.
     let private withPipeBits (fd : int) (bits : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let pipeId =
-            match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors system) with
             | Some (OpenFileObject.Pipe pipeId) -> pipeId
             | other -> failwith $"fd %d{fd} is not a pipe: %A{other}"
 

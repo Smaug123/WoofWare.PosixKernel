@@ -126,12 +126,13 @@ module TestSymlinkMode =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = root
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = root
+            }
+        )
+        |> Lone.restand
 
     let private lstatMode (system : UnixSystem<int, string>) : int =
         match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system with
@@ -237,7 +238,7 @@ module TestSymlinkMode =
                                     (SimulatedUnixPlatform.pathLimits platform)
                                     Owners.root
                                     SymlinkProtection.Off
-                                    system.Process.CurrentDirectoryInode
+                                    (Lone.proc system).CurrentDirectoryInode
                                     SymlinkPolicy.NoFollowFinal
                                     (UnixPath.parseOrFail context "/l")
                                     system.Machine.FileSystem

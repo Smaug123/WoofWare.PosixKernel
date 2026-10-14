@@ -350,7 +350,7 @@ module TestMkNod =
                 | InodeContent.Fifo _ -> "fifo"
 
             let parent = holder path after
-            let egid = after.Process.Credentials.EffectiveGroup
+            let egid = (Lone.proc after).Credentials.EffectiveGroup
 
             let group =
                 if entry.Owner.Group = parent.Owner.Group then

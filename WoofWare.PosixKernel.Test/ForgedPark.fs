@@ -18,7 +18,7 @@ module ForgedPark =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if (UnixThreadTable.parkOf thread system.Threads).IsSome then
+        if (UnixThreadTable.parkOf thread (Lone.threads system)).IsSome then
             failwith $"ForgedPark.onAbsent: thread %O{thread} is parked already"
 
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
@@ -34,12 +34,12 @@ module ForgedPark =
                     OpenFiles = openFiles
                     NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
                 }
-            Threads =
-                UnixThreadTable.withPark
-                    thread
-                    {
-                        Syscall = parked
-                        Ordinal = system.Machine.NextParkOrdinal
-                    }
-                    system.Threads
         }
+        |> Lone.mapThreads (
+            UnixThreadTable.withPark
+                thread
+                {
+                    Syscall = parked
+                    Ordinal = system.Machine.NextParkOrdinal
+                }
+        )

@@ -78,7 +78,7 @@ module TestSocketSyscall =
                     describe $"library %O{error}"
             | Ok (Ok (fd, after)), MeasuredSocketAnswer.Created (measuredType, measuredProtocol, measuredNonBlocking, _) ->
                 let socket =
-                    match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors after) with
+                    match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after) with
                     | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId after.Machine
                     | other -> failwith $"socket(%A{arguments}) made descriptor %d{fd} onto %A{other}"
 
@@ -283,7 +283,7 @@ module TestSocketSyscall =
 
                 let socketId = before.Machine.NextSocketId
 
-                FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors after)
+                FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors after)
                 |> shouldEqual (Some (OpenFileTarget.Socket socketId))
 
                 let socket = UnixMachineState.socket socketId after.Machine
