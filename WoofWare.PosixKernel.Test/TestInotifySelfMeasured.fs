@@ -388,7 +388,7 @@ module TestInotifySelfMeasured =
             let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf child machine)
 
             let machine =
-                match SimulatedMachine.tryEndProcess ended machine with
+                match Machines.tryEndProcess ended machine with
                 | Ok (ProcessTermination.Exited _, machine) -> machine
                 | other -> failwith $"the child's exit: %A{other}"
 

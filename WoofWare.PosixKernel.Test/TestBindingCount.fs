@@ -651,7 +651,12 @@ module TestBindingCount =
         : unit
         =
         let vfs =
-            VirtualFileSystem.ofFileSystemSeed buildTime Owners.linuxDefault SymlinkModes.linux seed
+            VirtualFileSystem.ofFileSystemSeed
+                EntryNameMatching.Bytes
+                buildTime
+                Owners.linuxDefault
+                SymlinkModes.linux
+                seed
 
         assertAgrees "after realising the seed" Set.empty vfs
 
@@ -741,7 +746,9 @@ module TestBindingCount =
 
     [<Test>]
     let ``checkInvariants reports a stored binding count that disagrees with the entries`` () : unit =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let file, vfs =
@@ -777,7 +784,9 @@ module TestBindingCount =
 
     [<Test>]
     let ``checkInvariants reports a stored subdirectory count that disagrees with the entries`` () : unit =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let directory, vfs =
@@ -832,7 +841,9 @@ module TestBindingCount =
     let ``Unchecked.ofParts stores the counts its entries imply`` () : unit =
         // A test that forges a graph to exercise some other defect must not
         // also trip over the count, or every such test would report two.
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let file, vfs =
@@ -843,6 +854,7 @@ module TestBindingCount =
 
         let forged =
             VirtualFileSystem.Unchecked.ofParts
+                EntryNameMatching.Bytes
                 (VirtualFileSystem.inodes vfs)
                 (VirtualFileSystem.root vfs)
                 (VirtualFileSystem.nextInode vfs)
@@ -856,6 +868,7 @@ module TestBindingCount =
 
         let forged =
             VirtualFileSystem.Unchecked.ofParts
+                EntryNameMatching.Bytes
                 (VirtualFileSystem.inodes withDirectory)
                 (VirtualFileSystem.root withDirectory)
                 (VirtualFileSystem.nextInode withDirectory)
@@ -867,7 +880,9 @@ module TestBindingCount =
     let ``forget refuses a directory that still holds entries`` () : unit =
         // Its entries would otherwise go on counting towards their targets'
         // binding counts after the directory holding them had gone.
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let directory, vfs =

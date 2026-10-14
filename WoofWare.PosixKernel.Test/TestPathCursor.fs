@@ -472,7 +472,9 @@ module TestPathCursor =
             | Ok value -> value
             | Error error -> failwith $"building the test filesystem: %O{error}"
 
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let d1, vfs =

@@ -467,7 +467,8 @@ module TestVirtualFileSystemAgainstHost =
         UnixTimestamp.createOrFail "test" 1_700_000_000L 0
 
     let private buildModel () : VirtualFileSystem =
-        let mutable vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let mutable vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
 
         let resolveDirectory (relative : string) : InodeNumber =
             match
@@ -827,13 +828,15 @@ module TestVirtualFileSystemAgainstHost =
 
                         let vfs =
                             GraphMutators.createSymlink
-                                (VirtualFileSystem.root (VirtualFileSystem.empty buildTime Owners.linuxDefault))
+                                (VirtualFileSystem.root (
+                                    VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+                                ))
                                 (DirectoryEntryName.parseOrFail "test" linkName)
                                 SymlinkModes.linux
                                 Owners.linuxDefault
                                 buildTime
                                 (SymlinkTarget.parseOrFail "test" targetText)
-                                (VirtualFileSystem.empty buildTime Owners.linuxDefault)
+                                (VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault)
                             |> function
                                 | Ok (_, vfs) -> vfs
                                 | Error error -> failwith $"building the model link: %O{error}"
@@ -2490,7 +2493,8 @@ module TestVirtualFileSystemAgainstHost =
                 failwith $"could not create symlink %s{name} -> %s{target}: errno %d{errno ()}"
 
     let private buildRenameModel () : VirtualFileSystem =
-        let mutable vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let mutable vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
 
         let directoryOf (relative : string) : InodeNumber =
             match

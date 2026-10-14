@@ -824,6 +824,16 @@ type internal FileSystemSeedFault =
     /// directory. The kernel mounts its device filesystem there at boot, and a
     /// mount over a populated directory would hide what it holds.
     | SeedCoversDeviceFileSystem of name : DirectoryEntryName
+    /// The seed has a directory binding both `first` and `second`, on a flavour
+    /// whose filesystem takes a name as reaching the entry bound under any
+    /// canonically equivalent Unicode spelling of it (Darwin's APFS), and so
+    /// binds at most one spelling of a name in a directory. Whether `first`
+    /// and `second` are two spellings of one name is beyond this library, which
+    /// holds no Unicode tables. Unmodelled.
+    | SeedNamesPossiblyEquivalent of
+        first : DirectoryEntryName *
+        second : DirectoryEntryName *
+        flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal FileSystemSeedFault =
@@ -837,6 +847,8 @@ module internal FileSystemSeedFault =
             $"the seed holds a directory entry named %s{DirectoryEntryName.toEscaped name}, which a %O{flavour} filesystem will not bind (on Darwin, a name that is not valid UTF-8), so no kernel of that flavour could have created it. Rename the entry, or simulate a flavour that binds it."
         | FileSystemSeedFault.SeedCoversDeviceFileSystem name ->
             $"the seed binds %s{DirectoryEntryName.toEscaped name} at its root to something other than an empty directory, and the kernel mounts its device filesystem there at boot, which would hide what the seed put there. Leave it out of the seed: the kernel supplies /dev itself."
+        | FileSystemSeedFault.SeedNamesPossiblyEquivalent (first, second, flavour) ->
+            $"the seed has a directory holding both %s{DirectoryEntryName.toEscaped first} and %s{DirectoryEntryName.toEscaped second}. A %O{flavour} filesystem takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it, so it holds at most one spelling of a name in a directory, and this library holds no Unicode tables to decide whether these two are spellings of one name. Keep one of them in that directory."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FileSystemSeedFault) : RefusalKind =
@@ -844,6 +856,7 @@ module internal FileSystemSeedFault =
         | FileSystemSeedFault.SeedNameTooLong _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedNameNotBindable _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedCoversDeviceFileSystem _ -> RefusalKind.Contradictory "seed"
+        | FileSystemSeedFault.SeedNamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
 module UnixSystem =
@@ -3441,7 +3454,10 @@ module UnixSystem =
             let bootTime = UnixTimestamp.ofMillisecondsSinceEpoch 0L
 
             match
-                VirtualFileSystem.empty bootTime (InodeOwner.ofProcess (defaultCredentials flavour))
+                VirtualFileSystem.empty
+                    (SimulatedUnixPlatform.entryNameMatching platform)
+                    bootTime
+                    (InodeOwner.ofProcess (defaultCredentials flavour))
                 |> mountDeviceFileSystem deviceMount bootTime
             with
             | Ok filesystem -> filesystem

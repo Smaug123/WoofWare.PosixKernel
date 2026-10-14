@@ -320,13 +320,13 @@ module TestUnixSignal =
         match UnixSignal.tryOnReturnToUser 0 before with
         | Ok (ProcessFate.ProcessEnded ended) ->
             let onMachine, machine =
-                match SimulatedMachine.tryEndLoneProcess ended with
+                match Machines.tryEndLoneProcess ended with
                 | Ok ended -> ended
                 | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
 
             EndedProcess.processId ended |> shouldEqual (UnixSystem.processId before)
-            SimulatedMachine.processIds machine |> shouldBeEmpty
-            SimulatedMachine.checkInvariants machine |> shouldEqual []
+            Machines.processIds machine |> shouldBeEmpty
+            Machines.checkInvariants machine |> shouldEqual []
             EndedProcess.termination ended, onMachine
         | other -> failwith $"onReturnToUser answered %O{other}"
 
@@ -607,11 +607,11 @@ module TestUnixSignal =
                 SignalState.pending death.FinalProcess.Signals
                 |> shouldEqual (SignalState.pending signals |> List.filter (fun entry -> entry.Target.IsNone))
 
-                match SimulatedMachine.tryEndLoneProcess death with
+                match Machines.tryEndLoneProcess death with
                 | Ok (termination, machine) ->
                     termination |> shouldEqual (EndedProcess.termination death)
-                    SimulatedMachine.processIds machine |> shouldBeEmpty
-                    SimulatedMachine.checkInvariants machine |> shouldEqual []
+                    Machines.processIds machine |> shouldBeEmpty
+                    Machines.checkInvariants machine |> shouldEqual []
                 | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
             | actual, expected ->
                 failwith $"onReturnToUser answered %A{actual}, but the signal state decided %A{expected}"

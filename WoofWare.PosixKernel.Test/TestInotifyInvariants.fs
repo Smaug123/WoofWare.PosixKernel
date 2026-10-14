@@ -507,7 +507,7 @@ module TestInotifyInvariants =
         // The refused add spent its descriptor.
         let again, machine = addIn a fdA "/dev" machine
         again |> shouldEqual (SyscallAnswer.Failed UnixError.ENOSPC)
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
         let state =
             match FileDescriptorRegistry.tryFindTarget fdB (Proc.fileDescriptors b (Machines.viewOf b machine)) with
