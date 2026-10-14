@@ -107,19 +107,19 @@ module TestConnectionWriteResetMeasured =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.ensure 1
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        system.Process.Signals
-                        |> SignalState.setDisposition
-                            Signal.SIGPIPE
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
-                        |> SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    proc.Signals
+                    |> SignalState.setDisposition
+                        Signal.SIGPIPE
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
+                    |> SignalState.setDisposition
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
+            }
+        )
 
     /// A connected pair on `system`, both blocking: the connecting socket's
     /// descriptor (the probe's `c`), then the accepted one's (`p`).
@@ -347,18 +347,18 @@ module TestConnectionWriteResetMeasured =
                 let system = peerIn peer server system
 
                 let system =
-                    { system with
-                        Process =
-                            { system.Process with
-                                Signals =
-                                    SignalState.enqueue
-                                        {
-                                            Signal = Signal.SIGUSR1
-                                            Target = ValueSome 1
-                                        }
-                                        system.Process.Signals
-                            }
-                    }
+                    system
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals =
+                                SignalState.enqueue
+                                    {
+                                        Signal = Signal.SIGUSR1
+                                        Target = ValueSome 1
+                                    }
+                                    proc.Signals
+                        }
+                    )
 
                 let bytes = bytesOf (8 <<< 20)
 
@@ -428,6 +428,6 @@ module TestConnectionWriteResetMeasured =
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->
             n |> shouldBeGreaterThan drained
             n |> shouldBeSmallerThan (int64 bytes.Length)
-            UnixThreadTable.parkedFor 1 after.Threads |> shouldEqual None
+            UnixThreadTable.parkedFor 1 (Lone.threads after) |> shouldEqual None
             soError client after |> fst |> shouldEqual "EPIPE"
         | other -> failwith $"expected the woken write to return, got %A{other}"

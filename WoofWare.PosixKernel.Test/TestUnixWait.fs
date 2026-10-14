@@ -288,27 +288,27 @@ module TestUnixWait =
 
         // Held, it parks.
         UnixWait.parkWaiting 3 (parkOfThread 3) system
-        |> fun parked -> UnixThreadTable.parkedFor 3 parked.Threads
+        |> fun parked -> UnixThreadTable.parkedFor 3 (Lone.threads parked)
         |> shouldEqual (Some (parkOfThread 3))
 
         // A signal deliverable to the thread is the finishing call's to
         // answer, not a reason to refuse the park.
         let signalled =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            system.Process.Signals
-                            |> SignalState.setDisposition
-                                Signal.SIGUSR1
-                                (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                            |> SignalState.enqueue
-                                {
-                                    Signal = Signal.SIGUSR1
-                                    Target = ValueSome 1
-                                }
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition
+                            Signal.SIGUSR1
+                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                        |> SignalState.enqueue
+                            {
+                                Signal = Signal.SIGUSR1
+                                Target = ValueSome 1
+                            }
+                }
+            )
 
         let parked = UnixWait.parkWaiting 1 (parkOfThread 1) signalled
 
