@@ -144,7 +144,7 @@ module TestTimeWaitMeasured =
         | other -> failwith $"accept: %A{other}"
 
     let private close (fd : int) (row : Row) : Row =
-        match UnixDescriptor.tryClose fd row.System with
+        match UnixDescriptor.tryClose (Callers.leader row.System) fd row.System with
         | Ok (SyscallAnswer.Completed 0L, system) ->
             { row with
                 System = system
@@ -747,7 +747,9 @@ module TestTimeWaitMeasured =
     /// The client writes until its send buffer is full, as the probe's
     /// non-blocking writes did until `EAGAIN`.
     let private fill (fd : int) (row : Row) : Row =
-        let system = UnixDescriptor.setNonBlocking fd true row.System |> snd
+        let system =
+            UnixDescriptor.setNonBlocking (Callers.leader row.System) fd true row.System
+            |> snd
 
         let chunk =
             Collections.Immutable.ImmutableArray.CreateRange (Array.create 4096 'x'B)

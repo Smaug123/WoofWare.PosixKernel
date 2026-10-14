@@ -48,7 +48,7 @@ module TestSocketEventDelivery =
     /// `close(2)`. A refusal crashes; an errno comes back, because that is an
     /// answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -1051,7 +1051,7 @@ module TestSocketEventDelivery =
             | Error error -> failwith $"close failed: %O{error}"
 
         // ...and so does the last one, leaving the epoll instance to the wait.
-        match UnixDescriptor.tryClose queueFd kernel with
+        match UnixDescriptor.tryClose (Callers.leader kernel) queueFd kernel with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             OpenFileTable.descriptions closed.Machine.OpenFiles
             |> Map.containsKey (

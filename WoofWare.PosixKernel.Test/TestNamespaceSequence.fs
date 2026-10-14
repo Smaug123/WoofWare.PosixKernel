@@ -704,7 +704,7 @@ module TestNamespaceSequence =
                 }
             | None ->
                 { world with
-                    System = UnixDescriptor.close fd world.System |> snd
+                    System = UnixDescriptor.close (Callers.leader world.System) fd world.System |> snd
                 }
 
         let opened (answer : SyscallAnswer) (after : UnixSystem<int, string>) : Outcome * World =
@@ -775,9 +775,9 @@ module TestNamespaceSequence =
         | Op.Dup fd ->
             match descriptor fd with
             | None -> unchanged Outcome.Skipped
-            | Some fd -> UnixDescriptor.dup fd system ||> opened
+            | Some fd -> UnixDescriptor.dup (Callers.leader system) fd system ||> opened
         | Op.Pipe ->
-            match UnixPipe.pipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.pipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Pipe2Answer.Failed error, after ->
                 Outcome.Answered (SyscallAnswer.Failed error),
                 { world with
@@ -794,7 +794,7 @@ module TestNamespaceSequence =
             match Map.tryFind slot world.Slots with
             | None -> unchanged Outcome.Skipped
             | Some fd ->
-                let answer, after = UnixDescriptor.close fd system
+                let answer, after = UnixDescriptor.close (Callers.leader system) fd system
 
                 Outcome.Answered answer,
                 {

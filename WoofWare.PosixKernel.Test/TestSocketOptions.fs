@@ -664,7 +664,7 @@ module TestSocketOptions =
             | other -> failwith $"accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> Ok system
             | Ok (SyscallAnswer.Failed error, _) -> failwith $"close answered %O{error}"
             | Error refusal -> Error refusal

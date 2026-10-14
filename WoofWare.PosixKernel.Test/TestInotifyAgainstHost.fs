@@ -392,7 +392,13 @@ module TestInotifyAgainstHost =
                                     let mutable available = 0
                                     hostBytesAvailable (nativeint hostFd, &available) |> shouldEqual 0
 
-                                    match UnixDescriptor.tryBytesAvailable modelFd UserBuffer.Mapped system with
+                                    match
+                                        UnixDescriptor.tryBytesAvailable
+                                            (Callers.leader system)
+                                            modelFd
+                                            UserBuffer.Mapped
+                                            system
+                                    with
                                     | Ok (BytesAvailableAnswer.Reported count) -> count |> shouldEqual available
                                     | other -> failwith $"%A{op}: %A{other}"
                             | Op.Close slot ->
@@ -401,7 +407,7 @@ module TestInotifyAgainstHost =
                                 | Some (hostFd, modelFd) ->
                                     hostClose hostFd |> shouldEqual 0
 
-                                    match UnixDescriptor.tryClose modelFd system with
+                                    match UnixDescriptor.tryClose (Callers.leader system) modelFd system with
                                     | Ok (SyscallAnswer.Completed 0L, after) -> system <- after
                                     | other -> failwith $"%A{op}: %A{other}"
 
@@ -414,7 +420,7 @@ module TestInotifyAgainstHost =
                                     if hostCopy < 0 then
                                         failwith $"%A{op}: dup failed on the host"
 
-                                    match UnixDescriptor.tryDup modelFd system with
+                                    match UnixDescriptor.tryDup (Callers.leader system) modelFd system with
                                     | Ok (SyscallAnswer.Completed copy, after) ->
                                         system <- after
                                         slots.[free] <- Some (hostCopy, int copy)
@@ -425,7 +431,9 @@ module TestInotifyAgainstHost =
                                 let host = hostAnswer numbering (nativeint (hostLSeek (hostFd, offset, whence)))
 
                                 let model =
-                                    match UnixDescriptor.tryLseek modelFd offset whence system with
+                                    match
+                                        UnixDescriptor.tryLseek (Callers.leader system) modelFd offset whence system
+                                    with
                                     | Ok (answer, _) -> modelAnswer answer
                                     | Error refusal -> failwith $"%A{op}: %A{refusal}"
 

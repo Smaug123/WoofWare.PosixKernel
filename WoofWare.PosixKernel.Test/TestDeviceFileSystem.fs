@@ -576,10 +576,13 @@ module TestDeviceFileSystem =
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"opening /f: %A{other}"
 
-        UnixDescriptor.tryFileClone file dev system |> shouldEqual (Ok UnixError.EXDEV)
-        UnixDescriptor.tryFileClone dev file system |> shouldEqual (Ok UnixError.EXDEV)
+        UnixDescriptor.tryFileClone (Callers.leader system) file dev system
+        |> shouldEqual (Ok UnixError.EXDEV)
+
+        UnixDescriptor.tryFileClone (Callers.leader system) dev file system
+        |> shouldEqual (Ok UnixError.EXDEV)
         // On one filesystem, the directory is what answers.
-        UnixDescriptor.tryFileClone file directory system
+        UnixDescriptor.tryFileClone (Callers.leader system) file directory system
         |> shouldEqual (Ok UnixError.EISDIR)
 
     // ------------------------------------------------------- the node itself

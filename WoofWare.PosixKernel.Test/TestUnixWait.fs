@@ -544,7 +544,7 @@ module TestUnixWait =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let readFd, writeFd, system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
                 | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 

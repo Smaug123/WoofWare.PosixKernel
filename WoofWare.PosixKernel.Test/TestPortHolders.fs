@@ -1302,7 +1302,7 @@ module TestPortHolders =
                     | _ -> Map.add id connection walk.Connections, walk.TimeWaits
                 | _ -> walk.Connections, walk.TimeWaits
 
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed 0L, system) ->
                 { walk with
                     System = system

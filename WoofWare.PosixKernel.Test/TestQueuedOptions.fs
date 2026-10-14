@@ -222,7 +222,9 @@ module TestQueuedOptions =
             | other -> failwith $"the listener's fd %d{listener} names %A{other}"
         | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) ->
             UnixSystem.checkInvariants system |> shouldEqual []
-            let _, system = UnixDescriptor.setNonBlocking client true system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
             let read =
                 match ReadOutcomes.read client UserBuffer.Mapped 16UL system with

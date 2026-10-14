@@ -382,7 +382,7 @@ module TestOpenFlagWord =
 
     /// What `fcntl(fd, command)` answers, as the probe prints it.
     let private flagWord (fd : int) (command : int) (system : UnixSystem<int, string>) : string =
-        match UnixDescriptor.tryFcntl fd command 0 system with
+        match UnixDescriptor.tryFcntl (Callers.leader system) fd command 0 system with
         | Ok (SyscallAnswer.Completed word, _) -> $"0x%x{word}"
         | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"refused (%s{FcntlRefusal.describe refusal})"

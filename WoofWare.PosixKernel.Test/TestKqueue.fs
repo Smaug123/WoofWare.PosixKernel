@@ -64,7 +64,7 @@ module TestKqueue =
         | Error error -> failwith $"dup: %O{error}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, closed) -> closed
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 

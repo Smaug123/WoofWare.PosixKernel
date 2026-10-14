@@ -213,7 +213,7 @@ module TestCopyFileSyscalls =
             fd, withRegistry registry system
         | "pipe-r"
         | "pipe-w" ->
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, writeFd), system) ->
                 (if kind = "pipe-r" then readFd else writeFd), system
             | other -> failwith $"pipe2: %A{other}"
@@ -336,7 +336,7 @@ module TestCopyFileSyscalls =
                 let source, system = make inKind "ksrc" (kindsSystem ())
                 let destination, system = make outKind "kdst" system
 
-                match UnixDescriptor.tryFileClone destination source system with
+                match UnixDescriptor.tryFileClone (Callers.leader system) destination source system with
                 | Ok error ->
                     if $"%O{error}" <> measured then
                         failwith $"in=%s{inKind} out=%s{outKind}: measured %s{measured}, the model answered %O{error}"
@@ -358,7 +358,7 @@ module TestCopyFileSyscalls =
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
-        UnixDescriptor.tryFileClone outFd inFd darwin
+        UnixDescriptor.tryFileClone (Callers.leader darwin) outFd inFd darwin
         |> shouldEqual (Error (FileCloneRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         let nfs =
@@ -374,7 +374,7 @@ module TestCopyFileSyscalls =
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
-        UnixDescriptor.tryFileClone outFd inFd nfs
+        UnixDescriptor.tryFileClone (Callers.leader nfs) outFd inFd nfs
         |> shouldEqual (Error (FileCloneRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // A refusal the descriptors earn first is still answered.
@@ -778,7 +778,9 @@ module TestCopyFileSyscalls =
             |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, system))
 
         // Both ends of a pipe report the times set through either.
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped (kindsSystem ()) with
+        let kinds = kindsSystem ()
+
+        match UnixPipe.tryPipe2 (Callers.leader kinds) 0 UserBuffer.Mapped kinds with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) ->
             for fd in [ readFd ; writeFd ] do
                 match futimens fd atime mtime system with

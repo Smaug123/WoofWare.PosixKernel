@@ -73,7 +73,7 @@ module TestPeerName =
         connectBlob fd (CopyIn.inet (UnixSystem.platform system) destination) system
 
     let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking fd true system with
+        match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
         | SetNonBlockingAnswer.Set, system -> system
         | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
 
@@ -91,7 +91,7 @@ module TestPeerName =
         | other -> failwith $"accept answered %A{other}"
 
     let private close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"close of fd %d{fd} answered %A{other}"
 

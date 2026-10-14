@@ -161,7 +161,7 @@ module TestUnixScheduling =
         |> Machines.doIn
             pid
             (fun view ->
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped view with
+                match UnixPipe.tryPipe2 (Caller.make pid (Proc.leader pid view)) 0 UserBuffer.Mapped view with
                 | Ok (Pipe2Answer.Created (3, 4), view) -> view
                 | other -> failwith $"pipe2: %A{other}"
             )

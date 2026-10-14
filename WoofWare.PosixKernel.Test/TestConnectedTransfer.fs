@@ -79,8 +79,13 @@ module TestConnectedTransfer =
 
         let server, system = KeventWorld.accept listener system
         let system = KeventWorld.close listener system
-        let _, system = UnixDescriptor.setNonBlocking client nonBlocking system
-        let _, system = UnixDescriptor.setNonBlocking server nonBlocking system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client nonBlocking system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server nonBlocking system
+
         client, server, system
 
     /// A write of the first `count` bytes of the payload through `fd`, by the
@@ -281,14 +286,19 @@ module TestConnectedTransfer =
 
             send client payload.Length system |> sleeps
 
-            let _, system = UnixDescriptor.setNonBlocking client true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
             let _, system = fill client system
-            let _, system = UnixDescriptor.setNonBlocking client false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client false system
 
             send client 1 system |> sleeps
 
             // A FIN answers a blocking read at once, with end of file.
-            let _, system = UnixDescriptor.setNonBlocking server true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
             let rec drain (system : UnixSystem<int, string>) =
                 match received server 65536 system with
@@ -780,7 +790,9 @@ module TestConnectedTransfer =
                 Hundredths = 100L
             }
 
-        let _, system = UnixDescriptor.setNonBlocking c (not blocking) system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) c (not blocking) system
+
         c, p, filled, system
 
     /// Section G of `tcp-shutdown.c` (docs/plans/2026-10-08-tcp-shutdown-linger),
@@ -823,7 +835,7 @@ module TestConnectedTransfer =
 
             let c, p, filled, system = lingerRowSetUp platform written lingers blocking
 
-            match expected, UnixDescriptor.tryClose c system with
+            match expected, UnixDescriptor.tryClose (Callers.leader system) c system with
             | LingerRow.Waited,
               Error (CloseRefusal.Release (DescriptionReleaseRefusal.LingeringClose (socket, _, unsent))) ->
                 socket |> shouldEqual (socketOf c system)
@@ -866,7 +878,7 @@ module TestConnectedTransfer =
             let system = KeventWorld.close p system
             // Through a blocking description, where Darwin's positive linger
             // time would wait.
-            let _, system = UnixDescriptor.setNonBlocking c false system
+            let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) c false system
 
             let connection = system.Machine.Connections |> Map.toList |> List.exactlyOne |> snd
 
@@ -884,7 +896,7 @@ module TestConnectedTransfer =
             TcpTransfer.sendSpace ConnectionEnd.Client connection.Transfer < capacity
             |> shouldEqual expectedStranded
 
-            match UnixDescriptor.tryClose c system with
+            match UnixDescriptor.tryClose (Callers.leader system) c system with
             | Ok (SyscallAnswer.Completed 0L, system) -> assertClean system
             | other -> failwith $"%A{SimulatedUnixPlatform.flavour platform}: closing c answered %A{other}"
 
@@ -1702,7 +1714,10 @@ module TestConnectedTransfer =
                 b
                 (fun view ->
                     let accepted, view = KeventWorld.accept listener view
-                    accepted, UnixDescriptor.setNonBlocking accepted true view |> snd
+
+                    accepted,
+                    UnixDescriptor.setNonBlocking (Caller.make b (Proc.leader b view)) accepted true view
+                    |> snd
                 )
                 machine
 

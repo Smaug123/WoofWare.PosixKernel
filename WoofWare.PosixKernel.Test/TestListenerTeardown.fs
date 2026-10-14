@@ -263,7 +263,7 @@ module TestListenerTeardown =
                 $"kq-read=%s{read} kq-write=%s{write}", KeventWorld.close kq system
 
         let readable =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (BytesAvailableAnswer.Reported count) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
@@ -310,8 +310,8 @@ module TestListenerTeardown =
         let q0, system = connectTo system
         let q1, system = connectTo system
         let q2, system = connectTo system
-        let _, system = UnixDescriptor.setNonBlocking q0 true system
-        let _, system = UnixDescriptor.setNonBlocking q1 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) q0 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) q1 true system
 
         let system =
             match write q1 100 system with
@@ -322,7 +322,7 @@ module TestListenerTeardown =
         let system = if lingering then lingerZero listener system else system
 
         let closed, system =
-            match UnixDescriptor.tryClose listener system with
+            match UnixDescriptor.tryClose (Callers.leader system) listener system with
             | Ok (SyscallAnswer.Completed 0L, system) -> "0", system
             | Ok (SyscallAnswer.Completed other, _) -> failwith $"closing the listener answered %d{other}"
             | Ok (SyscallAnswer.Failed error, system) -> answer (Error error), system
@@ -378,7 +378,7 @@ module TestListenerTeardown =
             let listener, system = listenerAt system
             let system = lingerZero listener system
 
-            match UnixDescriptor.tryClose listener system with
+            match UnixDescriptor.tryClose (Callers.leader system) listener system with
             | Ok (SyscallAnswer.Completed 0L, system) ->
                 UnixSystem.checkInvariants system |> shouldEqual []
                 bindFree port system |> shouldEqual "bind-ok"
@@ -545,7 +545,7 @@ module TestListenerTeardown =
                 system
 
         let system =
-            match UnixDescriptor.tryClose client system with
+            match UnixDescriptor.tryClose (Callers.leader system) client system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"%s{row}: the client's close answered %A{other}"
 
@@ -574,7 +574,9 @@ module TestListenerTeardown =
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"%s{row}: the accept answered %A{other}"
 
-        let _, system = UnixDescriptor.setNonBlocking accepted true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) accepted true system
+
         let r1, system = read accepted system
         let r2, system = read accepted system
         let soerr, system = socketError accepted system

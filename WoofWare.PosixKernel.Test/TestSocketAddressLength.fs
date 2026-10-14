@@ -329,7 +329,9 @@ module TestSocketAddressLength =
                     let clientFd, system =
                         if nonBlocking then
                             let fd, system = streamSocket system
-                            let system = UnixDescriptor.setNonBlocking fd true system |> snd
+
+                            let system =
+                                UnixDescriptor.setNonBlocking (Callers.leader system) fd true system |> snd
 
                             match
                                 CopyIn.connect
@@ -360,7 +362,7 @@ module TestSocketAddressLength =
                             | other -> failwith $"epoll_ctl ADD: %A{other}"
 
                     if closed then
-                        match UnixDescriptor.tryClose clientFd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) clientFd system with
                         | Ok (SyscallAnswer.Completed _, system) -> system
                         | other -> failwith $"closing a client: %A{other}"
                     else
@@ -375,7 +377,7 @@ module TestSocketAddressLength =
             let acceptedThenClosed =
                 match UnixConnection.tryAccept 0 listenerFd UserBuffer.Mapped 16u system with
                 | Ok (AcceptOutcome.Accepted (acceptedFd, _, _), after) ->
-                    match UnixDescriptor.tryClose acceptedFd after with
+                    match UnixDescriptor.tryClose (Callers.leader after) acceptedFd after with
                     | Ok (SyscallAnswer.Completed _, after) -> after
                     | other -> failwith $"closing the accepted descriptor: %A{other}"
                 | other -> failwith $"expected an accept, got %A{other}"

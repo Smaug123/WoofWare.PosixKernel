@@ -41,7 +41,7 @@ module TestSuppliedPipe =
         | Error refusal -> failwith $"read(0, %d{count}) was refused: %s{ReadRefusal.describe refusal}"
 
     let private fionread (system : UnixSystem<int, string>) : int =
-        match UnixDescriptor.tryBytesAvailable 0 UserBuffer.Mapped system with
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (BytesAvailableAnswer.Reported count) -> count
         | other -> failwith $"FIONREAD on descriptor 0 answered %A{other}"
 
@@ -490,12 +490,12 @@ module TestSuppliedPipe =
             writerOpen system |> shouldEqual true
 
             let duplicate, system =
-                match Answered.dup 0 system with
+                match Answered.dup (Callers.leader system) 0 system with
                 | SyscallAnswer.Completed fd, system -> int fd, system
                 | other -> failwith $"dup(0) answered %A{other}"
 
             let closeOrFail (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixDescriptor.tryClose fd system with
+                match UnixDescriptor.tryClose (Callers.leader system) fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close(%d{fd}) answered %A{other}"
 

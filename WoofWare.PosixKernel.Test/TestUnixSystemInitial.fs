@@ -383,7 +383,7 @@ module TestUnixSystemInitial =
             let lowestFree =
                 Seq.initInfinite id |> Seq.find (fun fd -> not (Map.containsKey fd launch))
 
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), _) -> readFd |> shouldEqual lowestFree
             | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 

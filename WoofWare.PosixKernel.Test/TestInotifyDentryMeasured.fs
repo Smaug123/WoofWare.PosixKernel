@@ -258,7 +258,13 @@ module TestInotifyDentryMeasured =
             "copy_file_range"
             (fun system -> UnixReadWrite.tryCopyFileRange src f 3UL 0 system |> answered "copy_file_range")
 
-        op "ftruncate" (fun system -> UnixDescriptor.tryFtruncate f 2L system |> answered "ftruncate")
+        op
+            "ftruncate"
+            (fun system ->
+                UnixDescriptor.tryFtruncate (Callers.leader system) f 2L system
+                |> answered "ftruncate"
+            )
+
         op "fchmod" (fun system -> UnixPathResolution.tryFchmod f 0o600 system |> answered "fchmod")
 
         op

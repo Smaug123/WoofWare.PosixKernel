@@ -147,7 +147,7 @@ module TestEphemeralPorts =
         | Error refusal -> failwith $"accept refused: %A{refusal}"
 
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | Ok (answer, _) -> failwith $"close answered %A{answer}"
         | Error refusal -> failwith $"close refused: %A{refusal}"

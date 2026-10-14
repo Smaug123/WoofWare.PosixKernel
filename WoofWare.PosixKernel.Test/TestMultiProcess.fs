@@ -254,8 +254,13 @@ module TestMultiProcess =
 
     // ---------------------------------------------------------- shared machine
 
-    let private bindAt (port : uint16) (view : UnixSystem<int, string>) : BindAnswer * UnixSystem<int, string> =
-        let fd, view = KeventWorld.stream true view
+    let private bindAt
+        (pid : ProcessId)
+        (port : uint16)
+        (view : UnixSystem<int, string>)
+        : BindAnswer * UnixSystem<int, string>
+        =
+        let fd, view = KeventWorld.streamIn pid true view
 
         match
             CopyIn.bind
@@ -274,17 +279,17 @@ module TestMultiProcess =
             let pids, machine = machineOf platform 2
             let a, b = pids.[0], pids.[1]
 
-            let answer, machine = inProcess a (bindAt 8080us) machine
+            let answer, machine = inProcess a (bindAt a 8080us) machine
 
             match answer with
             | BindAnswer.Bound _ -> ()
             | other -> failwith $"the first bind answered %A{other}"
 
-            let answer, machine = inProcess b (bindAt 8080us) machine
+            let answer, machine = inProcess b (bindAt b 8080us) machine
             answer |> shouldEqual (BindAnswer.Failed UnixError.EADDRINUSE)
 
             // ...and a different port is free to it.
-            let answer, machine = inProcess b (bindAt 8081us) machine
+            let answer, machine = inProcess b (bindAt b 8081us) machine
 
             match answer with
             | BindAnswer.Bound _ -> ()
@@ -404,7 +409,7 @@ module TestMultiProcess =
         let first = viewOf pids.[0] machine
         let second = viewOf pids.[1] machine
 
-        let _, second = KeventWorld.dup 1 second
+        let _, second = KeventWorld.dupIn pids.[1] 1 second
         let machine' = Machines.unfocus second machine
 
         let error = Assert.Throws<exn> (fun () -> Machines.unfocus first machine' |> ignore)
@@ -430,13 +435,13 @@ module TestMultiProcess =
         Machines.holdsProcessOf first machine |> shouldEqual true
 
         // Another process's change goes stale only the machine in `first`.
-        let _, second = KeventWorld.dup 1 second
+        let _, second = KeventWorld.dupIn pids.[1] 1 second
         let machine = Machines.unfocus second machine
         Machines.holdsProcessOf first machine |> shouldEqual true
 
         // A change of `first`'s own process, written back from another view of it, is one
         // `first` never saw.
-        let _, machine = inProcess pids.[0] (KeventWorld.dup 1) machine
+        let _, machine = inProcess pids.[0] (KeventWorld.dupIn pids.[0] 1) machine
         Machines.holdsProcessOf first machine |> shouldEqual false
 
         // A process the machine does not hold.

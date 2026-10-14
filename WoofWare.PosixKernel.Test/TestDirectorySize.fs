@@ -298,7 +298,7 @@ module TestDirectorySize =
             failwith $"%s{what} failed with %O{error}, but the history is valid by construction"
 
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"close %d{fd}: %A{other}"
 
@@ -362,7 +362,7 @@ module TestDirectorySize =
     /// `lseek(fd, offset, SEEK_END)` as the model answers it: the position, or
     /// the errno.
     let private modelSeekEnd (fd : int) (offset : int64) (system : UnixSystem<int, string>) : Result<int64, UnixError> =
-        match UnixDescriptor.tryLseek fd offset 2 system with
+        match UnixDescriptor.tryLseek (Callers.leader system) fd offset 2 system with
         | Ok (SyscallAnswer.Completed position, _) -> Ok position
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Error refusal ->
@@ -503,11 +503,11 @@ module TestDirectorySize =
             // Away from 0 first, so that a failure which reset the position
             // would be visible.
             let system =
-                match UnixDescriptor.tryLseek fd 7L 0 system with
+                match UnixDescriptor.tryLseek (Callers.leader system) fd 7L 0 system with
                 | Ok (SyscallAnswer.Completed 7L, system) -> system
                 | other -> failwith $"lseek(d, 7, SEEK_SET): %A{other}"
 
-            match UnixDescriptor.tryLseek fd offset 2 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd offset 2 system with
             | Ok (SyscallAnswer.Failed UnixError.EINVAL, after) -> after |> shouldEqual system
             | other -> failwith $"lseek(d, %d{offset}, SEEK_END): %A{other}"
 
@@ -542,7 +542,7 @@ module TestDirectorySize =
             UnixPathResolution.tryFstat fd system
             |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
 
-            match UnixDescriptor.tryLseek fd 0L 2 system with
+            match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 2 system with
             | Error (LSeekRefusal.DirectoryEnd _) -> ()
             | other -> failwith $"expected SEEK_END on an NFS directory to be refused, got %A{other}"
 

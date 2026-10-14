@@ -1976,7 +1976,7 @@ module TestShutdownAgainstHost =
         )
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -2068,8 +2068,8 @@ module TestShutdownAgainstHost =
                 | other -> failwith $"accept: %A{other}"
 
             let s = kernelClose listener s
-            let _, s = UnixDescriptor.setNonBlocking client true s
-            let _, s = UnixDescriptor.setNonBlocking server true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) client true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) server true s
             system <- s
             fds <- Map.ofList [ c, client ; p, server ]
 
@@ -2159,7 +2159,7 @@ module TestShutdownAgainstHost =
                 | Error refusal -> failwith $"shutdown refused: %s{ShutdownRefusal.describe refusal}"
 
             member this.Close e =
-                match UnixDescriptor.tryClose (this.Fd e) system with
+                match UnixDescriptor.tryClose (Callers.leader system) (this.Fd e) system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     system <- after
                     fds <- Map.remove e fds
@@ -2204,7 +2204,7 @@ module TestShutdownAgainstHost =
                 (this :> IShutdownPair).Close e
 
             member this.Fionread e =
-                match UnixDescriptor.tryBytesAvailable (this.Fd e) UserBuffer.Mapped system with
+                match UnixDescriptor.tryBytesAvailable (Callers.leader system) (this.Fd e) UserBuffer.Mapped system with
                 | Ok (BytesAvailableAnswer.Reported count) -> count
                 | other -> failwith $"FIONREAD: %A{other}"
 
@@ -2536,7 +2536,7 @@ module TestShutdownAgainstHost =
             Datagram = fun () -> created SocketKind.Datagram SocketProtocol.Udp
             NotSocket =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- kernelClose writeFd after
                         readFd
@@ -2545,7 +2545,7 @@ module TestShutdownAgainstHost =
             // stays free, and the closed-fd rows ask about one, as the probe's do.
             NamesNothing =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- after |> kernelClose writeFd |> kernelClose readFd
                         readFd
@@ -2563,7 +2563,7 @@ module TestShutdownAgainstHost =
                 fun how ->
                     let l, port = listening ()
                     let f = created SocketKind.Stream SocketProtocol.Tcp
-                    let _, after = UnixDescriptor.setNonBlocking f true system
+                    let _, after = UnixDescriptor.setNonBlocking (Callers.leader system) f true system
                     system <- after
                     let first = connectAnswer f port
 

@@ -137,7 +137,7 @@ module TestInodeLifetime =
             }
 
     let private closed (fd : int) (kernel : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd kernel with
+        match UnixDescriptor.tryClose (Callers.leader kernel) fd kernel with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> failwith $"could not close fd %d{fd}: %O{error}"
         | Ok (SyscallAnswer.Completed _, system) -> system

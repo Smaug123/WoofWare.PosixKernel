@@ -318,7 +318,7 @@ module TestImplicitSelfConnectMeasured =
                     | Ok (SyscallAnswer.Failed UnixError.ECONNREFUSED, system) ->
                         let port = (endpoint (nameOf false fd system)).Port
 
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
                         | Ok (SyscallAnswer.Completed 0L, system) -> modelTaken @ [ int port - int target ], system
                         | other -> failwith $"row %s{row}: closing the refused socket answered %A{other}"
                     | other -> failwith $"row %s{row}: the model answered %A{other}"

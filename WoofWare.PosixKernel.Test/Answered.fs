@@ -82,12 +82,13 @@ module internal Answered =
         | Ok answer -> answer
         | Error refusal -> failwith $"expected an answer, but it was refused: %A{refusal}"
 
-    /// `dup(2)`, which must not reach the descriptor bound.
+    /// `dup(2)` by `caller`, which must not reach the descriptor bound.
     let dup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match UnixDescriptor.tryDup fd system with
+        match UnixDescriptor.tryDup caller fd system with
         | Ok answer -> answer
         | Error refusal -> failwith $"dup(%d{fd}) was refused: %s{DescriptorLimitRefusal.describe refusal}"

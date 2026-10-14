@@ -179,7 +179,7 @@ module DualModeProbe =
         | Result.Error refusal -> Answer.Refused (ListenRefusal.describe refusal)
 
     let private close (libc : Libc) (fd : int) : unit =
-        match UnixDescriptor.tryClose fd libc.System with
+        match UnixDescriptor.tryClose (Callers.leader libc.System) fd libc.System with
         | Result.Ok (_, system) -> libc.System <- system
         | Result.Error refusal -> failwith $"DualModeProbe: close(%d{fd}) was refused: %A{refusal}"
 
@@ -394,7 +394,7 @@ module DualModeProbe =
 
     /// `close`, which the model may refuse; the probe prints nothing for it.
     let private tryClose (libc : Libc) (fd : int) : bool =
-        match UnixDescriptor.tryClose fd libc.System with
+        match UnixDescriptor.tryClose (Callers.leader libc.System) fd libc.System with
         | Result.Ok (_, system) ->
             libc.System <- system
             true

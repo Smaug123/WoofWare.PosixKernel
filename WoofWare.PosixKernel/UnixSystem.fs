@@ -1234,18 +1234,20 @@ module UnixSystem =
                } -> Error (SyscallRefusal.CallerAsleep (thread, park, call))
         | Some _ ->
 
+        let caller = Caller.make system.Process.ProcessId thread
+
         match call with
         | Syscall.GetEffectiveUserId ->
             Ok (
                 SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId system)))
+                    SyscallAnswer.Completed (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId caller system)))
                 ),
                 system
             )
         | Syscall.GetEffectiveGroupId ->
             Ok (
                 SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (GroupId.toUInt32 (UnixDescriptor.effectiveGroupId system)))
+                    SyscallAnswer.Completed (int64 (GroupId.toUInt32 (UnixDescriptor.effectiveGroupId caller system)))
                 ),
                 system
             )
@@ -1255,34 +1257,34 @@ module UnixSystem =
                 system
             )
         | Syscall.Dup fd ->
-            UnixDescriptor.tryDup fd system
+            UnixDescriptor.tryDup caller fd system
             |> answered
             |> Result.mapError SyscallRefusal.Dup
         | Syscall.Fcntl (fd, command, argument) ->
-            UnixDescriptor.tryFcntl fd command argument system
+            UnixDescriptor.tryFcntl caller fd command argument system
             |> answered
             |> Result.mapError SyscallRefusal.Fcntl
         | Syscall.Dup2 (oldFd, newFd) ->
-            UnixDescriptor.tryDup2 oldFd newFd system
+            UnixDescriptor.tryDup2 caller oldFd newFd system
             |> answered
             |> Result.mapError SyscallRefusal.Dup2
         | Syscall.Dup3 (oldFd, newFd, flags) ->
-            UnixDescriptor.tryDup3 oldFd newFd flags system
+            UnixDescriptor.tryDup3 caller oldFd newFd flags system
             |> answered
             |> Result.mapError SyscallRefusal.Dup3
         | Syscall.LSeek (fd, offset, whence) ->
-            UnixDescriptor.tryLseek fd offset whence system
+            UnixDescriptor.tryLseek caller fd offset whence system
             |> answered
             |> Result.mapError SyscallRefusal.LSeek
         | Syscall.FLock (fd, operation) ->
-            UnixDescriptor.tryFlock thread fd operation system
+            UnixDescriptor.tryFlock caller fd operation system
             |> Result.mapError SyscallRefusal.FLock
         | Syscall.FTruncate (fd, length) ->
-            UnixDescriptor.tryFtruncate fd length system
+            UnixDescriptor.tryFtruncate caller fd length system
             |> answered
             |> Result.mapError SyscallRefusal.FTruncate
         | Syscall.Close fd ->
-            UnixDescriptor.tryClose fd system
+            UnixDescriptor.tryClose caller fd system
             |> answered
             |> Result.mapError SyscallRefusal.Close
         | Syscall.MkDirAt (dirfd, path, mode) ->
@@ -1338,7 +1340,7 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.CopyFileRange
         | Syscall.FileClone (destination, source) ->
-            UnixDescriptor.tryFileClone destination source system
+            UnixDescriptor.tryFileClone caller destination source system
             |> Result.map (fun error -> SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.CloneFile (source, destination, flags) ->

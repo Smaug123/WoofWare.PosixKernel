@@ -1133,9 +1133,13 @@ module TestInotifyDelivery =
             | Ok (WriteAnswer.Completed written, system) -> Some (SyscallAnswer.Completed written, system)
             | Ok (WriteAnswer.Failed error, system) -> Some (SyscallAnswer.Failed error, system)
             | Error refusal -> failwith $"%A{op}: refused: %A{refusal}"
-        | Op.Ftruncate slot -> UnixDescriptor.tryFtruncate (slotOf slot) 0L system |> mustAnswer
+        | Op.Ftruncate slot ->
+            UnixDescriptor.tryFtruncate (Callers.leader system) (slotOf slot) 0L system
+            |> mustAnswer
         | Op.Fchmod (slot, mode) -> UnixPathResolution.tryFchmod (slotOf slot) mode system |> mustAnswer
-        | Op.Close slot -> UnixDescriptor.tryClose (slotOf slot) system |> mustAnswer
+        | Op.Close slot ->
+            UnixDescriptor.tryClose (Callers.leader system) (slotOf slot) system
+            |> mustAnswer
         | other -> failwith $"%A{other} is not a call through a kept descriptor"
 
     /// Numbers each cookie by the order it first appears in.

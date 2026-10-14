@@ -80,7 +80,7 @@ module TestDarwinPoll =
         | other -> failwith $"reading %d{count} bytes from fd %d{fd}: %A{other}"
 
     let private pipe (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe did not make a pipe: %A{other}"
 
