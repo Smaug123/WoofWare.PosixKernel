@@ -187,8 +187,8 @@ module internal FStatRefusal =
 [<RequireQualifiedAccess>]
 type internal FStatAtRefusal =
     /// The flag word carries flags the flavour accepts and this library does
-    /// not model. `flags` is the whole word.
-    | UnmodelledFlags of flags : int
+    /// not model.
+    | UnmodelledFlags of UnmodelledAtFlags
     /// Linux's `AT_EMPTY_PATH`, with a pathname the caller could not read.
     /// Linux reads a NULL pathname under `AT_EMPTY_PATH` as the empty one, and
     /// reports what `dirfd` names; `PathArgumentBytes.Unreadable` does not say
@@ -205,8 +205,7 @@ module internal FStatAtRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : FStatAtRefusal) : string =
         match refusal with
-        | FStatAtRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag this flavour accepts and this library does not model: Linux's AT_NO_AUTOMOUNT (0x800) or AT_STATX_SYNC_TYPE bits (0x2000, 0x4000), or Darwin's AT_REALDEV (0x200), AT_FDONLY (0x400), AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000)."
+        | FStatAtRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | FStatAtRefusal.UnreadableEmptyPath ->
             "AT_EMPTY_PATH with a pathname that could not be read: Linux reads a NULL pathname under AT_EMPTY_PATH as the empty one, and this library is not told whether the pathname was NULL."
         | FStatAtRefusal.Stat refusal -> StatRefusal.describe refusal
@@ -297,8 +296,8 @@ module internal FChModRefusal =
 [<RequireQualifiedAccess>]
 type internal FChModAtRefusal =
     /// The flag word carries flags the flavour accepts and this library does
-    /// not model. `flags` is the whole word.
-    | UnmodelledFlags of flags : int
+    /// not model.
+    | UnmodelledFlags of UnmodelledAtFlags
     /// The call walked its path, and `chmod(2)` refuses what it reached.
     | ChMod of ChModRefusal
     /// Linux's `AT_EMPTY_PATH` with the empty path named `dirfd` itself, and
@@ -311,8 +310,7 @@ module internal FChModAtRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : FChModAtRefusal) : string =
         match refusal with
-        | FChModAtRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag this flavour accepts and this library does not model: Darwin's AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000)."
+        | FChModAtRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | FChModAtRefusal.ChMod refusal -> ChModRefusal.describe refusal
         | FChModAtRefusal.Descriptor refusal -> FChModRefusal.describe refusal
 
@@ -400,8 +398,8 @@ module internal FChOwnRefusal =
 [<RequireQualifiedAccess>]
 type internal FChOwnAtRefusal =
     /// The flag word carries flags the flavour accepts and this library does
-    /// not model. `flags` is the whole word.
-    | UnmodelledFlags of flags : int
+    /// not model.
+    | UnmodelledFlags of UnmodelledAtFlags
     /// The call walked its path, and `chown(2)` or `lchown(2)` refuses what it
     /// reached.
     | ChOwn of ChOwnRefusal
@@ -415,8 +413,7 @@ module internal FChOwnAtRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : FChOwnAtRefusal) : string =
         match refusal with
-        | FChOwnAtRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag this flavour accepts and this library does not model: Darwin's AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000)."
+        | FChOwnAtRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | FChOwnAtRefusal.ChOwn refusal -> ChOwnRefusal.describe refusal
         | FChOwnAtRefusal.Descriptor refusal -> FChOwnRefusal.describe refusal
 
@@ -431,8 +428,8 @@ module internal FChOwnAtRefusal =
 [<RequireQualifiedAccess>]
 type internal UTimensAtRefusal =
     /// The flag word carries flags the flavour reads and this library does
-    /// not model. `flags` is the whole word.
-    | UnmodelledFlags of flags : int
+    /// not model.
+    | UnmodelledFlags of UnmodelledAtFlags
     /// Darwin, with a `times` pointer the caller could not read. Darwin's
     /// `utimensat` is its libc's, which reads the times itself before it
     /// makes any syscall, so the fault is the caller's own: no errno.
@@ -468,8 +465,7 @@ module internal UTimensAtRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : UTimensAtRefusal) : string =
         match refusal with
-        | UTimensAtRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag this flavour reads and this library does not model: Darwin's AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000)."
+        | UTimensAtRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | UTimensAtRefusal.UnreadableTimes ->
             "the times pointer could not be read, on Darwin, whose utimensat is its libc's: the libc reads the times itself before any syscall, so the caller faults (measured on Darwin 27.0: SIGBUS) rather than receiving an errno."
         | UTimensAtRefusal.Path refusal -> PathRefusal.describe refusal
@@ -680,11 +676,9 @@ module UnixPathResolution =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PathStart, PathFailure>
         =
-        match emptyPath with
-        | EmptyPathMeaning.NamesStartingPoint when UnixPath.isEmpty path ->
-            match directory with
-            | AtDirectory.CurrentDirectory -> Ok (PathStart.StartingObject system.Process.CurrentDirectoryInode)
-            | AtDirectory.Descriptor fd ->
+        match AtPathTarget.classify emptyPath directory path with
+        | AtPathTarget.CurrentDirectory -> Ok (PathStart.StartingObject system.Process.CurrentDirectoryInode)
+        | AtPathTarget.Descriptor fd ->
 
             match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors system) with
             | None -> Error (PathFailure.Errno UnixError.EBADF)
@@ -700,8 +694,7 @@ module UnixPathResolution =
             | OpenFileTarget.Epoll _
             | OpenFileTarget.Inotify _
             | OpenFileTarget.Kqueue _ -> Error (PathFailure.Refused (PathRefusal.UnmodelledStartingObject fd))
-        | EmptyPathMeaning.NamesStartingPoint
-        | EmptyPathMeaning.Walked ->
+        | AtPathTarget.Walked ->
             walkStart directory path system
             |> Result.map PathStart.Walk
             |> Result.mapError PathFailure.Errno
@@ -1153,10 +1146,10 @@ module UnixPathResolution =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match StatRules.screen flavour flags with
-        | StatScreen.Failed error -> Ok (FileStatusAnswer.Failed error)
-        | StatScreen.Unmodelled flags -> Error (FStatAtRefusal.UnmodelledFlags flags)
-        | StatScreen.Screened arguments ->
+        match AtFlags.screen flavour (AtFlagRules.fstatat flavour) flags with
+        | AtFlagScreen.Failed error -> Ok (FileStatusAnswer.Failed error)
+        | AtFlagScreen.Unmodelled refused -> Error (FStatAtRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened arguments ->
 
         let directory = AtDirectory.decode flavour dirfd
 
@@ -1174,10 +1167,9 @@ module UnixPathResolution =
         // the descriptor does (or stat of "." for AT_FDCWD), for every kind of
         // descriptor, AT_SYMLINK_NOFOLLOW or not; and a path that is not
         // empty answers as it does without the flag.
-        match arguments.EmptyPath, directory with
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.Descriptor fd when UnixPath.isEmpty path ->
-            tryFstat fd system |> Result.mapError FStatAtRefusal.Descriptor
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.CurrentDirectory when UnixPath.isEmpty path ->
+        match AtPathTarget.classify arguments.EmptyPath directory path with
+        | AtPathTarget.Descriptor fd -> tryFstat fd system |> Result.mapError FStatAtRefusal.Descriptor
+        | AtPathTarget.CurrentDirectory ->
             let cwd = system.Process.CurrentDirectoryInode
 
             match statOf cwd system with
@@ -1186,8 +1178,7 @@ module UnixPathResolution =
             | None ->
                 failwith
                     $"UnixPathResolution.fstatat: the current directory is inode %O{cwd}, which the filesystem does not contain. Run UnixSystem.checkInvariants (this is a bug in this library)."
-        | EmptyPathMeaning.NamesStartingPoint, _
-        | EmptyPathMeaning.Walked, _ ->
+        | AtPathTarget.Walked ->
             statParsed directory arguments.FinalSymlink path system
             |> Result.mapError FStatAtRefusal.Stat
 
@@ -1795,10 +1786,10 @@ module UnixPathResolution =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match AttributeChangeRules.screen flavour flags with
-        | AttributeChangeScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
-        | AttributeChangeScreen.Unmodelled flags -> Error (FChModAtRefusal.UnmodelledFlags flags)
-        | AttributeChangeScreen.Screened arguments ->
+        match AtFlags.screen flavour (AtFlagRules.attributeChange flavour) flags with
+        | AtFlagScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
+        | AtFlagScreen.Unmodelled refused -> Error (FChModAtRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened arguments ->
 
         let directory = AtDirectory.decode flavour dirfd
 
@@ -1813,10 +1804,9 @@ module UnixPathResolution =
         | Error error -> Ok (SyscallAnswer.Failed error, system)
         | Ok path ->
 
-        match arguments.EmptyPath, directory with
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.Descriptor fd when UnixPath.isEmpty path ->
-            tryFchmod fd mode system |> Result.mapError FChModAtRefusal.Descriptor
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.CurrentDirectory when UnixPath.isEmpty path ->
+        match AtPathTarget.classify arguments.EmptyPath directory path with
+        | AtPathTarget.Descriptor fd -> tryFchmod fd mode system |> Result.mapError FChModAtRefusal.Descriptor
+        | AtPathTarget.CurrentDirectory ->
             let cwd, through = currentDirectoryReached system
 
             changeModeOf through cwd mode system
@@ -1824,8 +1814,7 @@ module UnixPathResolution =
                 attributeChangeRefusal ChModRefusal.UnmeasuredModeChange ChModRefusal.UnplacedChange
                 >> FChModAtRefusal.ChMod
             )
-        | EmptyPathMeaning.NamesStartingPoint, _
-        | EmptyPathMeaning.Walked, _ ->
+        | AtPathTarget.Walked ->
             chmodParsed directory arguments.FinalSymlink path mode system
             |> Result.mapError FChModAtRefusal.ChMod
 
@@ -1885,10 +1874,10 @@ module UnixPathResolution =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match AttributeChangeRules.screen flavour flags with
-        | AttributeChangeScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
-        | AttributeChangeScreen.Unmodelled flags -> Error (FChOwnAtRefusal.UnmodelledFlags flags)
-        | AttributeChangeScreen.Screened arguments ->
+        match AtFlags.screen flavour (AtFlagRules.attributeChange flavour) flags with
+        | AtFlagScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
+        | AtFlagScreen.Unmodelled refused -> Error (FChOwnAtRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened arguments ->
 
         let directory = AtDirectory.decode flavour dirfd
 
@@ -1898,10 +1887,9 @@ module UnixPathResolution =
         | Error error -> Ok (SyscallAnswer.Failed error, system)
         | Ok path ->
 
-        match arguments.EmptyPath, directory with
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.Descriptor fd when UnixPath.isEmpty path ->
-            tryFchown fd user group system |> Result.mapError FChOwnAtRefusal.Descriptor
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.CurrentDirectory when UnixPath.isEmpty path ->
+        match AtPathTarget.classify arguments.EmptyPath directory path with
+        | AtPathTarget.Descriptor fd -> tryFchown fd user group system |> Result.mapError FChOwnAtRefusal.Descriptor
+        | AtPathTarget.CurrentDirectory ->
             let cwd, through = currentDirectoryReached system
 
             changeOwnerOf through cwd user group system
@@ -1909,8 +1897,7 @@ module UnixPathResolution =
                 attributeChangeRefusal ChOwnRefusal.UnmeasuredOwnerChange ChOwnRefusal.UnplacedChange
                 >> FChOwnAtRefusal.ChOwn
             )
-        | EmptyPathMeaning.NamesStartingPoint, _
-        | EmptyPathMeaning.Walked, _ ->
+        | AtPathTarget.Walked ->
             chownParsed directory arguments.FinalSymlink path user group system
             |> Result.mapError FChOwnAtRefusal.ChOwn
 
@@ -2193,10 +2180,10 @@ module UnixPathResolution =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match TimestampChangeRules.screen flavour flags with
-        | TimestampChangeScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
-        | TimestampChangeScreen.Unmodelled flags -> Error (UTimensAtRefusal.UnmodelledFlags flags)
-        | TimestampChangeScreen.Screened arguments ->
+        match AtFlags.screen flavour (AtFlagRules.utimensat flavour) flags with
+        | AtFlagScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
+        | AtFlagScreen.Unmodelled refused -> Error (UTimensAtRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened arguments ->
 
         let copied =
             match path with
@@ -2212,14 +2199,12 @@ module UnixPathResolution =
         // names, exactly as a null pathname does (NULLFD), or of the current
         // directory for AT_FDCWD; a path that is not empty answers as
         // without the flag.
-        match arguments.EmptyPath, directory with
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.Descriptor fd when UnixPath.isEmpty path ->
-            setDescriptorTimes fd access modification system
-        | EmptyPathMeaning.NamesStartingPoint, AtDirectory.CurrentDirectory when UnixPath.isEmpty path ->
+        match AtPathTarget.classify arguments.EmptyPath directory path with
+        | AtPathTarget.Descriptor fd -> setDescriptorTimes fd access modification system
+        | AtPathTarget.CurrentDirectory ->
             let cwd, through = currentDirectoryReached system
             setTimesOf (TimesTarget.Inode (cwd, through)) access modification system
-        | EmptyPathMeaning.NamesStartingPoint, _
-        | EmptyPathMeaning.Walked, _ ->
+        | AtPathTarget.Walked ->
 
         // Measured by `utimensat-rules.c` (TRAIL, EFFECT): "f/" and "lf/" are
         // ENOTDIR and "ld/" the directory with or without
@@ -2692,9 +2677,9 @@ module UnixPathResolution =
         : Result<CallProgress<PausedAccess<'Thread, 'Handler>, SyscallAnswer>, AccessRefusal>
         =
         match AccessRules.screen (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) mode flags with
-        | AccessScreen.Refused refusal -> Error refusal
-        | AccessScreen.Failed error -> Ok (CallProgress.Answered (SyscallAnswer.Failed error))
-        | AccessScreen.Screened arguments ->
+        | AtFlagScreen.Unmodelled refused -> Error (AccessRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Failed error -> Ok (CallProgress.Answered (SyscallAnswer.Failed error))
+        | AtFlagScreen.Screened arguments ->
             Ok (
                 CallProgress.NeedsCopyIn
                     {

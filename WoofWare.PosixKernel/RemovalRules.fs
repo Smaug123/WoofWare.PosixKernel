@@ -81,23 +81,12 @@ type internal RemovalKind =
     /// `AT_REMOVEDIR`: the call is `rmdir(2)`'s, under `RmDirRules`.
     | RmDir
 
-/// What screening `unlinkat(2)`'s flag word came to.
-[<RequireQualifiedAccess>]
-type internal UnlinkAtScreen =
-    /// A word this kernel accepts, and the removal it asks for.
-    | Screened of RemovalKind
-    /// The call fails with this errno before its path is copied in.
-    | Failed of error : UnixError
-    /// The word carries `flags`, which the flavour accepts and this library
-    /// does not model.
-    | Unmodelled of flags : int
-
 /// Why this kernel will not answer an `unlinkat(2)`.
 [<RequireQualifiedAccess>]
 type internal UnlinkAtRefusal =
     /// The flag word carries flags the flavour accepts and this library does
-    /// not model. `flags` is the whole word.
-    | UnmodelledFlags of flags : int
+    /// not model.
+    | UnmodelledFlags of UnmodelledAtFlags
     /// The flag word asked for a removal, and this kernel will not answer it.
     | Removal of RemovalRefusal
 
@@ -107,8 +96,7 @@ module internal UnlinkAtRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : UnlinkAtRefusal) : string =
         match refusal with
-        | UnlinkAtRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag Darwin accepts and this library does not model: 0x100, AT_SYMLINK_NOFOLLOW_ANY (0x800), 0x1000, AT_RESOLVE_BENEATH (0x2000), AT_NODELETEBUSY (0x4000) or AT_UNIQUE (0x8000)."
+        | UnlinkAtRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | UnlinkAtRefusal.Removal refusal -> RemovalRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -120,23 +108,13 @@ module internal UnlinkAtRefusal =
 [<RequireQualifiedAccess>]
 module UnlinkAtRules =
 
-    // `<fcntl.h>`'s numbering, measured by `at-dirfd.c` (CONST and FLAGS) on
-    // Linux 6.18.5 and Darwin 27.0.
-    let private linuxAtRemoveDir : int = 0x200
-    let private darwinAtRemoveDir : int = 0x80
-    // Two bits the SDK's <sys/fcntl.h> does not name, then
-    // AT_SYMLINK_NOFOLLOW_ANY, AT_RESOLVE_BENEATH, AT_NODELETEBUSY and
-    // AT_UNIQUE.
-    let private darwinUnmodelledFlags : int =
-        0x100 ||| 0x800 ||| 0x1000 ||| 0x2000 ||| 0x4000 ||| 0x8000
-
     /// `AT_REMOVEDIR` in `flavour`'s numbering: 0x200 on Linux, 0x80 on
     /// Darwin. `rmdir(2)` is `unlinkat(2)` with this flag from `AT_FDCWD`, and
     /// `unlink(2)` is it with no flags.
     let atRemoveDir (flavour : SimulatedUnixFlavour) : int =
         match flavour with
-        | SimulatedUnixFlavour.Linux -> linuxAtRemoveDir
-        | SimulatedUnixFlavour.Darwin -> darwinAtRemoveDir
+        | SimulatedUnixFlavour.Linux -> AtFlagNumbering.LinuxRemoveDir
+        | SimulatedUnixFlavour.Darwin -> AtFlagNumbering.DarwinRemoveDir
 
     /// Screen `unlinkat(2)`'s raw flag word as `flavour` does, before the path
     /// is copied in and before `dirfd` is looked at.
@@ -146,57 +124,15 @@ module UnlinkAtRules =
     /// `UnlinkAtRefusal.UnmodelledFlags`). Each answers EINVAL for a word
     /// carrying any other bit, even beside a flag it accepts; a word whose
     /// bits Darwin accepts and which carries one of the six is
-    /// `UnlinkAtScreen.Unmodelled`.
-    let internal screen (flavour : SimulatedUnixFlavour) (flags : int) : UnlinkAtScreen =
-        // Measured by `at-dirfd.c` (FLAGS, FLAGORDER: every single bit, and a
-        // rejected bit against a NULL path, a bad dirfd and the empty path)
-        // and by `unlinkat-rules.c` (FLAGS2: AT_REMOVEDIR, and each of
-        // Darwin's six, beside a rejected bit, against a file, a directory, a
-        // NULL path and a bad dirfd, which is EINVAL in every cell).
-        let removeDir, unmodelled =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> linuxAtRemoveDir, 0
-            | SimulatedUnixFlavour.Darwin -> darwinAtRemoveDir, darwinUnmodelledFlags
-
-        if flags &&& ~~~(removeDir ||| unmodelled) <> 0 then
-            UnlinkAtScreen.Failed UnixError.EINVAL
-        elif flags &&& unmodelled <> 0 then
-            UnlinkAtScreen.Unmodelled flags
-        elif flags &&& removeDir <> 0 then
-            UnlinkAtScreen.Screened RemovalKind.RmDir
-        else
-            UnlinkAtScreen.Screened RemovalKind.Unlink
-
-/// <summary>
-/// Parametrises the behaviour of different kernels when <c>unlink(2)</c> removes a name.
-/// </summary>
-/// <remarks>
-/// Unlike e.g. <c>mkdir</c>, whose platform-dependent behaviour is confined entirely to
-/// the directory walk, <c>unlink</c> diverges in the order of its refusals too.
-///
-/// Create one of these with <c>SimulatedUnixPlatform.unlinkRules</c>.
-/// </remarks>
-(*
-Measured on macOS 26.6/APFS at uid 501 and 0, and Linux 6.x arm64 at uid
-1000 and 0, one fresh tree per row.
-*)
-type UnlinkRules =
-    {
-        /// The walk `unlink` resolves its path with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms.
-        ///
-        /// Linux's `do_unlinkat` takes a parent and a name and never resolves
-        /// the final component at all, so a trailing separator neither
-        /// dereferences a final symlink nor is enforced by the walk: it is
-        /// reported on the resolution and enforced by
-        /// `linuxVerdict`. Darwin's `namei` resolves it like any other lookup,
-        /// which is `Demand`.
-        ///
-        /// The row that separates them is `unlink("lroot/")` with `lroot -> "/"`:
-        /// ENOTDIR on Linux, which cannot have traversed the link, against
-        /// EISDIR on Darwin, which did.
-        TrailingSeparator : TrailingSeparatorPolicy
-    }
+    /// `AtFlagScreen.Unmodelled`.
+    let internal screen (flavour : SimulatedUnixFlavour) (flags : int) : AtFlagScreen<RemovalKind> =
+        AtFlags.screenWord flavour (AtFlagRules.unlinkat flavour) flags
+        |> AtFlagScreen.map (fun admitted ->
+            if admitted &&& atRemoveDir flavour <> 0 then
+                RemovalKind.RmDir
+            else
+                RemovalKind.Unlink
+        )
 
 /// <summary>
 /// What <c>unlink(2)</c> should do, now that its path has been resolved.
@@ -521,18 +457,6 @@ module internal UnlinkRules =
 /// uid 0, one fresh tree per row.
 type RmDirRules =
     {
-        /// The walk `rmdir` resolves its path with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms. Linux `Ignore`,
-        /// Darwin `Demand`, exactly as `unlink`'s is and for the same reason.
-        ///
-        /// This is the field that makes the two flavours **destroy different
-        /// objects**. With `ld -> d` and `d` an empty directory, `rmdir("ld/")`
-        /// is ENOTDIR on Linux — whose walk cannot have traversed the link — and
-        /// *removes `d`* on Darwin, whose walk did. It is the divergence
-        /// that a final symlink followed under a trailing separator causes, and
-        /// the reason this
-        /// syscall dispatches on the flavour rather than picking a column.
-        TrailingSeparator : TrailingSeparatorPolicy
         /// What removing the directory does to the removed directory's own
         /// inode, which the flavours do not agree on.
         ///

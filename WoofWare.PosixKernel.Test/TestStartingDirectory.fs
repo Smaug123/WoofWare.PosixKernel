@@ -1737,9 +1737,9 @@ module TestStartingDirectory =
                     let system = unlinkAtCell envelope "/c/w/d"
 
                     match UnixNamespace.tryUnlinkat dirfd path flags system with
-                    | Error (UnlinkAtRefusal.UnmodelledFlags word) ->
+                    | Error (UnlinkAtRefusal.UnmodelledFlags refused) ->
                         // Refused only where the probe saw the word accepted.
-                        if word <> flags || expected = "EINVAL" then
+                        if refused.Flags <> flags || expected = "EINVAL" then
                             yield $"0x%x{flags} %s{label}: the probe answered %s{expected}, this library refused"
                     | result ->
                         let actual = renderedRemoval system result

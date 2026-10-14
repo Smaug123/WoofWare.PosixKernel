@@ -9,7 +9,7 @@ namespace WoofWare.PosixKernel
 /// ENOENT on Darwin; `rename("<300 bytes>", "nodir/x")` is ENOENT on Linux and
 /// ENAMETOOLONG on Darwin.
 ///
-/// Not derivable from `RenameRules.TrailingSeparator`, and not something the
+/// Not derivable from `SimulatedUnixPlatform.finalNameTrailingSeparator`, and not something the
 /// verdict could express: it decides which resolutions are *performed at all*,
 /// before there are two resolutions to judge.
 [<RequireQualifiedAccess>]
@@ -56,22 +56,6 @@ type RenameWalkOrder =
 /// uid 0, one fresh tree per row; `docs/probes/rename/` holds the probes.
 type RenameRules =
     {
-        /// The walk `rename` resolves *both* of its paths with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms. Linux `Ignore`,
-        /// Darwin `Demand`, exactly as `unlink`'s and `rmdir`'s are.
-        ///
-        /// One field for two paths because, measured, each kernel resolves its
-        /// source and its destination under the same policy — there is no row
-        /// where a separator costs one path something it does not cost the
-        /// other.
-        ///
-        /// This is the field that makes the two flavours **destroy different
-        /// objects**, the divergence that a final symlink
-        /// followed under a trailing separator causes. With `s -> real` a directory, `rename("s/", "moved")` moves
-        /// *real* on Darwin, leaving `s` dangling, and is ENOTDIR on Linux;
-        /// `rename("src", "s/")` replaces *real* on Darwin and is ENOTDIR on
-        /// Linux.
-        TrailingSeparator : TrailingSeparatorPolicy
         /// Which path is resolved first, and how far, before the other is
         /// looked at. See `RenameWalkOrder`.
         WalkOrder : RenameWalkOrder

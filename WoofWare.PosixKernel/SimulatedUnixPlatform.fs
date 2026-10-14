@@ -774,6 +774,51 @@ module SimulatedUnixPlatform =
                 NonDirectory = NonDirectoryDescriptorRule.NotSupportedOffTheFileSystem
             }
 
+    /// The walk this platform's `mkdir(2)`, `mknod(2)`, `symlink(2)`,
+    /// `link(2)` (for its new name), `unlink(2)`, `rmdir(2)` and `rename(2)`
+    /// (for both names) give a trailing separator on the final name they bind
+    /// or remove, which none of them follows as a symbolic link otherwise.
+    ///
+    /// Linux looks that name up in its parent without resolving it
+    /// (`TrailingSeparatorPolicy.Ignore`): a trailing separator neither
+    /// follows a final symbolic link nor is enforced by the walk, and each
+    /// call's verdict decides what it owes. Darwin resolves it as any lookup
+    /// would (`TrailingSeparatorPolicy.Demand`), following a final symbolic
+    /// link and demanding a directory, so the two flavours can bind or remove
+    /// different objects for the same path.
+    ///
+    /// A creating `open(2)` is the exception: see
+    /// `CreatingOpenRules.TrailingSeparator`.
+    let finalNameTrailingSeparator (platform : SimulatedUnixPlatform) : TrailingSeparatorPolicy =
+        // Linux's `filename_create` (mkdir, mknod, symlink, link) and
+        // `filename_parentat` (unlink, rmdir, rename) walk the parent and look
+        // the last component up bare; Darwin's `namei` resolves it. Measured
+        // rows that separate them, each from a fresh tree on Linux 6.x and
+        // Darwin (macOS 26.6 and 27.0):
+        //
+        //  * `mkdir("dang/")`, `dang` dangling, creates the link's target on
+        //    Darwin; "f/" is ENOTDIR and "cyc/" ELOOP there, and every
+        //    existing name EEXIST on Linux.
+        //  * `symlink(t, "f/")` and `symlink(t, "dl/")` (dl dangling) are
+        //    EEXIST on Linux; on Darwin the first is ENOTDIR and the second
+        //    follows the link to its free target (`link-symlink.c`, SYMLINK).
+        //    `link`'s new name is resolved as `symlink`'s is (LINKDST).
+        //  * `mknod`'s walk is its `mkdir`'s and `symlink`'s on Linux
+        //    (`mknodat-rules.c`, PATH): "f/", "dang/", "cyc/", "lf/" and
+        //    "ld/" are EEXIST and a free "nx/" is ENOENT.
+        //  * `unlink("lroot/")`, `lroot -> "/"`, is ENOTDIR on Linux, which
+        //    cannot have traversed the link, and EISDIR on Darwin, which did.
+        //  * `rmdir("ld/")`, `ld -> d` an empty directory, is ENOTDIR on Linux
+        //    and removes `d` on Darwin.
+        //  * `rename("s/", "moved")`, `s -> real` a directory, moves `real` on
+        //    Darwin, leaving `s` dangling, and is ENOTDIR on Linux;
+        //    `rename("src", "s/")` replaces `real` on Darwin and is ENOTDIR on
+        //    Linux. Each kernel resolves both of rename's paths alike: no row
+        //    costs one path something it does not cost the other.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> TrailingSeparatorPolicy.Ignore
+        | SimulatedUnixFlavour.Darwin -> TrailingSeparatorPolicy.Demand
+
     /// How this platform's `link(2)` and `linkat(2)` differ from the other's;
     /// see `LinkRules`.
     let linkRules (platform : SimulatedUnixPlatform) : LinkRules =
@@ -783,13 +828,11 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux ->
             {
                 PlainLinkSource = SymlinkPolicy.NoFollowFinal
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 DirectorySource = DirectorySourceRefusal.Last
             }
         | SimulatedUnixFlavour.Darwin ->
             {
                 PlainLinkSource = SymlinkPolicy.Follow
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 DirectorySource = DirectorySourceRefusal.BeforeDestination
             }
 
@@ -801,12 +844,10 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 EmptyTarget = EmptySymlinkTarget.NoSuchEntry
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 EmptyTarget = EmptySymlinkTarget.Accepted
             }
 
@@ -815,11 +856,9 @@ module SimulatedUnixPlatform =
     let mkNodRules (platform : SimulatedUnixPlatform) : MkNodRules =
         // Measured by `mknodat-rules.c` (TYPE, ORDER, PATH, PATHTYPE) on
         // Linux 6.18.5, root and uid 1000, ext4 and tmpfs, and Darwin 27.0,
-        // uid 501. Linux's walk is its `mkdir`'s and `symlink`'s
-        // (`filename_create`): "f/", "dang/", "cyc/", "lf/" and "ld/" are
-        // EEXIST and a free "nx/" is ENOENT.
+        // uid 501.
         match flavour platform with
-        | SimulatedUnixFlavour.Linux -> MkNodRules.TypeBeforePath TrailingSeparatorPolicy.Ignore
+        | SimulatedUnixFlavour.Linux -> MkNodRules.TypeBeforePath
         | SimulatedUnixFlavour.Darwin -> MkNodRules.PrivilegeBeforePath
 
     /// How this platform's `open(2)` behaves when asked to create; see
@@ -868,13 +907,11 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 ModeMask = PermissionBits.parseOrFail "SimulatedUnixPlatform.mkDirRules" 0o1777
                 InheritsSetGroupIdFromParent = true
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 ModeMask = PermissionBits.parseOrFail "SimulatedUnixPlatform.mkDirRules" 0o0777
                 InheritsSetGroupIdFromParent = false
             }
@@ -898,49 +935,32 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> PermissionBits.parseOrFail "SimulatedUnixPlatform.umaskStoredBits" 0o0777
         | SimulatedUnixFlavour.Darwin -> PermissionBits.parseOrFail "SimulatedUnixPlatform.umaskStoredBits" 0o7777
 
-    /// Everything this platform's `unlink(2)` does differently. See
-    /// `UnlinkRules`, whose one field this picks; the rest of the divergence
-    /// follows from the flavour alone.
-    let unlinkRules (platform : SimulatedUnixPlatform) : UnlinkRules =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux ->
-            {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
-            }
-        | SimulatedUnixFlavour.Darwin ->
-            {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
-            }
-
     /// Everything this platform's `rmdir(2)` does differently. See `RmDirRules`,
-    /// whose two fields this picks; the ordering half of the divergence
-    /// follows from the flavour alone.
+    /// whose field this picks; the walk is `finalNameTrailingSeparator`'s, and
+    /// the ordering half of the divergence follows from the flavour alone.
     let rmDirRules (platform : SimulatedUnixPlatform) : RmDirRules =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 RemovedDirectoryEffect = UnbindTargetEffect.LostALink
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 RemovedDirectoryEffect = UnbindTargetEffect.Untouched
             }
 
     /// Everything this platform's `rename(2)` does differently. See
-    /// `RenameRules`, whose two fields this picks; the ordering of the refusals
-    /// — which is most of the divergence — follows from the flavour alone.
+    /// `RenameRules`, whose field this picks; the walk is
+    /// `finalNameTrailingSeparator`'s, and the ordering of the refusals —
+    /// which is most of the divergence — follows from the flavour alone.
     let renameRules (platform : SimulatedUnixPlatform) : RenameRules =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 WalkOrder = RenameWalkOrder.ParentsThenFinals
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 WalkOrder = RenameWalkOrder.SourceThenDestination
             }
 

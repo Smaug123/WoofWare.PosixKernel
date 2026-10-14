@@ -202,8 +202,6 @@ module TestRenameRules =
         (destination : string)
         : RenameVerdict
         =
-        let rules = SimulatedUnixPlatform.renameRules platform
-
         let resolve (candidate : string) =
             PathWalk.resolveFull
                 (SimulatedUnixPlatform.pathLimits platform)
@@ -211,7 +209,7 @@ module TestRenameRules =
                 SymlinkProtection.Off
                 startDirectory
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator platform)
                 (path candidate)
                 vfs
             |> Answered.errno
@@ -680,8 +678,8 @@ module TestRenameRules =
 
     [<Test>]
     let ``each flavour resolves both paths under its own walk`` () : unit =
-        (SimulatedUnixPlatform.renameRules linux).TrailingSeparator
+        SimulatedUnixPlatform.finalNameTrailingSeparator linux
         |> shouldEqual TrailingSeparatorPolicy.Ignore
 
-        (SimulatedUnixPlatform.renameRules darwin).TrailingSeparator
+        SimulatedUnixPlatform.finalNameTrailingSeparator darwin
         |> shouldEqual TrailingSeparatorPolicy.Demand
