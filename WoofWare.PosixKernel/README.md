@@ -187,7 +187,7 @@ let leader = Caller.make (UnixSystem.processId system) 0
 
 match UnixNamespace.openPath leader 0 (path "/etc/hostname") 0 system with
 | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
-    match UnixReadWrite.read 0 (int fd) UserBuffer.Mapped 64UL system with
+    match UnixReadWrite.read leader (int fd) UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
         printf "%s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
     | outcome, _ -> failwith $"unexpected read: %A{outcome}"
@@ -205,15 +205,15 @@ It gives back its answer with the system as the call left it, or the answer alon
 
 A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
 A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
-The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`), the entropy calls (`UnixEntropy`), the socket calls (`UnixSocket` and `UnixConnection`), and the calls that wait for several things (`UnixPoll` and `UnixKqueue`) take the caller as their first argument.
-A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength` and `UnixConnection.connectWithAddress`.
+The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`), the entropy calls (`UnixEntropy`), the socket calls (`UnixSocket` and `UnixConnection`), the calls that wait for several things (`UnixPoll` and `UnixKqueue`), and the calls that read and write (`UnixReadWrite`) take the caller as their first argument.
+A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength`, `UnixConnection.connectWithAddress`, `UnixReadWrite.writeWithBytes`, `UnixReadWrite.sendWithBytes` and `UnixReadWrite.pwriteWithBytes`.
 Nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait` and `UnixKqueue.finishKevent` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
+The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead` and `UnixReadWrite.finishWrite` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
-The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
+The other families' functions take no caller yet: those of `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
 One of them takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
 The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
@@ -432,17 +432,17 @@ The cases exist so that a client's matches already handle them when pathname soc
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `read(2)` | `UnixReadWrite.read (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
-| `recv(2)` | `UnixReadWrite.recv (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
-| `pread(2)` | `UnixReadWrite.pread (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
-| `write(2)` | `UnixReadWrite.write (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
-| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (thread : 'Thread)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `read(2)` | `UnixReadWrite.read (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
+| `recv(2)` | `UnixReadWrite.recv (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
+| `pread(2)` | `UnixReadWrite.pread (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
+| `write(2)` | `UnixReadWrite.write (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (caller : Caller)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome>` |
-| `send(2)` | `UnixReadWrite.send (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
+| `send(2)` | `UnixReadWrite.send (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `send(2)`, given the bytes | `UnixReadWrite.sendWithBytes (bytes : ImmutableArray<byte>) (paused : PausedSend)` | `ProcessFate<WriteOutcome>` |
-| `pwrite(2)` | `UnixReadWrite.pwrite (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
+| `pwrite(2)` | `UnixReadWrite.pwrite (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
 | `pwrite(2)`, given the bytes | `UnixReadWrite.pwriteWithBytes (bytes : ImmutableArray<byte>) (paused : PausedPWrite)` | `WriteAnswer * UnixSystem` |
-| `copy_file_range(2)` | `UnixReadWrite.copyFileRange (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `copy_file_range(2)` | `UnixReadWrite.copyFileRange (caller : Caller) (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
 | `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (caller : Caller) (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
 
 #### Sockets
@@ -658,8 +658,8 @@ A woken thread finishes its call through its family's finishing function, which 
 | `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (caller : Caller)` |
 | `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (caller : Caller)` |
 | `ParkedSyscall.Accept` | `UnixConnection.finishAccept (caller : Caller)` |
-| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (thread : 'Thread)` |
-| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (thread : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
+| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (caller : Caller)` |
+| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (caller : Caller)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
 | `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (thread : 'Thread)` |
 
 Each answers what the call that parked answered, as in the tables above.
@@ -713,7 +713,9 @@ let spawned =
 
 // Thread 1 reads the empty pipe, and sleeps. The client holds it asleep.
 let asleep, parked =
-    match UnixReadWrite.read 1 readFd UserBuffer.Mapped 64UL spawned with
+    let caller = Caller.make (UnixSystem.processId spawned) 1
+
+    match UnixReadWrite.read caller readFd UserBuffer.Mapped 64UL spawned with
     | ReadOutcome.WouldBlock _, system -> Set.singleton 1, system
     | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
 
@@ -721,8 +723,9 @@ let asleep, parked =
 // caller's buffer, and writeWithBytes takes the bytes copyRange names.
 let written =
     let payload = "hello"B
+    let caller = Caller.make (UnixSystem.processId parked) 0
 
-    match UnixReadWrite.write 0 writeFd UserBuffer.Mapped (uint64 payload.Length) parked with
+    match UnixReadWrite.write caller writeFd UserBuffer.Mapped (uint64 payload.Length) parked with
     | CallProgress.NeedsCopyIn paused ->
         let range = PausedWrite.copyRange paused
 
@@ -737,7 +740,7 @@ let written =
 let woken =
     match UnixWait.wakes asleep written with
     | [ 1, _ ] ->
-        match UnixReadWrite.finishRead 1 written with
+        match UnixReadWrite.finishRead (Caller.make (UnixSystem.processId written) 1) written with
         | ReadOutcome.Answered (ReadAnswer.Completed bytes), system ->
             printfn "thread 1 read %s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
             resume 1 system

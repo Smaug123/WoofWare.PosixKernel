@@ -134,7 +134,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : ReadAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd buffer count system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd buffer count system with
         | Ok (ReadOutcome.Answered answer, system) -> answer, system
         | other -> failwith $"read(%d{fd}, %A{buffer}, %d{count}): expected an answer, got %A{other}"
 
@@ -498,7 +498,7 @@ module TestDeviceDescriptors =
     let ``a urandom read into memory the caller cannot produce is refused, and an empty one is not`` () : unit =
         let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
 
-        match UnixReadWrite.tryRead thread fd UserBuffer.Opaque 16UL system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Opaque 16UL system with
         | Error (ReadRefusal.Buffer BufferRefusal.OpaqueAtTransfer) -> ()
         | other -> failwith $"expected a refusal, got %A{other}"
 
@@ -520,12 +520,14 @@ module TestDeviceDescriptors =
 
             let outcome =
                 if pread then
-                    match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count 0L system with
+                    match
+                        UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped count 0L system
+                    with
                     | Ok answer -> Ok answer
                     | Error (PReadRefusal.SignalAtPageBoundary count) -> Error count
                     | Error (PReadRefusal.Buffer refusal) -> failwith $"pread: %A{refusal}"
                 else
-                    match UnixReadWrite.tryRead thread fd UserBuffer.Mapped count system with
+                    match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Mapped count system with
                     | Ok (ReadOutcome.Answered answer, system) -> Ok (answer, system)
                     | Error (ReadRefusal.SignalAtPageBoundary count) -> Error count
                     | other -> failwith $"read: %A{other}"
@@ -675,7 +677,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (count : uint64) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixReadWrite.tryPread thread fd UserBuffer.Mapped count offset system with
+            match UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped count offset system with
             | Error refusal -> failwith $"pread refused: %A{refusal}"
             | Ok (answer, after) ->
 
@@ -720,10 +722,10 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
+            UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped System.UInt64.MaxValue -1L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EINVAL, system))
 
-            UnixReadWrite.tryPread thread fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
+            UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped System.UInt64.MaxValue 0L system
             |> shouldEqual (Ok (ReadAnswer.Failed UnixError.EFAULT, system))
 
     // ------------------------------------------------------------------ write
@@ -998,7 +1000,7 @@ module TestDeviceDescriptors =
             openDevice CharacterDevice.URandom FileAccessMode.ReadWrite system
 
         for inFd, outFd in [ fileFd, nullFd ; nullFd, fileFd ; urandomFd, nullFd ; urandomFd, fileFd ] do
-            match UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 system with
+            match UnixReadWrite.tryCopyFileRange (Callers.leader system) inFd outFd 5UL 0 system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system

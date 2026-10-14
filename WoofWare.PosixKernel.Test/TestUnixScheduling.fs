@@ -352,7 +352,9 @@ module TestUnixScheduling =
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryRead thread.Name 3 UserBuffer.Mapped 1UL view with
+                            match
+                                UnixReadWrite.tryRead (Caller.make thread.Pid thread.Name) 3 UserBuffer.Mapped 1UL view
+                            with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view
@@ -384,7 +386,12 @@ module TestUnixScheduling =
                         pid
                         (fun view ->
                             match
-                                WriteOutcomes.admitThenWrite 0 4 UserBuffer.Mapped (ImmutableArray.Create 1uy) view
+                                WriteOutcomes.admitThenWriteAs
+                                    (Caller.make pid 0)
+                                    4
+                                    UserBuffer.Mapped
+                                    (ImmutableArray.Create 1uy)
+                                    view
                             with
                             | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, view)) -> view
                             | other -> failwith $"write: %A{other}"
@@ -422,7 +429,7 @@ module TestUnixScheduling =
                     |> Machines.inProcess
                         thread.Pid
                         (fun view ->
-                            match UnixReadWrite.tryFinishRead thread.Name view with
+                            match UnixReadWrite.tryFinishRead (Caller.make thread.Pid thread.Name) view with
                             | Ok (ReadOutcome.WouldBlock _, view) -> true, view
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) when bytes.Length = 1 ->
                                 false, view

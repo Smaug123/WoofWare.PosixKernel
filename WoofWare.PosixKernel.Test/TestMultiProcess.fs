@@ -336,10 +336,10 @@ module TestMultiProcess =
             // first open is 3.
             fds |> shouldEqual [ 3 ; 3 ]
 
-            let write (text : string) (view : UnixSystem<int, string>) =
+            let write (pid : ProcessId) (text : string) (view : UnixSystem<int, string>) =
                 match
-                    WriteOutcomes.writeBytes
-                        0
+                    WriteOutcomes.writeBytesAs
+                        (Caller.make pid 0)
                         1
                         (ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text))
                         view
@@ -347,9 +347,9 @@ module TestMultiProcess =
                 | Ok (WriteStep.Returns (_, view)) -> (), view
                 | other -> failwith $"write: %A{other}"
 
-            let (), machine = inProcess pids.[0] (write "first") machine
-            let (), machine = inProcess pids.[1] (write "second") machine
-            let (), machine = inProcess pids.[0] (write "again") machine
+            let (), machine = inProcess pids.[0] (write pids.[0] "first") machine
+            let (), machine = inProcess pids.[1] (write pids.[1] "second") machine
+            let (), machine = inProcess pids.[0] (write pids.[0] "again") machine
 
             UnixSystem.delivered (viewOf pids.[0] machine)
             |> DeliveryLog.toList

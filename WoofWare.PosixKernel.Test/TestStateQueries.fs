@@ -187,7 +187,7 @@ module TestStateQueries =
                 | other -> failwith $"pipe2: %A{other}"
 
             let system =
-                match UnixReadWrite.tryRead 0 3 UserBuffer.Mapped 16UL system with
+                match UnixReadWrite.tryRead (Callers.thread 0 system) 3 UserBuffer.Mapped 16UL system with
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 

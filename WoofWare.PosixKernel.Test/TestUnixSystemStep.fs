@@ -459,7 +459,7 @@ module TestUnixSystemStep =
             // a sleep on a connection with nothing to read, and a refusal with
             // an error, so the row above is about the length rather than about
             // the phase.
-            match phase, UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 1UL system with
+            match phase, UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 1UL system with
             | SocketPhase.Idle, answer
             | SocketPhase.Listening _, answer ->
                 answer
@@ -818,7 +818,7 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than written`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped 1UL system with
+        match UnixReadWrite.write (Callers.leader system) fd UserBuffer.Mapped 1UL system with
         | CallProgress.NeedsCopyIn paused ->
             let exn =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
@@ -1514,7 +1514,7 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than pwritten`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixReadWrite.pwrite 0 fd UserBuffer.Mapped 1UL 0L system with
+        match UnixReadWrite.pwrite (Callers.thread 0 system) fd UserBuffer.Mapped 1UL 0L system with
         | CallProgress.NeedsCopyIn paused ->
             let exn =
                 Assert.Throws<System.InvalidOperationException> (fun () ->

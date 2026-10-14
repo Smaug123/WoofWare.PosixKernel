@@ -286,7 +286,7 @@ module TestCopyFileSyscalls =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryCopyFileRange inFd outFd length flags system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) inFd outFd length flags system with
         | Ok result -> result
         | Error refusal ->
             failwith
@@ -354,7 +354,7 @@ module TestCopyFileSyscalls =
         let inFd, darwin = opened "f" FileAccessMode.ReadOnly darwin
         let outFd, darwin = opened "g" FileAccessMode.WriteOnly darwin
 
-        UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 darwin
+        UnixReadWrite.tryCopyFileRange (Callers.leader darwin) inFd outFd 5UL 0 darwin
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
@@ -370,7 +370,7 @@ module TestCopyFileSyscalls =
         let inFd, nfs = opened "ksrc" FileAccessMode.ReadOnly nfs
         let outFd, nfs = opened "kdst" FileAccessMode.WriteOnly nfs
 
-        UnixReadWrite.tryCopyFileRange inFd outFd 5UL 0 nfs
+        UnixReadWrite.tryCopyFileRange (Callers.leader nfs) inFd outFd 5UL 0 nfs
         |> Result.map fst
         |> shouldEqual (Error (CopyFileRangeRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
@@ -378,7 +378,7 @@ module TestCopyFileSyscalls =
         |> shouldEqual (Error (FileCloneRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs))
 
         // A refusal the descriptors earn first is still answered.
-        UnixReadWrite.tryCopyFileRange inFd 9999 5UL 0 nfs
+        UnixReadWrite.tryCopyFileRange (Callers.leader nfs) inFd 9999 5UL 0 nfs
         |> Result.map fst
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF))
 
@@ -930,7 +930,7 @@ module TestCopyFileRangeLarge =
             }
             |> Lone.withFileDescriptors registry
 
-        match UnixReadWrite.tryCopyFileRange source destination (uint64 length) 0 system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) source destination (uint64 length) 0 system with
         | Ok (SyscallAnswer.Completed moved, after) ->
             moved |> shouldEqual (int64 TestTransferCounts.LinuxMaxTransfer)
             TestTransferCounts.positionOf source after |> shouldEqual moved

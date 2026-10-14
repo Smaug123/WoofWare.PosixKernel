@@ -280,8 +280,8 @@ module TestStreamReaderGone =
             for fd in [ 1 ; 99 ] do
                 let admit =
                     Assert.Throws<System.InvalidOperationException> (fun () ->
-                        UnixReadWrite.tryAdmitWrite 7 fd UserBuffer.Mapped 1UL system
-                        |> ignore<Result<WriteStep<WriteAdmission, int, string>, WriteRefusal>>
+                        UnixReadWrite.tryWrite (Callers.thread 7 system) fd UserBuffer.Mapped 1UL system
+                        |> ignore
                     )
 
                 admit.Message

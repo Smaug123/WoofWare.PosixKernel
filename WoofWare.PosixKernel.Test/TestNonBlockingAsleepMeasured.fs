@@ -219,7 +219,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.write thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.write (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofWrite where
 
     /// `thread` reads up to `count` bytes through `fd`.
@@ -231,7 +231,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.read thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.read (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofRead where
 
     /// `thread` makes the transfer's call of `count` bytes through `fd`.
@@ -252,9 +252,10 @@ module TestNonBlockingAsleepMeasured =
     /// The woken sleeper's call, finished.
     let private finish (where : string) (transfer : Transfer) (system : UnixSystem<int, string>) =
         if isWrite transfer then
-            UnixReadWrite.finishWrite sleeper system |> ofWrite where
+            UnixReadWrite.finishWrite (Callers.thread sleeper system) system
+            |> ofWrite where
         else
-            UnixReadWrite.finishRead sleeper system |> ofRead where
+            UnixReadWrite.finishRead (Callers.thread sleeper system) system |> ofRead where
 
     /// The sleeper returns to user mode: every handler it takes runs and
     /// returns. How many ran.

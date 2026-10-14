@@ -176,7 +176,7 @@ module TestDeviceDescriptorsAgainstHost =
         let writeOnly, system = modelOpen FileAccessMode.WriteOnly path system
 
         let read (fd : int) (buffer : UserBuffer) (count : uint64) : Answer =
-            match UnixReadWrite.tryRead 0 fd buffer count system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd buffer count system with
             | Ok (ReadOutcome.Answered answer, _) -> ofRead answer
             | other -> failwith $"the model's read: %A{other}"
 
@@ -228,7 +228,7 @@ module TestDeviceDescriptorsAgainstHost =
                 for offset in [ 0L ; 1L <<< 40 ; -1L ; System.Int64.MaxValue ] do
                     $"pread 16@%d{offset}",
                     hostAnswer (int64 (hostPRead (host, Array.zeroCreate 16, 16un, offset))),
-                    (match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 16UL offset system with
+                    (match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 16UL offset system with
                      | Ok (answer, _) -> ofRead answer
                      | Error refusal -> failwith $"the model's pread: %A{refusal}")
 

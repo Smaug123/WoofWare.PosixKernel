@@ -1,6 +1,7 @@
 namespace WoofWare.PosixKernel.Test
 
 open System
+open System.Collections.Immutable
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -48,14 +49,23 @@ module TestCallerChecks =
     /// `kevent` under Darwin.
     let private eventWaiter : int = 5
 
+    /// The thread `world` parks in a `read` of an empty pipe.
+    let private pipeReader : int = 6
+
+    /// The thread `world` parks in a `write` to a full pipe.
+    let private pipeWriter : int = 7
+
+    /// A thread neither process has.
+    let private absent : int = 8
+
     let private everyFlavour : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
 
     /// One call of each public function of the families that take a caller:
-    /// the descriptor, pipe, socket, poll, kqueue and inotify calls on the
-    /// standard streams, which every flavour gives as pipes, and the path and
-    /// namespace calls on the root directory, so that a call's `dirfd` is
-    /// never looked up.
+    /// the descriptor, pipe, socket, poll, kqueue, read/write and inotify
+    /// calls on the standard streams, which every flavour gives as pipes, and
+    /// the path and namespace calls on the root directory, so that a call's
+    /// `dirfd` is never looked up.
     let private calls : Call list =
         let root = PathArg.ofText "/"
         let file = PathArg.ofText "/f"
@@ -225,6 +235,40 @@ module TestCallerChecks =
                 eventWaiter
                 [ SimulatedUnixFlavour.Darwin ]
                 (fun caller system -> UnixKqueue.finishKevent caller system |> ignore)
+            // Each read and write of nothing, so that an admitted caller's call
+            // answers at once. Darwin has no `copy_file_range`, but refuses it
+            // only once the caller is checked.
+            running
+                "UnixReadWrite.read"
+                (fun caller system -> UnixReadWrite.read caller 0 UserBuffer.Mapped 0UL system |> ignore)
+            running
+                "UnixReadWrite.recv"
+                (fun caller system -> UnixReadWrite.recv caller 0 UserBuffer.Mapped 0UL 0 system |> ignore)
+            running
+                "UnixReadWrite.pread"
+                (fun caller system -> UnixReadWrite.pread caller 0 UserBuffer.Mapped 0UL 0L system |> ignore)
+            running
+                "UnixReadWrite.write"
+                (fun caller system -> UnixReadWrite.write caller 1 UserBuffer.Mapped 0UL system |> ignore)
+            running
+                "UnixReadWrite.send"
+                (fun caller system -> UnixReadWrite.send caller 1 UserBuffer.Mapped 0UL 0 system |> ignore)
+            running
+                "UnixReadWrite.pwrite"
+                (fun caller system -> UnixReadWrite.pwrite caller 1 UserBuffer.Mapped 0UL 0L system |> ignore)
+            running
+                "UnixReadWrite.copyFileRange"
+                (fun caller system -> UnixReadWrite.copyFileRange caller 0 1 0UL 0 system |> ignore)
+            finishing
+                "UnixReadWrite.finishRead"
+                pipeReader
+                everyFlavour
+                (fun caller system -> UnixReadWrite.finishRead caller system |> ignore)
+            finishing
+                "UnixReadWrite.finishWrite"
+                pipeWriter
+                everyFlavour
+                (fun caller system -> UnixReadWrite.finishWrite caller system |> ignore)
             running
                 "UnixPathResolution.stat"
                 (fun caller system ->
@@ -434,15 +478,17 @@ module TestCallerChecks =
         | Refused.Parked -> "and is making another call"
         | Refused.Unparked -> "is not parked, so there is no call to finish"
 
-    /// A machine of `platform` holding two processes, each with threads 0 to 5,
+    /// A machine of `platform` holding two processes, each with threads 0 to 7,
     /// and the view of the first, in which thread 2 is parked in an `flock` of
     /// a pipe it made (so that `flockAcquire` admits it), thread 3 in an
     /// `accept` of a listener at `listenerFd` (so that `finishAccept` admits
     /// it), `poller` in a `poll`, `eventWaiter` in an `epoll_wait` (Linux) or a
-    /// `kevent` (Darwin) of a queue the leader made, and thread 1 in a
-    /// `sigsuspend`; and the IDs of the two processes.
+    /// `kevent` (Darwin) of a queue the leader made, `pipeReader` in a `read`
+    /// of an empty pipe and `pipeWriter` in a `write` to a full one, each of
+    /// a pipe the leader made, and thread 1 in a `sigsuspend`; and the IDs of
+    /// the two processes.
     let private world (platform : SimulatedUnixPlatform) : ProcessId * ProcessId * UnixSystem<int, string> =
-        let pids, machine = Machines.withThreads platform 2 6
+        let pids, machine = Machines.withThreads platform 2 8
         let own, other = pids.[0], pids.[1]
         let view = Machines.viewOf own machine
 
@@ -531,13 +577,45 @@ module TestCallerChecks =
                 | KeventOutcome.WouldBlock _, view -> view
                 | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
 
+        let pipe (view : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
+            match UnixPipe.pipe2 (Caller.make own 0) 0 UserBuffer.Mapped view with
+            | Pipe2Answer.Created (reader, writer), view -> reader, writer, view
+            | other, _ -> failwith $"pipe2: %A{other}"
+
+        let view =
+            let reader, _, view = pipe view
+
+            match UnixReadWrite.read (Caller.make own pipeReader) reader UserBuffer.Mapped 1UL view with
+            | ReadOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the read: expected it to sleep, got %A{other}"
+
+        // More than either flavour's pipe holds, so the write puts in what
+        // fits and sleeps for the rest.
+        let view =
+            let _, writer, view = pipe view
+            let count = 1 <<< 20
+
+            match UnixReadWrite.write (Caller.make own pipeWriter) writer UserBuffer.Mapped (uint64 count) view with
+            | CallProgress.NeedsCopyIn paused ->
+                let range = PausedWrite.copyRange paused
+
+                match
+                    UnixReadWrite.writeWithBytes
+                        (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
+                        paused
+                with
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view) -> view
+                | other -> failwith $"the write: expected it to sleep, got %A{other}"
+            | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
+
         own, other, UnixWait.park 1 ParkedSyscall.SigSuspend view
 
     /// Every public function of the families that take a caller refuses each
     /// caller its requirement refuses, with `InvalidOperationException` naming
     /// it and saying why, before it does anything else, so even where the
-    /// flavour would refuse the call itself (`dup3` and epoll on Darwin, kqueue
-    /// on Linux); and does not refuse the caller its requirement admits.
+    /// flavour would refuse the call itself (`dup3`, epoll and `copy_file_range`
+    /// on Darwin, kqueue on Linux); and does not refuse the caller its
+    /// requirement admits.
     [<Test>]
     let ``every function of a family that takes a caller checks it first`` () : unit =
         let mismatches =
@@ -554,14 +632,14 @@ module TestCallerChecks =
                                 [
                                     Caller.make own 0, None
                                     Caller.make other 0, Some Refused.OtherProcess
-                                    Caller.make own 7, Some Refused.Absent
+                                    Caller.make own absent, Some Refused.Absent
                                     Caller.make own 1, Some Refused.Parked
                                 ]
                             | Admits.Finishing sleeper ->
                                 [
                                     Caller.make own sleeper, None
                                     Caller.make other sleeper, Some Refused.OtherProcess
-                                    Caller.make own 7, Some Refused.Absent
+                                    Caller.make own absent, Some Refused.Absent
                                     Caller.make own 0, Some Refused.Unparked
                                 ]
 

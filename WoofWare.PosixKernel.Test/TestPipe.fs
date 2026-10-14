@@ -520,7 +520,7 @@ module TestPipe =
                             UserBuffer.Unmapped 8UL
 
                     let actual =
-                        UnixReadWrite.tryRead (Lone.leader system) fd buffer (uint64 count) system
+                        UnixReadWrite.tryRead (Callers.leader system) fd buffer (uint64 count) system
 
                     match Map.tryFind fd reference.Fds with
                     | None
@@ -1064,12 +1064,12 @@ module TestPipe =
         for platform in platforms do
             let (r, w), system = pipeOrFail 0 (systemOn platform)
 
-            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
             // A NULL buffer is not consulted before the read sleeps.
-            match UnixReadWrite.tryRead (Lone.leader system) r (UserBuffer.Unmapped 0UL) 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r (UserBuffer.Unmapped 0UL) 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1355,7 +1355,7 @@ module TestPipe =
             let system = closeOrFail w system
 
             // The dup holds the write end open: an empty read is not end of file.
-            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 1UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 1UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%A{other}"
 

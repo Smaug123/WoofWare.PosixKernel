@@ -475,7 +475,7 @@ module TestUnconnectedSocketTransfer =
     let private kernelAgrees (row : Row) (fd : int) (system : UnixSystem<int, string>) : bool =
         match row.Call with
         | Call.Read count ->
-            match UnixReadWrite.tryRead 1 fd UserBuffer.Mapped count system, row.Seen with
+            match UnixReadWrite.tryRead (Callers.thread 1 system) fd UserBuffer.Mapped count system, row.Seen with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after), Seen.ReturnedZero ->
                 bytes.IsEmpty && after = system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after), Seen.Failed seen ->

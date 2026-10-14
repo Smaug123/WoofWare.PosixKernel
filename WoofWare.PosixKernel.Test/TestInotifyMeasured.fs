@@ -278,7 +278,7 @@ module TestInotifyMeasured =
         (system : UnixSystem<int, string>)
         : ReadOutcome * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd buffer (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"read(%d{fd}, %d{count}) refused: %s{ReadRefusal.describe refusal}"
 
@@ -796,7 +796,7 @@ module TestInotifyMeasured =
 
     /// What the woken read of `thread` answers, as the probe prints it.
     let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        match UnixReadWrite.tryFinishRead thread system with
+        match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
@@ -1473,7 +1473,7 @@ module TestInotifyMeasured =
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
 
         let pread () =
-            match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 256UL 0L system with
+            match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0L system with
             | Ok (ReadAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
@@ -1521,7 +1521,7 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let recv =
-            match UnixReadWrite.tryRecv 0 fd UserBuffer.Mapped 256UL 0 system with
+            match UnixReadWrite.tryRecv (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0 system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 

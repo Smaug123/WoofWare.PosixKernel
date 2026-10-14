@@ -652,7 +652,7 @@ module TestInotifyInvariants =
             let finishReader () =
                 match UnixWait.satisfied 1 system with
                 | Some woken when not (Set.isEmpty woken) ->
-                    match UnixReadWrite.tryFinishRead 1 system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), after) ->
                         cover Label.ReaderInterrupted
                         system <- after
@@ -734,7 +734,14 @@ module TestInotifyInvariants =
                         ()
                     else
 
-                    match UnixReadWrite.tryRead (if asleep then 0 else 1) fd buffer (uint64 count) system with
+                    match
+                        UnixReadWrite.tryRead
+                            (Callers.thread (if asleep then 0 else 1) system)
+                            fd
+                            buffer
+                            (uint64 count)
+                            system
+                    with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         if bytes.Length > 0 then
                             cover Label.ReadTookRecords

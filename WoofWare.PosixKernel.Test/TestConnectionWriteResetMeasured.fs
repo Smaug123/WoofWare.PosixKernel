@@ -423,7 +423,9 @@ module TestConnectionWriteResetMeasured =
             UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
         let rec drain (total : int64) (system : UnixSystem<int, string>) =
-            match UnixReadWrite.tryRead 0 server UserBuffer.Mapped (uint64 (1 <<< 22)) system with
+            match
+                UnixReadWrite.tryRead (Callers.thread 0 system) server UserBuffer.Mapped (uint64 (1 <<< 22)) system
+            with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed got), system) when got.Length > 0 ->
                 drain (total + int64 got.Length) system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), system) -> total, system

@@ -1336,7 +1336,7 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.UTimensAt
         | Syscall.CopyFileRange (inFd, outFd, length, flags) ->
-            UnixReadWrite.tryCopyFileRange inFd outFd length flags system
+            UnixReadWrite.tryCopyFileRange caller inFd outFd length flags system
             |> answered
             |> Result.mapError SyscallRefusal.CopyFileRange
         | Syscall.FileClone (destination, source) ->

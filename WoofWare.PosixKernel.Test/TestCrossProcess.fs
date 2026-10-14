@@ -793,7 +793,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match WriteOutcomes.writeBytes 0 fd bytes view with
+                match WriteOutcomes.writeBytesAs (Caller.make pid 0) fd bytes view with
                 | Ok (WriteStep.Returns (WriteAnswer.Completed written, view)) when int written = bytes.Length -> view
                 | other -> failwith $"write %d{fd} %s{text}: %A{other}"
             )
@@ -1078,7 +1078,7 @@ module TestCrossProcess =
                 Machines.doIn
                     b
                     (fun view ->
-                        match UnixReadWrite.tryRead 1 reader UserBuffer.Mapped 4096UL view with
+                        match UnixReadWrite.tryRead (Caller.make b 1) reader UserBuffer.Mapped 4096UL view with
                         | Ok (ReadOutcome.WouldBlock _, view) -> view
                         | other -> failwith $"read: expected to sleep, got %A{other}"
                     )
@@ -1173,7 +1173,7 @@ module TestCrossProcess =
                 Machines.inProcess
                     b
                     (fun view ->
-                        match UnixReadWrite.tryFinishRead 1 view with
+                        match UnixReadWrite.tryFinishRead (Caller.make b 1) view with
                         | Ok (ReadOutcome.Answered answer, view) -> answer, view
                         | other -> failwith $"finishRead: %A{other}"
                     )
@@ -1599,8 +1599,8 @@ module TestCrossProcess =
         let a = pids.[0]
 
         let write (thread : int) (fd : int) (count : int) (view : UnixSystem<int, string>) =
-            WriteOutcomes.admitThenWrite
-                thread
+            WriteOutcomes.admitThenWriteAs
+                (Caller.make a thread)
                 fd
                 UserBuffer.Mapped
                 (ImmutableArray.Create<byte> (Array.zeroCreate<byte> count))
@@ -1748,7 +1748,7 @@ module TestCrossProcess =
             Machines.doIn
                 a
                 (fun view ->
-                    match UnixReadWrite.tryRead 1 fd UserBuffer.Mapped 4096UL view with
+                    match UnixReadWrite.tryRead (Caller.make a 1) fd UserBuffer.Mapped 4096UL view with
                     | Ok (ReadOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"read: expected to sleep, got %A{other}"
                 )
@@ -1769,7 +1769,7 @@ module TestCrossProcess =
             Machines.inProcess
                 a
                 (fun view ->
-                    match UnixReadWrite.tryFinishRead 1 view with
+                    match UnixReadWrite.tryFinishRead (Caller.make a 1) view with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) ->
                         InotifyReplay.parse bytes |> List.map InotifyReplay.render, view
                     | other -> failwith $"finishRead: %A{other}"
