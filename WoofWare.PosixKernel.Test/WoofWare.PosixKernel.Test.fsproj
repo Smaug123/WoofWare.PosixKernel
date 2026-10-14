@@ -15,6 +15,8 @@
   <ItemGroup>
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
+    <Compile Include="Expect.fs" />
+    <Compile Include="UnionCaseName.fs" />
     <Compile Include="GraphMutators.fs" />
     <Compile Include="Configured.fs" />
     <Compile Include="Proc.fs" />
@@ -137,6 +139,8 @@
     <Compile Include="TestInodeLifetime.fs" />
     <Compile Include="ErrnoHeaders.fs" />
     <Compile Include="TestUnixError.fs" />
+    <Compile Include="TestUnionCaseName.fs" />
+    <Compile Include="TestExpect.fs" />
     <Compile Include="TestUnixByteString.fs" />
     <Compile Include="TestUnixPath.fs" />
     <Compile Include="TestUnixPathBytes.fs" />

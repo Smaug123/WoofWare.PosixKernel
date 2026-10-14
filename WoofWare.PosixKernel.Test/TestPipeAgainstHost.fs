@@ -301,7 +301,7 @@ module TestPipeAgainstHost =
 
                 try
                     for i, op in List.indexed ops do
-                        let where = $"%O{platform}, call %d{i} (%A{op})"
+                        let where () : string = $"%O{platform}, call %d{i} (%A{op})"
 
                         system <-
                             { system with
@@ -371,10 +371,10 @@ module TestPipeAgainstHost =
                                     | Error refusal -> Error refusal
                                     | Ok (WriteStep.WouldBlock _) -> Ok None
                                     | Ok (WriteStep.Returns (answer, after)) -> Ok (Some (answer, after))
-                                    | Ok other -> failwith $"%s{where}: model %A{other}"
+                                    | Ok other -> failwith $"%s{where ()}: model %A{other}"
                                 // The host would sleep with part of it in.
                                 | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep _, _)) -> Ok None
-                                | Ok other -> failwith $"%s{where}: model %A{other}"
+                                | Ok other -> failwith $"%s{where ()}: model %A{other}"
 
                             let hostCall () =
                                 if mapped then
@@ -388,7 +388,7 @@ module TestPipeAgainstHost =
                                 // temporary O_NONBLOCK would leave it holding
                                 // what the model does not, so it is not asked.
                                 ()
-                            | Error refusal -> failwith $"%s{where}: model refused %A{refusal}"
+                            | Error refusal -> failwith $"%s{where ()}: model refused %A{refusal}"
                             | Ok (Some (answer, after)) ->
                                 let host =
                                     hostAnswer
@@ -398,7 +398,7 @@ module TestPipeAgainstHost =
                                 match answer, host with
                                 | WriteAnswer.Completed n, Ok h when int n = h -> offered <- offered + h
                                 | WriteAnswer.Failed e, Error h when e = h -> ()
-                                | _ -> failwith $"%s{where}: model %A{answer}, host %A{host}"
+                                | _ -> failwith $"%s{where ()}: model %A{answer}, host %A{host}"
 
                                 system <- after
                         | HostPipeOp.Read (index, count, mapped) ->
@@ -428,8 +428,9 @@ module TestPipeAgainstHost =
                                 |> shouldEqual (Error UnixError.EAGAIN)
 
                                 substituted <- true
-                            | Ok (ReadOutcome.Restarts, _) -> failwith $"%s{where}: a read that never slept restarted"
-                            | Error refusal -> failwith $"%s{where}: model refused %A{refusal}"
+                            | Ok (ReadOutcome.Restarts, _) ->
+                                failwith $"%s{where ()}: a read that never slept restarted"
+                            | Error refusal -> failwith $"%s{where ()}: model refused %A{refusal}"
                             | Ok (ReadOutcome.Answered answer, after) ->
                                 let host =
                                     hostAnswer
@@ -440,7 +441,7 @@ module TestPipeAgainstHost =
                                 | ReadAnswer.Completed bytes, Ok h when bytes.Length = h ->
                                     Array.sub target 0 h |> shouldEqual (Seq.toArray bytes)
                                 | ReadAnswer.Failed e, Error h when e = h -> ()
-                                | _ -> failwith $"%s{where}: model %A{answer}, host %A{host}"
+                                | _ -> failwith $"%s{where ()}: model %A{answer}, host %A{host}"
 
                                 system <- after
                         | HostPipeOp.SetNonBlocking (index, value) ->
@@ -460,13 +461,13 @@ module TestPipeAgainstHost =
                                 let hostNew = hostDup hostFd
 
                                 if hostNew < 0 then
-                                    failwith $"%s{where}: host dup failed"
+                                    failwith $"%s{where ()}: host dup failed"
 
                                 match Answered.dup modelFd system with
                                 | SyscallAnswer.Completed modelNew, after ->
                                     slots <- slots @ [ int modelNew, hostNew, pipeEnd, group ]
                                     system <- after
-                                | other -> failwith $"%s{where}: model dup %A{other}"
+                                | other -> failwith $"%s{where ()}: model dup %A{other}"
                         | HostPipeOp.Close index ->
                             match slotOf index with
                             | None -> ()
@@ -475,7 +476,7 @@ module TestPipeAgainstHost =
 
                                 match UnixDescriptor.tryClose modelFd system with
                                 | Ok (SyscallAnswer.Completed _, after) -> system <- after
-                                | other -> failwith $"%s{where}: model close %A{other}"
+                                | other -> failwith $"%s{where ()}: model close %A{other}"
 
                                 slots <- slots |> List.filter (fun s -> s <> closing)
 
@@ -484,7 +485,7 @@ module TestPipeAgainstHost =
                             let mutable available = 0
 
                             if hostBytesAvailable (nativeint hostFd, &available) <> 0 then
-                                failwith $"%s{where}: host FIONREAD failed"
+                                failwith $"%s{where ()}: host FIONREAD failed"
 
                             UnixDescriptor.tryBytesAvailable modelFd UserBuffer.Mapped system
                             |> shouldEqual (Ok (BytesAvailableAnswer.Reported available))
@@ -494,7 +495,7 @@ module TestPipeAgainstHost =
 
                             if (m.Mode, m.Size) <> (h.Mode, h.Size) then
                                 failwith
-                                    $"%s{where}: fd %O{pipeEnd} end: model mode 0o%o{m.Mode} size %d{m.Size}, host 0o%o{h.Mode} size %d{h.Size}"
+                                    $"%s{where ()}: fd %O{pipeEnd} end: model mode 0o%o{m.Mode} size %d{m.Size}, host 0o%o{h.Mode} size %d{h.Size}"
 
                             match flavour with
                             | SimulatedUnixFlavour.Darwin ->
@@ -511,7 +512,7 @@ module TestPipeAgainstHost =
                                             FileDescriptorRegistry.tryFindTarget modelFd (Lone.fileDescriptors system)
                                         with
                                         | Some (OpenFileTarget.Pipe (pipeId, _)) -> pipeId
-                                        | other -> failwith $"%s{where}: fd %d{modelFd} is %A{other}"
+                                        | other -> failwith $"%s{where ()}: fd %d{modelFd} is %A{other}"
 
                                     let buffer = (UnixMachineState.pipe pipeId system.Machine).Buffer
 
@@ -529,7 +530,7 @@ module TestPipeAgainstHost =
 
                                     if modelReady <> hostReady then
                                         failwith
-                                            $"%s{where}: %O{pipeEnd} end: model ready %b{modelReady}, host %b{hostReady}"
+                                            $"%s{where ()}: %O{pipeEnd} end: model ready %b{modelReady}, host %b{hostReady}"
                             | SimulatedUnixFlavour.Linux ->
                                 let id =
                                     FileDescriptorRegistry.tryFindId modelFd (Lone.fileDescriptors system)
@@ -539,18 +540,18 @@ module TestPipeAgainstHost =
                                 let host = hostLevel hostFd
 
                                 if model <> host then
-                                    failwith $"%s{where}: %O{pipeEnd} end: model polls 0x%x{model}, host 0x%x{host}"
+                                    failwith $"%s{where ()}: %O{pipeEnd} end: model polls 0x%x{model}, host 0x%x{host}"
 
                             // lseek and isatty: ESPIPE and ENOTTY on every pipe end.
                             if hostLSeek (hostFd, 0L, 1) <> -1L then
-                                failwith $"%s{where}: host lseek succeeded on a pipe"
+                                failwith $"%s{where ()}: host lseek succeeded on a pipe"
 
                             UnixError.ofRawErrnoUnder numbering (Marshal.GetLastPInvokeError ())
                             |> shouldEqual (Some UnixError.ESPIPE)
 
                             match UnixDescriptor.tryLseek modelFd 0L 1 system with
                             | Ok (SyscallAnswer.Failed UnixError.ESPIPE, _) -> ()
-                            | other -> failwith $"%s{where}: model lseek %A{other}"
+                            | other -> failwith $"%s{where ()}: model lseek %A{other}"
 
                             hostIsATty hostFd |> shouldEqual 0
 
@@ -577,11 +578,11 @@ module TestPipeAgainstHost =
                                 // but Linux moves nothing anyway.
                                 if hostMoved <> modelMoved then
                                     failwith
-                                        $"%s{where}: %O{pipeEnd} end: host moved (atime, mtime, ctime) %A{hostMoved}, model %A{modelMoved}"
+                                        $"%s{where ()}: %O{pipeEnd} end: host moved (atime, mtime, ctime) %A{hostMoved}, model %A{modelMoved}"
 
                         match UnixSystem.checkInvariants system with
                         | [] -> ()
-                        | defects -> failwith $"%s{where}: %A{defects}"
+                        | defects -> failwith $"%s{where ()}: %A{defects}"
                 finally
                     for _, hostFd, _, _ in slots do
                         hostClose hostFd |> ignore

@@ -175,7 +175,7 @@ module TestConnectDestinationMeasured =
             CopyIn.connect fd UserBuffer.Mapped call.Length (CopyIn.blob platform call.Family call.Endpoint) system
         with
         | Error refusal ->
-            let name = (sprintf "%A" refusal).Split([| ' ' ; '\n' |]).[0]
+            let name = UnionCaseName.ofValue refusal
             $"refused:%s{name}"
         | Ok (outcome, after) ->
             let answer =
