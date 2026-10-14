@@ -298,7 +298,7 @@ module TestSignalReceiver =
             systemWith SimulatedUnixFlavour.Linux (SignalDisposition.Catch (SignalCatch.ofHandler "h")) Set.empty
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixSignal.tryOnReturnToUser 7 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () -> UnixSignal.tryOnReturnToUser 7 system |> ignore)
 
         exn.Message |> shouldContainText "not one of the process's threads"
 

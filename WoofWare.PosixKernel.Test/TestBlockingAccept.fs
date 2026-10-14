@@ -231,11 +231,13 @@ module TestBlockingAccept =
         let fd, system = world platform
         let parked = parkIn 1 fd system
 
-        Assert.Throws<exn> (fun () -> UnixConnection.tryAccept 1 fd UserBuffer.Mapped 16u parked |> ignore<_>)
-        |> ignore<exn>
+        Assert.Throws<System.InvalidOperationException> (fun () ->
+            UnixConnection.tryAccept 1 fd UserBuffer.Mapped 16u parked |> ignore<_>
+        )
+        |> ignore<System.InvalidOperationException>
 
-        Assert.Throws<exn> (fun () -> UnixConnection.tryFinishAccept 2 parked |> ignore<_>)
-        |> ignore<exn>
+        Assert.Throws<System.InvalidOperationException> (fun () -> UnixConnection.tryFinishAccept 2 parked |> ignore<_>)
+        |> ignore<System.InvalidOperationException>
 
     // ------------------------------------------------------------------
     // The finish

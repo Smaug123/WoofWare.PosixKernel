@@ -19,6 +19,7 @@
     <Compile Include="Configured.fs" />
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
+    <Compile Include="Callers.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />
@@ -199,6 +200,7 @@
     <Compile Include="TestSockOptAgainstHost.fs" />
     <Compile Include="TestSocketOptions.fs" />
     <Compile Include="TestCallProgress.fs" />
+    <Compile Include="TestEntry.fs" />
     <Compile Include="TestSocketAddressing.fs" />
     <Compile Include="TestSocketErrorOption.fs" />
     <Compile Include="TestSocketErrorAgainstHost.fs" />

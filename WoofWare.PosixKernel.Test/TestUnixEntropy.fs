@@ -125,7 +125,7 @@ module TestUnixEntropy =
 
                             match outcome with
                             | Ok answered -> yield $"%s{case}: answered %A{Result.map fst answered}"
-                            | Error e when e.GetType () <> typeof<exn> ->
+                            | Error e when e.GetType () <> typeof<System.InvalidOperationException> ->
                                 yield $"%s{case}: threw %s{e.GetType().Name}: %s{e.Message}"
                             | Error e when
                                 not (e.Message.Contains "UnixEntropy.getRandom" && e.Message.Contains expected)

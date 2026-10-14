@@ -284,16 +284,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
-        // Looked up rather than asked of `UnixThreadTable.parkedFor`, so that a
-        // name that is no thread is left to `SignalState.onReturnToUser`'s own
-        // check.
-        match Map.tryFind thread system.Threads |> Option.bind (fun state -> state.Parked) with
-        | Some {
-                   Syscall = parked
-               } ->
-            failwith
-                $"UnixSignal.onReturnToUser: thread %O{thread} is asleep in %A{parked}, so it is not returning to user mode. A signal ends that sleep through the syscall's finishing call (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireReturning "UnixSignal.onReturnToUser" thread system.Threads
 
         SignalState.onReturnToUser
             system.Process.CoreDumps

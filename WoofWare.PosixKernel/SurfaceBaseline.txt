@@ -263,6 +263,12 @@ WoofWare.PosixKernel.BytesAvailableAnswer.IsReported [property]: [read-only] boo
 WoofWare.PosixKernel.BytesAvailableAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.BytesAvailableAnswer
 WoofWare.PosixKernel.BytesAvailableAnswer.NewReported [static method]: int -> WoofWare.PosixKernel.BytesAvailableAnswer
 WoofWare.PosixKernel.BytesAvailableAnswer.Tag [property]: [read-only] int
+WoofWare.PosixKernel.Caller inherit obj
+WoofWare.PosixKernel.Caller.make [static method]: WoofWare.PosixKernel.ProcessId -> 'Thread -> 'Thread WoofWare.PosixKernel.Caller
+WoofWare.PosixKernel.Caller.processId [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.ProcessId
+WoofWare.PosixKernel.Caller.thread [static method]: 'Thread WoofWare.PosixKernel.Caller -> 'Thread
+WoofWare.PosixKernel.Caller`1 inherit System.ValueType, implements 'Thread WoofWare.PosixKernel.Caller System.IEquatable, System.Collections.IStructuralEquatable, 'Thread WoofWare.PosixKernel.Caller System.IComparable, System.IComparable, System.Collections.IStructuralComparable
+WoofWare.PosixKernel.Caller`1.Equals [method]: ('Thread WoofWare.PosixKernel.Caller, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.CallerPrivilege inherit obj, implements WoofWare.PosixKernel.CallerPrivilege System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.CallerPrivilege System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.CallerPrivilege+Tags inherit obj
 WoofWare.PosixKernel.CallerPrivilege+Tags.Privileged [static field]: int = 0
