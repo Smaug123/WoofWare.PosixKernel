@@ -1329,8 +1329,11 @@ module internal TcpTransfer =
             // of FINs is done), or where a reset reached the closer already;
             // otherwise it makes the closer's FIN, unless the closer made it
             // already, and with nothing left to send the FIN arrives at once.
-            // Which end then goes to TIME_WAIT follows from the FINs
-            // (`timeWait`).
+            // A FIN made already and still queued is behind bytes the closed
+            // peer never took, and never arrives: Darwin's close there leaves
+            // neither end holding its port (measured, `docs/probes/time-wait`,
+            // tw-stranded.c rows S; Linux reset at the peer's close). Which
+            // end then goes to TIME_WAIT follows from the FINs (`timeWait`).
             let resets =
                 match own.Receiver with
                 | TcpEndState.Reset _ -> true
@@ -1367,7 +1370,7 @@ module internal TcpTransfer =
                             | TcpFin.NotSent
                             | TcpFin.Queued _ -> false
                         )
-                    | TcpFin.Queued passive -> TcpFin.Arrived passive
+                    | TcpFin.Queued passive -> TcpFin.Queued passive
                     | TcpFin.Arrived passive -> TcpFin.Arrived passive
 
             let transfer =

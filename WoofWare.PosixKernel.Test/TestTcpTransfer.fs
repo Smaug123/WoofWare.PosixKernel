@@ -662,7 +662,9 @@ module internal TcpTransferReference =
             // The last close is a reset where a close beside an open peer
             // would be one, or where a reset reached this end already;
             // otherwise it makes this end's FIN, unless made already, and with
-            // nothing left to send the FIN arrives at once.
+            // nothing left to send the FIN arrives at once. One made already
+            // and still queued is behind bytes the closed peer never took, and
+            // never arrives.
             let toMe = m.Flows.[c]
             let unread = not toMe.Arrived.IsEmpty || not toMe.InFlight.IsEmpty
             let exchangeDone = m.Ends.[p].FinArrived && me.FinArrived
@@ -679,8 +681,10 @@ module internal TcpTransferReference =
             let resets = me.GotReset || unreadResets || (abortive && not exchangeDone)
             let peer = m.Ends.[p]
 
+            let queued = peer.FinSent && not peer.FinArrived
+
             let peer =
-                if resets then
+                if resets || queued then
                     peer
                 else
                     { peer with

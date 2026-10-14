@@ -12,8 +12,9 @@ open WoofWare.PosixKernel
 /// closed, replayed from both flavours' outputs of `docs/probes/time-wait`:
 /// `time-wait.c` (binds over a client's and a server's TIME_WAIT, the passive
 /// end's port, a connect's and a bind's search, and how long it lasts),
-/// `tw-reuse.c` (when a connect takes a TIME_WAIT's four-tuple over) and
-/// `tw-boot.c` (Linux's first second of uptime).
+/// `tw-reuse.c` (when a connect takes a TIME_WAIT's four-tuple over),
+/// `tw-boot.c` (Linux's first second of uptime) and `tw-stranded.c` (a FIN
+/// still queued behind bytes the peer never read).
 ///
 /// Each row replays on a machine of its own, whose clock stands where the
 /// probe's did: two seconds after boot, as the probe waited, unless the row
@@ -734,3 +735,112 @@ module TestTimeWaitMeasured =
             | _ -> failwith $"unparsed line: %s{line}"
 
         replayed |> shouldEqual 6
+
+    let private shutWrite (fd : int) (row : Row) : Row =
+        match UnixConnection.tryShutdown fd 1 row.System with
+        | Ok (ShutdownAnswer.Shut, system) ->
+            { row with
+                System = system
+            }
+        | other -> failwith $"shutdown of fd %d{fd}: %A{other}"
+
+    /// The client writes until its send buffer is full, as the probe's
+    /// non-blocking writes did until `EAGAIN`.
+    let private fill (fd : int) (row : Row) : Row =
+        let system = UnixDescriptor.setNonBlocking fd true row.System |> snd
+
+        let chunk =
+            Collections.Immutable.ImmutableArray.CreateRange (Array.create 4096 'x'B)
+
+        let rec go (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match UnixReadWrite.tryWriteBytes 0 fd chunk system with
+            | Ok (WriteStep.Returns (WriteAnswer.Completed _, system)) -> go system
+            | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> system
+            | other -> failwith $"write on fd %d{fd}: %A{other}"
+
+        { row with
+            System = go system
+        }
+
+    /// What `getsockopt(SO_ERROR)` reads on `fd`, in the probe's names.
+    let private socketError (fd : int) (row : Row) : string * Row =
+        let answer, system = KeventWorld.readSocketError fd row.System
+        let platform = row.System.Machine.UnixPlatform
+
+        let name =
+            match OptionValue.readInt answer with
+            | 0 -> "OK"
+            | raw ->
+                match UnixError.ofRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) raw with
+                | Some error -> errorName (Some error)
+                | None -> failwith $"SO_ERROR read errno %d{raw}"
+
+        name,
+        { row with
+            System = system
+        }
+
+    /// `tw-stranded.c`: a connection whose client shut its send side behind
+    /// bytes the server never read, and whose server then shut its own and
+    /// closed. Linux resets the client at the server's close; Darwin does
+    /// not, and once the client closes too, neither end holds its port: the
+    /// client's FIN never arrived, so neither end is in TIME_WAIT. Darwin's
+    /// row C is not replayed: its loopback delivered the client's FIN after
+    /// the server had shut its own side, so both FINs crossed, which this
+    /// kernel's loopback, delivering at once, does not do.
+    let private replayStranded (platform : SimulatedUnixPlatform) (resource : string) : int =
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let mutable replayed = 0
+        let mutable z = 45701us
+
+        for line in lines resource do
+            match line with
+            | Matching @"^([CS]) wrote (nothing|until EAGAIN); (.*)$" [ name ; _ ; measured ] ->
+                let row = rowFor platform
+                let listener, row = ownListener z row
+                let client, row = newSocket false row
+
+                let row =
+                    match connect client z row with
+                    | Ok (SyscallAnswer.Completed 0L, row) -> row
+                    | other -> failwith $"the client's connect: %A{other |> Result.map fst}"
+
+                let clientPort =
+                    match boundAt client row with
+                    | Some bound -> bound.Port
+                    | None -> failwith "the client is unbound"
+
+                let server, row = accept listener row
+                let row = close listener row
+                let row = if name = "S" then fill client row else row
+                let row = row |> shutWrite client |> shutWrite server |> close server
+                let error, row = socketError client row
+                let row = close client row
+
+                let binds (row : Row) : string =
+                    $"T -> %s{bindLine false false (loopback clientPort) row}, Z -> %s{bindLine false false (loopback z) row}"
+
+                let answered =
+                    $"client SO_ERROR after the server's close -> %s{error}; then bind %s{binds row}; after 1 s %s{binds (advance 1_000_000_000L row)}; after 5 s %s{binds (advance 5_000_000_000L row)}"
+
+                z <- z + 1us
+
+                if name = "C" && flavour = SimulatedUnixFlavour.Darwin then
+                    ()
+                elif answered <> measured then
+                    failwith $"%A{flavour}: the model printed %s{answered} where the probe printed %s{measured}"
+                else
+                    replayed <- replayed + 1
+            | Matching @"^(Linux|Darwin) " _ -> ()
+            | _ -> failwith $"unparsed line: %s{line}"
+
+        replayed
+
+    [<Test>]
+    let ``Linux answers every tw-stranded.c row as measured`` () : unit =
+        replayStranded SimulatedUnixPlatform.linuxX64 "stranded-linux" |> shouldEqual 7
+
+    [<Test>]
+    let ``Darwin answers every tw-stranded.c row S as measured`` () : unit =
+        replayStranded SimulatedUnixPlatform.macOsArm64 "stranded-darwin"
+        |> shouldEqual 6
