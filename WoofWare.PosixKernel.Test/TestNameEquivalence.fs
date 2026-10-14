@@ -280,7 +280,7 @@ module TestNameEquivalence =
     /// directory, as each of the probe's rows starts in one.
     let private rowSystem (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         system
-        |> Answered.mkdir (arg (ascii "r")) 0o755
+        |> (fun system -> Answered.mkdir (Callers.leader system) (arg (ascii "r")) 0o755 system)
         |> completed
         |> (fun system -> Answered.chdir (Callers.leader system) (arg (ascii "r")) system)
         |> completed
@@ -339,7 +339,7 @@ module TestNameEquivalence =
         (system : UnixSystem<int, string>)
         =
         let system =
-            UnixNamespace.tryMkdir (arg first) 0o755 system
+            UnixNamespace.tryMkdir (Callers.leader system) (arg first) 0o755 system
             |> answered PathRefusal.describe
             |> completed
 
@@ -367,7 +367,7 @@ module TestNameEquivalence =
 
         let system =
             if firstIsDirectory then
-                UnixNamespace.tryMkdir (arg first) 0o755 system
+                UnixNamespace.tryMkdir (Callers.leader system) (arg first) 0o755 system
                 |> answered PathRefusal.describe
                 |> completed
             else
@@ -392,7 +392,7 @@ module TestNameEquivalence =
             match operation with
             | "mkdir(second)" ->
                 let answer, system =
-                    UnixNamespace.tryMkdir (arg second) 0o755 system
+                    UnixNamespace.tryMkdir (Callers.leader system) (arg second) 0o755 system
                     |> answered PathRefusal.describe
 
                 answer, "", system
@@ -410,12 +410,14 @@ module TestNameEquivalence =
                 answer, "", system
             | "unlink(second)" ->
                 let answer, system =
-                    UnixNamespace.tryUnlink (arg second) system |> answered RemovalRefusal.describe
+                    UnixNamespace.tryUnlink (Callers.leader system) (arg second) system
+                    |> answered RemovalRefusal.describe
 
                 answer, "", system
             | "rmdir(second)" ->
                 let answer, system =
-                    UnixNamespace.tryRmdir (arg second) system |> answered RemovalRefusal.describe
+                    UnixNamespace.tryRmdir (Callers.leader system) (arg second) system
+                    |> answered RemovalRefusal.describe
 
                 answer, "", system
             | "rename(src,second)"
@@ -1347,7 +1349,8 @@ module TestNameEquivalence =
                 | FileStatusAnswer.Failed error -> Some (string<UnixError> error, files, system)
             | Step.Unlink name ->
                 let answer, system =
-                    UnixNamespace.tryUnlink (arg name) system |> answered RemovalRefusal.describe
+                    UnixNamespace.tryUnlink (Callers.leader system) (arg name) system
+                    |> answered RemovalRefusal.describe
 
                 Some (errnoOf answer, files, system)
             | Step.Rename (source, destination) ->

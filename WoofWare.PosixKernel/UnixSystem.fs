@@ -1288,11 +1288,11 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.Close
         | Syscall.MkDirAt (dirfd, path, mode) ->
-            UnixNamespace.tryMkdirat dirfd path mode system
+            UnixNamespace.tryMkdirat caller dirfd path mode system
             |> answered
             |> Result.mapError SyscallRefusal.MkDir
         | Syscall.UnlinkAt (dirfd, path, flags) ->
-            UnixNamespace.tryUnlinkat dirfd path flags system
+            UnixNamespace.tryUnlinkat caller dirfd path flags system
             |> answered
             |> Result.mapError SyscallRefusal.UnlinkAt
         | Syscall.ChDir path ->
@@ -1324,11 +1324,11 @@ module UnixSystem =
             |> Result.map (fun answer -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Access
         | Syscall.SymlinkAt (target, dirfd, path) ->
-            UnixNamespace.trySymlinkatEager target dirfd path system
+            UnixNamespace.trySymlinkatEager caller target dirfd path system
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Symlink
         | Syscall.LinkAt (olddirfd, oldpath, newdirfd, newpath, flags) ->
-            UnixNamespace.tryLinkatEager olddirfd oldpath newdirfd newpath flags system
+            UnixNamespace.tryLinkatEager caller olddirfd oldpath newdirfd newpath flags system
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Link
         | Syscall.UTimensAt (dirfd, path, times, flags) ->
@@ -1344,7 +1344,7 @@ module UnixSystem =
             |> Result.map (fun error -> SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.CloneFile (source, destination, flags) ->
-            UnixNamespace.tryCloneFileEager source destination flags system
+            UnixNamespace.tryCloneFileEager caller source destination flags system
             |> answered
             |> Result.mapError SyscallRefusal.CloneFile
         | Syscall.SetResUid (real, effective, saved) ->
@@ -1360,12 +1360,12 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.SetGroups
         | Syscall.InotifyInit1 flags ->
-            match UnixInotify.tryInotifyInit1 flags system with
+            match UnixInotify.tryInotifyInit1 caller flags system with
             | Error refusal -> Error (SyscallRefusal.Inotify refusal)
             | Ok (Error error) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
             | Ok (Ok (fd, system)) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 fd)), system)
         | Syscall.InotifyRmWatch (fd, wd) ->
-            UnixInotify.tryInotifyRmWatch fd wd system
+            UnixInotify.tryInotifyRmWatch caller fd wd system
             |> answered
             |> Result.mapError SyscallRefusal.Inotify
 

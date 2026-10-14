@@ -462,18 +462,19 @@ module TestUTimensAt =
             let fd, system = opened readOnly "f" system
 
             let system =
-                Answered.unlink (UnixPath.parseOrFail context "f") system
+                Answered.unlink (Callers.leader system) (UnixPath.parseOrFail context "f") system
                 |> completed "unlink(f)"
 
             fd, None, system
         | "orphan" ->
             let system =
-                Answered.mkdir (PathArg.ofText "gone") 0o755 system |> completed "mkdir(gone)"
+                Answered.mkdir (Callers.leader system) (PathArg.ofText "gone") 0o755 system
+                |> completed "mkdir(gone)"
 
             let fd, system = opened readOnly "gone" system
 
             let system =
-                Answered.rmdir (UnixPath.parseOrFail context "gone") system
+                Answered.rmdir (Callers.leader system) (UnixPath.parseOrFail context "gone") system
                 |> completed "rmdir(gone)"
 
             fd, None, system
@@ -1392,7 +1393,14 @@ module TestUTimensAt =
                 )
 
         let system =
-            match UnixNamespace.trySymlinkatEager (PathArg.ofText "f") (atFdCwd user) (PathArg.ofText "wl") system with
+            match
+                UnixNamespace.trySymlinkatEager
+                    (Callers.leader system)
+                    (PathArg.ofText "f")
+                    (atFdCwd user)
+                    (PathArg.ofText "wl")
+                    system
+            with
             | Ok (SyscallAnswer.Completed _, system) -> dropped user system
             | other -> failwith $"%s{context}: symlink: %A{other}"
 

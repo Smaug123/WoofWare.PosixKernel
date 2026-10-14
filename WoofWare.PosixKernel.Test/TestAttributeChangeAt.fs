@@ -414,7 +414,7 @@ module TestAttributeChangeAt =
                 | SyscallAnswer.Completed _, system -> system
                 | other -> failwith $"%s{context}: open(%s{name}, O_CREAT): %A{other}"
             | Subject.Directory ->
-                match Answered.mkdir (PathArg.ofText name) 0o755 system with
+                match Answered.mkdir (Callers.leader system) (PathArg.ofText name) 0o755 system with
                 | SyscallAnswer.Completed _, system -> system
                 | other -> failwith $"%s{context}: mkdir(%s{name}): %A{other}"
 
@@ -809,7 +809,7 @@ module TestAttributeChangeAt =
 
                 Some (
                     fd,
-                    Answered.rmdir (UnixPath.parseOrFail context "gone") system
+                    Answered.rmdir (Callers.leader system) (UnixPath.parseOrFail context "gone") system
                     |> completed "rmdir(gone)"
                 )
             | "unlinked" ->
@@ -817,7 +817,7 @@ module TestAttributeChangeAt =
 
                 Some (
                     fd,
-                    Answered.unlink (UnixPath.parseOrFail context "g") system
+                    Answered.unlink (Callers.leader system) (UnixPath.parseOrFail context "g") system
                     |> completed "unlink(g)"
                 )
             | "locked" ->
@@ -1126,7 +1126,14 @@ module TestAttributeChangeAt =
                         (boot caller |> dropped caller)
 
                 let readlink =
-                    match UnixNamespace.tryReadlink (PathArg.ofText "lf") UserBuffer.Mapped 64 system with
+                    match
+                        UnixNamespace.tryReadlink
+                            (Callers.leader system)
+                            (PathArg.ofText "lf")
+                            UserBuffer.Mapped
+                            64
+                            system
+                    with
                     | Ok (ReadLinkAnswer.Reported _) -> "ok"
                     | Ok (ReadLinkAnswer.Failed error) -> $"%A{error}"
                     | Error refusal -> $"refused: %s{ReadLinkRefusal.describe refusal}"

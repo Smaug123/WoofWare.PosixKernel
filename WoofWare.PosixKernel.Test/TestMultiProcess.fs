@@ -364,8 +364,13 @@ module TestMultiProcess =
 
             assertClean machine
 
-    let private mkdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        Answered.mkdir (PathArg.ofText path) 0o755 view
+    let private mkdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        Answered.mkdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) 0o755 view
 
     let private chdir
         (pid : ProcessId)
@@ -375,8 +380,13 @@ module TestMultiProcess =
         =
         Answered.chdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) view
 
-    let private rmdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixNamespace.tryRmdir (PathArg.ofText path) view with
+    let private rmdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        match UnixNamespace.tryRmdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) view with
         | Ok answered -> answered
         | Error refusal -> failwith $"rmdir: %s{RemovalRefusal.describe refusal}"
 
@@ -386,11 +396,11 @@ module TestMultiProcess =
             let pids, machine = machineOf platform 2
             let a, b = pids.[0], pids.[1]
 
-            let _, machine = inProcess a (mkdir "/d") machine
+            let _, machine = inProcess a (mkdir a "/d") machine
             let _, machine = inProcess a (chdir a "/d") machine
             let standing = (Proc.state a (viewOf a machine)).CurrentDirectoryInode
 
-            let answer, machine = inProcess b (rmdir "/d") machine
+            let answer, machine = inProcess b (rmdir b "/d") machine
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
 
             // No name reaches it, and it is still there: a stands in it.

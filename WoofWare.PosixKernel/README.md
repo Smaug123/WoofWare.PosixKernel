@@ -183,7 +183,9 @@ let path (text : string) : PathArgumentBytes =
 
 // Thread 0, the process's leader, calls open("/etc/hostname", O_RDONLY), and read(fd, buf, 64).
 // O_RDONLY is 0 on every flavour.
-match UnixNamespace.openPath 0 0 (path "/etc/hostname") 0 system with
+let leader = Caller.make (UnixSystem.processId system) 0
+
+match UnixNamespace.openPath leader 0 (path "/etc/hostname") 0 system with
 | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
     match UnixReadWrite.read 0 (int fd) UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
@@ -203,14 +205,15 @@ It gives back its answer with the system as the call left it, or the answer alon
 
 A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
 A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
-The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`) and the entropy calls (`UnixEntropy`) take the caller as their first argument.
-`UnixPathResolution.accessWithPath`, which finishes a call its caller has already begun, takes none, and nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
+The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the calls on names in the filesystem (`UnixNamespace`), inotify (`UnixInotify`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`) and the entropy calls (`UnixEntropy`) take the caller as their first argument.
+A function that finishes a call its caller has already begun, given what the call paused to copy in, takes none: `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination` and `UnixInotify.inotifyAddWatchWithPath` (see "Calls that copy in from the caller's memory").
+Nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
 
 Each of those calls checks its caller before it does anything else.
 The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing function `UnixDescriptor.flockAcquire` requires the thread to be parked instead, in the call it finishes (see "Sleeping and waking").
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
-The other families' functions take no caller yet.
+The other families' functions take no caller yet: those of `UnixReadWrite`, `UnixSocket`, `UnixConnection`, `UnixPoll`, `UnixKqueue`, `UnixSignal`, `UnixThreadLifecycle`, `UnixScheduling` and `UnixSystem`.
 One of them takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
 The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
 `UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
@@ -383,32 +386,32 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (thread : 'Thread) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `openat(2)` | `UnixNamespace.openat (thread : 'Thread) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `readlink(2)` | `UnixNamespace.readlink (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
-| `readlinkat(2)` | `UnixNamespace.readlinkat (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
-| one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
-| `mkdir(2)` | `UnixNamespace.mkdir (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `mkdirat(2)` | `UnixNamespace.mkdirat (dirfd : int) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `mknod(2)`, regular files only | `UnixNamespace.mknod (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
-| `mknodat(2)`, regular files only | `UnixNamespace.mknodat (dirfd : int) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
-| `unlink(2)` | `UnixNamespace.unlink (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `rmdir(2)` | `UnixNamespace.rmdir (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `unlinkat(2)` | `UnixNamespace.unlinkat (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `rename(2)` | `UnixNamespace.rename (source : PathArgumentBytes)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
-| `renameat(2)` | `UnixNamespace.renameat (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
+| `open(2)` | `UnixNamespace.openPath (caller : Caller) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
+| `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
+| one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (caller : Caller) (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
+| `mkdir(2)` | `UnixNamespace.mkdir (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `mkdirat(2)` | `UnixNamespace.mkdirat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `mknod(2)`, regular files only | `UnixNamespace.mknod (caller : Caller) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
+| `mknodat(2)`, regular files only | `UnixNamespace.mknodat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
+| `unlink(2)` | `UnixNamespace.unlink (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `rmdir(2)` | `UnixNamespace.rmdir (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `unlinkat(2)` | `UnixNamespace.unlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `rename(2)` | `UnixNamespace.rename (caller : Caller) (source : PathArgumentBytes)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
+| `renameat(2)` | `UnixNamespace.renameat (caller : Caller) (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
 | `rename(2)` or `renameat(2)`, given the destination | `UnixNamespace.renameWithDestination (destination : PathArgumentBytes) (paused : PausedRename)` | `SyscallAnswer * UnixSystem` |
-| Darwin's `clonefile(2)` | `UnixNamespace.cloneFile (flags : int)` | `CallProgress<PausedCloneFileSource, SyscallAnswer * UnixSystem>` |
+| Darwin's `clonefile(2)` | `UnixNamespace.cloneFile (caller : Caller) (flags : int)` | `CallProgress<PausedCloneFileSource, SyscallAnswer * UnixSystem>` |
 | `clonefile(2)`, given the source | `UnixNamespace.cloneFileWithSource (source : PathArgumentBytes) (paused : PausedCloneFileSource)` | `CallProgress<PausedCloneFile, SyscallAnswer * UnixSystem>` |
 | `clonefile(2)`, given the destination | `UnixNamespace.cloneFileWithDestination (destination : PathArgumentBytes) (paused : PausedCloneFile)` | `SyscallAnswer * UnixSystem` |
-| `symlink(2)` | `UnixNamespace.symlink (target : PathArgumentBytes)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
-| `symlinkat(2)` | `UnixNamespace.symlinkat (target : PathArgumentBytes) (dirfd : int)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
+| `symlink(2)` | `UnixNamespace.symlink (caller : Caller) (target : PathArgumentBytes)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
+| `symlinkat(2)` | `UnixNamespace.symlinkat (caller : Caller) (target : PathArgumentBytes) (dirfd : int)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
 | `symlink(2)` or `symlinkat(2)`, given the link's path | `UnixNamespace.symlinkWithPath (path : PathArgumentBytes) (paused : PausedSymlink)` | `SyscallAnswer * UnixSystem` |
-| `link(2)` | `UnixNamespace.link (oldpath : PathArgumentBytes)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
-| `linkat(2)` | `UnixNamespace.linkat (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int) (flags : int)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
+| `link(2)` | `UnixNamespace.link (caller : Caller) (oldpath : PathArgumentBytes)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
+| `linkat(2)` | `UnixNamespace.linkat (caller : Caller) (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int) (flags : int)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
 | `link(2)` or `linkat(2)`, given the new path | `UnixNamespace.linkWithDestination (newpath : PathArgumentBytes) (paused : PausedLink)` | `SyscallAnswer * UnixSystem` |
 
-`UnixNamespace.openPath` and `UnixNamespace.openat` take the thread because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
+`UnixNamespace.openPath` and `UnixNamespace.openat` answer a `SyscallOutcome` because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
 Nothing makes a FIFO yet, so both always answer `SyscallOutcome.Answered`.
 
 A Linux directory compares names byte for byte.
@@ -514,10 +517,10 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (flags : int)` | `Result<int * UnixSystem, UnixError>` |
-| `inotify_add_watch(2)` | `UnixInotify.inotifyAddWatch (fd : int) (mask : uint32)` | `CallProgress<PausedInotifyAddWatch, SyscallAnswer * UnixSystem>` |
+| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `inotify_add_watch(2)` | `UnixInotify.inotifyAddWatch (caller : Caller) (fd : int) (mask : uint32)` | `CallProgress<PausedInotifyAddWatch, SyscallAnswer * UnixSystem>` |
 | `inotify_add_watch(2)`, given the path | `UnixInotify.inotifyAddWatchWithPath (path : PathArgumentBytes) (paused : PausedInotifyAddWatch)` | `SyscallAnswer * UnixSystem` |
-| `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
+| `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (caller : Caller) (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
 
 #### Signals
 

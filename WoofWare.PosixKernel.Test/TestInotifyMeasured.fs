@@ -139,12 +139,12 @@ module TestInotifyMeasured =
         | SyscallAnswer.Failed error -> $"-1 %O{error}"
 
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
         | Ok (Ok created) -> created
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
     let private initAnswer (flags : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
         | Ok (Ok (fd, system)) -> SyscallAnswer.Completed (int64 fd), system
         | Ok (Error error) -> SyscallAnswer.Failed error, system
         | Error refusal -> failwith $"inotify_init1(0x%x{flags}) refused: %s{InotifyRefusal.describe refusal}"
@@ -168,7 +168,7 @@ module TestInotifyMeasured =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixInotify.tryInotifyRmWatch fd wd system with
+        match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
         | Ok answered -> answered
         | Error refusal -> failwith $"inotify_rm_watch(%d{fd}, %d{wd}) refused: %s{InotifyRefusal.describe refusal}"
 
@@ -489,7 +489,7 @@ module TestInotifyMeasured =
             | Error refusal -> failwith $"%A{refusal}"
 
         let regular, s =
-            match UnixNamespace.tryOpenPath 0 0 (PathArg.ofText "w/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "w/f") 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -903,7 +903,7 @@ module TestInotifyMeasured =
         let accepted =
             [ 0..31 ]
             |> List.choose (fun bit ->
-                match UnixInotify.tryInotifyInit1 (1 <<< bit) system with
+                match UnixInotify.tryInotifyInit1 (Callers.leader system) (1 <<< bit) system with
                 | Ok (Ok _) -> Some $"0%s{Convert.ToString (1L <<< bit, 8)}"
                 | Ok (Error UnixError.EINVAL) -> None
                 | other -> failwith $"bit %d{bit}: %A{other}"
@@ -956,7 +956,7 @@ module TestInotifyMeasured =
         let fd, s = init1 nonblock system
 
         let regular, s =
-            match UnixNamespace.tryOpenPath 0 0 (PathArg.ofText "g/f") 0 s with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 s) 0 (PathArg.ofText "g/f") 0 s with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -975,7 +975,7 @@ module TestInotifyMeasured =
             | Error refusal -> failwith $"%A{refusal}"
 
         let rm (on : int) (wd : int) =
-            match UnixInotify.tryInotifyRmWatch on wd system with
+            match UnixInotify.tryInotifyRmWatch (Callers.leader system) on wd system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -1034,7 +1034,7 @@ module TestInotifyMeasured =
         let fd, system = init1 nonblock system
 
         let regular, system =
-            match UnixNamespace.tryOpenPath 0 0 (PathArg.ofText "g/f") 0 system with
+            match UnixNamespace.tryOpenPath (Callers.thread 0 system) 0 (PathArg.ofText "g/f") 0 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), s) -> int fd, s
             | other -> failwith $"%A{other}"
 
@@ -1047,7 +1047,7 @@ module TestInotifyMeasured =
 
     /// The screen phase alone, for a call that must be over before the path.
     let private screened (on : int) (mask : uint32) (system : UnixSystem<int, string>) : string =
-        match UnixInotify.tryInotifyAddWatch on mask system with
+        match UnixInotify.tryInotifyAddWatch (Callers.leader system) on mask system with
         | Ok (CallProgress.Answered (answer, _)) -> rc answer
         | Ok (CallProgress.NeedsCopyIn _) ->
             $"add(%d{on}, _, 0x%x{mask}) reached the path, where Linux answers without it"
@@ -1124,7 +1124,7 @@ module TestInotifyMeasured =
 
         for on in [ -1 ; 999 ; fd ; regular ; epoll ] do
             for mask in masks do
-                match UnixInotify.tryInotifyAddWatch on mask system with
+                match UnixInotify.tryInotifyAddWatch (Callers.leader system) on mask system with
                 | Error refusal -> failwith $"add(%d{on}, _, 0x%x{mask}) refused: %A{refusal}"
                 | Ok (CallProgress.Answered (answer, unchanged)) ->
                     obj.ReferenceEquals (unchanged, system) |> shouldEqual true
@@ -1514,7 +1514,7 @@ module TestInotifyMeasured =
             | Error refusal -> failwith $"%A{refusal}"
 
         let getdents =
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Ok (ReadDirectoryAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 

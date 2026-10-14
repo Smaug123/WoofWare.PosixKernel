@@ -576,7 +576,7 @@ module TestModeChange =
 
             let inode = inodeAt system.Machine.FileSystem "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchmodAnswer fd 0o400 unlinked with
             | SyscallAnswer.Completed 0L, after ->

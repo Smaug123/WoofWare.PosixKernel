@@ -175,7 +175,7 @@ module TestPathCopyIn =
 
         let readlink (destination : UserBuffer) (capacity : int) =
             Some (fun path system ->
-                match UnixNamespace.tryReadlink path destination capacity system with
+                match UnixNamespace.tryReadlink (Callers.leader system) path destination capacity system with
                 | Ok (ReadLinkAnswer.Failed error) -> Some error
                 | Ok (ReadLinkAnswer.Reported _) -> None
                 | Error refusal -> failwith $"readlink refused: %s{ReadLinkRefusal.describe refusal}"
@@ -219,10 +219,12 @@ module TestPathCopyIn =
                     Create = true
                     Exclusive = true
                 }
-        | "mkdir", "mode 0777" -> Some (fun path system -> ofAnswer (fst (Answered.mkdir path 0o777 system)))
-        | "mkdir", "mode all bits" -> Some (fun path system -> ofAnswer (fst (Answered.mkdir path 0xffff system)))
-        | "unlink", "-" -> answered UnixNamespace.tryUnlink
-        | "rmdir", "-" -> answered UnixNamespace.tryRmdir
+        | "mkdir", "mode 0777" ->
+            Some (fun path system -> ofAnswer (fst (Answered.mkdir (Callers.leader system) path 0o777 system)))
+        | "mkdir", "mode all bits" ->
+            Some (fun path system -> ofAnswer (fst (Answered.mkdir (Callers.leader system) path 0xffff system)))
+        | "unlink", "-" -> answered (fun path system -> UnixNamespace.tryUnlink (Callers.leader system) path system)
+        | "rmdir", "-" -> answered (fun path system -> UnixNamespace.tryRmdir (Callers.leader system) path system)
         | "chdir", "-" -> Some (fun path system -> ofAnswer (fst (Answered.chdir (Callers.leader system) path system)))
         | "chmod", "mode 0644" ->
             answered (fun path system -> UnixPathResolution.tryChmod (Callers.leader system) path 0o644 system)
@@ -497,7 +499,7 @@ module TestPathCopyIn =
             holds (
                 changing
                     $"mkdir 0o%o{mode}"
-                    (fun path -> UnixNamespace.tryMkdir path mode)
+                    (fun path system -> UnixNamespace.tryMkdir (Callers.leader system) path mode system)
                     (fun path -> UnixNamespace.mkdirParsed AtDirectory.CurrentDirectory path mode)
             )
 
@@ -533,8 +535,19 @@ module TestPathCopyIn =
 
     [<Test>]
     let ``removing calls copy their path in and then answer as before`` () : unit =
-        holds (changing "unlink" UnixNamespace.tryUnlink (UnixNamespace.unlinkParsed AtDirectory.CurrentDirectory))
-        holds (changing "rmdir" UnixNamespace.tryRmdir (UnixNamespace.rmdirParsed AtDirectory.CurrentDirectory))
+        holds (
+            changing
+                "unlink"
+                (fun path system -> UnixNamespace.tryUnlink (Callers.leader system) path system)
+                (UnixNamespace.unlinkParsed AtDirectory.CurrentDirectory)
+        )
+
+        holds (
+            changing
+                "rmdir"
+                (fun path system -> UnixNamespace.tryRmdir (Callers.leader system) path system)
+                (UnixNamespace.rmdirParsed AtDirectory.CurrentDirectory)
+        )
 
     [<Test>]
     let ``attribute-changing calls copy their path in and then answer as before`` () : unit =
@@ -612,7 +625,9 @@ module TestPathCopyIn =
                 holds
                     {
                         Name = $"readlink %A{destination} %d{capacity}"
-                        Bytes = fun path -> UnixNamespace.tryReadlink path destination capacity
+                        Bytes =
+                            fun path system ->
+                                UnixNamespace.tryReadlink (Callers.leader system) path destination capacity system
                         Parsed =
                             fun path ->
                                 UnixNamespace.readlinkParsed AtDirectory.CurrentDirectory path destination capacity

@@ -150,11 +150,35 @@ module internal InotifyReplay =
         | SyscallAnswer.Completed value -> $"%d{value}"
         | SyscallAnswer.Failed error -> $"-1 %O{error}"
 
-    let init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+    /// `inotify_init1(flags)` by the leader of the process `pid`, which must
+    /// succeed.
+    let init1In (pid : ProcessId) (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid system)) flags system with
         | Ok (Ok created) -> created
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
+    /// `init1In` the only process on the machine.
+    let init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        init1In (Lone.pid system) flags system
+
+    /// `inotify_add_watch(fd, path, mask)` by the leader of the process `pid`.
+    let addWatchIn
+        (pid : ProcessId)
+        (fd : int)
+        (path : string)
+        (mask : uint32)
+        (system : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        match
+            Eager.tryInotifyAddWatchAs (Caller.make pid (Proc.leader pid system)) fd (PathArg.ofText path) mask system
+        with
+        | Ok answered -> answered
+        | Error refusal ->
+            failwith
+                $"inotify_add_watch(%d{fd}, %s{path}, 0x%x{mask}) refused: %s{InotifyAddWatchRefusal.describe refusal}"
+
+    /// `addWatchIn` the only process on the machine.
     let addWatch
         (fd : int)
         (path : string)
@@ -162,13 +186,22 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
-        | Ok answered -> answered
-        | Error refusal ->
-            failwith
-                $"inotify_add_watch(%d{fd}, %s{path}, 0x%x{mask}) refused: %s{InotifyAddWatchRefusal.describe refusal}"
+        addWatchIn (Lone.pid system) fd path mask system
 
-    /// `addWatch`, which must succeed: the watch descriptor.
+    /// `addWatchIn`, which must succeed: the watch descriptor.
+    let watchIn
+        (pid : ProcessId)
+        (fd : int)
+        (path : string)
+        (mask : uint32)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match addWatchIn pid fd path mask system with
+        | SyscallAnswer.Completed wd, system -> int wd, system
+        | SyscallAnswer.Failed error, _ -> failwith $"inotify_add_watch(%d{fd}, %s{path}): %O{error}"
+
+    /// `watchIn` the only process on the machine.
     let watch
         (fd : int)
         (path : string)
@@ -176,12 +209,10 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match addWatch fd path mask system with
-        | SyscallAnswer.Completed wd, system -> int wd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"inotify_add_watch(%d{fd}, %s{path}): %O{error}"
+        watchIn (Lone.pid system) fd path mask system
 
     let rmWatch (fd : int) (wd : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyRmWatch fd wd system with
+        match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
         | Ok answered -> answered
         | Error refusal -> failwith $"inotify_rm_watch(%d{fd}, %d{wd}) refused: %s{InotifyRefusal.describe refusal}"
 
@@ -426,17 +457,34 @@ module internal InotifyReplay =
             Nanoseconds = nanoseconds
         }
 
-    let mkdir (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryMkdir (PathArg.ofText path) mode system
+    /// `mkdir(path, mode)` by the leader of the process `pid`, which must
+    /// succeed.
+    let mkdirIn
+        (pid : ProcessId)
+        (path : string)
+        (mode : int)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        UnixNamespace.tryMkdir (Caller.make pid (Proc.leader pid system)) (PathArg.ofText path) mode system
         |> completed $"mkdir(%s{path})"
 
+    /// `mkdirIn` the only process on the machine.
+    let mkdir (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        mkdirIn (Lone.pid system) path mode system
+
     let rmdir (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryRmdir (PathArg.ofText path) system
+        UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofText path) system
         |> completed $"rmdir(%s{path})"
 
-    let unlink (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryUnlink (PathArg.ofText path) system
+    /// `unlink(path)` by the leader of the process `pid`, which must succeed.
+    let unlinkIn (pid : ProcessId) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        UnixNamespace.tryUnlink (Caller.make pid (Proc.leader pid system)) (PathArg.ofText path) system
         |> completed $"unlink(%s{path})"
+
+    /// `unlinkIn` the only process on the machine.
+    let unlink (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        unlinkIn (Lone.pid system) path system
 
     let link (existing : string) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Eager.tryLink (PathArg.ofText existing) (PathArg.ofText path) system

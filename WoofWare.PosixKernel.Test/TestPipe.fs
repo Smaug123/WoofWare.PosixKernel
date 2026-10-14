@@ -1123,7 +1123,7 @@ module TestPipe =
                 | Ok (SyscallAnswer.Failed UnixError.EINVAL, _) -> ()
                 | other -> failwith $"%O{platform}: %A{other}"
 
-                match UnixNamespace.tryReadDirectoryEntry fd system with
+                match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
                 | Ok (ReadDirectoryAnswer.Failed error, _) ->
                     error
                     |> shouldEqual (

@@ -311,12 +311,17 @@ module TestDirectorySize =
 
             closeFd (int fd) system
         | DirectorySizeOp.MakeDirectory path ->
-            Answered.mkdir (PathArg.ofPath (rooted path)) 0o755 system
+            Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
             |> completed $"mkdir %s{path}"
             |> snd
-        | DirectorySizeOp.Unlink path -> Answered.unlink (rooted path) system |> completed $"unlink %s{path}" |> snd
+        | DirectorySizeOp.Unlink path ->
+            Answered.unlink (Callers.leader system) (rooted path) system
+            |> completed $"unlink %s{path}"
+            |> snd
         | DirectorySizeOp.RemoveDirectory path ->
-            Answered.rmdir (rooted path) system |> completed $"rmdir %s{path}" |> snd
+            Answered.rmdir (Callers.leader system) (rooted path) system
+            |> completed $"rmdir %s{path}"
+            |> snd
         | DirectorySizeOp.Rename (source, destination) ->
             match Eager.tryRename (argument source) (argument destination) system with
             | Ok result -> result |> completed $"rename %s{source} %s{destination}" |> snd

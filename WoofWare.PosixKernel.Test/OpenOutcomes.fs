@@ -32,7 +32,7 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenPath (Proc.leader pid system) flags path mode system
+        UnixNamespace.tryOpenPath (Caller.make pid (Proc.leader pid system)) flags path mode system
         |> answered
 
     /// `openPathIn` the only process on the machine.
@@ -55,5 +55,5 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenat (Lone.leader system) dirfd path flags mode system
+        UnixNamespace.tryOpenat (Callers.leader system) dirfd path flags mode system
         |> answered

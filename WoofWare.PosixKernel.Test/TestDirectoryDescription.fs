@@ -90,12 +90,14 @@ module TestDirectoryDescription =
         closeFd (int fd) system
 
     let private makeDirectory (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Answered.mkdir (PathArg.ofPath (rooted path)) 0o755 system
+        Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
         |> completed $"mkdir %s{path}"
         |> snd
 
     let private unlink (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        Answered.unlink (rooted path) system |> completed $"unlink %s{path}" |> snd
+        Answered.unlink (Callers.leader system) (rooted path) system
+        |> completed $"unlink %s{path}"
+        |> snd
 
     let private openAt (flags : OpenFlags) (path : string) (system : UnixSystem<int, string>) =
         let fd, system =
@@ -110,7 +112,7 @@ module TestDirectoryDescription =
         int fd, system
 
     let private read (fd : int) (system : UnixSystem<int, string>) =
-        match UnixNamespace.tryReadDirectoryEntry fd system with
+        match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
         | Ok result -> result
         | Error refusal -> failwith $"read of fd %d{fd} was refused: %s{ReadDirectoryRefusal.describe refusal}"
 
@@ -447,7 +449,7 @@ module TestDirectoryDescription =
             | SyscallAnswer.Completed answered, _ when answered = offset -> ()
             | other -> failwith $"SEEK_CUR after SEEK_SET %d{offset}: %A{other}"
 
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Error (ReadDirectoryRefusal.UnenumerablePosition (_, refused)) -> refused |> shouldEqual offset
             | other -> failwith $"read after SEEK_SET %d{offset}: %A{other}"
 
@@ -546,7 +548,10 @@ module TestDirectoryDescription =
             let system =
                 (system, names) ||> List.fold (fun system n -> unlink $"d/%s{n}" system)
 
-            let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
+            let system =
+                Answered.rmdir (Callers.leader system) (rooted "d") system
+                |> completed "rmdir d"
+                |> snd
 
             let expected =
                 match SimulatedUnixPlatform.flavour platform with
@@ -575,9 +580,16 @@ module TestDirectoryDescription =
         for platform in platforms do
             let fd, system = withDirectory platform []
             let _, system = seek fd 5L 0 system
-            let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
 
-            match SimulatedUnixPlatform.flavour platform, UnixNamespace.tryReadDirectoryEntry fd system with
+            let system =
+                Answered.rmdir (Callers.leader system) (rooted "d") system
+                |> completed "rmdir d"
+                |> snd
+
+            match
+                SimulatedUnixPlatform.flavour platform,
+                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system
+            with
             | SimulatedUnixFlavour.Linux, Ok (ReadDirectoryAnswer.Failed UnixError.ENOENT, _) -> ()
             | SimulatedUnixFlavour.Darwin, Error (ReadDirectoryRefusal.UnenumerablePosition (_, 5L)) -> ()
             | flavour, other -> failwith $"%O{flavour}: %A{other}"
@@ -896,7 +908,12 @@ module TestDirectoryDescription =
         // it reads a removed directory, so the model must not be left at the
         // start, where SEEK_CUR would answer 0.
         let fd, system = withDirectory SimulatedUnixPlatform.macOsArm64 []
-        let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
+
+        let system =
+            Answered.rmdir (Callers.leader system) (rooted "d") system
+            |> completed "rmdir d"
+            |> snd
+
         let _, system = read fd system
 
         match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 1 system with

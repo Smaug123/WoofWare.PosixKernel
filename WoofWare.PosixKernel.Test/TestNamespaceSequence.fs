@@ -725,40 +725,61 @@ module TestNamespaceSequence =
                 failwith $"%A{op} did not return, though the filesystem holds nothing an open can sleep on"
 
         match op with
-        | Op.MkDir (path, mode) -> UnixNamespace.mkdir (arg path) mode system |> answered
-        | Op.MkDirAt (dir, path, mode) -> UnixNamespace.mkdirat (dirfd dir) (arg path) mode system |> answered
-        | Op.MkNod path -> UnixNamespace.mknod (arg path) 0o100644 0u system |> answered
-        | Op.RmDir path -> UnixNamespace.rmdir (arg path) system |> answered
-        | Op.Unlink path -> UnixNamespace.unlink (arg path) system |> answered
-        | Op.UnlinkAt (dir, path, flags) -> UnixNamespace.unlinkat (dirfd dir) (arg path) flags system |> answered
+        | Op.MkDir (path, mode) -> UnixNamespace.mkdir (Callers.leader system) (arg path) mode system |> answered
+        | Op.MkDirAt (dir, path, mode) ->
+            UnixNamespace.mkdirat (Callers.leader system) (dirfd dir) (arg path) mode system
+            |> answered
+        | Op.MkNod path ->
+            UnixNamespace.mknod (Callers.leader system) (arg path) 0o100644 0u system
+            |> answered
+        | Op.RmDir path -> UnixNamespace.rmdir (Callers.leader system) (arg path) system |> answered
+        | Op.Unlink path -> UnixNamespace.unlink (Callers.leader system) (arg path) system |> answered
+        | Op.UnlinkAt (dir, path, flags) ->
+            UnixNamespace.unlinkat (Callers.leader system) (dirfd dir) (arg path) flags system
+            |> answered
         | Op.Rename (source, destination) ->
-            match UnixNamespace.rename (arg source) system with
+            match UnixNamespace.rename (Callers.leader system) (arg source) system with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused ->
                 UnixNamespace.renameWithDestination (arg destination) paused |> answered
         | Op.RenameAt (sourceDir, source, destinationDir, destination) ->
-            match UnixNamespace.renameat (dirfd sourceDir) (arg source) (dirfd destinationDir) system with
+            match
+                UnixNamespace.renameat
+                    (Callers.leader system)
+                    (dirfd sourceDir)
+                    (arg source)
+                    (dirfd destinationDir)
+                    system
+            with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused ->
                 UnixNamespace.renameWithDestination (arg destination) paused |> answered
         | Op.Link (source, destination) ->
-            match UnixNamespace.link (arg source) system with
+            match UnixNamespace.link (Callers.leader system) (arg source) system with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused -> UnixNamespace.linkWithDestination (arg destination) paused |> answered
         | Op.LinkAt (sourceDir, source, destinationDir, destination, flags) ->
-            match UnixNamespace.linkat (dirfd sourceDir) (arg source) (dirfd destinationDir) flags system with
+            match
+                UnixNamespace.linkat
+                    (Callers.leader system)
+                    (dirfd sourceDir)
+                    (arg source)
+                    (dirfd destinationDir)
+                    flags
+                    system
+            with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused -> UnixNamespace.linkWithDestination (arg destination) paused |> answered
         | Op.Symlink (target, path) ->
-            match UnixNamespace.symlink (arg target) system with
+            match UnixNamespace.symlink (Callers.leader system) (arg target) system with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused -> UnixNamespace.symlinkWithPath (arg path) paused |> answered
         | Op.SymlinkAt (target, dir, path) ->
-            match UnixNamespace.symlinkat (arg target) (dirfd dir) system with
+            match UnixNamespace.symlinkat (Callers.leader system) (arg target) (dirfd dir) system with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused -> UnixNamespace.symlinkWithPath (arg path) paused |> answered
         | Op.CloneFile (source, destination, flags) ->
-            match UnixNamespace.cloneFile flags system with
+            match UnixNamespace.cloneFile (Callers.leader system) flags system with
             | CallProgress.Answered answer -> answered answer
             | CallProgress.NeedsCopyIn paused ->
                 match UnixNamespace.cloneFileWithSource (arg source) paused with
@@ -767,10 +788,16 @@ module TestNamespaceSequence =
                     UnixNamespace.cloneFileWithDestination (arg destination) paused |> answered
         | Op.ChDir path -> UnixPathResolution.chdir (Callers.leader system) (arg path) system |> answered
         | Op.Open (path, variant) ->
-            UnixNamespace.openPath system.Leader (openFlags platform variant) (arg path) 0o644 system
+            UnixNamespace.openPath (Callers.leader system) (openFlags platform variant) (arg path) 0o644 system
             |> openOutcome
         | Op.OpenAt (dir, path, variant) ->
-            UnixNamespace.openat system.Leader (dirfd dir) (arg path) (openFlags platform variant) 0o644 system
+            UnixNamespace.openat
+                (Callers.leader system)
+                (dirfd dir)
+                (arg path)
+                (openFlags platform variant)
+                0o644
+                system
             |> openOutcome
         | Op.Dup fd ->
             match descriptor fd with
@@ -826,7 +853,8 @@ module TestNamespaceSequence =
             match descriptor fd with
             | None -> unchanged Outcome.Skipped
             | Some fd ->
-                let answer, after = UnixNamespace.readDirectoryEntry fd system
+                let answer, after =
+                    UnixNamespace.readDirectoryEntry (Callers.leader system) fd system
 
                 Outcome.Directory answer,
                 { world with

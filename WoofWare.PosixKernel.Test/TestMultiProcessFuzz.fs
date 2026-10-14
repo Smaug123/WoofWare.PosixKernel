@@ -1130,7 +1130,7 @@ module TestMultiProcessFuzz =
             // `OpenOutcomes.answered` fails the run if the open sleeps: nothing
             // makes a FIFO, so none can.
             UnixNamespace.tryOpenPath
-                thread
+                (Caller.make pid thread)
                 (OpenFlagWords.encode (UnixSystem.platform view) openCreating)
                 (PathArg.ofText files.[path % files.Length])
                 0o644
@@ -1154,7 +1154,7 @@ module TestMultiProcessFuzz =
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
         | Op.MkDir dir ->
-            UnixNamespace.tryMkdir (PathArg.ofText dirs.[dir % dirs.Length]) 0o755 view
+            UnixNamespace.tryMkdir (Caller.make pid thread) (PathArg.ofText dirs.[dir % dirs.Length]) 0o755 view
             |> answered
         | Op.RmDir dir ->
             let path = dirs.[dir % dirs.Length]
@@ -1170,7 +1170,7 @@ module TestMultiProcessFuzz =
                 | Ok inode -> Some inode
                 | Error _ -> None
 
-            match UnixNamespace.tryRmdir (PathArg.ofText path) view with
+            match UnixNamespace.tryRmdir (Caller.make pid thread) (PathArg.ofText path) view with
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 let standsElsewhere =
                     machine.Processes
@@ -1305,7 +1305,7 @@ module TestMultiProcessFuzz =
             | made -> made
         | Op.Unblock signal -> mask SignalMaskChange.Unblock fatal.[signal % fatal.Length] view
         | Op.InotifyInit nonBlocking ->
-            match UnixInotify.tryInotifyInit1 (if nonBlocking then 0x800 else 0) view with
+            match UnixInotify.tryInotifyInit1 (Caller.make pid thread) (if nonBlocking then 0x800 else 0) view with
             | Ok (Ok (_, after)) -> Made.Answered after
             | Ok (Error _) -> Made.Answered view
             | Error _ -> Made.Refused
@@ -1313,27 +1313,46 @@ module TestMultiProcessFuzz =
             match pick inotify (ofKind pid isInotify view) with
             | None -> Made.Answered view
             | Some fd ->
-                Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view
+                Eager.tryInotifyAddWatchAs
+                    (Caller.make pid thread)
+                    fd
+                    (PathArg.ofText standing.[dir % standing.Length])
+                    inotifyEvents
+                    view
                 |> answered
         | Op.InotifyRmWatch (inotify, wd) ->
             match pick inotify (ofKind pid isInotify view) with
             | None -> Made.Answered view
-            | Some fd -> UnixInotify.tryInotifyRmWatch fd (1 + wd % 4) view |> answered
+            | Some fd ->
+                UnixInotify.tryInotifyRmWatch (Caller.make pid thread) fd (1 + wd % 4) view
+                |> answered
         | Op.InotifyRead inotify -> inotifyRead (pick inotify (ofKind pid isInotify view))
         | Op.InotifyReadNewest -> inotifyRead (newestInotify pid view)
         | Op.InotifyWatchNewest dir ->
             match newestInotify pid view with
             | None -> Made.Answered view
             | Some fd ->
-                Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view
+                Eager.tryInotifyAddWatchAs
+                    (Caller.make pid thread)
+                    fd
+                    (PathArg.ofText standing.[dir % standing.Length])
+                    inotifyEvents
+                    view
                 |> answered
         | Op.InotifyAwait dir ->
-            match UnixInotify.tryInotifyInit1 0 view with
+            match UnixInotify.tryInotifyInit1 (Caller.make pid thread) 0 view with
             | Error _ -> Made.Refused
             | Ok (Error _) -> Made.Answered view
             | Ok (Ok (fd, view)) ->
 
-            match Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view with
+            match
+                Eager.tryInotifyAddWatchAs
+                    (Caller.make pid thread)
+                    fd
+                    (PathArg.ofText standing.[dir % standing.Length])
+                    inotifyEvents
+                    view
+            with
             | Error _ -> Made.Refused
             | Ok (_, view) ->
 
@@ -1357,7 +1376,7 @@ module TestMultiProcessFuzz =
                 view
             |> answered
         | Op.Unlink path ->
-            UnixNamespace.tryUnlink (PathArg.ofText files.[path % files.Length]) view
+            UnixNamespace.tryUnlink (Caller.make pid thread) (PathArg.ofText files.[path % files.Length]) view
             |> answered
         | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup thread status view)
 

@@ -183,19 +183,20 @@ module TestStartingDirectory =
             let fd, system = opened "f2" system
 
             let system =
-                Answered.unlink (UnixPath.parseOrFail context "f2") system
+                Answered.unlink (Callers.leader system) (UnixPath.parseOrFail context "f2") system
                 |> completed "unlink(f2)"
 
             Some (fd, system)
         | "socket" -> Some (NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system)
         | "orphan" ->
             let system =
-                Answered.mkdir (PathArg.ofText "gone") 0o755 system |> completed "mkdir(gone)"
+                Answered.mkdir (Callers.leader system) (PathArg.ofText "gone") 0o755 system
+                |> completed "mkdir(gone)"
 
             let fd, system = opened "gone" system
 
             let system =
-                Answered.rmdir (UnixPath.parseOrFail context "gone") system
+                Answered.rmdir (Callers.leader system) (UnixPath.parseOrFail context "gone") system
                 |> completed "rmdir(gone)"
 
             Some (fd, system)
@@ -325,6 +326,7 @@ module TestStartingDirectory =
                     | Some (dirfd, system) ->
                         let actual =
                             UnixNamespace.trySymlinkatEager
+                                (Callers.leader system)
                                 (PathArg.ofText "target")
                                 dirfd
                                 (pathArgument path envelope.Platform)
@@ -369,8 +371,24 @@ module TestStartingDirectory =
 
                         let actual =
                             match side with
-                            | "old" -> UnixNamespace.tryLinkatEager dirfd p atFdCwd (PathArg.ofText "newlink") 0 system
-                            | _ -> UnixNamespace.tryLinkatEager atFdCwd (PathArg.ofText "f2") dirfd p 0 system
+                            | "old" ->
+                                UnixNamespace.tryLinkatEager
+                                    (Callers.leader system)
+                                    dirfd
+                                    p
+                                    atFdCwd
+                                    (PathArg.ofText "newlink")
+                                    0
+                                    system
+                            | _ ->
+                                UnixNamespace.tryLinkatEager
+                                    (Callers.leader system)
+                                    atFdCwd
+                                    (PathArg.ofText "f2")
+                                    dirfd
+                                    p
+                                    0
+                                    system
                             |> renderedLink
 
                         if actual <> expected then
@@ -720,6 +738,7 @@ module TestStartingDirectory =
                         // The probe's buffer was 64 bytes.
                         let actual =
                             UnixNamespace.tryReadlinkat
+                                (Callers.leader system)
                                 dirfd
                                 (pathArgument path envelope.Platform)
                                 UserBuffer.Mapped
@@ -773,7 +792,13 @@ module TestStartingDirectory =
                         | None -> yield $"%s{kind}: no such dirfd could be made"
                         | Some (dirfd, system) ->
                             let actual =
-                                UnixNamespace.tryReadlinkat dirfd (PathArg.ofText "") UserBuffer.Mapped 64 system
+                                UnixNamespace.tryReadlinkat
+                                    (Callers.leader system)
+                                    dirfd
+                                    (PathArg.ofText "")
+                                    UserBuffer.Mapped
+                                    64
+                                    system
                                 |> renderedLink
 
                             if actual <> expected then
@@ -790,7 +815,13 @@ module TestStartingDirectory =
                         | None -> yield $"%s{kind}: no such dirfd could be made"
                         | Some (dirfd, system) ->
                             let actual =
-                                UnixNamespace.tryReadlinkat dirfd (PathArg.ofText "") UserBuffer.Mapped size system
+                                UnixNamespace.tryReadlinkat
+                                    (Callers.leader system)
+                                    dirfd
+                                    (PathArg.ofText "")
+                                    UserBuffer.Mapped
+                                    size
+                                    system
                                 |> renderedLink
 
                             if actual <> expected then
@@ -807,13 +838,16 @@ module TestStartingDirectory =
                     let size = int (cell.Substring ("size=".Length, at - "size=".Length))
                     let expected = cell.Substring (at + 1)
 
+                    let system = boot envelope
+
                     let actual =
                         UnixNamespace.tryReadlinkat
+                            (Callers.leader system)
                             atFdCwd
                             PathArgumentBytes.Unreadable
                             UserBuffer.Mapped
                             size
-                            (boot envelope)
+                            system
                         |> renderedLink
 
                     if actual <> expected then
@@ -1021,7 +1055,12 @@ module TestStartingDirectory =
                     | Some (dirfd, system) ->
                         // The probe's mode.
                         let actual =
-                            UnixNamespace.tryMkdirat dirfd (pathArgument path envelope.Platform) 0o755 system
+                            UnixNamespace.tryMkdirat
+                                (Callers.leader system)
+                                dirfd
+                                (pathArgument path envelope.Platform)
+                                0o755
+                                system
                             |> renderedMkdirAt
 
                         if actual <> expected then
@@ -1231,13 +1270,18 @@ module TestStartingDirectory =
 
                     let fd, system = opened "d" (mkdirAtCell envelope "/c/w")
 
-                    let actual = UnixNamespace.tryMkdirat fd path mode system |> renderedCreation system
+                    let actual =
+                        UnixNamespace.tryMkdirat (Callers.leader system) fd path mode system
+                        |> renderedCreation system
 
                     if actual <> at then
                         yield $"mkdirat %s{label} 0o%o{mode}: the probe answered %s{at}, this library %s{actual}"
 
                     let system = mkdirAtCell envelope "/c/w/d"
-                    let actual = UnixNamespace.tryMkdir path mode system |> renderedCreation system
+
+                    let actual =
+                        UnixNamespace.tryMkdir (Callers.leader system) path mode system
+                        |> renderedCreation system
 
                     if actual <> plain then
                         yield $"mkdir %s{label} 0o%o{mode}: the probe answered %s{plain}, this library %s{actual}"
@@ -1258,7 +1302,12 @@ module TestStartingDirectory =
                     let expected = field "at=" at
 
                     let actual =
-                        UnixNamespace.tryMkdirat fd (pathOf (field "path=" path)) (modeOf mode) system
+                        UnixNamespace.tryMkdirat
+                            (Callers.leader system)
+                            fd
+                            (pathOf (field "path=" path))
+                            (modeOf mode)
+                            system
                         |> renderedCreation system
 
                     if actual <> expected then
@@ -1331,7 +1380,12 @@ module TestStartingDirectory =
                         let flags = if call = "unlinkat" then 0 else atRemoveDir flavour
 
                         let actual =
-                            UnixNamespace.tryUnlinkat dirfd (pathArgument path envelope.Platform) flags system
+                            UnixNamespace.tryUnlinkat
+                                (Callers.leader system)
+                                dirfd
+                                (pathArgument path envelope.Platform)
+                                flags
+                                system
                             |> renderedUnlinkAt
 
                         if actual <> expected then
@@ -1374,8 +1428,10 @@ module TestStartingDirectory =
                     let flag = 1 <<< bit
                     let expected = Map.tryFind flag rejected |> Option.defaultValue "ok"
 
+                    let system = boot envelope
+
                     let actual =
-                        UnixNamespace.tryUnlinkat atFdCwd (PathArg.ofText "f") flag (boot envelope)
+                        UnixNamespace.tryUnlinkat (Callers.leader system) atFdCwd (PathArg.ofText "f") flag system
                         |> renderedUnlinkAt
 
                     if actual.StartsWith "refused: the flag word" then
@@ -1416,8 +1472,10 @@ module TestStartingDirectory =
                     | "nx" -> atFdCwd, PathArg.ofText "nx"
                     | other -> failwith $"%s{context}: the probe has no FLAGORDER cell %s{other}"
 
+                let system = boot envelope
+
                 let actual =
-                    UnixNamespace.tryUnlinkat dirfd path 0x40000000 (boot envelope)
+                    UnixNamespace.tryUnlinkat (Callers.leader system) dirfd path 0x40000000 system
                     |> renderedUnlinkAt
 
                 if actual <> expected then
@@ -1600,8 +1658,8 @@ module TestStartingDirectory =
         : Result<SyscallAnswer * UnixSystem<int, string>, UnlinkAtRefusal>
         =
         match call with
-        | "unlink" -> UnixNamespace.tryUnlink path system
-        | "rmdir" -> UnixNamespace.tryRmdir path system
+        | "unlink" -> UnixNamespace.tryUnlink (Callers.leader system) path system
+        | "rmdir" -> UnixNamespace.tryRmdir (Callers.leader system) path system
         | other -> failwith $"%s{context}: the probe has no call %s{other}"
         |> Result.mapError UnlinkAtRefusal.Removal
 
@@ -1654,7 +1712,7 @@ module TestStartingDirectory =
                     let fd, system = opened "d" (unlinkAtCell envelope "/c/w")
 
                     let actual =
-                        UnixNamespace.tryUnlinkat fd path (flagsOf call) system
+                        UnixNamespace.tryUnlinkat (Callers.leader system) fd path (flagsOf call) system
                         |> renderedRemoval system
 
                     if actual <> at then
@@ -1685,11 +1743,17 @@ module TestStartingDirectory =
                     let fd, before = opened "d/sub" (unlinkAtCell envelope "/c/w")
 
                     let first, system =
-                        UnixNamespace.tryUnlinkat fd (PathArg.ofText "../sub") (atRemoveDir flavour) before
+                        UnixNamespace.tryUnlinkat
+                            (Callers.leader before)
+                            fd
+                            (PathArg.ofText "../sub")
+                            (atRemoveDir flavour)
+                            before
                         |> answer
 
                     let second, after =
-                        UnixNamespace.tryUnlinkat fd path (flagsOf thenCall) system |> answer
+                        UnixNamespace.tryUnlinkat (Callers.leader system) fd path (flagsOf thenCall) system
+                        |> answer
 
                     let actual = $"%s{first};%s{second}" + goneSince before after
 
@@ -1756,7 +1820,7 @@ module TestStartingDirectory =
 
                     let system = unlinkAtCell envelope "/c/w/d"
 
-                    match UnixNamespace.tryUnlinkat dirfd path flags system with
+                    match UnixNamespace.tryUnlinkat (Callers.leader system) dirfd path flags system with
                     | Error (UnlinkAtRefusal.UnmodelledFlags refused) ->
                         // Refused only where the probe saw the word accepted.
                         if refused.Flags <> flags || expected = "EINVAL" then
@@ -2207,7 +2271,12 @@ module TestStartingDirectory =
                             Eager.tryRenameat fd (PathArg.ofText "../sub") fd (PathArg.ofText "../sub2") before
                             |> firstAnswer
                         | _ ->
-                            UnixNamespace.tryUnlinkat fd (PathArg.ofText "../sub") (atRemoveDir flavour) before
+                            UnixNamespace.tryUnlinkat
+                                (Callers.leader before)
+                                fd
+                                (PathArg.ofText "../sub")
+                                (atRemoveDir flavour)
+                                before
                             |> firstAnswer
 
                     let actual =
@@ -2227,7 +2296,9 @@ module TestStartingDirectory =
                         | "rename" ->
                             Eager.tryRename (PathArg.ofText "../sub") (PathArg.ofText "../sub2") before
                             |> firstAnswer
-                        | _ -> UnixNamespace.tryRmdir (PathArg.ofText "../sub") before |> firstAnswer
+                        | _ ->
+                            UnixNamespace.tryRmdir (Callers.leader before) (PathArg.ofText "../sub") before
+                            |> firstAnswer
 
                     let actual =
                         firstDone + ";" + (Eager.tryRename old newPath system |> renderedRename before)
@@ -2585,6 +2656,7 @@ module TestStartingDirectory =
                         | Some (dirfd, system) ->
                             let actual =
                                 UnixNamespace.tryMknodat
+                                    (Callers.leader system)
                                     dirfd
                                     (pathArgument path envelope.Platform)
                                     regularFileMode
@@ -3000,8 +3072,8 @@ module TestStartingDirectory =
             let argument = PathArgumentBytes.Bytes (UnixPath.toByteString path)
             let inCwd = walkSystem platform credentials cwd
 
-            UnixNamespace.tryReadlinkat (atFdCwd flavour) argument UserBuffer.Mapped 64 inCwd
-            |> shouldEqual (UnixNamespace.tryReadlink argument UserBuffer.Mapped 64 inCwd)
+            UnixNamespace.tryReadlinkat (Callers.leader inCwd) (atFdCwd flavour) argument UserBuffer.Mapped 64 inCwd
+            |> shouldEqual (UnixNamespace.tryReadlink (Callers.leader inCwd) argument UserBuffer.Mapped 64 inCwd)
 
             // Opened as root, as the descriptor properties above do, and
             // compared with readlink from the same tree, whose unowned
@@ -3035,8 +3107,10 @@ module TestStartingDirectory =
                     }
                 )
 
-            UnixNamespace.tryReadlinkat fd argument UserBuffer.Mapped 64 atRoot
-            |> shouldEqual (UnixNamespace.tryReadlink argument UserBuffer.Mapped 64 heldInCwd)
+            UnixNamespace.tryReadlinkat (Callers.leader atRoot) fd argument UserBuffer.Mapped 64 atRoot
+            |> shouldEqual (
+                UnixNamespace.tryReadlink (Callers.leader heldInCwd) argument UserBuffer.Mapped 64 heldInCwd
+            )
 
         Check.One (config, Prop.forAll (Arb.fromGen walkCase) property)
 
@@ -3140,8 +3214,8 @@ module TestStartingDirectory =
             let argument = PathArgumentBytes.Bytes (UnixPath.toByteString path)
             let inCwd = walkSystem platform credentials cwd
 
-            UnixNamespace.tryMkdirat (atFdCwd flavour) argument mode inCwd
-            |> shouldEqual (UnixNamespace.tryMkdir argument mode inCwd)
+            UnixNamespace.tryMkdirat (Callers.leader inCwd) (atFdCwd flavour) argument mode inCwd
+            |> shouldEqual (UnixNamespace.tryMkdir (Callers.leader inCwd) argument mode inCwd)
 
             // Opened as root, as the descriptor properties above do, and
             // compared with mkdir from the same tree, whose unowned entries are
@@ -3174,9 +3248,12 @@ module TestStartingDirectory =
                 | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
                 | Error refusal -> Error refusal
 
-            UnixNamespace.tryMkdirat fd argument mode atRoot
+            UnixNamespace.tryMkdirat (Callers.leader atRoot) fd argument mode atRoot
             |> outcome
-            |> shouldEqual (UnixNamespace.tryMkdir argument mode heldInCwd |> outcome)
+            |> shouldEqual (
+                UnixNamespace.tryMkdir (Callers.leader heldInCwd) argument mode heldInCwd
+                |> outcome
+            )
 
         Check.One (config, Prop.forAll (Arb.fromGen mkdirCase) property)
 
@@ -3207,8 +3284,8 @@ module TestStartingDirectory =
             let argument = PathArgumentBytes.Bytes (UnixPath.toByteString path)
             let inCwd = walkSystem platform credentials cwd
 
-            UnixNamespace.tryMknodat (atFdCwd flavour) argument mode dev inCwd
-            |> shouldEqual (UnixNamespace.tryMknod argument mode dev inCwd)
+            UnixNamespace.tryMknodat (Callers.leader inCwd) (atFdCwd flavour) argument mode dev inCwd
+            |> shouldEqual (UnixNamespace.tryMknod (Callers.leader inCwd) argument mode dev inCwd)
 
             // Opened as root, as the descriptor properties above do, and
             // compared with mknod from the same tree, whose unowned entries are
@@ -3241,9 +3318,12 @@ module TestStartingDirectory =
                 | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
                 | Error refusal -> Error refusal
 
-            UnixNamespace.tryMknodat fd argument mode dev atRoot
+            UnixNamespace.tryMknodat (Callers.leader atRoot) fd argument mode dev atRoot
             |> outcome
-            |> shouldEqual (UnixNamespace.tryMknod argument mode dev heldInCwd |> outcome)
+            |> shouldEqual (
+                UnixNamespace.tryMknod (Callers.leader heldInCwd) argument mode dev heldInCwd
+                |> outcome
+            )
 
         Check.One (config, Prop.forAll (Arb.fromGen mknodCase) property)
 
@@ -3272,14 +3352,14 @@ module TestStartingDirectory =
 
             let plain (system : UnixSystem<int, string>) =
                 if removeDir then
-                    UnixNamespace.tryRmdir argument system
+                    UnixNamespace.tryRmdir (Callers.leader system) argument system
                 else
-                    UnixNamespace.tryUnlink argument system
+                    UnixNamespace.tryUnlink (Callers.leader system) argument system
                 |> Result.mapError UnlinkAtRefusal.Removal
 
             let inCwd = walkSystem platform credentials cwd
 
-            UnixNamespace.tryUnlinkat (atFdCwd flavour) argument flags inCwd
+            UnixNamespace.tryUnlinkat (Callers.leader inCwd) (atFdCwd flavour) argument flags inCwd
             |> shouldEqual (plain inCwd)
 
             // Opened as root, as the descriptor properties above do, and
@@ -3315,7 +3395,7 @@ module TestStartingDirectory =
                 | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
                 | Error refusal -> Error refusal
 
-            UnixNamespace.tryUnlinkat fd argument flags atRoot
+            UnixNamespace.tryUnlinkat (Callers.leader atRoot) fd argument flags atRoot
             |> outcome
             |> shouldEqual (plain heldInCwd |> outcome)
 

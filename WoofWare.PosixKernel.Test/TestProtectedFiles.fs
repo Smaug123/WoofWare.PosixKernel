@@ -580,7 +580,12 @@ module TestProtectedFiles =
 
         let readlinkText =
             match
-                UnixNamespace.tryReadlink (PathArg.ofPath (path "/s/lf")) UserBuffer.Mapped 4096 system
+                UnixNamespace.tryReadlink
+                    (Callers.leader system)
+                    (PathArg.ofPath (path "/s/lf"))
+                    UserBuffer.Mapped
+                    4096
+                    system
                 |> ok
             with
             | ReadLinkAnswer.Reported _ -> "ok"
@@ -637,7 +642,7 @@ module TestProtectedFiles =
             "cycle-stat", stat "/s/lcyc"
             "via-chain", stat "/v/via"
             "unlink",
-            UnixNamespace.tryUnlink (PathArg.ofPath (path "/s/lf")) system
+            UnixNamespace.tryUnlink (Callers.leader system) (PathArg.ofPath (path "/s/lf")) system
             |> ok
             |> fst
             |> answerText
@@ -933,12 +938,18 @@ module TestProtectedFiles =
                 // except through a trailing separator.
                 "readlink of p/",
                 (fun p ->
-                    UnixNamespace.tryReadlink (bytes (p + "/")) UserBuffer.Mapped 64 system
+                    UnixNamespace.tryReadlink (Callers.leader system) (bytes (p + "/")) UserBuffer.Mapped 64 system
                     |> ofReadLink
                 )
                 "readlinkat of p/",
                 (fun p ->
-                    UnixNamespace.tryReadlinkat atFdCwd (bytes (p + "/")) UserBuffer.Mapped 64 system
+                    UnixNamespace.tryReadlinkat
+                        (Callers.leader system)
+                        atFdCwd
+                        (bytes (p + "/"))
+                        UserBuffer.Mapped
+                        64
+                        system
                     |> ofReadLink
                 )
                 "linkat(AT_SYMLINK_FOLLOW)",

@@ -1009,7 +1009,7 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            match UnixNamespace.tryReadDirectoryEntry fd system with
+            match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
             | Ok (ReadDirectoryAnswer.Failed UnixError.ENOTDIR, after) -> after |> shouldEqual system
             | other -> failwith $"%O{device}: expected ENOTDIR, got %A{other}"
 

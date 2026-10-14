@@ -458,17 +458,27 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostMkdir (onHost paths.[path], 0o755)))
-                                (UnixNamespace.tryMkdir (PathArg.ofText paths.[path]) 0o755 system.Value)
+                                (UnixNamespace.tryMkdir
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    0o755
+                                    system.Value)
                         | Op.RmDir path ->
                             answered
                                 op
                                 (hostAnswer (hostRmdir (onHost paths.[path])))
-                                (UnixNamespace.tryRmdir (PathArg.ofText paths.[path]) system.Value)
+                                (UnixNamespace.tryRmdir
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    system.Value)
                         | Op.Unlink path ->
                             answered
                                 op
                                 (hostAnswer (hostUnlink (onHost paths.[path])))
-                                (UnixNamespace.tryUnlink (PathArg.ofText paths.[path]) system.Value)
+                                (UnixNamespace.tryUnlink
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    system.Value)
                         | Op.Link (existing, path) ->
                             answered
                                 op
@@ -640,7 +650,11 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostRmWatch (hostFds.[instance], wd)))
-                                (UnixInotify.tryInotifyRmWatch modelFds.[instance] wd system.Value
+                                (UnixInotify.tryInotifyRmWatch
+                                    (Callers.leader system.Value)
+                                    modelFds.[instance]
+                                    wd
+                                    system.Value
                                  |> Result.mapError InotifyRefusal.describe)
 
                         for instance in 0..1 do

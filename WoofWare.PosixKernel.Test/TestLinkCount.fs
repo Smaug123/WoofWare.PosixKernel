@@ -94,7 +94,7 @@ module TestLinkCount =
         match step with
         | LinkCountStep.MakeDirectory path ->
             let _, system =
-                Answered.mkdir (PathArg.ofPath (rooted path)) 0o755 system
+                Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted path)) 0o755 system
                 |> completed $"mkdir %s{path}"
 
             held, system
@@ -106,9 +106,16 @@ module TestLinkCount =
             match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
             | Ok (SyscallAnswer.Completed _, system) -> held, system
             | other -> failwith $"close %d{fd}: %A{other}"
-        | LinkCountStep.Unlink path -> held, Answered.unlink (rooted path) system |> completed $"unlink %s{path}" |> snd
+        | LinkCountStep.Unlink path ->
+            held,
+            Answered.unlink (Callers.leader system) (rooted path) system
+            |> completed $"unlink %s{path}"
+            |> snd
         | LinkCountStep.RemoveDirectory path ->
-            held, Answered.rmdir (rooted path) system |> completed $"rmdir %s{path}" |> snd
+            held,
+            Answered.rmdir (Callers.leader system) (rooted path) system
+            |> completed $"rmdir %s{path}"
+            |> snd
         | LinkCountStep.Rename (source, destination) ->
             match Eager.tryRename (PathArg.ofText $"/%s{source}") (PathArg.ofText $"/%s{destination}") system with
             | Ok result -> held, result |> completed $"rename %s{source} %s{destination}" |> snd
@@ -273,7 +280,8 @@ module TestLinkCount =
                 Answered.chdir (Callers.leader system) (PathArg.ofText "/c") system
                 |> completed "chdir"
 
-            let _, system = Answered.rmdir (rooted "c") system |> completed "rmdir"
+            let _, system =
+                Answered.rmdir (Callers.leader system) (rooted "c") system |> completed "rmdir"
 
             let here =
                 UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText ".") system

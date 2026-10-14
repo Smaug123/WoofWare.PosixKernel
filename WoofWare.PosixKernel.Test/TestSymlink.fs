@@ -354,12 +354,15 @@ module TestSymlink =
                         else
                             probe
 
+                    let system = probeCell envelope
+
                     let actual =
                         UnixNamespace.trySymlinkatEager
+                            (Callers.leader system)
                             (orderTarget envelope targetLabel)
                             dirfd
                             (orderName envelope nameLabel)
-                            (probeCell envelope)
+                            system
                         |> rendered
 
                     if actual <> expected then
@@ -510,7 +513,7 @@ module TestSymlink =
             let system =
                 Eager.trySymlink (ofBytes target) (text "n") (probeCell envelope) |> created
 
-            match UnixNamespace.tryReadlink (text "n") UserBuffer.Mapped 4096 system with
+            match UnixNamespace.tryReadlink (Callers.leader system) (text "n") UserBuffer.Mapped 4096 system with
             | Ok (ReadLinkAnswer.Reported written) -> written |> List.ofSeq |> shouldEqual target
             | other -> failwith $"%s{context}: readlink did not report: %A{other}"
 
@@ -534,7 +537,9 @@ module TestSymlink =
                 let system = probeCell envelope
 
                 let direct =
-                    match UnixNamespace.trySymlinkatEager (text target) atFdCwd (text path) system with
+                    match
+                        UnixNamespace.trySymlinkatEager (Callers.leader system) (text target) atFdCwd (text path) system
+                    with
                     | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
                     | Error refusal -> Error (SyscallRefusal.Symlink refusal)
 

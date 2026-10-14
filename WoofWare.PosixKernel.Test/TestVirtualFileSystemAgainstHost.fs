@@ -906,6 +906,7 @@ module TestVirtualFileSystemAgainstHost =
 
         match
             UnixNamespace.tryReadlink
+                (Callers.leader system)
                 (PathArg.ofPath (UnixPath.parseOrFail "test" relative))
                 UserBuffer.Mapped
                 capacity

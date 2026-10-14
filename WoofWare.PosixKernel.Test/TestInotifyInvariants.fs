@@ -61,7 +61,7 @@ module TestInotifyInvariants =
         |> Configured.expectOk InotifyLimitsRefusal.describe
 
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
         | Ok (Ok created) -> created
         | other -> failwith $"inotify_init1: %A{other}"
 
@@ -326,13 +326,13 @@ module TestInotifyInvariants =
     let ``an instance under the Darwin flavour is a defect, and every call is refused`` () : unit =
         let darwin = bootWith id SimulatedUnixPlatform.macOsArm64
 
-        UnixInotify.tryInotifyInit1 0 darwin
+        UnixInotify.tryInotifyInit1 (Callers.leader darwin) 0 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
         Eager.tryInotifyAddWatch 0 (PathArg.ofText "d1") 0x100u darwin
         |> shouldEqual (Error (InotifyAddWatchRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
-        UnixInotify.tryInotifyRmWatch 0 1 darwin
+        UnixInotify.tryInotifyRmWatch (Callers.leader darwin) 0 1 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
         match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0) darwin with
@@ -470,7 +470,7 @@ module TestInotifyInvariants =
             |> Machines.inProcess
                 pid
                 (fun view ->
-                    match UnixInotify.tryInotifyInit1 0x800 view with
+                    match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) 0x800 view with
                     | Ok (Ok (fd, view)) -> Ok fd, view
                     | Ok (Error error) -> Error error, view
                     | Error refusal -> failwith $"%A{refusal}"
@@ -487,7 +487,14 @@ module TestInotifyInvariants =
             |> Machines.inProcess
                 pid
                 (fun view ->
-                    match Eager.tryInotifyAddWatch fd (PathArg.ofText path) 0x100u view with
+                    match
+                        Eager.tryInotifyAddWatchAs
+                            (Caller.make pid (Proc.leader pid view))
+                            fd
+                            (PathArg.ofText path)
+                            0x100u
+                            view
+                    with
                     | Ok answered -> answered
                     | Error refusal -> failwith $"%A{refusal}"
                 )
@@ -535,7 +542,10 @@ module TestInotifyInvariants =
 
         let system, _, _ = instance
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyRmWatch (3, 1)) system, UnixInotify.tryInotifyRmWatch 3 1 system with
+        match
+            UnixSystem.tryStep 0 (Syscall.InotifyRmWatch (3, 1)) system,
+            UnixInotify.tryInotifyRmWatch (Callers.leader system) 3 1 system
+        with
         | Ok (SyscallOutcome.Answered stepped, afterStep), Ok (answered, after) ->
             stepped |> shouldEqual answered
             afterStep |> shouldEqual after
@@ -670,7 +680,12 @@ module TestInotifyInvariants =
                     match Array.tryFindIndex Option.isNone slots with
                     | None -> ()
                     | Some free ->
-                        match UnixInotify.tryInotifyInit1 (if nonBlocking then 0x800 else 0) system with
+                        match
+                            UnixInotify.tryInotifyInit1
+                                (Callers.leader system)
+                                (if nonBlocking then 0x800 else 0)
+                                system
+                        with
                         | Ok (Ok (fd, after)) ->
                             system <- after
                             slots.[free] <- Some fd
@@ -685,7 +700,7 @@ module TestInotifyInvariants =
                 | Op.Remove (slot, wd) ->
                     let fd = slots.[slot] |> Option.defaultValue 99
 
-                    match UnixInotify.tryInotifyRmWatch fd wd system with
+                    match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
                     | Ok (_, after) ->
                         system <- after
 

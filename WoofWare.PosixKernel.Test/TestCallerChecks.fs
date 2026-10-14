@@ -25,11 +25,12 @@ module TestCallerChecks =
         }
 
     /// One call of each public function of the families that take a caller:
-    /// the descriptor and pipe calls on the standard streams, which every
-    /// flavour gives as pipes, and the path calls on the root directory, so
-    /// that a call's `dirfd` is never looked up.
+    /// the descriptor, pipe and inotify calls on the standard streams, which
+    /// every flavour gives as pipes, and the path and namespace calls on the
+    /// root directory, so that a call's `dirfd` is never looked up.
     let private calls : Call list =
         let root = PathArg.ofText "/"
+        let file = PathArg.ofText "/f"
 
         let running (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
             {
@@ -202,6 +203,84 @@ module TestCallerChecks =
             running
                 "UnixEntropy.getEntropy"
                 (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
+            running
+                "UnixNamespace.openPath"
+                (fun caller system -> UnixNamespace.openPath caller 0 root 0 system |> ignore)
+            running
+                "UnixNamespace.openat"
+                (fun caller system -> UnixNamespace.openat caller 0 root 0 0 system |> ignore)
+            running
+                "UnixNamespace.readlink"
+                (fun caller system ->
+                    UnixNamespace.readlink caller root UserBuffer.Mapped 64 system
+                    |> ignore<ReadLinkAnswer>
+                )
+            running
+                "UnixNamespace.readlinkat"
+                (fun caller system ->
+                    UnixNamespace.readlinkat caller 0 root UserBuffer.Mapped 64 system
+                    |> ignore<ReadLinkAnswer>
+                )
+            running
+                "UnixNamespace.readDirectoryEntry"
+                (fun caller system -> UnixNamespace.readDirectoryEntry caller 0 system |> ignore)
+            running "UnixNamespace.mkdir" (fun caller system -> UnixNamespace.mkdir caller root 0o755 system |> ignore)
+            running
+                "UnixNamespace.mkdirat"
+                (fun caller system -> UnixNamespace.mkdirat caller 0 root 0o755 system |> ignore)
+            // S_IFREG, which each flavour makes as a creating open does.
+            running
+                "UnixNamespace.mknod"
+                (fun caller system -> UnixNamespace.mknod caller file 0o100644 0u system |> ignore)
+            running
+                "UnixNamespace.mknodat"
+                (fun caller system -> UnixNamespace.mknodat caller 0 file 0o100644 0u system |> ignore)
+            running "UnixNamespace.unlink" (fun caller system -> UnixNamespace.unlink caller root system |> ignore)
+            running "UnixNamespace.rmdir" (fun caller system -> UnixNamespace.rmdir caller root system |> ignore)
+            running
+                "UnixNamespace.unlinkat"
+                (fun caller system -> UnixNamespace.unlinkat caller 0 root 0 system |> ignore)
+            running "UnixNamespace.rename" (fun caller system -> UnixNamespace.rename caller root system |> ignore)
+            running
+                "UnixNamespace.renameat"
+                (fun caller system -> UnixNamespace.renameat caller 0 root 0 system |> ignore)
+            running "UnixNamespace.cloneFile" (fun caller system -> UnixNamespace.cloneFile caller 0 system |> ignore)
+            running "UnixNamespace.symlink" (fun caller system -> UnixNamespace.symlink caller root system |> ignore)
+            running
+                "UnixNamespace.symlinkat"
+                (fun caller system -> UnixNamespace.symlinkat caller root 0 system |> ignore)
+            running "UnixNamespace.link" (fun caller system -> UnixNamespace.link caller root system |> ignore)
+            running
+                "UnixNamespace.linkat"
+                (fun caller system -> UnixNamespace.linkat caller 0 root 0 0 system |> ignore)
+            // Internal: `UnixSystem.step`'s ways into `symlinkat`, `linkat` and
+            // `clonefile`.
+            running
+                "UnixNamespace.symlinkat"
+                (fun caller system ->
+                    UnixNamespace.trySymlinkatEager caller root 0 file system
+                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, SymlinkRefusal>>
+                )
+            running
+                "UnixNamespace.linkat"
+                (fun caller system ->
+                    UnixNamespace.tryLinkatEager caller 0 root 0 file 0 system
+                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, LinkRefusal>>
+                )
+            running
+                "UnixNamespace.cloneFile"
+                (fun caller system ->
+                    UnixNamespace.tryCloneFileEager caller root file 0 system
+                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>>
+                )
+            running "UnixInotify.inotifyInit1" (fun caller system -> UnixInotify.inotifyInit1 caller 0 system |> ignore)
+            // IN_CREATE.
+            running
+                "UnixInotify.inotifyAddWatch"
+                (fun caller system -> UnixInotify.inotifyAddWatch caller 0 0x100u system |> ignore)
+            running
+                "UnixInotify.inotifyRmWatch"
+                (fun caller system -> UnixInotify.inotifyRmWatch caller 0 1 system |> ignore)
             {
                 Name = "UnixDescriptor.flockAcquire"
                 Requirement = CallerRequirement.Woken

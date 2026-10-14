@@ -214,7 +214,7 @@ module TestDeviceFileSystem =
             | Error (OpenRefusal.Path (PathRefusal.UnmodelledDeviceName _)) -> ()
             | other -> failwith $"open(O_CREAT) /dev/%s{unknown}: expected a refusal, got %A{other}"
 
-            match UnixNamespace.tryMkdir (PathArg.ofText $"/dev/%s{unknown}") 0o755 system with
+            match UnixNamespace.tryMkdir (Callers.leader system) (PathArg.ofText $"/dev/%s{unknown}") 0o755 system with
             | Error (PathRefusal.UnmodelledDeviceName _) -> ()
             | other -> failwith $"mkdir /dev/%s{unknown}: expected a refusal, got %A{other}"
 
@@ -380,7 +380,7 @@ module TestDeviceFileSystem =
             | Ok fd, system -> fd, system
             | Error error, _ -> failwith $"opening /dev: %O{error}"
 
-        match UnixNamespace.tryReadDirectoryEntry fd system with
+        match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
         | Error (ReadDirectoryRefusal.DeviceFileSystem _) -> ()
         | other -> failwith $"reading /dev: expected a refusal, got %A{other}"
 
@@ -430,20 +430,20 @@ module TestDeviceFileSystem =
             | Ok answer -> failed answer
             | Error refusal -> failwith $"refused: %s{RenameRefusal.describe refusal}"
 
-        removal (UnixNamespace.tryRmdir (PathArg.ofText "/dev") unprivileged)
+        removal (UnixNamespace.tryRmdir (Callers.leader unprivileged) (PathArg.ofText "/dev") unprivileged)
         |> shouldEqual (Some UnixError.EACCES)
 
-        removal (UnixNamespace.tryRmdir (PathArg.ofText "/dev") root)
+        removal (UnixNamespace.tryRmdir (Callers.leader root) (PathArg.ofText "/dev") root)
         |> shouldEqual (Some UnixError.EBUSY)
 
-        removal (UnixNamespace.tryUnlink (PathArg.ofText "/dev") unprivileged)
+        removal (UnixNamespace.tryUnlink (Callers.leader unprivileged) (PathArg.ofText "/dev") unprivileged)
         |> shouldEqual (Some UnixError.EACCES)
 
-        removal (UnixNamespace.tryUnlink (PathArg.ofText "/dev") root)
+        removal (UnixNamespace.tryUnlink (Callers.leader root) (PathArg.ofText "/dev") root)
         |> shouldEqual (Some UnixError.EISDIR)
 
         for system in [ unprivileged ; root ] do
-            removal (UnixNamespace.tryRmdir (PathArg.ofText "/dev/.") system)
+            removal (UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofText "/dev/.") system)
             |> shouldEqual (Some UnixError.EINVAL)
 
         renamed unprivileged "/devx" |> shouldEqual (Some UnixError.EACCES)
@@ -454,7 +454,7 @@ module TestDeviceFileSystem =
         | Error (RenameRefusal.MountPoint _) -> ()
         | other -> failwith $"rename /d -> /dev: expected a refusal, got %A{other}"
 
-        UnixNamespace.tryMkdir (PathArg.ofText "/dev") 0o755 unprivileged
+        UnixNamespace.tryMkdir (Callers.leader unprivileged) (PathArg.ofText "/dev") 0o755 unprivileged
         |> Result.map failed
         |> shouldEqual (Ok (Some UnixError.EEXIST))
 
@@ -509,7 +509,7 @@ module TestDeviceFileSystem =
                 sticky
 
         for removal in [ UnixNamespace.tryRmdir ; UnixNamespace.tryUnlink ] do
-            match removal (PathArg.ofText "/dev") sticky with
+            match removal (Callers.leader sticky) (PathArg.ofText "/dev") sticky with
             | Error (RemovalRefusal.MountPoint _) -> ()
             | other -> failwith $"removing /dev from a sticky root: expected a refusal, got %A{other}"
 
@@ -527,11 +527,11 @@ module TestDeviceFileSystem =
         let root = bootedAsRoot linux
 
         // Its root is root's, mode 0755: uid 1000 is refused by the bits.
-        match UnixNamespace.tryUnlink (PathArg.ofText "/dev/null") unprivileged with
+        match UnixNamespace.tryUnlink (Callers.leader unprivileged) (PathArg.ofText "/dev/null") unprivileged with
         | Ok answer -> failed answer |> shouldEqual (Some UnixError.EACCES)
         | Error refusal -> failwith $"refused: %s{RemovalRefusal.describe refusal}"
 
-        match UnixNamespace.tryUnlink (PathArg.ofText "/dev/null") root with
+        match UnixNamespace.tryUnlink (Callers.leader root) (PathArg.ofText "/dev/null") root with
         | Error (RemovalRefusal.DeviceFileSystem (_, removed)) -> removed |> shouldEqual (name "null")
         | other -> failwith $"unlink /dev/null as root: expected a refusal, got %A{other}"
 
@@ -619,7 +619,7 @@ module TestDeviceFileSystem =
         Eager.tryAccess (PathArg.ofText "/dev/urandom") 1 system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EACCES))
 
-        UnixNamespace.tryReadlink (PathArg.ofText "/dev/null") UserBuffer.Mapped 16 system
+        UnixNamespace.tryReadlink (Callers.leader system) (PathArg.ofText "/dev/null") UserBuffer.Mapped 16 system
         |> shouldEqual (Ok (ReadLinkAnswer.Failed UnixError.EINVAL))
 
         Answered.chdir (Callers.leader system) (PathArg.ofText "/dev/null") system

@@ -1369,7 +1369,13 @@ module TestCrossProcess =
 
         // ...and a stands in a directory b has removed.
         let machine =
-            Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+                machine
 
         let machine =
             Machines.doIn
@@ -1383,7 +1389,13 @@ module TestCrossProcess =
         let standing = (Proc.state a (Machines.viewOf a machine)).CurrentDirectoryInode
 
         let machine =
-            Machines.doIn b (fun view -> Answered.rmdir (UnixPath.parseOrFail "test" "/d") view |> snd) machine
+            Machines.doIn
+                b
+                (fun view ->
+                    Answered.rmdir (Caller.make b (Proc.leader b view)) (UnixPath.parseOrFail "test" "/d") view
+                    |> snd
+                )
+                machine
 
         Machines.assertClean machine
 
@@ -1523,7 +1535,15 @@ module TestCrossProcess =
                 | other -> failwith $"the descriptor names %A{other}"
 
             let answer, machine =
-                Machines.inProcess a (Answered.unlink (UnixPath.parseOrFail "test" "/shared")) machine
+                Machines.inProcess
+                    a
+                    (fun view ->
+                        Answered.unlink
+                            (Caller.make a (Proc.leader a view))
+                            (UnixPath.parseOrFail "test" "/shared")
+                            view
+                    )
+                    machine
 
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
             Machines.assertClean machine
@@ -1620,9 +1640,10 @@ module TestCrossProcess =
 
     // ------------------------------------------------------- inotify
 
-    /// `inotify_init1(flags)` and a watch of `path` for `mask`, in `view`: the
-    /// instance's descriptor.
+    /// `inotify_init1(flags)` and a watch of `path` for `mask`, by the leader
+    /// of the process `pid` in `view`: the instance's descriptor.
     let private watching
+        (pid : ProcessId)
         (flags : int)
         (path : string)
         (mask : uint32)
@@ -1630,11 +1651,13 @@ module TestCrossProcess =
         : int * UnixSystem<int, string>
         =
         let fd, view =
-            match UnixInotify.tryInotifyInit1 flags view with
+            match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) flags view with
             | Ok (Ok created) -> created
             | other -> failwith $"inotify_init1: %A{other}"
 
-        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask view with
+        match
+            Eager.tryInotifyAddWatchAs (Caller.make pid (Proc.leader pid view)) fd (PathArg.ofText path) mask view
+        with
         | Ok (SyscallAnswer.Completed _, view) -> fd, view
         | other -> failwith $"inotify_add_watch(%s{path}): %A{other}"
 
@@ -1678,10 +1701,16 @@ module TestCrossProcess =
         let a, b = pids.[0], pids.[1]
 
         let machine =
-            Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+                machine
 
         // Blocking, so that the read sleeps.
-        let fd, machine = Machines.inProcess a (watching 0 "/d" inCreate) machine
+        let fd, machine = Machines.inProcess a (watching a 0 "/d" inCreate) machine
 
         let machine =
             Machines.doIn
@@ -1725,11 +1754,21 @@ module TestCrossProcess =
 
         let machine =
             machine
-            |> Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd)
-            |> Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/e") 0o755 view |> snd)
+            |> Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+            |> Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/e") 0o755 view
+                    |> snd
+                )
 
-        let inA, machine = Machines.inProcess a (watching 0x800 "/d" inCreate) machine
-        let inB, machine = Machines.inProcess b (watching 0x800 "/e" inCreate) machine
+        let inA, machine = Machines.inProcess a (watching a 0x800 "/d" inCreate) machine
+        let inB, machine = Machines.inProcess b (watching b 0x800 "/e" inCreate) machine
 
         // A change in a process's own view, to what its own instance watches,
         // and to what the other process's instance watches.

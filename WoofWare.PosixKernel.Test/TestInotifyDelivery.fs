@@ -1059,9 +1059,11 @@ module TestInotifyDelivery =
         match op with
         | Op.Create (i, exclusive) -> opened (openFlags FileAccessMode.WriteOnly true exclusive false) i
         | Op.OpenTruncate i -> opened (openFlags FileAccessMode.WriteOnly false false true) i
-        | Op.MkDir i -> UnixNamespace.tryMkdir (path i) 0o755 system |> unrefused
-        | Op.RmDir i -> UnixNamespace.tryRmdir (path i) system |> unrefused
-        | Op.Unlink i -> UnixNamespace.tryUnlink (path i) system |> unrefused
+        | Op.MkDir i ->
+            UnixNamespace.tryMkdir (Callers.leader system) (path i) 0o755 system
+            |> unrefused
+        | Op.RmDir i -> UnixNamespace.tryRmdir (Callers.leader system) (path i) system |> unrefused
+        | Op.Unlink i -> UnixNamespace.tryUnlink (Callers.leader system) (path i) system |> unrefused
         | Op.Link (existing, i) -> Eager.tryLink (path existing) (path i) system |> unrefused
         | Op.Symlink (target, i) -> Eager.trySymlink (path target) (path i) system |> unrefused
         | Op.Rename (source, destination) -> Eager.tryRename (path source) (path destination) system |> unrefused
@@ -1098,7 +1100,9 @@ module TestInotifyDelivery =
         | Op.AddWatch (instance, i, mask, dontFollow) ->
             Eager.tryInotifyAddWatch fds.[instance] (path i) (mask ||| (if dontFollow then 0x02000000u else 0u)) system
             |> unrefused
-        | Op.RmWatch (instance, wd) -> UnixInotify.tryInotifyRmWatch fds.[instance] wd system |> unrefused
+        | Op.RmWatch (instance, wd) ->
+            UnixInotify.tryInotifyRmWatch (Callers.leader system) fds.[instance] wd system
+            |> unrefused
         | Op.Open (i, readOnly) ->
             let access =
                 if readOnly then
