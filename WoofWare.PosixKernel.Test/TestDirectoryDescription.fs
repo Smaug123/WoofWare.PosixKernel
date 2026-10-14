@@ -160,22 +160,41 @@ module TestDirectoryDescription =
     /// Names drawn from a small alphabet, including bytes above 0x7F, so that
     /// a generated directory really does exercise ordering by bytes.
     let private nameGen : Gen<string> =
-        Gen.elements [ "a" ; "b" ; "c" ; "A" ; "Z" ; "aa" ; "ab" ; "é" ; "中" ]
+        Gen.elements [ "a" ; "b" ; "c" ; "A" ; "Z" ; "aa" ; "ab" ; "é" ; "中" ; "éa" ; "bé" ; "a中b" ]
 
-    let private beyondAscii (name : string) : bool =
-        name |> Seq.exists (fun c -> int c >= 0x80)
+    let private isAscii (c : char) : bool = int c < 0x80
+
+    /// Whether a directory of `platform`'s holding `other` can bind `name` as
+    /// well. Darwin refuses to bind a name beyond ASCII beside another unless
+    /// their ASCII ends tell them apart: their longest ASCII suffixes differ,
+    /// or neither's longest ASCII prefix begins the other's
+    /// (`TestNameEquivalence`). So "é" and "中" might be two spellings of one
+    /// name as far as the library can tell, while "é" and "éa" are two.
+    let private admitsBeside (platform : SimulatedUnixPlatform) (other : string) (name : string) : bool =
+        let ends (name : string) : (string * string) option =
+            if Seq.forall isAscii name then
+                None
+            else
+                Some (
+                    String (name |> Seq.takeWhile isAscii |> Array.ofSeq),
+                    String (name |> Seq.rev |> Seq.takeWhile isAscii |> Seq.rev |> Array.ofSeq)
+                )
+
+        match SimulatedUnixPlatform.flavour platform, ends other, ends name with
+        | SimulatedUnixFlavour.Linux, _, _ -> true
+        | SimulatedUnixFlavour.Darwin, Some (otherLeading, otherTrailing), Some (leading, trailing) ->
+            other = name
+            || otherTrailing <> trailing
+            || not (
+                leading.StartsWith (otherLeading, StringComparison.Ordinal)
+                || otherLeading.StartsWith (leading, StringComparison.Ordinal)
+            )
+        | SimulatedUnixFlavour.Darwin, _, _ -> true
 
     /// Whether a directory of `platform`'s holding `names` can bind `name` as
-    /// well. Darwin refuses a second name beyond ASCII in one directory, since
-    /// "é" and "中" might be two spellings of one name as far as the library can
-    /// tell (`TestNameEquivalence`), so a Darwin directory here holds at most
-    /// one of them.
+    /// well.
     let private admits (platform : SimulatedUnixPlatform) (names : string seq) (name : string) : bool =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> true
-        | SimulatedUnixFlavour.Darwin ->
-            not (beyondAscii name)
-            || names |> Seq.forall (fun other -> other = name || not (beyondAscii other))
+        names |> Seq.forall (fun other -> admitsBeside platform other name)
 
     /// `names` without each name a directory of `platform`'s holding those
     /// before it would refuse.
@@ -189,10 +208,18 @@ module TestDirectoryDescription =
 
     [<Test>]
     let ``a scan yields every name once, then dot-dot and dot, each with the inode stat reports`` () : unit =
-        let property (platform : SimulatedUnixPlatform) (names : string list) : unit =
+        let property
+            (cover : SimulatedUnixFlavour -> unit)
+            (platform : SimulatedUnixPlatform)
+            (names : string list)
+            : unit
+            =
             let names = List.distinct names |> holdable platform
             let fd, system = withDirectory platform names
             let records, system = drain fd system
+
+            if (names |> List.filter (Seq.exists (isAscii >> not)) |> List.length) > 1 then
+                cover (SimulatedUnixPlatform.flavour platform)
 
             records
             |> List.map (fun r -> text r.Name)
@@ -215,12 +242,15 @@ module TestDirectoryDescription =
 
                 record.Kind |> shouldEqual expectedKind
 
-        Check.One (
-            config,
-            Prop.forAll
+        let coverage =
+            CoverageSample.check
+                config
                 (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf nameGen)))
-                (fun (p, n) -> property p n)
-        )
+                (fun cover (p, n) -> property cover p n)
+
+        // Darwin's directories hold several names beyond ASCII, as long as
+        // their ASCII ends tell them apart.
+        coverage.Count SimulatedUnixFlavour.Darwin |> shouldBeGreaterThan 20
 
     [<Test>]
     let ``a subdirectory is reported as a directory`` () : unit =

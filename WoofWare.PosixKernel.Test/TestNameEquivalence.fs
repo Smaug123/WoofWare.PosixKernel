@@ -67,6 +67,18 @@ module TestNameEquivalence =
     /// "é" as "e" and U+0301 COMBINING ACUTE ACCENT.
     let private nfd : byte list = [ 0x65uy ; 0xCCuy ; 0x81uy ]
 
+    /// U+212A KELVIN SIGN, whose canonical decomposition is "K".
+    let private kelvin : byte list = [ 0xE2uy ; 0x84uy ; 0xAAuy ]
+
+    /// U+4E2D, which has no decomposition.
+    let private han : byte list = [ 0xE4uy ; 0xB8uy ; 0xADuy ]
+
+    /// "café.txt", its "é" precomposed.
+    let private cafe : byte list = ascii "caf" @ nfc @ ascii ".txt"
+
+    /// "naïve.txt", its "ï" precomposed.
+    let private naive : byte list = ascii "na" @ [ 0xC3uy ; 0xAFuy ] @ ascii "ve.txt"
+
     [<Test>]
     let ``Darwin refuses an exclusive create of the NFD spelling of a name bound in NFC`` () : unit =
         let system =
@@ -125,9 +137,6 @@ module TestNameEquivalence =
 
     [<Test>]
     let ``a Darwin seed holding two names that might be one is refused, in any directory`` () : unit =
-        let kelvin = [ 0xE2uy ; 0x84uy ; 0xAAuy ]
-        let han = [ 0xE4uy ; 0xB8uy ; 0xADuy ]
-
         let refusedPair (seed : Map<DirectoryEntryName, SeedEntry>) : (byte list * byte list) option =
             match seeded SimulatedUnixPlatform.macOsArm64 seed with
             | Ok _ -> None
@@ -147,12 +156,18 @@ module TestNameEquivalence =
         |> shouldEqual (Some (nfd, nfc))
 
         // Two names beyond ASCII that APFS would hold as two: refused all the
-        // same, since telling them apart needs Unicode's tables.
+        // same, since their ASCII ends are alike and telling them apart needs
+        // Unicode's tables.
         refusedPair (seedOf [ nfc ; han ]) |> shouldEqual (Some (nfc, han))
+
+        refusedPair (seedOf [ nfc @ ascii "x" ; han @ ascii "x" ])
+        |> shouldEqual (Some (nfc @ ascii "x", han @ ascii "x"))
 
         // Names the rule can tell apart.
         refusedPair (seedOf [ nfc ; ascii "e" ; ascii "k" ; kelvin ; ascii "x" ])
         |> shouldEqual None
+
+        refusedPair (seedOf [ cafe ; naive ; nfc ]) |> shouldEqual None
 
         // One per directory is fine, however many directories.
         refusedPair (Map.ofList [ seedName nfc, SeedEntry.directory (seedOf [ han ]) ])
@@ -173,6 +188,28 @@ module TestNameEquivalence =
         match UnixPathResolution.tryStat SymlinkPolicy.Follow (arg ([ byte '/' ] @ nfd)) system with
         | Error (StatRefusal.Path (PathRefusal.UndecidedNameEquivalence _)) -> ()
         | other -> failwith $"expected the NFD spelling's lookup to be refused, got %A{other}"
+
+    [<Test>]
+    let ``a Darwin seed holding names beyond ASCII whose ASCII ends differ boots, each name reaching its own file``
+        ()
+        : unit
+        =
+        let names = [ cafe ; naive ; nfc ]
+
+        let system =
+            match seeded SimulatedUnixPlatform.macOsArm64 (seedOf names) with
+            | Ok image -> image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            | Error fault -> failwith $"Darwin refused the seed: %s{FileSystemSeedFault.describe fault}"
+
+        let inodes =
+            names
+            |> List.map (fun name ->
+                match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (arg ([ byte '/' ] @ name)) system with
+                | Ok (FileStatusAnswer.Reported status) -> status.Inode
+                | other -> failwith $"stat(/%s{hexOf name}): %A{other}"
+            )
+
+        List.distinct inodes |> shouldHaveLength (List.length names)
 
     [<Test>]
     let ``checkInvariants reports a directory holding two names that might be one, where names match by equivalence``
@@ -553,14 +590,11 @@ module TestNameEquivalence =
         ]
 
     /// The Darwin rows APFS answered as two names, which this library refuses
-    /// all the same: both names decompose to something beyond ASCII, and
-    /// telling such names apart needs Unicode's tables.
+    /// all the same: both names decompose to something beyond ASCII, with
+    /// alike ASCII ends, and telling such names apart needs Unicode's tables.
+    /// (U+00BD and "1", U+2044, "2" are told apart by their last characters.)
     let private darwinMightBeEquivalent : string list =
-        [
-            "L\tanother letter\tc3a9\tc3a8"
-            "L\tanother case, non-ASCII\tc389\tc3a9"
-            "L\tvulgar half then 1 fraction-slash 2\tc2bd\t31e2818432"
-        ]
+        [ "L\tanother letter\tc3a9\tc3a8" ; "L\tanother case, non-ASCII\tc389\tc3a9" ]
 
     [<Test>]
     let ``Darwin answers every probe row as case-sensitive APFS did, or refuses where equivalence decides it``
@@ -572,6 +606,79 @@ module TestNameEquivalence =
     [<Test>]
     let ``Linux answers every probe row as tmpfs did`` () : unit =
         replay linux "name-equivalence.linux.txt" Set.empty
+
+    // ----------------------------------------- names told apart by their ends
+
+    /// U+0301 COMBINING ACUTE ACCENT.
+    let private acute : byte list = [ 0xCCuy ; 0x81uy ]
+
+    /// Pairs of names beyond ASCII that are not canonically equivalent, and
+    /// that their ASCII ends tell apart once U+212A is read as "K": their
+    /// longest ASCII suffixes differ, or neither's longest ASCII prefix begins
+    /// the other's.
+    let private toldApart : (byte list * byte list) list =
+        [
+            cafe, naive
+            nfc @ ascii ".txt", nfc @ ascii ".md"
+            // "café" and "résumé"
+            ascii "caf" @ nfc, ascii "r" @ nfc @ ascii "sum" @ nfc
+            // U+00BD VULGAR FRACTION ONE HALF, and "1", U+2044, "2"
+            [ 0xC2uy ; 0xBDuy ], ascii "1" @ [ 0xE2uy ; 0x81uy ; 0x84uy ] @ ascii "2"
+            nfc @ kelvin, ascii "e" @ acute @ ascii "k"
+            kelvin @ nfc, ascii "k" @ nfc
+        ]
+
+    /// Pairs of names beyond ASCII that are not canonically equivalent, but
+    /// that their ASCII ends do not tell apart: their longest ASCII suffixes
+    /// are the same once U+212A is read as "K", and one's longest ASCII
+    /// prefix begins the other's.
+    let private notToldApart : (byte list * byte list) list =
+        [
+            nfc, han
+            ascii "a" @ nfc, ascii "ab" @ han
+            nfc @ ascii "x", han @ ascii "x"
+            nfc @ kelvin, han @ ascii "K"
+            ascii "caf" @ nfc, ascii "ca" @ han
+        ]
+
+    [<Test>]
+    let ``Darwin binds a name beyond ASCII beside another whose ASCII ends differ from its own`` () : unit =
+        for first, second in toldApart do
+            for first, second in [ first, second ; second, first ] do
+                let system =
+                    match create first (rowSystem darwin) with
+                    | "OK", system -> system
+                    | failed, _ -> failwith $"creating %s{hexOf first}: %s{failed}"
+
+                let system =
+                    try
+                        match create second system with
+                        | "OK", system -> system
+                        | failed, _ -> failwith $"creating %s{hexOf second} beside %s{hexOf first}: %s{failed}"
+                    with RowRefused why ->
+                        failwith $"creating %s{hexOf second} beside %s{hexOf first} was refused: %s{why}"
+
+                inodeOf first system |> shouldNotEqual (inodeOf second system)
+                namesHere system |> List.sort |> shouldEqual (List.sort [ first ; second ])
+
+    [<Test>]
+    let ``Darwin refuses a name beyond ASCII beside another whose ASCII ends are alike`` () : unit =
+        for first, second in notToldApart do
+            for first, second in [ first, second ; second, first ] do
+                let system =
+                    match create first (rowSystem darwin) with
+                    | "OK", system -> system
+                    | failed, _ -> failwith $"creating %s{hexOf first}: %s{failed}"
+
+                match OpenFlagWords.openPath (openFlags true true) (arg second) 0o644 system with
+                | Error (OpenRefusal.Path (PathRefusal.UndecidedNameEquivalence (_, name, bound))) ->
+                    bytesOfName name |> shouldEqual second
+                    bytesOfName bound |> shouldEqual first
+                | Ok (answer, _) ->
+                    failwith $"creating %s{hexOf second} beside %s{hexOf first}: expected a refusal, got %A{answer}"
+                | Error refusal ->
+                    failwith
+                        $"creating %s{hexOf second} beside %s{hexOf first}: expected the lookup to be refused, got %s{OpenRefusal.describe refusal}"
 
     // ------------------------------------------------- generated directories
 
@@ -634,8 +741,25 @@ module TestNameEquivalence =
         |> List.map (fun piece -> Gen.elements (respellings piece))
         |> Gen.sequenceToList
 
+    /// `spelled` with an ASCII piece put before or after it, or with its first
+    /// or last piece replaced by any piece: so it keeps one of its ends, and
+    /// often changes the other's ASCII.
+    let private variedGen (spelled : byte list list) : Gen<byte list list> =
+        let asciiPieces = pieces |> List.filter (List.forall (fun b -> b < 0x80uy))
+
+        Gen.frequency
+            [
+                2, Gen.elements asciiPieces |> Gen.map (fun piece -> piece :: spelled)
+                2, Gen.elements asciiPieces |> Gen.map (fun piece -> spelled @ [ piece ])
+                1, Gen.elements pieces |> Gen.map (fun piece -> piece :: List.tail spelled)
+                1,
+                Gen.elements pieces
+                |> Gen.map (fun piece -> List.take (List.length spelled - 1) spelled @ [ piece ])
+            ]
+
     /// The name to look up beside the names `spelled`: one of them, one of
-    /// them spelled another way, or any name.
+    /// them spelled another way, one of them with one end changed, or any
+    /// name.
     let private lookedUpGen (spelled : byte list list list) : Gen<byte list list> =
         match spelled with
         | [] -> spelledGen
@@ -644,6 +768,7 @@ module TestNameEquivalence =
                 [
                     1, Gen.elements spelled
                     2, Gen.elements spelled |> Gen.bind respelledGen
+                    3, Gen.elements spelled |> Gen.bind variedGen
                     2, spelledGen
                 ]
 
@@ -660,27 +785,84 @@ module TestNameEquivalence =
     /// The canonical decomposition, by the host's Unicode tables.
     let private nfdOf (text : string) : string = text.Normalize NormalizationForm.FormD
 
-    let private beyondAscii (text : string) : bool =
-        nfdOf text |> Seq.exists (fun c -> int c >= 0x80)
+    let private isAsciiText (text : string) : bool =
+        text |> Seq.forall (fun c -> int c < 0x80)
+
+    let private beyondAscii (text : string) : bool = not (isAsciiText (nfdOf text))
 
     let private equivalent (left : byte list) (right : byte list) : bool =
         match decoded left, decoded right with
         | Some left, Some right -> nfdOf left = nfdOf right
         | _ -> false
 
+    /// The longest prefix and the longest suffix of `text` whose characters
+    /// each decompose to ASCII, decomposed, by the host's tables.
+    let private asciiEnds (text : string) : string * string =
+        let decomposed : string option list =
+            text.EnumerateRunes ()
+            |> Seq.map (fun rune ->
+                let decomposed = nfdOf (rune.ToString ())
+                if isAsciiText decomposed then Some decomposed else None
+            )
+            |> List.ofSeq
+
+        let leading (pieces : string option list) : string list =
+            pieces |> List.takeWhile Option.isSome |> List.choose id
+
+        String.concat "" (leading decomposed), String.concat "" (List.rev (leading (List.rev decomposed)))
+
+    /// The longest prefix and the longest suffix of `text` that are ASCII as
+    /// they stand.
+    let private rawAsciiEnds (text : string) : string * string =
+        let isAscii (c : char) : bool = int c < 0x80
+
+        String (text |> Seq.takeWhile isAscii |> Array.ofSeq),
+        String (text |> Seq.rev |> Seq.takeWhile isAscii |> Seq.rev |> Array.ofSeq)
+
+    /// Whether one of `left` and `right` begins the other.
+    let private prefixRelated (left : string) (right : string) : bool =
+        left.StartsWith (right, StringComparison.Ordinal)
+        || right.StartsWith (left, StringComparison.Ordinal)
+
     /// The rule the library states, by the host's tables rather than its own:
-    /// two different names might be equivalent when they are, or when both
-    /// decompose to something beyond ASCII.
+    /// two different names might be equivalent when they decompose to the same
+    /// ASCII, or when both decompose to something beyond ASCII, the same ASCII
+    /// suffix ends both, and one's ASCII prefix begins the other's.
     let private possiblyEquivalent (left : byte list) (right : byte list) : bool =
         left <> right
         && match decoded left, decoded right with
-           | Some l, Some r -> nfdOf l = nfdOf r || (beyondAscii l && beyondAscii r)
+           | Some l, Some r ->
+               match beyondAscii l, beyondAscii r with
+               | false, false -> nfdOf l = nfdOf r
+               | true, true ->
+                   let leftLeading, leftTrailing = asciiEnds l
+                   let rightLeading, rightTrailing = asciiEnds r
+                   leftTrailing = rightTrailing && prefixRelated leftLeading rightLeading
+               | true, false
+               | false, true -> false
            | _ -> false
 
     let private entryName (bytes : byte list) : DirectoryEntryName =
         match DirectoryEntryName.ofByteString (byteString bytes) with
         | Ok name -> name
         | Error error -> failwith $"test name %s{hexOf bytes}: %s{DirectoryEntryName.describe error}"
+
+    /// What looking `name` up answers in a directory, of a filesystem comparing
+    /// names by canonical equivalence, binding `entries`: the first as inode 1,
+    /// the next as inode 2, and so on.
+    let private lookUpAmong (entries : byte list list) (name : byte list) : EntryLookup =
+        let names = List.map entryName entries
+
+        let directory =
+            names
+            |> List.mapi (fun i name -> name, InodeNumber (int64 i + 1L))
+            |> Map.ofList
+
+        EntryNameMatching.lookUp
+            EntryNameMatching.CanonicalEquivalence
+            (entryName name)
+            directory
+            (List.foldBack NamesBeyondAscii.add names NamesBeyondAscii.empty)
 
     [<Test>]
     let ``a lookup by canonical equivalence is bound exactly, free of every equivalent, or undecided as the rule says``
@@ -696,25 +878,10 @@ module TestNameEquivalence =
             }
 
         let property (cover : string -> unit) (entries : byte list list, name : byte list) : unit =
-            let directory =
-                entries
-                |> List.mapi (fun i bytes -> entryName bytes, InodeNumber (int64 i + 1L))
-                |> Map.ofList
-
             let anyPossiblyEquivalent =
                 entries |> List.exists (fun bound -> possiblyEquivalent bound name)
 
-            let namesBeyondAscii =
-                entries
-                |> List.filter (List.exists (fun b -> b >= 0x80uy))
-                |> List.map entryName
-
-            let answer =
-                EntryNameMatching.lookUp
-                    EntryNameMatching.CanonicalEquivalence
-                    (entryName name)
-                    directory
-                    namesBeyondAscii
+            let answer = lookUpAmong entries name
 
             let fail (why : string) : unit =
                 failwith $"looking up %s{hexOf name} among %A{List.map hexOf entries}: %s{why}, got %A{answer}"
@@ -723,7 +890,12 @@ module TestNameEquivalence =
             | EntryLookup.Bound inode ->
                 cover "bound"
 
-                if Map.tryFind (entryName name) directory <> Some inode then
+                let expected =
+                    entries
+                    |> List.tryFindIndex ((=) name)
+                    |> Option.map (fun i -> InodeNumber (int64 i + 1L))
+
+                if expected <> Some inode then
                     fail "expected the entry bound under exactly those bytes"
             | EntryLookup.Free ->
                 if entries |> List.exists (equivalent name) then
@@ -740,6 +912,23 @@ module TestNameEquivalence =
 
                 if (decoded name).IsNone && not entries.IsEmpty then
                     cover "free, not UTF-8"
+
+                // The two ways the rule tells apart names beyond ASCII.
+                let endsBeyondAscii (bytes : byte list) : (string * string) option =
+                    decoded bytes |> Option.filter beyondAscii |> Option.map asciiEnds
+
+                match endsBeyondAscii name with
+                | None -> ()
+                | Some (leading, trailing) ->
+                    for bound in entries do
+                        match endsBeyondAscii bound with
+                        | None -> ()
+                        | Some (boundLeading, boundTrailing) ->
+                            if boundTrailing <> trailing && prefixRelated boundLeading leading then
+                                cover "free beside a name beyond ASCII told apart by its ASCII suffix"
+
+                            if boundTrailing = trailing && not (prefixRelated boundLeading leading) then
+                                cover "free beside a name beyond ASCII told apart by its ASCII prefix"
             | EntryLookup.Undecided bound ->
                 if List.contains name entries then
                     fail "the name is bound under exactly its bytes"
@@ -758,7 +947,7 @@ module TestNameEquivalence =
                     cover "undecided, not equivalent"
 
         let coverage =
-            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 2000) (Arb.fromGen gen) property
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 3000) (Arb.fromGen gen) property
 
         for label in
             [
@@ -766,10 +955,255 @@ module TestNameEquivalence =
                 "free beside other names"
                 "free, beyond ASCII"
                 "free, not UTF-8"
+                "free beside a name beyond ASCII told apart by its ASCII suffix"
+                "free beside a name beyond ASCII told apart by its ASCII prefix"
                 "undecided, equivalent"
                 "undecided, not equivalent"
             ] do
             if coverage.Count label < 50 then
+                failwith $"the fixed sample reached %s{label} only %d{coverage.Count label} times"
+
+    /// U+0327 COMBINING CEDILLA, which canonical ordering puts before U+0301.
+    let private cedilla : byte list = [ 0xCCuy ; 0xA7uy ]
+
+    /// Groups of spellings, each canonically equivalent to the others in its
+    /// group by this test's reading of the Unicode Character Database: ASCII
+    /// letters and punctuation; the three code points whose decomposition is
+    /// ASCII, beside it; letters precomposed and decomposed; a Hangul syllable
+    /// and its jamo; two combining marks in either order, alone and after a
+    /// letter, precomposed or not; U+00C5, U+212B ANGSTROM SIGN and "A" with
+    /// U+030A; a letter with no decomposition; and bytes that are not UTF-8,
+    /// two of which make U+0301 when they meet.
+    let private spellingGroups : byte list list list =
+        [
+            [ ascii "a" ]
+            [ ascii "e" ]
+            [ ascii "x" ]
+            [ ascii ".txt" ]
+            [ ascii "-" ]
+            [ ascii "K" ; kelvin ]
+            [ ascii ";" ; [ 0xCDuy ; 0xBEuy ] ]
+            [ ascii "`" ; [ 0xE1uy ; 0xBFuy ; 0xAFuy ] ]
+            [ nfc ; nfd ]
+            [ [ 0xC3uy ; 0xA1uy ] ; ascii "a" @ acute ]
+            [
+                [ 0xEAuy ; 0xB0uy ; 0x80uy ]
+                [ 0xE1uy ; 0x84uy ; 0x80uy ; 0xE1uy ; 0x85uy ; 0xA1uy ]
+            ]
+            [ acute @ cedilla ; cedilla @ acute ]
+            [
+                ascii "a" @ acute @ cedilla
+                ascii "a" @ cedilla @ acute
+                [ 0xC3uy ; 0xA1uy ] @ cedilla
+            ]
+            [
+                [ 0xC3uy ; 0x85uy ]
+                [ 0xE2uy ; 0x84uy ; 0xABuy ]
+                ascii "A" @ [ 0xCCuy ; 0x8Auy ]
+            ]
+            [ han ]
+            [ [ 0xFFuy ] ]
+            [ [ 0xCCuy ] ]
+            [ [ 0x81uy ] ]
+        ]
+
+    // Bytes that are not UTF-8 make a name equivalent to none, so they come up
+    // less often than the rest.
+    let private spellingGroupGen : Gen<byte list list> =
+        spellingGroups
+        |> List.map (fun group ->
+            let weight = if (decoded (List.head group)).IsSome then 4 else 1
+            weight, Gen.constant group
+        )
+        |> Gen.frequency
+
+    let private spellingGroupsGen : Gen<byte list list list> =
+        Gen.choose (1, 5)
+        |> Gen.bind (fun count -> Gen.listOfLength count spellingGroupGen)
+
+    /// Each of `groups` spelled any way it can be.
+    let private spellGen (groups : byte list list list) : Gen<byte list> =
+        groups |> List.map Gen.elements |> Gen.sequenceToList |> Gen.map List.concat
+
+    /// Two names: mostly two spellings of one sequence of groups, which the
+    /// host's tables then take as equivalent unless bytes that are not UTF-8
+    /// or a mark's neighbours get in the way; otherwise two spellings of
+    /// sequences differing in one group, or two unrelated names.
+    let private pairGen : Gen<byte list * byte list> =
+        // `groups` with one group replaced by any group.
+        let vary (groups : byte list list list) : Gen<byte list list list> =
+            gen {
+                let! at = Gen.choose (0, List.length groups - 1)
+                let! group = spellingGroupGen
+                return List.updateAt at group groups
+            }
+
+        gen {
+            let! groups = spellingGroupsGen
+            let! left = spellGen groups
+
+            let! right =
+                Gen.frequency
+                    [
+                        4, spellGen groups
+                        2, vary groups |> Gen.bind spellGen
+                        1, spellingGroupsGen |> Gen.bind spellGen
+                    ]
+
+            return left, right
+        }
+
+    [<Test>]
+    let ``two canonically equivalent names are never told apart`` () : unit =
+        let property (cover : string -> unit) (left : byte list, right : byte list) : unit =
+            let fail (why : string) : unit =
+                failwith $"%s{hexOf left} and %s{hexOf right}: %s{why}"
+
+            match decoded left, decoded right with
+            | Some l, Some r when left <> right && nfdOf l = nfdOf r ->
+                // What the other properties hold the library to is itself
+                // sound.
+                if not (possiblyEquivalent left right) then
+                    fail
+                        "the host's tables say they are equivalent, but the rule as this test states it tells them apart"
+
+                for bound, name in [ left, right ; right, left ] do
+                    match lookUpAmong [ bound ] name with
+                    | EntryLookup.Undecided _ -> ()
+                    | answer ->
+                        fail
+                            $"the host's tables say they are equivalent, but looking %s{hexOf name} up beside %s{hexOf bound} answered %A{answer}"
+
+                if (EntryNameMatching.firstPossiblyEquivalentPair [ entryName left ; entryName right ]).IsNone then
+                    fail "the host's tables say they are equivalent, but firstPossiblyEquivalentPair tells them apart"
+
+                cover "equivalent"
+
+                if beyondAscii l then
+                    cover "equivalent, beyond ASCII"
+
+                    if fst (asciiEnds l) <> fst (asciiEnds r) then
+                        cover "equivalent, beyond ASCII, with different ASCII prefixes"
+
+                    if snd (rawAsciiEnds l) <> snd (rawAsciiEnds r) then
+                        cover
+                            "equivalent, beyond ASCII, with ASCII suffixes alike only once U+212A and its kin decompose"
+                else
+                    cover "equivalent, decomposing to ASCII"
+            | _ -> ()
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 3000) (Arb.fromGen pairGen) property
+
+        for label in
+            [
+                "equivalent"
+                "equivalent, beyond ASCII"
+                "equivalent, beyond ASCII, with different ASCII prefixes"
+                "equivalent, beyond ASCII, with ASCII suffixes alike only once U+212A and its kin decompose"
+                "equivalent, decomposing to ASCII"
+            ] do
+            if coverage.Count label < 50 then
+                failwith $"the fixed sample reached %s{label} only %d{coverage.Count label} times"
+
+    [<Test>]
+    let ``two names are told apart exactly where the rule tells them apart`` () : unit =
+        let property (cover : string -> unit) (left : byte list, right : byte list) : unit =
+            let fail (why : string) : unit =
+                failwith $"%s{hexOf left} and %s{hexOf right}: %s{why}"
+
+            let mightBe = possiblyEquivalent left right
+
+            for bound, name in [ left, right ; right, left ] do
+                let answer = lookUpAmong [ bound ] name
+
+                let expected =
+                    if bound = name then EntryLookup.Bound (InodeNumber 1L)
+                    elif mightBe then EntryLookup.Undecided (entryName bound)
+                    else EntryLookup.Free
+
+                if answer <> expected then
+                    fail
+                        $"looking %s{hexOf name} up beside %s{hexOf bound} answered %A{answer}, where the rule says %A{expected}"
+
+            // A directory's names, which this is given, are distinct.
+            if left <> right then
+                let pair =
+                    EntryNameMatching.firstPossiblyEquivalentPair [ entryName left ; entryName right ]
+
+                let expectedPair =
+                    if mightBe then
+                        Some (entryName left, entryName right)
+                    else
+                        None
+
+                if pair <> expectedPair then
+                    fail $"firstPossiblyEquivalentPair answered %A{pair}, where the rule says %A{expectedPair}"
+
+            match decoded left, decoded right with
+            | _ when left = right -> cover "the same bytes"
+            | _ when mightBe && equivalent left right -> cover "equivalent"
+            | _ when mightBe -> cover "not equivalent, but not told apart"
+            | Some _, Some _ -> cover "told apart"
+            | _ -> cover "not UTF-8"
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 3000) (Arb.fromGen pairGen) property
+
+        for label in
+            [
+                "equivalent"
+                "not equivalent, but not told apart"
+                "told apart"
+                "not UTF-8"
+            ] do
+            if coverage.Count label < 50 then
+                failwith $"the fixed sample reached %s{label} only %d{coverage.Count label} times"
+
+    [<Test>]
+    let ``firstPossiblyEquivalentPair finds two names the rule does not tell apart exactly when there are two``
+        ()
+        : unit
+        =
+        let rec namesGen (count : int) (spelled : byte list list list) : Gen<byte list list list> =
+            if count = 0 then
+                Gen.constant (List.rev spelled)
+            else
+                lookedUpGen spelled
+                |> Gen.bind (fun next -> namesGen (count - 1) (next :: spelled))
+
+        let gen : Gen<byte list list> =
+            Gen.choose (0, 6)
+            |> Gen.bind (fun count -> namesGen count [])
+            |> Gen.map (List.map List.concat >> List.distinct)
+
+        let property (cover : string -> unit) (names : byte list list) : unit =
+            let anyPair =
+                names
+                |> List.indexed
+                |> List.exists (fun (i, left) -> names |> List.skip (i + 1) |> List.exists (possiblyEquivalent left))
+
+            match EntryNameMatching.firstPossiblyEquivalentPair (List.map entryName names) with
+            | None ->
+                if anyPair then
+                    failwith $"%A{List.map hexOf names}: no pair found, though the rule does not tell two apart"
+
+                cover "no pair"
+            | Some (first, second) ->
+                let first = bytesOfName first
+                let second = bytesOfName second
+
+                match List.tryFindIndex ((=) first) names, List.tryFindIndex ((=) second) names with
+                | Some i, Some j when i < j && possiblyEquivalent first second -> cover "a pair"
+                | _ ->
+                    failwith
+                        $"%A{List.map hexOf names}: found %s{hexOf first} and %s{hexOf second}, which are not two of the names, in order, that the rule does not tell apart"
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 1000) (Arb.fromGen gen) property
+
+        for label in [ "no pair" ; "a pair" ] do
+            if coverage.Count label < 100 then
                 failwith $"the fixed sample reached %s{label} only %d{coverage.Count label} times"
 
     /// One call a generated history makes in a directory of its own.
@@ -993,12 +1427,16 @@ module TestNameEquivalence =
                             "answered"
                     )
 
-                    let besideBeyondAscii =
+                    let namesBeyondAscii =
                         reference.Entries
-                        |> List.exists (fun (bound, _) -> decoded bound |> Option.exists beyondAscii)
+                        |> List.filter (fun (bound, _) -> decoded bound |> Option.exists beyondAscii)
+                        |> List.length
 
-                    if besideBeyondAscii && not mightDecide then
+                    if namesBeyondAscii > 0 && not mightDecide then
                         cover "answered beside a name beyond ASCII"
+
+                    if namesBeyondAscii > 1 then
+                        cover "answered beside two names beyond ASCII"
 
                     run rest after files system
 
@@ -1026,6 +1464,7 @@ module TestNameEquivalence =
             [
                 "answered"
                 "answered beside a name beyond ASCII"
+                "answered beside two names beyond ASCII"
                 "refused, equivalence decides"
                 "refused, might be equivalent"
             ] do
