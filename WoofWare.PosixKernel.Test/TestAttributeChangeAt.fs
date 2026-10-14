@@ -976,7 +976,11 @@ module TestAttributeChangeAt =
                             | "fchmodat" ->
                                 UnixPathResolution.tryFchmodat (atFdCwd caller) (PathArg.ofText "f") 0o644 flags system
                                 |> Result.map (fst >> errno)
-                                |> Result.mapError (fun r -> r = FChModAtRefusal.UnmodelledFlags flags)
+                                |> Result.mapError (fun r ->
+                                    match r with
+                                    | FChModAtRefusal.UnmodelledFlags refused -> refused.Flags = flags
+                                    | _ -> false
+                                )
                             | _ ->
                                 UnixPathResolution.tryFchownat
                                     (atFdCwd caller)
@@ -986,7 +990,11 @@ module TestAttributeChangeAt =
                                     flags
                                     system
                                 |> Result.map (fst >> errno)
-                                |> Result.mapError (fun r -> r = FChOwnAtRefusal.UnmodelledFlags flags)
+                                |> Result.mapError (fun r ->
+                                    match r with
+                                    | FChOwnAtRefusal.UnmodelledFlags refused -> refused.Flags = flags
+                                    | _ -> false
+                                )
 
                         match actual with
                         | Ok actual when actual = expected -> ()

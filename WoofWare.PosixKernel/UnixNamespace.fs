@@ -475,10 +475,10 @@ type PausedSymlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
 type internal LinkRefusal =
     /// This kernel will not resolve one of the pathnames.
     | Path of refusal : PathRefusal
-    /// The flag word `flags` carries flags the flavour accepts and this library
-    /// does not model: Darwin's `AT_SYMLINK_NOFOLLOW_ANY` (0x800),
+    /// The flag word carries flags the flavour accepts and this library does
+    /// not model: Darwin's `AT_SYMLINK_NOFOLLOW_ANY` (0x800),
     /// `AT_RESOLVE_BENEATH` (0x2000) and `AT_UNIQUE` (0x8000).
-    | UnmodelledFlags of flags : int
+    | UnmodelledFlags of UnmodelledAtFlags
     /// Linux's `AT_EMPTY_PATH`, from a caller that is not privileged, with a
     /// path (an empty one included) relative to a descriptor. Linux then
     /// answers `ENOENT` unless the descriptor was opened with the very
@@ -501,8 +501,7 @@ module internal LinkRefusal =
     let describe (refusal : LinkRefusal) : string =
         match refusal with
         | LinkRefusal.Path refusal -> PathRefusal.describe refusal
-        | LinkRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag Darwin accepts and this library does not model: AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000)."
+        | LinkRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | LinkRefusal.OpenTimeCredentials ->
             "AT_EMPTY_PATH from a caller that is not privileged, with a path relative to a descriptor: Linux admits it only if the descriptor was opened with the caller's present credentials, and this library does not record the credentials a descriptor was opened with."
         | LinkRefusal.NamelessSource inode ->
@@ -1323,8 +1322,13 @@ module UnixNamespace =
 
         // The inode to read, and what the call answers if it is not a link.
         let (target : Result<Result<InodeNumber, UnixError>, ReadLinkRefusal>), (notALink : UnixError) =
-            match SimulatedUnixPlatform.readlinkEmptyPath system.Machine.UnixPlatform, directory with
-            | EmptyPathMeaning.NamesStartingPoint, AtDirectory.Descriptor fd when UnixPath.isEmpty path ->
+            match
+                AtPathTarget.classify
+                    (SimulatedUnixPlatform.readlinkEmptyPath system.Machine.UnixPlatform)
+                    directory
+                    path
+            with
+            | AtPathTarget.Descriptor fd ->
                 // Measured (`readlinkat-empty-path.c`, and `at-dirfd.c`'s
                 // eventq rows): a pipe, a socket or an epoll instance is
                 // ENOENT, as a file or directory that is not a link is.
@@ -1346,8 +1350,8 @@ module UnixNamespace =
                     | OpenFileTarget.Kqueue _ -> Error UnixError.ENOENT
 
                 Ok named, UnixError.ENOENT
-            | EmptyPathMeaning.NamesStartingPoint, _
-            | EmptyPathMeaning.Walked, _ ->
+            | AtPathTarget.CurrentDirectory
+            | AtPathTarget.Walked ->
                 // An empty path from AT_FDCWD names the current directory,
                 // which is not a link, so it is ENOENT, as the walk answers it.
                 //
@@ -2170,9 +2174,9 @@ module UnixNamespace =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
         match UnlinkAtRules.screen flavour flags with
-        | UnlinkAtScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
-        | UnlinkAtScreen.Unmodelled flags -> Error (UnlinkAtRefusal.UnmodelledFlags flags)
-        | UnlinkAtScreen.Screened kind ->
+        | AtFlagScreen.Failed error -> Ok (SyscallAnswer.Failed error, system)
+        | AtFlagScreen.Unmodelled refused -> Error (UnlinkAtRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened kind ->
 
         match UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -3058,7 +3062,7 @@ module UnixNamespace =
         |> CallProgress.resumeWith (trySymlinkWithPath path)
 
     let private linkSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (arguments : LinkArguments)
+        (arguments : AtFlagArguments)
         (source : AtDirectory)
         (destination : AtDirectory)
         (path : PathArgumentBytes)
@@ -3122,7 +3126,7 @@ module UnixNamespace =
                 match
                     UnixPathResolution.resolvePathFull
                         source
-                        arguments.Source
+                        arguments.FinalSymlink
                         TrailingSeparatorPolicy.Demand
                         path
                         system
@@ -3173,10 +3177,10 @@ module UnixNamespace =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match LinkRules.screen flavour flags with
-        | LinkScreen.Failed error -> Ok (CallProgress.Answered (SyscallAnswer.Failed error, system))
-        | LinkScreen.Unmodelled flags -> Error (LinkRefusal.UnmodelledFlags flags)
-        | LinkScreen.Screened arguments ->
+        match AtFlags.screen flavour (AtFlagRules.linkat flavour) flags with
+        | AtFlagScreen.Failed error -> Ok (CallProgress.Answered (SyscallAnswer.Failed error, system))
+        | AtFlagScreen.Unmodelled refused -> Error (LinkRefusal.UnmodelledFlags refused)
+        | AtFlagScreen.Screened arguments ->
             linkSourceFrom
                 arguments
                 (AtDirectory.decode flavour olddirfd)
@@ -3226,7 +3230,7 @@ module UnixNamespace =
 
         linkSourceFrom
             {
-                Source = rules.PlainLinkSource
+                FinalSymlink = rules.PlainLinkSource
                 EmptyPath = EmptyPathMeaning.Walked
             }
             AtDirectory.CurrentDirectory

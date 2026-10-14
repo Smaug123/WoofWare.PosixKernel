@@ -69,9 +69,8 @@ type internal AccessArguments =
 type internal AccessRefusal =
     /// The flag word carries flags this kernel accepts but whose meaning this
     /// library does not model: Darwin's `AT_SYMLINK_NOFOLLOW_ANY` (0x800),
-    /// `AT_RESOLVE_BENEATH` (0x2000) and `AT_UNIQUE` (0x8000). `flags` is the
-    /// whole word.
-    | UnmodelledFlags of flags : int
+    /// `AT_RESOLVE_BENEATH` (0x2000) and `AT_UNIQUE` (0x8000).
+    | UnmodelledFlags of UnmodelledAtFlags
     /// The mode word asks for Darwin's extended rights (`rights` is those bits
     /// of it) of the inode at `inode`, which this library does not model.
     | ExtendedRights of inode : InodeNumber * rights : int
@@ -87,8 +86,7 @@ module internal AccessRefusal =
     /// entry point asked, and with which path.
     let describe (refusal : AccessRefusal) : string =
         match refusal with
-        | AccessRefusal.UnmodelledFlags flags ->
-            $"the flag word 0x%x{flags} carries a flag Darwin accepts and this library does not model: AT_SYMLINK_NOFOLLOW_ANY (0x800), AT_RESOLVE_BENEATH (0x2000) or AT_UNIQUE (0x8000). Each changes how the path is walked; model the walk before answering."
+        | AccessRefusal.UnmodelledFlags refused -> UnmodelledAtFlags.describe refused
         | AccessRefusal.ExtendedRights (inode, rights) ->
             $"the mode word asks for Darwin's extended rights 0x%x{rights} of inode %O{inode} (_READ_OK to _CHOWN_OK, bits 9 to 21), which this library does not model. Measured as the owner, some are refused on a mode-0 file and _CHOWN_OK even on a 0777 one, so they are questions of their own rather than the permission bits restated."
         | AccessRefusal.UnmeasuredExecution (inode, refusal) ->
@@ -103,28 +101,9 @@ module internal AccessRefusal =
         | AccessRefusal.UnmeasuredExecution (_, inner) -> ExecutionRefusal.kind inner
         | AccessRefusal.Path inner -> PathRefusal.kind inner
 
-/// What screening `faccessat(2)`'s mode word and flag word came to.
-[<RequireQualifiedAccess>]
-type internal AccessScreen =
-    /// Both words are ones this kernel accepts, and this is what they say.
-    | Screened of AccessArguments
-    /// The call fails with this errno before its path is copied in.
-    | Failed of error : UnixError
-    /// This library will not answer the call at all.
-    | Refused of refusal : AccessRefusal
-
 [<RequireQualifiedAccess>]
 module internal AccessRules =
 
-    // `<fcntl.h>`'s numbering, measured by `access-rules.c` on Linux 6.18.5
-    // and Darwin 27.0.
-    let private linuxAtSymlinkNoFollow : int = 0x100
-    let private linuxAtEAccess : int = 0x200
-    let private linuxAtEmptyPath : int = 0x1000
-    let private darwinAtEAccess : int = 0x10
-    let private darwinAtSymlinkNoFollow : int = 0x20
-    // AT_SYMLINK_NOFOLLOW_ANY, AT_RESOLVE_BENEATH and AT_UNIQUE.
-    let private darwinUnmodelledFlags : int = 0x800 ||| 0x2000 ||| 0x8000
     // `_ACCESS_EXTENDED_MASK`: `_READ_OK` (1 << 9) to `_CHOWN_OK` (1 << 21).
     let private darwinExtendedRights : int = 0x3FFE00
 
@@ -138,7 +117,7 @@ module internal AccessRules =
     /// accepts but this library refuses (see `AccessRefusal.UnmodelledFlags`);
     /// it rejects no mode word, ignores bits 3 to 8 and 22 to 31, and reads
     /// bits 9 to 21 as its extended rights.
-    let screen (flavour : SimulatedUnixFlavour) (mode : int) (flags : int) : AccessScreen =
+    let screen (flavour : SimulatedUnixFlavour) (mode : int) (flags : int) : AtFlagScreen<AccessArguments> =
         // Measured by `access-rules.c`: every single bit of each word, and
         // the order of a bad mode, bad flags, a bad dirfd and the path's
         // copy-in against one another. Linux: a bad mode is EINVAL ahead of
@@ -146,62 +125,38 @@ module internal AccessRules =
         // bad dirfd. Darwin: bad flags are EINVAL ahead of the same; bits 3
         // to 8 and 22 to 31 changed no answer over every permission word of a
         // file and a directory the caller owned.
-        match flavour with
-        | SimulatedUnixFlavour.Linux ->
-            if mode &&& ~~~0o7 <> 0 then
-                AccessScreen.Failed UnixError.EINVAL
-            elif
-                flags &&& ~~~(linuxAtSymlinkNoFollow ||| linuxAtEAccess ||| linuxAtEmptyPath)
-                <> 0
-            then
-                AccessScreen.Failed UnixError.EINVAL
-            else
+        let rules = AtFlagRules.faccessat flavour
 
-            AccessScreen.Screened
-                {
-                    Question = AccessQuestion.ofLowBits mode
-                    ExtendedRights = 0
-                    Ids =
-                        if flags &&& linuxAtEAccess <> 0 then
-                            AccessIds.Effective
-                        else
-                            AccessIds.Real
-                    FinalSymlink =
-                        if flags &&& linuxAtSymlinkNoFollow <> 0 then
-                            SymlinkPolicy.NoFollowFinal
-                        else
-                            SymlinkPolicy.Follow
-                    EmptyPath =
-                        if flags &&& linuxAtEmptyPath <> 0 then
-                            EmptyPathMeaning.NamesStartingPoint
-                        else
-                            EmptyPathMeaning.Walked
-                }
-        | SimulatedUnixFlavour.Darwin ->
-            // Refused whatever else the word carries: which of EINVAL and these
-            // flags' own answers wins when both are present is unmeasured.
-            if flags &&& darwinUnmodelledFlags <> 0 then
-                AccessScreen.Refused (AccessRefusal.UnmodelledFlags flags)
-            elif flags &&& ~~~(darwinAtEAccess ||| darwinAtSymlinkNoFollow) <> 0 then
-                AccessScreen.Failed UnixError.EINVAL
-            else
+        let eaccess, extendedRights =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> AtFlagNumbering.LinuxEAccess, 0
+            | SimulatedUnixFlavour.Darwin -> AtFlagNumbering.DarwinEAccess, mode &&& darwinExtendedRights
 
-            AccessScreen.Screened
-                {
-                    Question = AccessQuestion.ofLowBits mode
-                    ExtendedRights = mode &&& darwinExtendedRights
-                    Ids =
-                        if flags &&& darwinAtEAccess <> 0 then
-                            AccessIds.Effective
-                        else
-                            AccessIds.Real
-                    FinalSymlink =
-                        if flags &&& darwinAtSymlinkNoFollow <> 0 then
-                            SymlinkPolicy.NoFollowFinal
-                        else
-                            SymlinkPolicy.Follow
-                    EmptyPath = EmptyPathMeaning.Walked
-                }
+        let modeRejected =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> mode &&& ~~~0o7 <> 0
+            | SimulatedUnixFlavour.Darwin -> false
+
+        if modeRejected then
+            AtFlagScreen.Failed UnixError.EINVAL
+        else
+
+        AtFlags.screenWord flavour rules.Screening flags
+        |> AtFlagScreen.map (fun admitted ->
+            let path = AtFlags.read rules admitted
+
+            {
+                Question = AccessQuestion.ofLowBits mode
+                ExtendedRights = extendedRights
+                Ids =
+                    if admitted &&& eaccess <> 0 then
+                        AccessIds.Effective
+                    else
+                        AccessIds.Real
+                FinalSymlink = path.FinalSymlink
+                EmptyPath = path.EmptyPath
+            }
+        )
 
     /// <summary>
     /// Whether a caller standing as <c>standing</c> towards an inode whose content is
