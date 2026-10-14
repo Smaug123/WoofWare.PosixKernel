@@ -1260,11 +1260,11 @@ module TestBlockingAccept =
             // completed with, and is then closed at once, its linger turned off
             // first so that the close is a FIN: the reference follows the
             // listener's descriptors and the clients', and nothing else.
-            let dropAccepted (where : string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
+            let dropAccepted (where : unit -> string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                     | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
-                    | other -> failwith $"%s{where}: the accepted fd %d{fd} names %A{other}"
+                    | other -> failwith $"%s{where ()}: the accepted fd %d{fd} names %A{other}"
 
                 let held =
                     {
@@ -1276,7 +1276,7 @@ module TestBlockingAccept =
 
                 if held <> expected then
                     failwith
-                        $"%s{where}: the socket accepted for client fd %d{client} holds %A{held}, expected %A{expected}"
+                        $"%s{where ()}: the socket accepted for client fd %d{client} holds %A{held}, expected %A{expected}"
 
                 if expected <> completedUnder linux reference.ListenerOptions then
                     cover $"%s{flavourName} accept: an option changed since the connection completed"
@@ -1287,11 +1287,11 @@ module TestBlockingAccept =
                 let system =
                     match setOption fd (OptionChange.Linger (false, 0)) system with
                     | Ok (SetSockOptAnswer.Set, system) -> system
-                    | other -> failwith $"%s{where}: turning the accepted fd %d{fd}'s linger off: %A{other}"
+                    | other -> failwith $"%s{where ()}: turning the accepted fd %d{fd}'s linger off: %A{other}"
 
                 match UnixDescriptor.tryClose fd system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
-                | other -> failwith $"%s{where}: closing the accepted fd %d{fd}: %A{other}"
+                | other -> failwith $"%s{where ()}: closing the accepted fd %d{fd}: %A{other}"
 
             /// `r` with its oldest queued client's connection accepted.
             let acceptedHead (r : AcceptReference) : AcceptReference =
@@ -1340,7 +1340,8 @@ module TestBlockingAccept =
                 | None -> ()
                 | Some op ->
 
-                let where = $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
+                let where () : string =
+                    $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
 
                 match op with
                 | AcceptOp.Accept (thread, fd) ->
@@ -1375,7 +1376,7 @@ module TestBlockingAccept =
                                         reference.Parks
                                 NextOrdinal = reference.NextOrdinal + 1
                             }
-                    | _, other -> failwith $"%s{where}: %A{other}"
+                    | _, other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.Connect ->
                     let client, created =
                         NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
@@ -1410,13 +1411,13 @@ module TestBlockingAccept =
                                 Fds = Map.add client false reference.Fds
                                 Clients = Map.add client ClientFate.Refused reference.Clients
                             }
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.Close fd ->
                     match Map.tryFind fd reference.Fds with
                     | None ->
                         match UnixDescriptor.tryClose fd system with
                         | Ok (SyscallAnswer.Failed UnixError.EBADF, _) -> ()
-                        | other -> failwith $"%s{where}: %A{other}"
+                        | other -> failwith $"%s{where ()}: %A{other}"
                     | Some _ ->
 
                     let drains =
@@ -1465,7 +1466,7 @@ module TestBlockingAccept =
 
                         system <- closed
                         reference <- releasedIfUnheld after
-                    | other -> failwith $"%s{where}: dies %b{dies}, %A{other}"
+                    | other -> failwith $"%s{where ()}: dies %b{dies}, %A{other}"
                 | AcceptOp.Dup fd ->
                     let answer, after = Answered.dup fd system
 
@@ -1534,7 +1535,7 @@ module TestBlockingAccept =
                         UnixWait.wakes (asleep |> List.map fst |> Set.ofList) system |> List.map fst
 
                     if woken <> expected then
-                        failwith $"%s{where}: woke %A{woken}, expected %A{expected}"
+                        failwith $"%s{where ()}: woke %A{woken}, expected %A{expected}"
 
                     reference <-
                         { reference with
@@ -1584,7 +1585,7 @@ module TestBlockingAccept =
                             settle
                                 (acceptedHead reference)
                                 (dropAccepted where (List.head reference.Queue) accepted after)
-                        | other -> failwith $"%s{where}: %A{other}"
+                        | other -> failwith $"%s{where ()}: %A{other}"
                     | Some _, Ok (AcceptOutcome.Failed UnixError.EINTR, after) when signalled && not restart ->
                         settle reference after
                     | Some _, Ok (AcceptOutcome.Restarts, after) when signalled && restart -> settle reference after
@@ -1603,7 +1604,7 @@ module TestBlockingAccept =
                                         reference.Parks
                                 NextOrdinal = reference.NextOrdinal + 1
                             }
-                    | _, other -> failwith $"%s{where}: %A{other}"
+                    | _, other -> failwith $"%s{where ()}: %A{other}"
                 | AcceptOp.SetOption (fd, change) ->
                     match setOption fd change system with
                     | Ok (SetSockOptAnswer.Set, after) ->
@@ -1616,11 +1617,11 @@ module TestBlockingAccept =
                             { reference with
                                 ListenerOptions = changed linux change reference.ListenerOptions
                             }
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
 
                 match UnixSystem.checkInvariants system with
                 | [] -> ()
-                | defects -> failwith $"%s{where}: %A{defects}"
+                | defects -> failwith $"%s{where ()}: %A{defects}"
 
                 // Every park agrees with the reference's.
                 for thread in acceptThreads do
@@ -1637,11 +1638,11 @@ module TestBlockingAccept =
                             | ParkedSyscall.Accept {
                                                        Listener = SleepTarget.EndedByClose _
                                                    } -> None
-                            | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
+                            | other -> failwith $"%s{where ()}: thread %d{thread} parked in %A{other}"
                         )
 
                     if expected <> actual then
-                        failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
+                        failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
                     system.Machine.Sockets
@@ -1656,14 +1657,14 @@ module TestBlockingAccept =
                     (queuedClients listenState.Queue system, listenState.Drained)
                     |> shouldEqual (reference.Queue, reference.Drained)
                 | None when not reference.Alive -> ()
-                | other -> failwith $"%s{where}: the listener is %A{other}, alive %b{reference.Alive}"
+                | other -> failwith $"%s{where ()}: the listener is %A{other}, alive %b{reference.Alive}"
 
                 // Every client's connect has come to what the reference says.
                 for KeyValue (client, fate) in reference.Clients do
                     let actual = clientFate client system
 
                     if actual <> fate then
-                        failwith $"%s{where}: client fd %d{client} is %A{actual}, expected %A{fate}"
+                        failwith $"%s{where ()}: client fd %d{client} is %A{actual}, expected %A{fate}"
 
         // An accept asleep on the listener's only descriptor, which closes;
         // two connects; and the accept finished. Under Linux the finish takes

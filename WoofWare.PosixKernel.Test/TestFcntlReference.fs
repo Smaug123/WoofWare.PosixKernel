@@ -596,12 +596,12 @@ module TestFcntlReference =
                 }
 
             for i, op in List.indexed ops do
-                let where = $"%O{platform}, op %d{i} (%A{op})"
+                let where () : string = $"%O{platform}, op %d{i} (%A{op})"
                 let expected, after = step op reference
                 let actual, afterSystem = library reference op system
 
                 if actual <> expected then
-                    failwith $"%s{where}: expected %A{expected}, got %A{actual}"
+                    failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
 
                 cover (
                     match op, actual with
@@ -615,8 +615,8 @@ module TestFcntlReference =
                         "dup2 onto an open descriptor"
                     | FcntlOp.DupFd (_, m, _), Outcome.Answered (SyscallAnswer.Completed fd) when fd > int64 m ->
                         "F_DUPFD past a taken minimum"
-                    | _, Outcome.Answered (SyscallAnswer.Failed error) -> $"%A{error}"
-                    | op, Outcome.Answered (SyscallAnswer.Completed _) -> (sprintf "%A" op).Split(' ').[0]
+                    | _, Outcome.Answered (SyscallAnswer.Failed error) -> $"%O{error}"
+                    | op, Outcome.Answered (SyscallAnswer.Completed _) -> UnionCaseName.ofValue op
                 )
 
                 reference <- after
@@ -626,28 +626,28 @@ module TestFcntlReference =
                 let registry = Lone.fileDescriptors system
                 let libraryFds = FileDescriptorRegistry.fds registry
 
-                (where, libraryFds |> Map.keys |> Set.ofSeq)
-                |> shouldEqual (where, reference.Fds |> Map.keys |> Set.ofSeq)
+                libraryFds
+                |> Map.keys
+                |> Set.ofSeq
+                |> Expect.equal where (reference.Fds |> Map.keys |> Set.ofSeq)
 
-                (where, partition libraryFds)
-                |> shouldEqual (where, partition (reference.Fds |> Map.map (fun _ (d, _, _) -> d)))
+                partition libraryFds
+                |> Expect.equal where (partition (reference.Fds |> Map.map (fun _ (d, _, _) -> d)))
 
                 for fd in Map.keys reference.Fds do
                     let _, cloexec, clofork = reference.Fds.[fd]
 
-                    (where, fd, FileDescriptorRegistry.tryFindFlags fd registry)
-                    |> shouldEqual (
-                        where,
-                        fd,
-                        Some
-                            {
-                                CloseOnExec = cloexec
-                                CloseOnFork = clofork
-                            }
-                    )
+                    (fd, FileDescriptorRegistry.tryFindFlags fd registry)
+                    |> Expect.equal
+                        where
+                        (fd,
+                         Some
+                             {
+                                 CloseOnExec = cloexec
+                                 CloseOnFork = clofork
+                             })
 
-                UnixSystem.checkInvariants system
-                |> fun defects -> (where, defects) |> shouldEqual (where, [])
+                UnixSystem.checkInvariants system |> Expect.empty where
 
         let gen =
             gen {

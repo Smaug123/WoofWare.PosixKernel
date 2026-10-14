@@ -120,7 +120,7 @@ module TestPipeBufferAgainstHost =
                     let mutable offered = 0
 
                     for i, op in List.indexed ops do
-                        let where = $"%O{platform}, call %d{i} (%O{op})"
+                        let where () : string = $"%O{platform}, call %d{i} (%O{op})"
 
                         match op with
                         | PipeBufferOp.Write count ->
@@ -135,10 +135,10 @@ module TestPipeBufferAgainstHost =
                                 elif errno = eagain flavour && count > 0 then
                                     0
                                 else
-                                    failwith $"%s{where}: the host's write failed with errno %d{errno}"
+                                    failwith $"%s{where ()}: the host's write failed with errno %d{errno}"
 
                             if hostAccepted <> accepted then
-                                failwith $"%s{where}: the host took %d{hostAccepted}, the model %d{accepted}"
+                                failwith $"%s{where ()}: the host took %d{hostAccepted}, the model %d{accepted}"
 
                             buffer <- b
                             offered <- offered + accepted
@@ -154,21 +154,22 @@ module TestPipeBufferAgainstHost =
                                 elif errno = eagain flavour && count > 0 then
                                     [||]
                                 else
-                                    failwith $"%s{where}: the host's read failed with errno %d{errno}"
+                                    failwith $"%s{where ()}: the host's read failed with errno %d{errno}"
 
                             if hostGot <> Seq.toArray got then
                                 failwith
-                                    $"%s{where}: the host read %d{hostGot.Length} bytes, the model %d{got.Length}, or their contents differ"
+                                    $"%s{where ()}: the host read %d{hostGot.Length} bytes, the model %d{got.Length}, or their contents differ"
 
                             buffer <- b
 
                         let mutable available = 0
 
                         if hostBytesAvailable (nativeint fds.[0], &available) <> 0 then
-                            failwith $"%s{where}: FIONREAD failed"
+                            failwith $"%s{where ()}: FIONREAD failed"
 
                         if available <> PipeBuffer.held buffer then
-                            failwith $"%s{where}: the host holds %d{available}, the model %d{PipeBuffer.held buffer}"
+                            failwith
+                                $"%s{where ()}: the host holds %d{available}, the model %d{PipeBuffer.held buffer}"
 
                         let hostReadable = readyIn fds.[0] POLLIN
                         let hostWritable = readyIn fds.[1] POLLOUT
@@ -178,7 +179,7 @@ module TestPipeBufferAgainstHost =
                             <> (PipeBuffer.readable buffer, PipeBuffer.writable buffer)
                         then
                             failwith
-                                $"%s{where}: with %d{available} held, the host polls (readable %b{hostReadable}, writable %b{hostWritable}), the model (%b{PipeBuffer.readable buffer}, %b{PipeBuffer.writable buffer})"
+                                $"%s{where ()}: with %d{available} held, the host polls (readable %b{hostReadable}, writable %b{hostWritable}), the model (%b{PipeBuffer.readable buffer}, %b{PipeBuffer.writable buffer})"
                 finally
                     hostClose fds.[0] |> ignore
                     hostClose fds.[1] |> ignore

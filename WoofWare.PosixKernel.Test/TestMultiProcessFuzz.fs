@@ -1490,17 +1490,18 @@ module TestMultiProcessFuzz =
         Machines.wakes (asleepByProcess world.Asleep) world.Machine |> Map.ofList
 
     let private assertClean (machine : SimulatedMachine<int, string>) : unit =
-        Machines.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> Expect.empty (fun () -> "the machine")
 
         for pid in Machines.processIds machine do
+            let where () : string = $"process %O{pid}"
             let view = Machines.focus pid machine |> Option.get
-            UnixSystem.checkInvariants view |> shouldEqual []
+            UnixSystem.checkInvariants view |> Expect.empty where
 
             FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors view)
-            |> shouldEqual []
+            |> Expect.empty where
 
             VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem
-            |> shouldEqual []
+            |> Expect.empty where
 
         // Nothing passes a descriptor to another process, so each pipe's ends
         // are one process's.
@@ -1519,7 +1520,7 @@ module TestMultiProcessFuzz =
         |> List.collect (fun pid -> pipesOf pid |> Set.toList)
         |> List.countBy id
         |> List.filter (fun (_, count) -> count > 1)
-        |> shouldEqual []
+        |> Expect.empty (fun () -> "pipes held by more than one process")
 
     /// Every slot but `except`'s is as it was.
     let private othersUnmoved
@@ -1530,7 +1531,7 @@ module TestMultiProcessFuzz =
         =
         for KeyValue (pid, slot) in after.Processes do
             if pid <> except then
-                slot |> shouldEqual before.Processes.[pid]
+                slot |> Expect.equal (fun () -> $"process %O{pid}") before.Processes.[pid]
 
     /// `made`, by `thread` of `pid`, written into `world`: a view written back,
     /// the thread asleep, or the process ended.
@@ -1717,7 +1718,7 @@ module TestMultiProcessFuzz =
 
                 for KeyValue (_, fired) in newlyWakeable do
                     for primitive in fired do
-                        let kind = (sprintf "%A" primitive).Split(' ').[0]
+                        let kind = UnionCaseName.ofValue primitive
 
                         cover (FuzzLabel.CrossWakeKind kind)
 
@@ -1741,7 +1742,9 @@ module TestMultiProcessFuzz =
                 |> Seq.take added.Count
                 |> Set.ofSeq
 
-            added |> shouldEqual lowestFree
+            added
+            |> Expect.equal (fun () -> $"process %O{pid}'s new descriptors") lowestFree
+
             world
 
     /// The process's listener at `port`, the flavour's event queue watching

@@ -86,13 +86,13 @@ module TestPipe =
             }
         | PipeOrigin.Launched _ -> failwith "a launched pipe reports no inodes"
 
-    let private assertSound (context : string) (system : UnixSystem<int, string>) : unit =
+    let private assertSound (context : unit -> string) (system : UnixSystem<int, string>) : unit =
         match UnixSystem.checkInvariants system with
         | [] -> ()
-        | defects -> failwith $"%s{context}: %A{defects}"
+        | defects -> failwith $"%s{context ()}: %A{defects}"
 
-        FileDescriptorRegistry.assertInvariants context (Lone.fileDescriptors system)
-        |> ignore
+        FileDescriptorRegistry.checkInvariants (Lone.fileDescriptors system)
+        |> Expect.empty context
 
     let private payload (start : int) (count : int) : ImmutableArray<byte> =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte ((start + i) % 251)))
@@ -337,7 +337,7 @@ module TestPipe =
                     }
 
                 let now = UnixMachineState.realtime system.Scheduling system.Machine
-                let where = $"%O{platform}, call %d{i} (%A{op})"
+                let where () : string = $"%O{platform}, call %d{i} (%A{op})"
 
                 let nonBlockingOf (fd : int) =
                     reference.NonBlocking.[snd reference.Fds.[fd]]
@@ -362,7 +362,7 @@ module TestPipe =
                         | Ok (WriteStep.ProcessEnded endedProcess) -> Ok (WriteStep.ProcessEnded endedProcess)
                         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
                         | Ok (WriteStep.Restarts _) as other ->
-                            failwith $"%s{where}: a write that never slept restarted: %A{other}"
+                            failwith $"%s{where ()}: a write that never slept restarted: %A{other}"
                         | Ok (WriteStep.Returns (WriteAdmission.Transfer n, admitted)) ->
                             transferred <- Some n
                             UnixReadWrite.tryWriteBytes (Lone.leader system) fd (payload reference.Offered n) admitted
@@ -378,19 +378,19 @@ module TestPipe =
                                 admitted
                         | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer _, _, _))
                         | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep _, _, _)) as other ->
-                            failwith $"%s{where}: an admission that raised a signal asked for bytes: %A{other}"
+                            failwith $"%s{where ()}: an admission that raised a signal asked for bytes: %A{other}"
 
                     match Map.tryFind fd reference.Fds with
                     | None ->
                         match actual with
                         | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EBADF, after)) ->
                             after |> shouldEqual system
-                        | other -> failwith $"%s{where}: expected EBADF, got %A{other}"
+                        | other -> failwith $"%s{where ()}: expected EBADF, got %A{other}"
                     | Some (PipeEnd.Read, _) ->
                         match actual with
                         | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EBADF, after)) ->
                             after |> shouldEqual system
-                        | other -> failwith $"%s{where}: expected EBADF on the read end, got %A{other}"
+                        | other -> failwith $"%s{where ()}: expected EBADF on the read end, got %A{other}"
                     | Some (PipeEnd.Write, _) ->
 
                     let nonBlocking = nonBlockingOf fd
@@ -420,7 +420,7 @@ module TestPipe =
                             SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
                             withSignals (Lone.proc system).Signals after |> shouldEqual system
                             system <- after
-                        | _ -> failwith $"%s{where}: expected EPIPE and SIGPIPE under %A{sigPipe}, got %A{actual}"
+                        | _ -> failwith $"%s{where ()}: expected EPIPE and SIGPIPE under %A{sigPipe}, got %A{actual}"
                     else
 
                     let takes, grown =
@@ -501,7 +501,7 @@ module TestPipe =
                                 }
 
                         system <- after
-                    | _ -> failwith $"%s{where}: expected %A{expected}, got %A{actual}"
+                    | _ -> failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
                 | PipeOp.Read (fd, count, mapped) ->
                     let buffer =
                         if mapped then
@@ -518,7 +518,7 @@ module TestPipe =
                         match actual with
                         | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), after) ->
                             after |> shouldEqual system
-                        | other -> failwith $"%s{where}: expected EBADF, got %A{other}"
+                        | other -> failwith $"%s{where ()}: expected EBADF, got %A{other}"
                     | Some (PipeEnd.Read, _) ->
 
                     let held = modelHeld reference.Buffer
@@ -586,7 +586,7 @@ module TestPipe =
                             }
 
                         system <- after
-                    | _ -> failwith $"%s{where}: expected %A{expected}, got %A{actual}"
+                    | _ -> failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
                 | PipeOp.SetNonBlocking (fd, value) ->
                     let answer, after = UnixDescriptor.setNonBlocking fd value system
 
@@ -611,7 +611,7 @@ module TestPipe =
                             { reference with
                                 Fds = Map.add (int newFd) shared reference.Fds
                             }
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
 
                     system <- after
                 | PipeOp.Close fd ->
@@ -624,7 +624,7 @@ module TestPipe =
                             }
 
                         system <- after
-                    | other -> failwith $"%s{where}: %A{other}"
+                    | other -> failwith $"%s{where ()}: %A{other}"
                 | PipeOp.Poll fd ->
                     match flavour with
                     | SimulatedUnixFlavour.Darwin -> ()
@@ -747,7 +747,7 @@ module TestPipe =
                     (readFd, writeFd) |> shouldEqual (3, 4)
                     UnixDescriptor.isNonBlocking readFd after |> shouldEqual (Some nonBlocking)
                     UnixDescriptor.isNonBlocking writeFd after |> shouldEqual (Some nonBlocking)
-                    assertSound $"%O{platform} bit %d{bit}" after
+                    assertSound (fun () -> $"%O{platform} bit %d{bit}") after
                 | Error (), Error (Pipe2Refusal.PacketMode _)
                 | Error (), Error (Pipe2Refusal.NotificationPipe _) -> ()
                 | expected, actual -> failwith $"%O{platform}, bit %d{bit}: expected %A{expected}, got %A{actual}"
@@ -974,7 +974,7 @@ module TestPipe =
                     for count in [ 0 ; 1 ; pipeBuf ; pipeBuf + 1 ; 65536 ; 100000 ] do
                         for buffer in [ UserBuffer.Mapped ; UserBuffer.Unmapped 0UL ; UserBuffer.Unmapped 8UL ] do
                             for disposition in sigPipeDispositions do
-                                let where =
+                                let where () : string =
                                     $"%O{platform}, fill %d{fill}, O_NONBLOCK %b{nonBlocking}, count %d{count}, %A{buffer}, %A{disposition}"
 
                                 let (r, w), system = pipeOrFail (nonBlockFlag flavour) (systemOn platform)
@@ -992,7 +992,7 @@ module TestPipe =
                                                 match writeOrFail w (payload 0 1) system with
                                                 | WriteAnswer.Completed _, system -> fillUp system
                                                 | _, system -> system
-                                            | other -> failwith $"%s{where}: filling: %A{other}"
+                                            | other -> failwith $"%s{where ()}: filling: %A{other}"
 
                                         fillUp system
                                     | n -> writeOrFail w (payload 0 n) system |> snd
@@ -1033,7 +1033,7 @@ module TestPipe =
                                     (answer, signal) |> shouldEqual (WriteAnswer.Failed UnixError.EPIPE, raised)
                                     SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
                                     withSignals (Lone.proc system).Signals after |> shouldEqual system
-                                | _ -> failwith $"%s{where}: %A{actual}"
+                                | _ -> failwith $"%s{where ()}: %A{actual}"
 
     [<Test>]
     let ``a blocking read of an empty pipe with a writer sleeps; with no writer it is end of file`` () : unit =
@@ -1333,7 +1333,7 @@ module TestPipe =
             Map.count (madePipes system) |> shouldEqual 1
             let system = closeOrFail dupped system
             Map.isEmpty (madePipes system) |> shouldEqual true
-            assertSound $"%O{platform}" system
+            assertSound (fun () -> $"%O{platform}") system
 
     [<Test>]
     let ``wouldTake is the count write takes, and offering only that prefix changes nothing`` () : unit =
