@@ -1,0 +1,73 @@
+Linux 6.18.5 aarch64
+none/B L=43001 holder -; B -> OK getsockname=127.0.0.1:43001
+none/Br L=43002 holder -; Br -> OK getsockname=127.0.0.1:43002
+none/W L=43003 holder -; W -> OK getsockname=0.0.0.0:43003
+none/Wr L=43004 holder -; Wr -> OK getsockname=0.0.0.0:43004
+none/Lsr L=43005 holder -; Lsr -> OK getsockname=0.0.0.0:43005
+none/Y L=43006 holder -; Y -> OK getsockname=127.0.0.1:43006
+none/Yr L=43007 holder -; Yr -> OK getsockname=127.0.0.1:43007
+none/Xr L=43008 holder -; Xr -> OK getsockname=127.0.0.1:43008
+lr/B L=43009 holder OK at 127.0.0.1:43009; B -> EADDRINUSE getsockname=0.0.0.0:0
+lr/Br L=43010 holder OK at 127.0.0.1:43010; Br -> EADDRINUSE getsockname=0.0.0.0:0
+lr/W L=43011 holder OK at 127.0.0.1:43011; W -> EADDRINUSE getsockname=0.0.0.0:0
+lr/Wr L=43012 holder OK at 127.0.0.1:43012; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+lr/Lsr L=43013 holder OK at 127.0.0.1:43013; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+lr/Y L=43014 holder OK at 127.0.0.1:43014; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+lr/Yr L=43015 holder OK at 127.0.0.1:43015; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+lr/Xr L=43016 holder OK at 127.0.0.1:43016; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+l/B L=43017 holder OK at 127.0.0.1:43017; B -> EADDRINUSE getsockname=0.0.0.0:0
+l/Br L=43018 holder OK at 127.0.0.1:43018; Br -> EADDRINUSE getsockname=0.0.0.0:0
+l/W L=43019 holder OK at 127.0.0.1:43019; W -> EADDRINUSE getsockname=0.0.0.0:0
+l/Wr L=43020 holder OK at 127.0.0.1:43020; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+l/Lsr L=43021 holder OK at 127.0.0.1:43021; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+l/Y L=43022 holder OK at 127.0.0.1:43022; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+l/Yr L=43023 holder OK at 127.0.0.1:43023; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+l/Xr L=43024 holder OK at 127.0.0.1:43024; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+wr/B L=43025 holder OK at 0.0.0.0:43025; B -> EADDRINUSE getsockname=0.0.0.0:0
+wr/Br L=43026 holder OK at 0.0.0.0:43026; Br -> EADDRINUSE getsockname=0.0.0.0:0
+wr/W L=43027 holder OK at 0.0.0.0:43027; W -> EADDRINUSE getsockname=0.0.0.0:0
+wr/Wr L=43028 holder OK at 0.0.0.0:43028; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+wr/Lsr L=43029 holder OK at 0.0.0.0:43029; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+wr/Y L=43030 holder OK at 0.0.0.0:43030; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+wr/Yr L=43031 holder OK at 0.0.0.0:43031; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+wr/Xr L=43032 holder OK at 0.0.0.0:43032; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+or/B L=43033 holder OK at 127.0.0.2:43033; B -> OK getsockname=127.0.0.1:43033
+or/Br L=43034 holder OK at 127.0.0.2:43034; Br -> OK getsockname=127.0.0.1:43034
+or/W L=43035 holder OK at 127.0.0.2:43035; W -> EADDRINUSE getsockname=0.0.0.0:0
+or/Wr L=43036 holder OK at 127.0.0.2:43036; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+or/Lsr L=43037 holder OK at 127.0.0.2:43037; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+or/Y L=43038 holder OK at 127.0.0.2:43038; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+or/Yr L=43039 holder OK at 127.0.0.2:43039; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+or/Xr L=43040 holder OK at 127.0.0.2:43040; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+Lr/B L=43041 holder OK at 127.0.0.1:43041; B -> EADDRINUSE getsockname=0.0.0.0:0
+Lr/Br L=43042 holder OK at 127.0.0.1:43042; Br -> EADDRINUSE getsockname=0.0.0.0:0
+Lr/W L=43043 holder OK at 127.0.0.1:43043; W -> EADDRINUSE getsockname=0.0.0.0:0
+Lr/Wr L=43044 holder OK at 127.0.0.1:43044; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+Lr/Lsr L=43045 holder OK at 127.0.0.1:43045; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+Lr/Y L=43046 holder OK at 127.0.0.1:43046; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+Lr/Yr L=43047 holder OK at 127.0.0.1:43047; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+Lr/Xr L=43048 holder OK at 127.0.0.1:43048; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+c/B L=43049 holder OK at 127.0.0.1:43049; B -> EADDRINUSE getsockname=0.0.0.0:0
+c/Br L=43050 holder OK at 127.0.0.1:43050; Br -> EADDRINUSE getsockname=0.0.0.0:0
+c/W L=43051 holder OK at 127.0.0.1:43051; W -> EADDRINUSE getsockname=0.0.0.0:0
+c/Wr L=43052 holder OK at 127.0.0.1:43052; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+c/Lsr L=43053 holder OK at 127.0.0.1:43053; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+c/Y L=43054 holder OK at 127.0.0.1:43054; Y -> OK getsockname=127.0.0.1:43054
+c/Yr L=43055 holder OK at 127.0.0.1:43055; Yr -> OK getsockname=127.0.0.1:43055
+c/Xr L=43056 holder OK at 127.0.0.1:43056; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+cr/B L=43057 holder OK at 127.0.0.1:43057; B -> EADDRINUSE getsockname=0.0.0.0:0
+cr/Br L=43058 holder OK at 127.0.0.1:43058; Br -> EADDRINUSE getsockname=0.0.0.0:0
+cr/W L=43059 holder OK at 127.0.0.1:43059; W -> EADDRINUSE getsockname=0.0.0.0:0
+cr/Wr L=43060 holder OK at 127.0.0.1:43060; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+cr/Lsr L=43061 holder OK at 127.0.0.1:43061; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+cr/Y L=43062 holder OK at 127.0.0.1:43062; Y -> OK getsockname=127.0.0.1:43062
+cr/Yr L=43063 holder OK at 127.0.0.1:43063; Yr -> OK getsockname=127.0.0.1:43063
+cr/Xr L=43064 holder OK at 127.0.0.1:43064; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+br/B L=43065 holder OK at 127.0.0.1:43065; B -> EADDRINUSE getsockname=0.0.0.0:0
+br/Br L=43066 holder OK at 127.0.0.1:43066; Br -> EADDRINUSE getsockname=0.0.0.0:0
+br/W L=43067 holder OK at 127.0.0.1:43067; W -> EADDRINUSE getsockname=0.0.0.0:0
+br/Wr L=43068 holder OK at 127.0.0.1:43068; Wr -> EADDRINUSE getsockname=0.0.0.0:0
+br/Lsr L=43069 holder OK at 127.0.0.1:43069; Lsr -> EADDRINUSE getsockname=0.0.0.0:0
+br/Y L=43070 holder OK at 127.0.0.1:43070; Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+br/Yr L=43071 holder OK at 127.0.0.1:43071; Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+br/Xr L=43072 holder OK at 127.0.0.1:43072; Xr -> EADDRNOTAVAIL getsockname=0.0.0.0:0

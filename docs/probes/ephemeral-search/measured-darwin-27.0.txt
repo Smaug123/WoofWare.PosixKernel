@@ -1,0 +1,11 @@
+Darwin 27.0.0 arm64
+range [49152, 65535]
+filled 16364 of 16384 ports at 127.0.0.1 with SO_REUSEADDR; 20 held by other sockets, 0 other errors
+exhausted/W -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/B -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/Br -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/Wr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/Lsr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/Y -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+exhausted/Yr -> EADDRNOTAVAIL getsockname=0.0.0.0:0
+released/W -> OK

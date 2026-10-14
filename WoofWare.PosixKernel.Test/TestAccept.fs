@@ -85,7 +85,7 @@ module TestAccept =
                             Endpoint = serverAddress
                             LockedAddress = None
                             LockedPort = false
-                            HoldsPort = true
+                            PortHold = PortHold.Reserved
                         }
                 )
             Kind = SocketKind.Stream
@@ -213,7 +213,7 @@ module TestAccept =
                     Endpoint = serverAddress
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 

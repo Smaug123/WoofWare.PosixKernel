@@ -286,17 +286,22 @@ type internal UnixMachineState =
 [<RequireQualifiedAccess>]
 type internal EphemeralPortUse =
     /// `bind(2)` with port 0, and the implicit bind `listen(2)` performs on an
-    /// unbound socket: the port is reserved outright. Another socket's binding
-    /// stands in the way as `bind(2)` decides, and so does an endpoint of any
-    /// TCP connection whose socket has closed, because a real kernel keeps a
-    /// closing socket in its bind table until its connection is gone.
+    /// unbound socket: the port is reserved outright. For a stream socket,
+    /// another socket's binding at an overlapping address stands in the way
+    /// whatever either's `SO_REUSEADDR`, since the search never relaxes the
+    /// bind rule as an explicit bind may; for a datagram socket it stands in
+    /// the way as `bind(2)` decides. So does an endpoint of any TCP connection
+    /// whose socket has closed, because a real kernel keeps a closing socket in
+    /// its bind table until its connection is gone.
     | Reserve
     /// The implicit bind `connect(2)` performs on an unbound socket, towards
-    /// `destination`. Another socket's binding stands in the way as for
-    /// `Reserve`, but a connection does so only when it occupies the
+    /// `destination`. A connection stands in the way only when it occupies the
     /// four-tuple to `destination`: a real kernel selects a connect-time port
     /// from its connection table, so a port held towards another destination
-    /// is free.
+    /// is free. Under Linux, a stream socket's binding stands in the way at any
+    /// address if `bind(2)` or `listen(2)` made it, and otherwise only through
+    /// its connection; elsewhere a binding stands in the way as `bind(2)`
+    /// decides.
     | ConnectTo of destination : Ipv4Endpoint
 
 [<RequireQualifiedAccess>]
@@ -877,7 +882,7 @@ module UnixMachineState =
     /// Whether another socket's binding conflicts with `candidate`, taken on
     /// behalf of `socket`, by `SimulatedUnixPlatform.bindConflict`. A binding
     /// its connection released (`releasedPort`), or whose refused connect gave
-    /// its port back (`InetBinding.HoldsPort`), conflicts with nothing.
+    /// its port back (`PortHold.GivenBack`), conflicts with nothing.
     let private socketBindingConflicts
         (socketId : SocketId)
         (socket : SocketDescription)
@@ -893,7 +898,7 @@ module UnixMachineState =
 
             match other.Ipv4Binding with
             | None -> false
-            | Some existing when not existing.HoldsPort -> false
+            | Some existing when not (PortHold.isHeld existing.PortHold) -> false
             | Some existing ->
                 // Separate port namespaces per transport, measured: a UDP
                 // socket takes a port a listening TCP socket holds.
@@ -917,8 +922,7 @@ module UnixMachineState =
     ///
     /// The relation `bind(2)` decides admission with, and `listen(2)` asks
     /// again on the flavour that re-screens an already-bound socket. An
-    /// ephemeral choice asks `socketBindingConflicts` instead, and judges a
-    /// closed end by its own rule. Measured for a
+    /// ephemeral choice asks its own rules instead (`allocateEphemeralPort`). Measured for a
     /// connection end, open or closed, on both flavours, with and without
     /// `SO_REUSEADDR` on either side, at loopback and the wildcard, and the
     /// `listen(2)` of a socket that bound
@@ -943,17 +947,10 @@ module UnixMachineState =
                       socket.ReuseAddress
               )
 
-    /// Whether a TCP connection end whose socket has gone still occupies
-    /// `endpoint`'s port, whatever either side's `SO_REUSEADDR`
-    /// (`orphanedEndpoints`).
-    let private orphanedConnectionOccupies (endpoint : Ipv4Endpoint) (machine : UnixMachineState) : bool =
-        orphanedEndpoints machine
-        |> List.exists (fun (held, _) -> held.Port = endpoint.Port && Ipv4Endpoint.addressesOverlap held endpoint)
-
     /// Whether anything other than `socketId` holds `port`, at any address and
     /// whatever anyone's `SO_REUSEADDR`: a socket of `socket`'s kind bound at
     /// it, unless its connection released it (`releasedPort`) or its refused
-    /// connect gave it back (`InetBinding.HoldsPort`), or, for a
+    /// connect gave it back (`PortHold.GivenBack`), or, for a
     /// stream socket, a connection end whose socket has closed and which still
     /// holds it (`orphanedEndpoints`). Darwin's implicit connect bind, which
     /// binds the wildcard, passes over every port another socket is bound at,
@@ -974,7 +971,7 @@ module UnixMachineState =
                 && not (releasedPort other machine)
                 && (
                     match other.Ipv4Binding with
-                    | Some binding -> binding.HoldsPort && binding.Endpoint.Port = port
+                    | Some binding -> PortHold.isHeld binding.PortHold && binding.Endpoint.Port = port
                     | None -> false
                 )
             )
@@ -982,6 +979,53 @@ module UnixMachineState =
         boundThere
         || socket.Kind = SocketKind.Stream
            && orphanedEndpoints machine |> List.exists (fun (held, _) -> held.Port = port)
+
+    /// The bindings of the sockets of `socket`'s kind other than `socketId`
+    /// that hold their ports, by port: none whose connection released it
+    /// (`releasedPort`) or whose refused connect gave it back
+    /// (`PortHold.GivenBack`). Worked out once for a whole search.
+    let private heldBindingsByPort
+        (socketId : SocketId)
+        (socket : SocketDescription)
+        (machine : UnixMachineState)
+        : Map<uint16, Ipv4Binding list>
+        =
+        machine.Sockets
+        |> Map.toList
+        |> List.choose (fun (otherId, other) ->
+            if otherId = socketId || other.Kind <> socket.Kind || releasedPort other machine then
+                None
+            else
+                match other.Ipv4Binding with
+                | Some binding when PortHold.isHeld binding.PortHold -> Some binding
+                | Some _
+                | None -> None
+        )
+        |> List.groupBy (fun binding -> binding.Endpoint.Port)
+        |> Map.ofList
+
+    /// Whether one of `held`, the bindings other sockets hold at
+    /// `candidate`'s port, is at an address overlapping it, however it came by
+    /// the port, whatever either socket's `SO_REUSEADDR`, and whether or not it
+    /// listens: what a stream socket's search for a port to bind passes over,
+    /// which never relaxes the bind rule as an explicit bind may. Measured on
+    /// Linux (`inet_csk_find_open_port`), and on Darwin for a search carrying
+    /// `SO_REUSEADDR` against sockets carrying it too
+    /// (`docs/probes/ephemeral-search`).
+    let private searchMeetsHolder (held : Ipv4Binding list) (candidate : Ipv4Binding) : bool =
+        held
+        |> List.exists (fun binding -> Ipv4Endpoint.addressesOverlap binding.Endpoint candidate.Endpoint)
+
+    /// Whether one of `held`, the bindings other stream sockets hold at a port,
+    /// is one `bind(2)` or `listen(2)` made (`PortHold.Reserved`), at any
+    /// address and whatever anyone's `SO_REUSEADDR`: an explicit bind, one of
+    /// port 0, a listener's own implicit bind, or the listener's port an
+    /// accepted socket holds. Linux's search for a connect's port
+    /// (`__inet_hash_connect`) passes over every such port, and shares one only
+    /// connect's own implicit bind gave another socket (measured,
+    /// `docs/probes/ephemeral-search`).
+    let private linuxBindMadeHolder (held : Ipv4Binding list) : bool =
+        held |> List.exists (fun binding -> binding.PortHold = PortHold.Reserved)
 
     /// Whether a TCP connection occupies the four-tuple between `source` and
     /// `destination`, in either orientation. One a reset has reached does
@@ -1003,9 +1047,8 @@ module UnixMachineState =
     /// range once and wrapping, as the binding `candidate` makes of it, on
     /// behalf of `socket`. `purpose` decides what makes a port free.
     ///
-    /// `None` when a full sweep finds nothing. The caller decides what to do:
-    /// there is no measured answer for an exhausted range, so inventing an
-    /// errno here would be a guess.
+    /// `None` when a full sweep finds nothing, which the caller answers: see
+    /// `SimulatedUnixPlatform.ephemeralPortsExhausted`.
     let internal allocateEphemeralPort
         (purpose : EphemeralPortUse)
         (socketId : SocketId)
@@ -1017,6 +1060,21 @@ module UnixMachineState =
         let low, high = machine.EphemeralPortRange
         let width = int high - int low + 1
 
+        // What holds each port, worked out once for the sweep rather than
+        // once for each port it considers.
+        let heldAt =
+            let byPort = lazy (heldBindingsByPort socketId socket machine)
+            fun (port : uint16) -> byPort.Force () |> Map.tryFind port |> Option.defaultValue []
+
+        // Whether a TCP connection end whose socket has gone still occupies
+        // `endpoint`'s port, whatever either side's SO_REUSEADDR
+        // (`orphanedEndpoints`).
+        let orphans = lazy (orphanedEndpoints machine)
+
+        let orphanOccupies (endpoint : Ipv4Endpoint) : bool =
+            orphans.Force ()
+            |> List.exists (fun (held, _) -> held.Port = endpoint.Port && Ipv4Endpoint.addressesOverlap held endpoint)
+
         let acceptable (port : uint16) : Ipv4Binding option =
             let binding = candidate port
 
@@ -1025,20 +1083,23 @@ module UnixMachineState =
                     $"UnixMachineState.allocateEphemeralPort: the candidate binding for port %d{port} names port %d{binding.Endpoint.Port} instead (this is a bug in this library)."
 
             let free =
-                match purpose with
-                | EphemeralPortUse.Reserve ->
-                    not (socketBindingConflicts socketId socket binding machine)
-                    // Only a stream socket shares a namespace with the TCP
-                    // connections. A port an end whose socket has closed
-                    // still holds is passed over whatever either side's
-                    // SO_REUSEADDR: what that flag does to an implicit bind
-                    // is unmeasured.
-                    && (socket.Kind <> SocketKind.Stream
-                        || not (orphanedConnectionOccupies binding.Endpoint machine))
-                | EphemeralPortUse.ConnectTo destination ->
+                match purpose, socket.Kind, SimulatedUnixPlatform.flavour machine.UnixPlatform with
+                | EphemeralPortUse.Reserve, SocketKind.Stream, _ ->
+                    not (searchMeetsHolder (heldAt port) binding)
+                    // A port an end whose socket has closed still holds is
+                    // passed over whatever either side's SO_REUSEADDR.
+                    && not (orphanOccupies binding.Endpoint)
+                // A datagram socket's search is the bind rule's: Linux's lets
+                // two sockets carrying SO_REUSEADDR share a port, by the
+                // source (`udp_lib_lport_inuse`), which is unmeasured.
+                | EphemeralPortUse.Reserve, _, _ -> not (socketBindingConflicts socketId socket binding machine)
+                | EphemeralPortUse.ConnectTo destination, SocketKind.Stream, SimulatedUnixFlavour.Linux ->
+                    not (linuxBindMadeHolder (heldAt port))
                     // An end whose socket has closed constrains a connect's
                     // port by its four-tuple alone: which other ports a
                     // connect passes over is unmeasured.
+                    && not (connectionOccupiesTuple binding.Endpoint destination machine)
+                | EphemeralPortUse.ConnectTo destination, _, _ ->
                     not (socketBindingConflicts socketId socket binding machine)
                     && not (connectionOccupiesTuple binding.Endpoint destination machine)
 

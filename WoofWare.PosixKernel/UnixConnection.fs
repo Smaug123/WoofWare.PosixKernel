@@ -223,8 +223,11 @@ type internal ConnectRefusal =
     /// `boundToWildcard` says whether the socket was bound to the wildcard or
     /// not bound at all.
     | SourceForNonLoopbackDestination of socket : SocketId * destination : SocketAddress * boundToWildcard : bool
-    /// The implicit bind found every port in the ephemeral range taken, and
-    /// what a kernel answers then is unmeasured.
+    /// The implicit bind found every port in the ephemeral range taken, on a
+    /// Darwin socket or a datagram socket: Linux answers a stream socket's
+    /// `EADDRNOTAVAIL`. Darwin answers `EADDRNOTAVAIL` too, measured, but this
+    /// kernel's search can pass over a port Darwin's would take; what a
+    /// datagram socket's connect answers is unmeasured.
     | EphemeralPortsExhausted of range : uint16 * uint16
     /// The destination is not an address of this machine, and this library
     /// models no network to carry a packet anywhere else.
@@ -290,7 +293,7 @@ module internal ConnectRefusal =
             else
                 $"socket %O{socket} is unbound and is connecting to %s{SocketAddress.toString destination}, and which source address a kernel picks for a destination other than 127.0.0.1 is unmeasured. Bind the socket first, or connect to 127.0.0.1."
         | ConnectRefusal.EphemeralPortsExhausted (low, high) ->
-            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this implicit bind has no answer. Widen the machine's EphemeralPortRange, or measure what a real kernel says here."
+            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this implicit bind has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a datagram socket's connect answers is unmeasured. Widen the machine's EphemeralPortRange."
         | ConnectRefusal.DestinationNotLocal (destination, kind) ->
             let carried =
                 match kind with
@@ -556,11 +559,12 @@ module UnixConnection =
         // whether or not anything has reported it yet: it gives the port back
         // by the platform's rule, and getsockname goes on reporting it.
         let bindingOnRefusal (binding : Ipv4Binding) : Ipv4Binding =
-            { binding with
-                HoldsPort =
-                    binding.HoldsPort
-                    && not (SimulatedUnixPlatform.refusalReleasesPort system.Machine.UnixPlatform binding.LockedPort)
-            }
+            if SimulatedUnixPlatform.refusalReleasesPort system.Machine.UnixPlatform binding.LockedPort then
+                { binding with
+                    PortHold = PortHold.GivenBack
+                }
+            else
+                binding
 
         // connect(2)'s implicit bind, when the socket has no local address
         // yet: loopback source, ephemeral port, the same conflict rule as
@@ -576,7 +580,7 @@ module UnixConnection =
             : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             match current with
-            | Some binding when not binding.HoldsPort ->
+            | Some binding when not (PortHold.isHeld binding.PortHold) ->
                 // A Linux refused connect gave the port back, and the socket
                 // connects as one with no port: a new port, at the binding's
                 // address, which a wildcard resolves to loopback (measured,
@@ -598,7 +602,7 @@ module UnixConnection =
                 let candidate (port : uint16) : Ipv4Binding =
                     { binding with
                         Endpoint = Ipv4Endpoint.ofParts address port
-                        HoldsPort = true
+                        PortHold = PortHold.Connected
                     }
 
                 match
@@ -683,7 +687,11 @@ module UnixConnection =
                     // address all the way to the wildcard.
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold =
+                        match sock.Kind with
+                        | SocketKind.Stream -> PortHold.Connected
+                        | SocketKind.Datagram
+                        | SocketKind.SeqPacket -> PortHold.Reserved
                 }
 
             match
@@ -710,6 +718,26 @@ module UnixConnection =
             : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
             =
             ensureBoundFrom sock.Ipv4Binding dest system
+
+        // A stream connect's implicit bind, with the answer the platform gives
+        // where it finds every port taken (`Ok (Error errno)`), which leaves the
+        // socket as it was.
+        let ensureStreamBound
+            (dest : Ipv4Endpoint)
+            (system : UnixSystem<'Thread, 'Handler>)
+            : Result<Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, UnixError>, ConnectRefusal>
+            =
+            match ensureBound dest system with
+            | Ok bound -> Ok (Ok bound)
+            | Error (ConnectRefusal.EphemeralPortsExhausted (low, high)) ->
+                match
+                    SimulatedUnixPlatform.ephemeralPortsExhausted
+                        system.Machine.UnixPlatform
+                        EphemeralSearchCall.Connect
+                with
+                | Some error -> Ok (Error error)
+                | None -> Error (ConnectRefusal.EphemeralPortsExhausted (low, high))
+            | Error refusal -> Error refusal
 
         // The established/refused attempt, shared by both flavours once the
         // per-flavour screens have let an idle stream socket through.
@@ -799,9 +827,10 @@ module UnixConnection =
                     )
                 else
 
-                match ensureBound dest system with
+                match ensureStreamBound dest system with
                 | Error refusal -> Error refusal
-                | Ok (clientBinding, system) ->
+                | Ok (Error error) -> failed error system
+                | Ok (Ok (clientBinding, system)) ->
 
                 // Two corners a REUSEADDR-bound client can engineer, each
                 // refused because the real answer is unmeasured.
@@ -937,7 +966,7 @@ module UnixConnection =
                 // checked below.
                 match sock.Ipv4Binding with
                 | Some binding when
-                    binding.HoldsPort
+                    PortHold.isHeld binding.PortHold
                     && binding.Endpoint.Port = dest.Port
                     && (binding.Endpoint.Address = dest.Address
                         || binding.Endpoint.Address = Ipv4Address.any
@@ -978,9 +1007,10 @@ module UnixConnection =
                 // socket has a concrete local endpoint too — measured,
                 // getsockname reports 127.0.0.1 and a nonzero port while the
                 // refusal is pending, on both kernels.
-                match ensureBound dest system with
+                match ensureStreamBound dest system with
                 | Error refusal -> Error refusal
-                | Ok (binding, system) when binding.Endpoint = dest ->
+                | Ok (Error error) -> failed error system
+                | Ok (Ok (binding, system)) when binding.Endpoint = dest ->
                     // Only a socket with no port of its own gets here, one
                     // holding a port having been answered above: unbound, or
                     // under Linux one whose refused connect gave its port back.
@@ -1021,7 +1051,7 @@ module UnixConnection =
                                             system.Machine.Sockets
                                 }
                         }
-                | Ok (binding, system) ->
+                | Ok (Ok (binding, system)) ->
 
                 if not nonBlocking then
                     // The refusal is delivered inline, and the socket's fate
@@ -1298,7 +1328,7 @@ module UnixConnection =
                                 // No bind(2) ran.
                                 LockedAddress = None
                                 LockedPort = false
-                                HoldsPort = true
+                                PortHold = PortHold.Connected
                             }
 
                         match
@@ -1514,7 +1544,7 @@ module UnixConnection =
                                     // No bind(2) ran.
                                     LockedAddress = None
                                     LockedPort = false
-                                    HoldsPort = true
+                                    PortHold = PortHold.Reserved
                                 }
 
                         match
@@ -1985,7 +2015,7 @@ module UnixConnection =
                                     // refusal delivery can ever revert it.
                                     LockedAddress = None
                                     LockedPort = false
-                                    HoldsPort = true
+                                    PortHold = PortHold.Reserved
                                 })
                             listener.Addressing
                     Kind = SocketKind.Stream
