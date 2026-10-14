@@ -1198,7 +1198,7 @@ module UnixReadWrite =
         // `SignalState.generate`). A Linux stream socket with no peer raises it
         // as a pipe does (socket-unconnected-transfer.c: on the writing thread,
         // before the write returned); no Darwin socket with no peer raises it.
-        if ProcessId.toInt32 system.Process.ProcessId = 1 then
+        if ProcessSignal.isInit system then
             Error (WriteRefusal.InitProcess target)
         else
 
@@ -1213,34 +1213,12 @@ module UnixReadWrite =
                 Target = receiver
             }
 
-        let generation =
-            SignalState.generate
-                system.Process.CoreDumps
-                system.Leader
-                (system.Threads |> Map.keys |> Set.ofSeq)
-                entry
-                system.Process.Signals
-
-        match generation with
+        match ProcessSignal.generate entry system with
         | Error refusal -> Error (WriteRefusal.SignalReceiver (target, refusal))
-        | Ok (SignalGeneration.ProcessContinues signals) ->
-            Ok (
-                WriteStep.ReturnsRaising (
-                    answer,
-                    entry,
-                    { system with
-                        Process =
-                            { system.Process with
-                                Signals = signals
-                            }
-                    }
-                )
-            )
-        | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
-            |> WriteStep.ProcessEnded
-            |> Ok
-        | Ok (SignalGeneration.ProcessStopped (signal, _)) ->
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+            Ok (WriteStep.ReturnsRaising (answer, entry, system))
+        | Ok (ProcessFate.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
             failwith
                 $"UnixReadWrite: generating %O{signal} for a write into %s{BrokenWriteTarget.describe target} stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
 
