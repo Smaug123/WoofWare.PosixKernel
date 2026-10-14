@@ -201,16 +201,13 @@ module TestUnixSignal =
                     else
                         match
                             SignalState.generate
+                                (UnixSystemState.signalNumbering system)
                                 coreDumps
                                 0
                                 (Set.singleton 0)
                                 {
                                     Signal =
-                                        match
-                                            Signal.ofRawSignoUnder
-                                                (SignalState.numbering (Lone.proc system).Signals)
-                                                signo
-                                        with
+                                        match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueNone
@@ -302,7 +299,7 @@ module TestUnixSignal =
         : UnixSystem<int, string>
         =
         let system = systemLaunchedWith (ProcessLaunch.withCoreDumps coreDumps) flavour
-        let numbering = SignalState.numbering (Lone.proc system).Signals
+        let numbering = UnixSystemState.signalNumbering system
         let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
         let system =
@@ -357,7 +354,7 @@ module TestUnixSignal =
             for coreDumps in [ CoreDumps.Suppressed ; CoreDumps.Written ] do
                 for signal, coreDumped in fatalSignals coreDumps do
                     let pending = pendingBehindMask flavour coreDumps signal
-                    let numbering = SignalState.numbering (Lone.proc pending).Signals
+                    let numbering = UnixSystemState.signalNumbering pending
                     let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
                     let unblocked =
@@ -472,8 +469,7 @@ module TestUnixSignal =
 
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
         let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
-            let mask =
-                SignalMask.ofSignals (SignalState.numbering (Lone.proc system).Signals) signals
+            let mask = SignalMask.ofSignals (UnixSystemState.signalNumbering system) signals
 
             match UnixSignal.pthreadSigmask thread (sigBlock case.Flavour + 2) (Some mask) system with
             | Ok (_, system) -> system
@@ -490,7 +486,7 @@ module TestUnixSignal =
             ||> List.fold (fun system (signal, disposition) ->
                 match
                     UnixSignal.sigaction
-                        (Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) signal)
+                        (Signal.toRawSignoUnder (UnixSystemState.signalNumbering system) signal)
                         (Some disposition)
                         system
                 with
@@ -510,7 +506,7 @@ module TestUnixSignal =
                 | Some system ->
 
                 let signo =
-                    Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) send.Signal
+                    Signal.toRawSignoUnder (UnixSystemState.signalNumbering system) send.Signal
 
                 let answer =
                     match send.Target with
@@ -547,6 +543,7 @@ module TestUnixSignal =
 
             let decided =
                 SignalState.onReturnToUser
+                    (UnixSystemState.signalNumbering system)
                     (Lone.proc system).CoreDumps
                     (Lone.leader system)
                     threads

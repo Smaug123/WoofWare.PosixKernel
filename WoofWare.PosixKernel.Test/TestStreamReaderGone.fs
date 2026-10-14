@@ -45,7 +45,12 @@ module TestStreamReaderGone =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        disposition
+                        proc.Signals
             }
         )
 
@@ -207,6 +212,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
+                                (UnixSystemState.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads

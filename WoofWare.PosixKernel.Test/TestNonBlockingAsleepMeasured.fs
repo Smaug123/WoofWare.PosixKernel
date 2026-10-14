@@ -146,8 +146,12 @@ module TestNonBlockingAsleepMeasured =
                 { system.Process with
                     Signals =
                         system.Process.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch
                                 { SignalCatch.ofHandler "h" with

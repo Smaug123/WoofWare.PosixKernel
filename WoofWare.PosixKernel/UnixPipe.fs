@@ -119,9 +119,7 @@ module UnixPipe =
             else
                 Pipe2Flags.Creates (
                     flags &&& OpenFlagNumbering.LinuxNonBlock <> 0,
-                    { DescriptorFlags.none with
-                        CloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
-                    }
+                    DescriptorFlags.Linux (closeOnExec = (flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0))
                 )
         | SimulatedUnixFlavour.Darwin ->
             let accepted =
@@ -134,10 +132,10 @@ module UnixPipe =
             else
                 Pipe2Flags.Creates (
                     flags &&& OpenFlagNumbering.DarwinNonBlock <> 0,
-                    {
-                        CloseOnExec = flags &&& OpenFlagNumbering.DarwinCloseOnExec <> 0
-                        CloseOnFork = flags &&& OpenFlagNumbering.DarwinCloseOnFork <> 0
-                    }
+                    DescriptorFlags.Darwin (
+                        closeOnExec = (flags &&& OpenFlagNumbering.DarwinCloseOnExec <> 0),
+                        closeOnFork = (flags &&& OpenFlagNumbering.DarwinCloseOnFork <> 0)
+                    )
                 )
 
     /// `pipe2`, with a refusal answered as the `Error` rather than raised.
@@ -218,7 +216,11 @@ module UnixPipe =
             }
 
         let (readFd, writeFd), registry =
-            FileDescriptorRegistry.createPipe pipeId nonBlocking (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createPipe
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                pipeId
+                nonBlocking
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             registry

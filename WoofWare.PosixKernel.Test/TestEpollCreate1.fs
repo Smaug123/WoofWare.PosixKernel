@@ -77,9 +77,12 @@ module TestEpollCreate1 =
     let ``an epoll instance is created exactly for 0 and EPOLL_CLOEXEC, on the lowest free descriptor`` () : unit =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.fileDescriptors linux)
 
-        let _, withTwo = FileDescriptorRegistry.createEpoll queueSystem
+        let _, withTwo =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux queueSystem
 
         let holed =
             Lone.withFileDescriptors
@@ -95,7 +98,9 @@ module TestEpollCreate1 =
                 fd |> shouldEqual epoll
 
                 let expectedFd, expectedRegistry =
-                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors holed)
+                    FileDescriptorRegistry.createEpoll
+                        (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                        (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
 
@@ -104,9 +109,9 @@ module TestEpollCreate1 =
                 let expectedRegistry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = (flags = cloExec)
-                        }
+                        (DescriptorFlags.closingOnExec
+                            (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                            (flags = cloExec))
                         expectedRegistry
 
                 after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)

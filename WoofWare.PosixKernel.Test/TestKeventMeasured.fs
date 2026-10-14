@@ -781,6 +781,8 @@ module TestKeventMeasured =
                 s.Fresh (fun system ->
                     let fd, registry =
                         FileDescriptorRegistry.openFile
+                            (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                            (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                             (ForgedName.ofInode system (InodeNumber 1L))
                             (InodeNumber 1L)
                             FileAccessMode.ReadWrite
@@ -793,6 +795,8 @@ module TestKeventMeasured =
                 s.Fresh (fun system ->
                     let fd, registry =
                         FileDescriptorRegistry.openDirectory
+                            (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                            (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                             (ForgedName.ofInode system (InodeNumber 1L))
                             (InodeNumber 1L)
                             (Lone.fileDescriptors system)

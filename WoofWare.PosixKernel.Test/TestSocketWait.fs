@@ -86,7 +86,10 @@ module TestSocketWait =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SocketId 0L)
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -177,6 +180,8 @@ module TestSocketWait =
 
             let fileFd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly

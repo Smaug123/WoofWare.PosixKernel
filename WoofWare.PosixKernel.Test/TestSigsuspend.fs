@@ -1224,22 +1224,24 @@ module TestSigsuspend =
             }
         )
 
-    let private suspended (thread : int) (signals : SignalState<int, string>) : SignalState<int, string> =
-        SignalState.suspend thread SignalMask.empty signals
+    /// `system`'s signals once `thread` has entered `sigsuspend` with an empty
+    /// mask.
+    let private suspended (thread : int) (system : UnixSystem<int, string>) : SignalState<int, string> =
+        SignalState.suspend (UnixSystemState.signalNumbering system) thread SignalMask.empty (Lone.proc system).Signals
 
     [<Test>]
     let ``a mask to restore for a thread the table does not hold is a defect`` () : unit =
         let system = boot SimulatedUnixFlavour.Linux
 
         system
-        |> withSignals (suspended 42 (Lone.proc system).Signals)
+        |> withSignals (suspended 42 system)
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutThread 42 ]
 
         // The control: a thread between its call's answer and its return to user
         // mode holds one, parked in nothing.
         system
-        |> withSignals (suspended main (Lone.proc system).Signals)
+        |> withSignals (suspended main system)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -1255,7 +1257,7 @@ module TestSigsuspend =
             |> Option.defaultWith (fun () -> failwith "the poll did not park")
 
         polling
-        |> withSignals (suspended main (Lone.proc polling).Signals)
+        |> withSignals (suspended main polling)
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.MaskToRestoreOutsideSigsuspend (main, parked) ]
 
@@ -1315,7 +1317,7 @@ module TestSigsuspend =
             // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.
             let forgotten =
-                SignalState.suspend helper usr1 (Lone.proc blocking).Signals
+                SignalState.suspend (UnixSystemState.signalNumbering blocking) helper usr1 (Lone.proc blocking).Signals
                 |> SignalState.forgetThread helper
 
             SignalState.maskToRestore helper forgotten |> shouldEqual None

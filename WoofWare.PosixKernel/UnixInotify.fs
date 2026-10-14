@@ -213,6 +213,7 @@ module UnixInotify =
 
         let fd, registry =
             FileDescriptorRegistry.createInotify
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
                 owner
                 (flags &&& InotifyInitFlags.NonBlock <> 0)
                 (UnixSystemState.fileDescriptors system)
@@ -220,9 +221,9 @@ module UnixInotify =
         let registry =
             FileDescriptorRegistry.setFlags
                 fd
-                { DescriptorFlags.none with
-                    CloseOnExec = flags &&& InotifyInitFlags.CloseOnExec <> 0
-                }
+                (DescriptorFlags.closingOnExec
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (flags &&& InotifyInitFlags.CloseOnExec <> 0))
                 registry
 
         Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))

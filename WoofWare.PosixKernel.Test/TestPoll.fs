@@ -118,7 +118,10 @@ module TestPoll =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -141,6 +144,8 @@ module TestPoll =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 accessMode
@@ -516,7 +521,9 @@ module TestPoll =
     [<Test>]
     let ``an entry naming an epoll instance is refused`` () : unit =
         let queueFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.fileDescriptors linux)
 
         let system = Lone.withFileDescriptors registry linux
 
@@ -535,9 +542,12 @@ module TestPoll =
     [<Test>]
     let ``the refusal names the first unmeasured entry in list order`` () : unit =
         let firstEpoll, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.fileDescriptors linux)
 
-        let secondEpoll, registry = FileDescriptorRegistry.createEpoll registry
+        let secondEpoll, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry linux
 

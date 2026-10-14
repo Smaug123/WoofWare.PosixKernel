@@ -1516,14 +1516,16 @@ module UnixPoll =
         | Ok () ->
 
         let fd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             FileDescriptorRegistry.setFlags
                 fd
-                { DescriptorFlags.none with
-                    CloseOnExec = flags &&& EpollCreateFlags.CloseOnExec <> 0
-                }
+                (DescriptorFlags.closingOnExec
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (flags &&& EpollCreateFlags.CloseOnExec <> 0))
                 registry
 
         Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))

@@ -45,17 +45,20 @@ module TestWakeCondition =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
-        let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
+        let blockedFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         // Two kqueues, for `KqueueDrained`'s two live answers: fds 5 and 6. The world is
         // Linux's, which has no kqueue; the primitive asks only of the description.
         let _, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let drainedFd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let registry =
             match FileDescriptorRegistry.tryFindId drainedFd registry with
@@ -137,9 +140,11 @@ module TestWakeCondition =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1

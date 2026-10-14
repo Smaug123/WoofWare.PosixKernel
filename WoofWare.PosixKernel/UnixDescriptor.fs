@@ -700,7 +700,7 @@ module UnixDescriptor =
         | Error refusal -> Error refusal
         | Ok () ->
 
-        match FileDescriptorRegistry.dup fd registry with
+        match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) fd registry with
         | Ok (newFd, registry) ->
             Ok (SyscallAnswer.Completed (int64 newFd), UnixSystemState.withFileDescriptors registry system)
         | Error FileDescriptorDupError.BadFd ->
@@ -1154,19 +1154,8 @@ module UnixDescriptor =
 
         truncateAt through inode length system
         |> Result.map (fun system ->
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Linux -> SyscallAnswer.Completed 0L, system
-            | SimulatedUnixFlavour.Darwin ->
-                SyscallAnswer.Completed 0L,
-                UnixSystemState.mapOpenFiles
-                    (OpenFileTable.mapStatus
-                        id
-                        (fun status ->
-                            { status with
-                                Written = true
-                            }
-                        ))
-                    system
+            SyscallAnswer.Completed 0L,
+            UnixSystemState.mapOpenFiles (OpenFileTable.mapStatus id OpenFileStatus.markWritten) system
         )
 
     /// `ftruncate(2)`: set a regular file's length through a descriptor open for
@@ -1265,31 +1254,6 @@ module UnixDescriptor =
         =
         tryPosixFadvise fd offset length advice system
         |> Refusal.orRaise "UnixDescriptor.posixFadvise" PosixFadviseRefusal.kind PosixFadviseRefusal.describe
-
-    /// Record on the description `id` that an `flock` lock has been granted to
-    /// it, under the flavour that reports that (`OpenFileStatus.Flocked`).
-    ///
-    /// Measured on Darwin 27.0.0 (`fcntl-dup.c`, WRITTEN rows): `F_GETFL` shows
-    /// 0x4000 once a lock has been granted, blocking or not, and through a dup
-    /// as well; a refused or interrupted request does not set it, and LOCK_UN
-    /// does not clear it.
-    let private recordGrant
-        (flavour : SimulatedUnixFlavour)
-        (id : OpenFileDescriptionId)
-        (openFiles : OpenFileTable)
-        : OpenFileTable
-        =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> openFiles
-        | SimulatedUnixFlavour.Darwin ->
-            OpenFileTable.mapStatus
-                id
-                (fun status ->
-                    { status with
-                        Flocked = true
-                    }
-                )
-                openFiles
 
     /// `flock`, with a refusal answered as the `Error` rather than raised.
     let internal tryFlock<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1406,7 +1370,9 @@ module UnixDescriptor =
         let registry =
             match error, request, FileDescriptorRegistry.tryFindId fd registry with
             | None, FlockRequest.Acquire _, Some id ->
-                FileDescriptorRegistry.mapOpenFiles (recordGrant flavour id) registry
+                FileDescriptorRegistry.mapOpenFiles
+                    (OpenFileTable.mapStatus id OpenFileStatus.recordFlockGrant)
+                    registry
             | _ -> registry
 
         let advanced = UnixSystemState.withFileDescriptors registry system
@@ -1514,7 +1480,7 @@ module UnixDescriptor =
 
         let openFiles =
             match error with
-            | None -> recordGrant (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) requester openFiles
+            | None -> OpenFileTable.mapStatus requester OpenFileStatus.recordFlockGrant openFiles
             | Some _ -> openFiles
 
         let advanced = UnixSystemState.mapOpenFiles (fun _ -> openFiles) system
@@ -2314,14 +2280,7 @@ module UnixDescriptor =
                 )
 
             if endedHavingWritten then
-                OpenFileTable.mapStatus
-                    closingId
-                    (fun status ->
-                        { status with
-                            Written = true
-                        }
-                    )
-                    machine.OpenFiles
+                OpenFileTable.mapStatus closingId OpenFileStatus.markWritten machine.OpenFiles
             else
                 machine.OpenFiles
 
@@ -2539,7 +2498,7 @@ module UnixDescriptor =
     /// The word `F_GETFL` reports for `description` on `platform`.
     let private statusWord (platform : SimulatedUnixPlatform) (description : OpenFileDescription) : int =
         let bit (condition : bool) (value : int) : int = if condition then value else 0
-        let status = description.Status
+        let architecture = SimulatedUnixPlatform.architecture platform
 
         let accessMode =
             match description.AccessMode with
@@ -2547,10 +2506,10 @@ module UnixDescriptor =
             | FileAccessMode.WriteOnly -> 1
             | FileAccessMode.ReadWrite -> 2
 
+        let status = OpenFileStatus.flagBits architecture description.Status
+
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
-            let architecture = SimulatedUnixPlatform.architecture platform
-
             // Measured (`fcntl-dup.c`, KIND rows): a 64-bit kernel's `open(2)`
             // adds O_LARGEFILE to every description it makes, and nothing else
             // that makes a description does.
@@ -2568,20 +2527,12 @@ module UnixDescriptor =
 
             accessMode
             ||| bit description.NonBlocking OpenFlagNumbering.LinuxNonBlock
-            ||| bit status.DataSynchronous OpenFlagNumbering.LinuxDataSynchronous
-            ||| bit status.Synchronous OpenFlagNumbering.LinuxSynchronous
-            ||| bit status.OpenedDirectory (OpenFlagNumbering.linuxDirectory architecture)
-            ||| bit status.OpenedNoFollow (OpenFlagNumbering.linuxNoFollow architecture)
+            ||| status
             ||| bit madeByOpen (OpenFlagNumbering.linuxLargeFile architecture)
         | SimulatedUnixFlavour.Darwin ->
-            // Measured (`fcntl-dup.c` and `open-flags.c`): Darwin keeps neither
-            // O_DIRECTORY nor O_NOFOLLOW, and reports two bits of its own.
             accessMode
             ||| bit description.NonBlocking OpenFlagNumbering.DarwinNonBlock
-            ||| bit status.Synchronous OpenFlagNumbering.DarwinSynchronous
-            ||| bit status.DataSynchronous OpenFlagNumbering.DarwinDataSynchronous
-            ||| bit status.Written OpenFlagNumbering.DarwinWritten
-            ||| bit status.Flocked OpenFlagNumbering.DarwinFlocked
+            ||| status
 
     /// Store `registry` as `system`'s descriptor table and open file descriptions.
     let private withRegistry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2641,23 +2592,11 @@ module UnixDescriptor =
 
             let registry =
                 FileDescriptorRegistry.setNonBlocking fd (argument &&& nonBlockingBit flavour <> 0) registry
+                |> FileDescriptorRegistry.mapOpenFiles (OpenFileTable.mapStatus id (OpenFileStatus.setFlags argument))
 
             match flavour with
             | SimulatedUnixFlavour.Linux -> Ok (SyscallAnswer.Completed 0L, withRegistry registry system)
             | SimulatedUnixFlavour.Darwin ->
-
-            let registry =
-                registry
-                |> FileDescriptorRegistry.mapOpenFiles (
-                    OpenFileTable.mapStatus
-                        id
-                        (fun status ->
-                            { status with
-                                Synchronous = argument &&& OpenFlagNumbering.DarwinSynchronous <> 0
-                                DataSynchronous = argument &&& OpenFlagNumbering.DarwinDataSynchronous <> 0
-                            }
-                        )
-                )
 
             // Measured: Darwin stores the flags and then asks the file to take
             // O_NONBLOCK, which a kqueue answers ENOTTY, every time.
@@ -2681,30 +2620,29 @@ module UnixDescriptor =
                     failwith
                         $"UnixDescriptor.fcntl: fd %d{fd} named a description a moment ago and has no flags now (this is a bug in this library)."
 
+            let bit (condition : bool) (value : int) : int = if condition then value else 0
+
             let word =
-                match flavour with
-                | SimulatedUnixFlavour.Linux when flags.CloseOnFork ->
-                    failwith
-                        $"UnixDescriptor.fcntl: fd %d{fd} carries FD_CLOFORK under the Linux flavour, which has no such flag (this is a bug in this library)."
-                | _ ->
-                    (if flags.CloseOnExec then FcntlNumbering.CloseOnExec else 0)
-                    ||| (if flags.CloseOnFork then
-                             FcntlNumbering.DarwinCloseOnFork
-                         else
-                             0)
+                match flags with
+                | DescriptorFlags.Linux (closeOnExec = closeOnExec) -> bit closeOnExec FcntlNumbering.CloseOnExec
+                | DescriptorFlags.Darwin (closeOnExec = closeOnExec ; closeOnFork = closeOnFork) ->
+                    bit closeOnExec FcntlNumbering.CloseOnExec
+                    ||| bit closeOnFork FcntlNumbering.DarwinCloseOnFork
 
             Ok (SyscallAnswer.Completed (int64 word), system)
         | Some FcntlCommand.SetDescriptorFlags ->
             // Measured (`fcntl-dup.c`, SETFD rows, every bit): Linux keeps bit
             // 0 and Darwin bits 0 and 1, and every other bit is ignored.
+            let closeOnExec = argument &&& FcntlNumbering.CloseOnExec <> 0
+
             let flags =
-                {
-                    CloseOnExec = argument &&& FcntlNumbering.CloseOnExec <> 0
-                    CloseOnFork =
-                        match flavour with
-                        | SimulatedUnixFlavour.Linux -> false
-                        | SimulatedUnixFlavour.Darwin -> argument &&& FcntlNumbering.DarwinCloseOnFork <> 0
-                }
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = closeOnExec)
+                | SimulatedUnixFlavour.Darwin ->
+                    DescriptorFlags.Darwin (
+                        closeOnExec = closeOnExec,
+                        closeOnFork = (argument &&& FcntlNumbering.DarwinCloseOnFork <> 0)
+                    )
 
             Ok (SyscallAnswer.Completed 0L, withRegistry (FileDescriptorRegistry.setFlags fd flags registry) system)
         | Some (FcntlCommand.DuplicateAtOrAbove closeOnExec) ->
@@ -2720,10 +2658,7 @@ module UnixDescriptor =
             | Error refusal -> Error (FcntlRefusal.DescriptorLimit refusal)
             | Ok () ->
 
-            let flags =
-                { DescriptorFlags.none with
-                    CloseOnExec = closeOnExec
-                }
+            let flags = DescriptorFlags.closingOnExec flavour closeOnExec
 
             match FileDescriptorRegistry.dupAtOrAbove fd argument flags registry with
             | None ->
@@ -2745,9 +2680,8 @@ module UnixDescriptor =
     ///   description: `O_NONBLOCK`, `O_SYNC` and `O_DSYNC` on both flavours;
     ///   on Linux, `O_DIRECTORY` and `O_NOFOLLOW` as `open(2)` was given them,
     ///   and `O_LARGEFILE` for every description `open(2)` made; on Darwin, its
-    ///   own `0x10000` once the description has been written through
-    ///   (`OpenFileStatus.Written`) and `0x4000` once a lock has been granted
-    ///   to it (`OpenFileStatus.Flocked`).
+    ///   own `0x10000` once the description has been written through and
+    ///   `0x4000` once a lock has been granted to it (`OpenFileStatus.Darwin`).
     /// - `F_SETFL` sets `O_NONBLOCK` from `argument`, and on Darwin `O_SYNC`
     ///   and `O_DSYNC` too, and ignores every other bit the flavour does not
     ///   change, the access mode included; so a word `F_GETFL` reported may be
@@ -2838,7 +2772,11 @@ module UnixDescriptor =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
-        duplicateOnto oldFd newFd DescriptorFlags.none system
+        duplicateOnto
+            oldFd
+            newFd
+            (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+            system
 
     /// `dup2(2)`: make `newFd` name the open file description `oldFd` names,
     /// with neither descriptor flag, and answer `newFd`.
@@ -2883,9 +2821,7 @@ module UnixDescriptor =
         else
 
         let descriptorFlags =
-            { DescriptorFlags.none with
-                CloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
-            }
+            DescriptorFlags.Linux (closeOnExec = (flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0))
 
         duplicateOnto oldFd newFd descriptorFlags system
         |> Result.mapError (fun refusal ->

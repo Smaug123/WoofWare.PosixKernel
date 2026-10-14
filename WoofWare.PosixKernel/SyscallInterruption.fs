@@ -228,7 +228,15 @@ module SyscallInterruption =
             (signals : SignalState<'Thread, 'Handler>)
             : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
             =
-            match SignalState.takeOnReturn system.Process.CoreDumps system.Leader threads thread signals with
+            match
+                SignalState.takeOnReturn
+                    (UnixSystemState.signalNumbering system)
+                    system.Process.CoreDumps
+                    system.Leader
+                    threads
+                    thread
+                    signals
+            with
             | Error refusal -> Error (SigsuspendRefusal.Receiver refusal)
             // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/sigsuspend-mask.c`
             // on Linux 6.18.5 and Darwin 27.0.0: a caught signal ended the call
@@ -281,7 +289,13 @@ module SyscallInterruption =
         // signals discarded) is dropped. The thread returns to user mode for real
         // once its syscall has answered.
         match
-            SignalState.onReturnToUser system.Process.CoreDumps system.Leader threads thread system.Process.Signals
+            SignalState.onReturnToUser
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                threads
+                thread
+                system.Process.Signals
         with
         | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
         | Ok (None, _) -> Ok []

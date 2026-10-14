@@ -2013,7 +2013,10 @@ module UnixConnection =
             let (SocketId rawAcceptedId) = acceptedId
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket acceptedId (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    acceptedId
+                    (UnixSystemState.fileDescriptors system)
 
             let accepted =
                 {

@@ -408,21 +408,17 @@ type UnixSystemDefect<'Thread> =
     /// process's `RLIMIT_NOFILE` reaches (`SimulatedUnixPlatform.descriptorBound`),
     /// which no call hands out.
     | DescriptorAtOrAboveBound of fd : int * bound : int
-    /// A descriptor carries `FD_CLOFORK` under the Linux flavour, which has no
-    /// such flag.
-    | CloseOnForkUnderLinux of fd : int
-    /// A description carries one of `O_SYNC` and `O_DSYNC` without the other
-    /// under the Linux flavour, whose `open(2)` sets both together and whose
-    /// `F_SETFL` changes neither.
-    | UnpairedSynchronisationUnderLinux of description : OpenFileDescriptionId
-    /// A description's status holds a fact the flavour's `F_GETFL` does not
-    /// report, which `OpenFileStatus` keeps only under the other flavour.
+    /// A descriptor's flags are the other flavour's, not those of the
+    /// machine's `flavour` (`DescriptorFlags.flavour`).
+    | DescriptorFlagsNotOfFlavour of fd : int * flags : DescriptorFlags * flavour : SimulatedUnixFlavour
+    /// A description's status is the other flavour's, not that of the
+    /// machine's `flavour` (`OpenFileStatus.flavour`).
     | StatusNotOfFlavour of
         description : OpenFileDescriptionId *
         status : OpenFileStatus *
         flavour : SimulatedUnixFlavour
-    /// Under the Darwin flavour, a description holds an `flock` lock and its
-    /// status does not record that one was granted (`OpenFileStatus.Flocked`).
+    /// A Darwin description holds an `flock` lock and its status does not
+    /// record that one was granted (`OpenFileStatus.Darwin`'s `flocked`).
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A thread is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
@@ -577,12 +573,6 @@ type UnixSystemDefect<'Thread> =
     /// A pending signal is directed at a thread the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
     | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
-    /// The process's signal state reads signals under a numbering other than
-    /// its machine's platform assigns, so a signal in the signal tables may
-    /// have a different number, or none, under the kernel's numbering.
-    /// `initial` derives the one from the other, so this is a state assembled
-    /// some other way.
-    | SignalNumberingMismatch of signals : SignalNumbering * platform : SignalNumbering
     /// The machine's mount claims a filesystem type its flavour cannot report,
     /// so `fstatfs` on a file would answer a fact no such machine could tell.
     | FileSystemTypeNotReportable of flavour : SimulatedUnixFlavour * fileSystemType : EmulatedFileSystemType
@@ -1959,6 +1949,8 @@ module UnixSystem =
             |> List.filter (fun (_, count) -> count > 1)
             |> List.map (fun (registeredAt, _) -> UnixSystemDefect.DuplicateEventRegistrationOrdinal registeredAt)
 
+        // Each description's status against the machine's flavour, and a
+        // Darwin description's lock against the grant its status records.
         let statusOfFlavour =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
@@ -1967,35 +1959,18 @@ module UnixSystem =
             |> List.collect (fun (id, description) ->
                 let status = description.Status
 
-                let foreign =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> status.Written || status.Flocked
-                    | SimulatedUnixFlavour.Darwin -> status.OpenedDirectory || status.OpenedNoFollow
-
                 let unrecorded =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> false
-                    | SimulatedUnixFlavour.Darwin -> description.Flock.IsSome && not status.Flocked
+                    match status with
+                    | OpenFileStatus.Darwin (flocked = flocked) -> description.Flock.IsSome && not flocked
+                    | OpenFileStatus.Linux _ -> false
 
                 [
-                    if foreign then
+                    if OpenFileStatus.flavour status <> flavour then
                         yield UnixSystemDefect.StatusNotOfFlavour (id, status, flavour)
                     if unrecorded then
                         yield UnixSystemDefect.FlockHeldNotRecorded id
                 ]
             )
-
-
-        let unpairedUnderLinux =
-            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> []
-            | SimulatedUnixFlavour.Linux ->
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
-                |> List.filter (fun (_, description) ->
-                    description.Status.Synchronous <> description.Status.DataSynchronous
-                )
-                |> List.map (fun (id, _) -> UnixSystemDefect.UnpairedSynchronisationUnderLinux id)
 
         // Every description is referenced: by a descriptor, or by a call in
         // flight that holds it. Both counts are the description's own: the
@@ -2637,7 +2612,6 @@ module UnixSystem =
         @ connectionFreshness
         @ ordinalFreshness
         @ ordinalDuplicates
-        @ unpairedUnderLinux
         @ statusOfFlavour
         @ unreferencedDescriptions
         @ lingeringHeldOnlyByCalls
@@ -2696,20 +2670,20 @@ module UnixSystem =
             |> List.filter (fun (fd, _) -> fd >= bound)
             |> List.map (fun (fd, _) -> UnixSystemDefect.DescriptorAtOrAboveBound (fd, bound))
 
-        let closeOnForkUnderLinux =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> []
-            | SimulatedUnixFlavour.Linux ->
-                let registry = UnixSystemState.fileDescriptors system
+        // Each descriptor's flags against the machine's flavour.
+        let flagsOfFlavour =
+            let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+            let registry = UnixSystemState.fileDescriptors system
 
-                FileDescriptorRegistry.fds registry
-                |> Map.toList
-                |> List.filter (fun (fd, _) ->
-                    match FileDescriptorRegistry.tryFindFlags fd registry with
-                    | Some flags -> flags.CloseOnFork
-                    | None -> false
-                )
-                |> List.map (fun (fd, _) -> UnixSystemDefect.CloseOnForkUnderLinux fd)
+            FileDescriptorRegistry.fds registry
+            |> Map.toList
+            |> List.choose (fun (fd, _) ->
+                match FileDescriptorRegistry.tryFindFlags fd registry with
+                | Some flags when DescriptorFlags.flavour flags <> flavour ->
+                    Some (UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, flags, flavour))
+                | Some _
+                | None -> None
+            )
 
 
         // Each thread's park against the descriptor table. A park names what the
@@ -3147,23 +3121,9 @@ module UnixSystem =
 
 
         // The signal state against the thread table: every thread it names must
-        // be one, or the delivery that reads it has nowhere to go. And against
-        // the machine's platform: the state checks every signal against
-        // the numbering it was built with, so a state built under the wrong
-        // one holds signals the kernel would number differently, or not at all.
+        // be one, or the delivery that reads it has nowhere to go.
         let signals =
             let signals = system.Process.Signals
-
-            let numberings =
-                let stateNumbering = SignalState.numbering signals
-
-                let platformNumbering =
-                    SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
-
-                if stateNumbering = platformNumbering then
-                    []
-                else
-                    [ UnixSystemDefect.SignalNumberingMismatch (stateNumbering, platformNumbering) ]
 
             let frames =
                 SignalState.threadsWithFrames signals
@@ -3221,7 +3181,7 @@ module UnixSystem =
                     | ValueNone -> None
                 )
 
-            numberings @ frames @ masks @ toRestore @ targets
+            frames @ masks @ toRestore @ targets
 
         let supplementaryGroups =
             let count = List.length system.Process.Credentials.SupplementaryGroups
@@ -3274,7 +3234,7 @@ module UnixSystem =
 
         currentDirectory
         @ beyondBound
-        @ closeOnForkUnderLinux
+        @ flagsOfFlavour
         @ parks
         @ kqueueOwners
         @ signals

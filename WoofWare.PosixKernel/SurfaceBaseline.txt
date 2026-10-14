@@ -567,16 +567,32 @@ WoofWare.PosixKernel.DeliveryLogModule inherit obj
 WoofWare.PosixKernel.DeliveryLogModule.count [static method]: WoofWare.PosixKernel.DeliveryLog -> int
 WoofWare.PosixKernel.DeliveryLogModule.since [static method]: int -> WoofWare.PosixKernel.DeliveryLog -> WoofWare.PosixKernel.Delivery list
 WoofWare.PosixKernel.DeliveryLogModule.toList [static method]: WoofWare.PosixKernel.DeliveryLog -> WoofWare.PosixKernel.Delivery list
-WoofWare.PosixKernel.DescriptorFlags inherit obj, implements WoofWare.PosixKernel.DescriptorFlags System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DescriptorFlags System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.DescriptorFlags..ctor [constructor]: (bool, bool)
-WoofWare.PosixKernel.DescriptorFlags.CloseOnExec [property]: [read-only] bool
-WoofWare.PosixKernel.DescriptorFlags.CloseOnFork [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags inherit obj, implements WoofWare.PosixKernel.DescriptorFlags System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DescriptorFlags System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.DescriptorFlags+Darwin inherit WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags+Darwin.closeOnExec [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.closeOnFork [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.get_closeOnExec [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Darwin.get_closeOnFork [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Linux inherit WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags+Linux.closeOnExec [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags+Linux.get_closeOnExec [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags+Tags inherit obj
+WoofWare.PosixKernel.DescriptorFlags+Tags.Darwin [static field]: int = 1
+WoofWare.PosixKernel.DescriptorFlags+Tags.Linux [static field]: int = 0
 WoofWare.PosixKernel.DescriptorFlags.Equals [method]: (WoofWare.PosixKernel.DescriptorFlags, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.DescriptorFlags.get_CloseOnExec [method]: unit -> bool
-WoofWare.PosixKernel.DescriptorFlags.get_CloseOnFork [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_IsDarwin [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_IsLinux [method]: unit -> bool
+WoofWare.PosixKernel.DescriptorFlags.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.DescriptorFlags.IsDarwin [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags.IsLinux [property]: [read-only] bool
+WoofWare.PosixKernel.DescriptorFlags.NewDarwin [static method]: (bool, bool) -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags.NewLinux [static method]: bool -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlags.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DescriptorFlagsModule inherit obj
-WoofWare.PosixKernel.DescriptorFlagsModule.get_none [static method]: unit -> WoofWare.PosixKernel.DescriptorFlags
-WoofWare.PosixKernel.DescriptorFlagsModule.none [static property]: [read-only] WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlagsModule.closeOnExec [static method]: WoofWare.PosixKernel.DescriptorFlags -> bool
+WoofWare.PosixKernel.DescriptorFlagsModule.closingOnExec [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> bool -> WoofWare.PosixKernel.DescriptorFlags
+WoofWare.PosixKernel.DescriptorFlagsModule.flavour [static method]: WoofWare.PosixKernel.DescriptorFlags -> WoofWare.PosixKernel.SimulatedUnixFlavour
+WoofWare.PosixKernel.DescriptorFlagsModule.none [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.DescriptorFlags
 WoofWare.PosixKernel.DirectoryContent inherit obj, implements WoofWare.PosixKernel.DirectoryContent System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryContent System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.DirectoryContent..ctor [constructor]: (Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>, WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.PermissionBits)
 WoofWare.PosixKernel.DirectoryContent.Entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.InodeNumber>
@@ -2096,6 +2112,26 @@ WoofWare.PosixKernel.LinuxKernelVersion.get_Patch [method]: unit -> System.UInt3
 WoofWare.PosixKernel.LinuxKernelVersion.Major [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.LinuxKernelVersion.Minor [property]: [read-only] System.UInt32
 WoofWare.PosixKernel.LinuxKernelVersion.Patch [property]: [read-only] System.UInt32
+WoofWare.PosixKernel.LinuxSync inherit obj, implements WoofWare.PosixKernel.LinuxSync System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.LinuxSync System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.LinuxSync+Tags inherit obj
+WoofWare.PosixKernel.LinuxSync+Tags.DataSync [static field]: int = 1
+WoofWare.PosixKernel.LinuxSync+Tags.FullSync [static field]: int = 2
+WoofWare.PosixKernel.LinuxSync+Tags.NoSync [static field]: int = 0
+WoofWare.PosixKernel.LinuxSync.DataSync [static property]: [read-only] WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.Equals [method]: (WoofWare.PosixKernel.LinuxSync, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.LinuxSync.FullSync [static property]: [read-only] WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.get_DataSync [static method]: unit -> WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.get_FullSync [static method]: unit -> WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.get_IsDataSync [method]: unit -> bool
+WoofWare.PosixKernel.LinuxSync.get_IsFullSync [method]: unit -> bool
+WoofWare.PosixKernel.LinuxSync.get_IsNoSync [method]: unit -> bool
+WoofWare.PosixKernel.LinuxSync.get_NoSync [static method]: unit -> WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.LinuxSync.IsDataSync [property]: [read-only] bool
+WoofWare.PosixKernel.LinuxSync.IsFullSync [property]: [read-only] bool
+WoofWare.PosixKernel.LinuxSync.IsNoSync [property]: [read-only] bool
+WoofWare.PosixKernel.LinuxSync.NoSync [static property]: [read-only] WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.LinuxSync.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ListenAnswer inherit obj, implements WoofWare.PosixKernel.ListenAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ListenAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.ListenAnswer+Failed inherit WoofWare.PosixKernel.ListenAnswer
 WoofWare.PosixKernel.ListenAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
@@ -2477,24 +2513,38 @@ WoofWare.PosixKernel.OpenFileObject.NewKqueue [static method]: WoofWare.PosixKer
 WoofWare.PosixKernel.OpenFileObject.NewPipe [static method]: WoofWare.PosixKernel.PipeId -> WoofWare.PosixKernel.OpenFileObject
 WoofWare.PosixKernel.OpenFileObject.NewSocket [static method]: WoofWare.PosixKernel.SocketId -> WoofWare.PosixKernel.OpenFileObject
 WoofWare.PosixKernel.OpenFileObject.Tag [property]: [read-only] int
-WoofWare.PosixKernel.OpenFileStatus inherit obj, implements WoofWare.PosixKernel.OpenFileStatus System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.OpenFileStatus System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.OpenFileStatus..ctor [constructor]: (bool, bool, bool, bool, bool, bool)
-WoofWare.PosixKernel.OpenFileStatus.DataSynchronous [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus inherit obj, implements WoofWare.PosixKernel.OpenFileStatus System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.OpenFileStatus System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.OpenFileStatus+Darwin inherit WoofWare.PosixKernel.OpenFileStatus
+WoofWare.PosixKernel.OpenFileStatus+Darwin.dataSynchronous [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.flocked [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.get_dataSynchronous [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.get_flocked [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.get_synchronous [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.get_written [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.synchronous [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Darwin.written [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Linux inherit WoofWare.PosixKernel.OpenFileStatus
+WoofWare.PosixKernel.OpenFileStatus+Linux.get_openedDirectory [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Linux.get_openedNoFollow [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus+Linux.get_sync [method]: unit -> WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.OpenFileStatus+Linux.openedDirectory [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Linux.openedNoFollow [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus+Linux.sync [property]: [read-only] WoofWare.PosixKernel.LinuxSync
+WoofWare.PosixKernel.OpenFileStatus+Tags inherit obj
+WoofWare.PosixKernel.OpenFileStatus+Tags.Darwin [static field]: int = 1
+WoofWare.PosixKernel.OpenFileStatus+Tags.Linux [static field]: int = 0
 WoofWare.PosixKernel.OpenFileStatus.Equals [method]: (WoofWare.PosixKernel.OpenFileStatus, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.OpenFileStatus.Flocked [property]: [read-only] bool
-WoofWare.PosixKernel.OpenFileStatus.get_DataSynchronous [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.get_Flocked [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.get_OpenedDirectory [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.get_OpenedNoFollow [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.get_Synchronous [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.get_Written [method]: unit -> bool
-WoofWare.PosixKernel.OpenFileStatus.OpenedDirectory [property]: [read-only] bool
-WoofWare.PosixKernel.OpenFileStatus.OpenedNoFollow [property]: [read-only] bool
-WoofWare.PosixKernel.OpenFileStatus.Synchronous [property]: [read-only] bool
-WoofWare.PosixKernel.OpenFileStatus.Written [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus.get_IsDarwin [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus.get_IsLinux [method]: unit -> bool
+WoofWare.PosixKernel.OpenFileStatus.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.OpenFileStatus.IsDarwin [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus.IsLinux [property]: [read-only] bool
+WoofWare.PosixKernel.OpenFileStatus.NewDarwin [static method]: (bool, bool, bool, bool) -> WoofWare.PosixKernel.OpenFileStatus
+WoofWare.PosixKernel.OpenFileStatus.NewLinux [static method]: (WoofWare.PosixKernel.LinuxSync, bool, bool) -> WoofWare.PosixKernel.OpenFileStatus
+WoofWare.PosixKernel.OpenFileStatus.Tag [property]: [read-only] int
 WoofWare.PosixKernel.OpenFileStatusModule inherit obj
-WoofWare.PosixKernel.OpenFileStatusModule.get_none [static method]: unit -> WoofWare.PosixKernel.OpenFileStatus
-WoofWare.PosixKernel.OpenFileStatusModule.none [static property]: [read-only] WoofWare.PosixKernel.OpenFileStatus
+WoofWare.PosixKernel.OpenFileStatusModule.flavour [static method]: WoofWare.PosixKernel.OpenFileStatus -> WoofWare.PosixKernel.SimulatedUnixFlavour
+WoofWare.PosixKernel.OpenFileStatusModule.none [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.OpenFileStatus
 WoofWare.PosixKernel.OpenFileTable inherit obj, implements WoofWare.PosixKernel.OpenFileTable System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.OpenFileTable System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.OpenFileTable.Equals [method]: (WoofWare.PosixKernel.OpenFileTable, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.OpenFileTableModule inherit obj
@@ -3961,10 +4011,9 @@ WoofWare.PosixKernel.SignalState inherit obj
 WoofWare.PosixKernel.SignalState.framesOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list
 WoofWare.PosixKernel.SignalState.maskOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
 WoofWare.PosixKernel.SignalState.maskToRestore [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask option
-WoofWare.PosixKernel.SignalState.numbering [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalNumbering
 WoofWare.PosixKernel.SignalState.pending [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
-WoofWare.PosixKernel.SignalState.pendingBlocked [static method]: 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
-WoofWare.PosixKernel.SignalState.pendingFor [static method]: 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
+WoofWare.PosixKernel.SignalState.pendingBlocked [static method]: WoofWare.PosixKernel.SignalNumbering -> 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
+WoofWare.PosixKernel.SignalState.pendingFor [static method]: WoofWare.PosixKernel.SignalNumbering -> 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
 WoofWare.PosixKernel.SignalState.threadsWithFrames [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet
 WoofWare.PosixKernel.SignalState.threadsWithMasks [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet
 WoofWare.PosixKernel.SignalState.threadsWithMasksToRestore [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet

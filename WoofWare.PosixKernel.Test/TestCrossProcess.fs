@@ -1435,6 +1435,7 @@ module TestCrossProcess =
 
                     let forged =
                         FileDescriptorRegistry.Unchecked.ofParts
+                            SimulatedUnixFlavour.Linux
                             fds
                             (OpenFileTable.descriptions openFiles)
                             (OpenFileDescriptionId 1000L)

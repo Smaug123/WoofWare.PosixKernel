@@ -1056,7 +1056,12 @@ module DualModeProbe =
             libc.System
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (UnixSystemState.signalNumbering libc.System)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                            proc.Signals
                 }
             )
 

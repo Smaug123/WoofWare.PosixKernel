@@ -473,7 +473,12 @@ module SocketFuzz =
                 // shrink towards.
                 failwith $"close of fd %d{fd} answered %O{error}, which is not EBADF"
         | FuzzOp.Dup (slot, newSlot) ->
-            match FileDescriptorRegistry.dup (slotFd slot state) (Lone.fileDescriptors state.Kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (slotFd slot state)
+                    (Lone.fileDescriptors state.Kernel)
+            with
             | Ok (fd, registry) ->
                 "ok",
                 assignSlot
@@ -485,7 +490,9 @@ module SocketFuzz =
             | Error FileDescriptorDupError.BadFd -> "EBADF", state
         | FuzzOp.NewEpoll slot ->
             let fd, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors state.Kernel)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (Lone.fileDescriptors state.Kernel)
 
             "ok",
             assignSlot

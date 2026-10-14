@@ -53,7 +53,12 @@ module TestSignalReceiver =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGUSR1 disposition proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGUSR1
+                            disposition
+                            proc.Signals
                 }
             )
 
@@ -266,6 +271,7 @@ module TestSignalReceiver =
 
             let signals =
                 SignalState.enqueue
+                    (UnixSystemState.signalNumbering system)
                     {
                         Signal = Signal.SIGUSR1
                         Target = ValueSome 2

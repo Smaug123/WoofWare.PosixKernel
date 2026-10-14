@@ -339,6 +339,7 @@ module internal ProcessSignal =
 
         let generation =
             SignalState.generate
+                (UnixSystemState.signalNumbering system)
                 system.Process.CoreDumps
                 system.Leader
                 (system.Threads |> Map.keys |> Set.ofSeq)

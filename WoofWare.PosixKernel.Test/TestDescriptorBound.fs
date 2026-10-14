@@ -218,6 +218,7 @@ module TestDescriptorBound =
 
             let registry =
                 FileDescriptorRegistry.Unchecked.ofParts
+                    (SimulatedUnixPlatform.flavour run.Platform)
                     (FileDescriptorRegistry.fds (Lone.fileDescriptors system)
                      |> Map.add bound (Map.find 3 (FileDescriptorRegistry.fds (Lone.fileDescriptors system))))
                     (OpenFileTable.descriptions system.Machine.OpenFiles)

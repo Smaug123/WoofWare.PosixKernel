@@ -366,6 +366,7 @@ module TestUnconnectedSocketTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
                         proc.Signals

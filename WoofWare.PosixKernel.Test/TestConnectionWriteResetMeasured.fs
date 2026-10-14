@@ -113,9 +113,11 @@ module TestConnectionWriteResetMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
             }
@@ -352,6 +354,7 @@ module TestConnectionWriteResetMeasured =
                         { proc with
                             Signals =
                                 SignalState.enqueue
+                                    (UnixSystemState.signalNumbering system)
                                     {
                                         Signal = Signal.SIGUSR1
                                         Target = ValueSome 1

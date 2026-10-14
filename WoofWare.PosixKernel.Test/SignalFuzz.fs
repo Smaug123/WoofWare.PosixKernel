@@ -288,7 +288,7 @@ module SignalFuzz =
             | [] -> ()
             | frame :: outer ->
                 let disposition =
-                    match SignalState.disposition frame.Entry.Signal (signals ()) with
+                    match SignalState.disposition numbering frame.Entry.Signal (signals ()) with
                     | SignalDisposition.Default -> "d"
                     | SignalDisposition.Ignore -> "i"
                     | SignalDisposition.Catch _ -> "c"
@@ -327,7 +327,7 @@ module SignalFuzz =
                                 Restart = false
                             }
 
-                withSignals (SignalState.setDisposition (signal s) disposition (signals ()))
+                withSignals (SignalState.setDisposition numbering (signal s) disposition (signals ()))
             | SignalFuzzOp.Kill s ->
                 match UnixSignal.tryKill self s system with
                 | Error refusal -> raise (Refusal $"kill refused: %O{refusal}")

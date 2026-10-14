@@ -128,7 +128,12 @@ module TestNonBlocking =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp linux
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors system)
+            with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -163,6 +168,8 @@ module TestNonBlocking =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -206,7 +213,12 @@ module TestNonBlocking =
             [ 0 ; 1 ; 2 ]
             |> List.mapFold
                 (fun registry fd ->
-                    match FileDescriptorRegistry.dup fd registry with
+                    match
+                        FileDescriptorRegistry.dup
+                            (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                            fd
+                            registry
+                    with
                     | Ok (duplicate, registry) -> duplicate, registry
                     | Error error -> failwith $"could not dup %d{fd}: %A{error}"
                 )

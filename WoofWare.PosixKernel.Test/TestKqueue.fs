@@ -54,7 +54,12 @@ module TestKqueue =
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+        match
+            FileDescriptorRegistry.dup
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                fd
+                (Lone.fileDescriptors system)
+        with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup: %O{error}"
 
@@ -101,8 +106,12 @@ module TestKqueue =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -169,7 +178,7 @@ module TestKqueue =
                         AccessMode = FileAccessMode.ReadWrite
                         NonBlocking = false
                         Flock = None
-                        Status = OpenFileStatus.none
+                        Status = OpenFileStatus.none SimulatedUnixFlavour.Darwin
                     }
 
                 // A fresh description, not one any other descriptor shares.
@@ -329,7 +338,10 @@ module TestKqueue =
                 }
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket system.Machine.NextSocketId (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    system.Machine.NextSocketId
+                    (Lone.fileDescriptors system)
 
             let (SocketId raw) = system.Machine.NextSocketId
 
@@ -346,6 +358,8 @@ module TestKqueue =
         let fileFd, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -1080,7 +1094,10 @@ module TestKqueue =
     [<Test>]
     let ``checkInvariants rejects an object the flavour's kernel does not have`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc linux).ProcessId (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.proc linux).ProcessId
+                (Lone.fileDescriptors linux)
 
         let withKqueue = withRegistry registry linux
 
@@ -1100,7 +1117,10 @@ module TestKqueue =
                 )
             ]
 
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors darwin)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                (Lone.fileDescriptors darwin)
 
         let withEpoll = withRegistry registry darwin
 

@@ -7,12 +7,42 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
+/// Which of `O_SYNC` and `O_DSYNC` an `open(2)` of the descriptor-table
+/// property asks for. `O_DSYNC` alone is not among them: the library refuses
+/// it.
+[<RequireQualifiedAccess>]
+type FcntlSyncRequest =
+    | Neither
+    /// `O_SYNC`, which on Linux is both of its bits.
+    | Sync
+    /// `O_SYNC|O_DSYNC`, the same word as `Sync` on Linux.
+    | SyncAndDataSync
+
+/// A non-blocking `flock(2)` of the descriptor-table property.
+[<RequireQualifiedAccess>]
+type FcntlFlockOp =
+    /// `LOCK_SH|LOCK_NB`.
+    | Shared
+    /// `LOCK_EX|LOCK_NB`.
+    | Exclusive
+    /// `LOCK_UN`.
+    | Unlock
+
 /// One step of the descriptor-table property.
 [<RequireQualifiedAccess>]
 type FcntlOp =
     /// `open(2)` of the file `f`, with the access mode, `O_CLOEXEC`, `O_SYNC`
-    /// and `O_NOFOLLOW` as asked.
-    | Open of access : FileAccessMode * closeOnExec : bool * synchronous : bool * noFollow : bool
+    /// and `O_DSYNC`, `O_NOFOLLOW` and `O_TRUNC` as asked.
+    | Open of
+        access : FileAccessMode *
+        closeOnExec : bool *
+        synchronous : FcntlSyncRequest *
+        noFollow : bool *
+        truncate : bool
+    /// `open(2)` of the directory `d` with `O_RDONLY|O_DIRECTORY`, as
+    /// `opendir(3)` opens one, with `O_CLOEXEC`, `O_SYNC` and `O_DSYNC` as
+    /// asked.
+    | OpenDirectory of closeOnExec : bool * synchronous : FcntlSyncRequest
     /// `pipe2(2)`, with `O_NONBLOCK` and `O_CLOEXEC` as asked.
     | Pipe of nonBlocking : bool * closeOnExec : bool
     | Dup of fd : int
@@ -26,13 +56,18 @@ type FcntlOp =
     | Dup3 of oldFd : int * newFd : int * closeOnExec : bool * stray : bool
     /// A one-byte `write(2)`.
     | Write of fd : int
+    /// A one-byte `pwrite(2)` at offset 0.
+    | Pwrite of fd : int
+    | Ftruncate of fd : int * length : int64
+    | Flock of fd : int * operation : FcntlFlockOp
     | Close of fd : int
 
-/// `fcntl(2)`, `dup2(2)` and `dup3(2)` against a reference descriptor table
-/// written out again from the measurements: each descriptor names a
-/// description and carries its own flags, each description carries the status
-/// flags, and the flag words are spelled in each flavour's numbering
-/// independently of the library's tables.
+/// `fcntl(2)`, `dup2(2)` and `dup3(2)`, and the calls that change what
+/// `F_GETFL` reports (`open(2)`, `write(2)`, `pwrite(2)`, `ftruncate(2)` and
+/// `flock(2)`), against a reference descriptor table written out again from
+/// the measurements: each descriptor names a description and carries its own
+/// flags, each description carries the status flags, and the flag words are
+/// spelled in each flavour's numbering independently of the library's tables.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestFcntlReference =
@@ -46,24 +81,49 @@ module TestFcntlReference =
             SimulatedUnixPlatform.macOsArm64
         ]
 
+    /// Whether `status` holds only what `flavour`'s kernel keeps on a
+    /// description.
+    let private statusIsOf (flavour : SimulatedUnixFlavour) (status : OpenFileStatus) : bool =
+        match flavour, status with
+        | SimulatedUnixFlavour.Linux, OpenFileStatus.Linux _
+        | SimulatedUnixFlavour.Darwin, OpenFileStatus.Darwin _ -> true
+        | SimulatedUnixFlavour.Linux, OpenFileStatus.Darwin _
+        | SimulatedUnixFlavour.Darwin, OpenFileStatus.Linux _ -> false
+
     [<RequireQualifiedAccess>]
     type private Kind =
         | File
+        | Directory
         | PipeRead
         | PipeWrite
 
+    [<RequireQualifiedAccess>]
+    type private Lock =
+        | Shared
+        | Exclusive
+
+    /// Each description's facts, kept under both flavours alike; `statusWord`
+    /// reports each only under the flavour whose `F_GETFL` does.
     type private Description =
         {
             Kind : Kind
             /// For a pipe's write end made by `Pipe`, its read end's description;
             /// a launched output stream's reader never goes.
             Reader : int option
+            /// What `flock` contends on: the file, the directory, or a pipe
+            /// (both of whose ends are one).
+            Object : int
             Access : int
             NonBlocking : bool
             Synchronous : bool
             DataSynchronous : bool
             NoFollow : bool
+            /// Whether `open` was given `O_DIRECTORY`.
+            OpenedDirectory : bool
             Written : bool
+            /// Whether a lock has ever been granted to it.
+            Flocked : bool
+            Lock : Lock option
         }
 
     /// What a call came to: an answer, a refusal at the descriptor bound, or
@@ -82,7 +142,14 @@ module TestFcntlReference =
             Fds : Map<int, int * bool * bool>
             Descriptions : Map<int, Description>
             Next : int
+            /// The `Object` the next pipe gets.
+            NextObject : int
         }
+
+    /// The `Object` of the file `f`.
+    let private fileObject : int = 0
+    /// The `Object` of the directory `d`.
+    let private directoryObject : int = 1
 
     // Each flavour's numbering, written out from the headers and the probe's
     // HEADER rows rather than read from the library.
@@ -100,6 +167,7 @@ module TestFcntlReference =
     let private directBit (r : Reference) : int = if x64 r then 0x4000 else 0x10000
     let private noAtimeBit (r : Reference) : int = 0x40000
     let private noFollowBit (r : Reference) : int = if x64 r then 0x20000 else 0x8000
+    let private directoryBit (r : Reference) : int = if x64 r then 0x10000 else 0x4000
 
     let private unmodelled (r : Reference) : int =
         if r.Darwin then
@@ -110,13 +178,22 @@ module TestFcntlReference =
     let private statusWord (r : Reference) (d : Description) : int =
         let bit (set : bool) (value : int) = if set then value else 0
 
+        let madeByOpen =
+            match d.Kind with
+            | Kind.File
+            | Kind.Directory -> true
+            | Kind.PipeRead
+            | Kind.PipeWrite -> false
+
         d.Access
         ||| bit d.NonBlocking (nonBlockBit r)
         ||| bit d.Synchronous (syncBit r)
         ||| bit d.DataSynchronous (dsyncBit r)
-        ||| bit (not r.Darwin && d.Kind = Kind.File) (largeFileBit r)
+        ||| bit (not r.Darwin && madeByOpen) (largeFileBit r)
         ||| bit (not r.Darwin && d.NoFollow) (noFollowBit r)
+        ||| bit (not r.Darwin && d.OpenedDirectory) (directoryBit r)
         ||| bit (r.Darwin && d.Written) 0x10000
+        ||| bit (r.Darwin && d.Flocked) 0x4000
 
     let private bound (r : Reference) : int =
         SimulatedUnixPlatform.descriptorBound r.Platform
@@ -124,6 +201,24 @@ module TestFcntlReference =
     let private lowestFreeFrom (minimum : int) (r : Reference) : int =
         Seq.initInfinite (fun i -> minimum + i)
         |> Seq.find (fun fd -> not (Map.containsKey fd r.Fds))
+
+    /// Whether some descriptor names the description `description`: a lock
+    /// goes with the last of them.
+    let private isLive (description : int) (r : Reference) : bool =
+        r.Fds |> Map.exists (fun _ (named, _, _) -> named = description)
+
+    let private withDescription (description : int) (d : Description) (r : Reference) : Reference =
+        { r with
+            Descriptions = Map.add description d r.Descriptions
+        }
+
+    /// What `open(2)` keeps of `synchronous`: on Linux, `O_SYNC` is both of
+    /// its bits.
+    let private synchronisation (r : Reference) (synchronous : FcntlSyncRequest) : bool * bool =
+        match synchronous with
+        | FcntlSyncRequest.Neither -> false, false
+        | FcntlSyncRequest.Sync -> true, not r.Darwin
+        | FcntlSyncRequest.SyncAndDataSync -> true, true
 
     let private add (description : Description) (fd : int) (cloexec : bool) (r : Reference) : Reference =
         { r with
@@ -149,16 +244,20 @@ module TestFcntlReference =
                     Bound = bound r
                 }
 
-        let fresh (kind : Kind) (access : int) =
+        let fresh (kind : Kind) (object : int) (access : int) =
             {
                 Kind = kind
                 Reader = None
+                Object = object
                 Access = access
                 NonBlocking = false
                 Synchronous = false
                 DataSynchronous = false
                 NoFollow = false
+                OpenedDirectory = false
                 Written = false
+                Flocked = false
+                Lock = None
             }
 
         let duplicate (oldFd : int) (newFd : int) (cloexec : bool) (r : Reference) =
@@ -169,8 +268,9 @@ module TestFcntlReference =
             }
 
         match op with
-        | FcntlOp.Open (_, _, _, _) when lowestFreeFrom 0 r >= bound r -> atBound (lowestFreeFrom 0 r), r
-        | FcntlOp.Open (access, cloexec, synchronous, noFollow) ->
+        | FcntlOp.Open _
+        | FcntlOp.OpenDirectory _ when lowestFreeFrom 0 r >= bound r -> atBound (lowestFreeFrom 0 r), r
+        | FcntlOp.Open (access, cloexec, synchronous, noFollow, truncate) ->
             let fd = lowestFreeFrom 0 r
 
             let access =
@@ -179,12 +279,31 @@ module TestFcntlReference =
                 | FileAccessMode.WriteOnly -> 1
                 | FileAccessMode.ReadWrite -> 2
 
+            let synchronous, dataSynchronous = synchronisation r synchronous
+
             ok fd,
             add
-                { fresh Kind.File access with
+                { fresh Kind.File fileObject access with
                     Synchronous = synchronous
-                    DataSynchronous = synchronous && not r.Darwin
+                    DataSynchronous = dataSynchronous
                     NoFollow = noFollow
+                    // `f` always exists, so `O_TRUNC` always truncates a file
+                    // that was there.
+                    Written = truncate
+                }
+                fd
+                cloexec
+                r
+        | FcntlOp.OpenDirectory (cloexec, synchronous) ->
+            let fd = lowestFreeFrom 0 r
+            let synchronous, dataSynchronous = synchronisation r synchronous
+
+            ok fd,
+            add
+                { fresh Kind.Directory directoryObject 0 with
+                    Synchronous = synchronous
+                    DataSynchronous = dataSynchronous
+                    OpenedDirectory = true
                 }
                 fd
                 cloexec
@@ -193,22 +312,25 @@ module TestFcntlReference =
             atBound (lowestFreeFrom (lowestFreeFrom 0 r + 1) r), r
         | FcntlOp.Pipe (nonBlocking, cloexec) ->
             let readFd = lowestFreeFrom 0 r
+            let object = r.NextObject
 
             let r =
                 add
-                    { fresh Kind.PipeRead 0 with
+                    { fresh Kind.PipeRead object 0 with
                         NonBlocking = nonBlocking
                     }
                     readFd
                     cloexec
-                    r
+                    { r with
+                        NextObject = object + 1
+                    }
 
             let writeFd = lowestFreeFrom 0 r
             let readDescription = r.Next - 1
 
             ok readFd,
             add
-                { fresh Kind.PipeWrite 1 with
+                { fresh Kind.PipeWrite object 1 with
                     NonBlocking = nonBlocking
                     Reader = Some readDescription
                 }
@@ -301,26 +423,120 @@ module TestFcntlReference =
                 let d = r.Descriptions.[description]
 
                 match d.Kind with
-                | Kind.PipeRead -> failed UnixError.EBADF, r
+                | Kind.PipeRead
+                | Kind.Directory -> failed UnixError.EBADF, r
                 | Kind.File when d.Access = 0 -> failed UnixError.EBADF, r
-                | Kind.PipeWrite when
-                    d.Reader
-                    |> Option.exists (fun reader -> not (r.Fds |> Map.exists (fun _ (named, _, _) -> named = reader)))
-                    ->
+                | Kind.PipeWrite when d.Reader |> Option.exists (fun reader -> not (isLive reader r)) ->
                     // No reader: EPIPE, with SIGPIPE ignored, and nothing moved.
                     failed UnixError.EPIPE, r
                 | Kind.File
                 | Kind.PipeWrite ->
                     ok 1,
-                    { r with
-                        Descriptions =
-                            Map.add
-                                description
-                                { d with
-                                    Written = true
-                                }
-                                r.Descriptions
-                    }
+                    withDescription
+                        description
+                        { d with
+                            Written = true
+                        }
+                        r
+        | FcntlOp.Pwrite fd ->
+            match Map.tryFind fd r.Fds with
+            | None -> failed UnixError.EBADF, r
+            | Some (description, _, _) ->
+                let d = r.Descriptions.[description]
+
+                match d.Kind with
+                // Unseekable and unwritable at once: Darwin lets
+                // unwritability win.
+                | Kind.PipeRead when r.Darwin -> failed UnixError.EBADF, r
+                | Kind.PipeRead
+                | Kind.PipeWrite -> failed UnixError.ESPIPE, r
+                | Kind.File
+                | Kind.Directory when d.Access = 0 -> failed UnixError.EBADF, r
+                | Kind.File
+                | Kind.Directory ->
+                    ok 1,
+                    withDescription
+                        description
+                        { d with
+                            Written = true
+                        }
+                        r
+        | FcntlOp.Ftruncate (_, length) when length < 0L -> failed UnixError.EINVAL, r
+        | FcntlOp.Ftruncate (fd, _) ->
+            match Map.tryFind fd r.Fds with
+            | None -> failed UnixError.EBADF, r
+            | Some (description, _, _) ->
+                let d = r.Descriptions.[description]
+
+                match d.Kind with
+                | Kind.PipeRead
+                | Kind.PipeWrite -> failed UnixError.EINVAL, r
+                | Kind.File
+                | Kind.Directory when d.Access = 0 -> failed UnixError.EINVAL, r
+                | Kind.File
+                | Kind.Directory ->
+                    ok 0,
+                    withDescription
+                        description
+                        { d with
+                            Written = true
+                        }
+                        r
+        | FcntlOp.Flock (fd, operation) ->
+            match Map.tryFind fd r.Fds with
+            | None -> failed UnixError.EBADF, r
+            | Some (description, _, _) ->
+                let d = r.Descriptions.[description]
+
+                let acquire (wanted : Lock) : Outcome * Reference =
+                    let conflicts =
+                        r.Descriptions
+                        |> Map.exists (fun other o ->
+                            other <> description
+                            && o.Object = d.Object
+                            && isLive other r
+                            && (
+                                match wanted, o.Lock with
+                                | _, None -> false
+                                | Lock.Exclusive, Some _ -> true
+                                | Lock.Shared, Some held -> held = Lock.Exclusive
+                            )
+                        )
+
+                    // Linux gives up the old lock before it asks for the new
+                    // one, so a conversion it cannot grant leaves none.
+                    let released =
+                        { d with
+                            Lock = None
+                        }
+
+                    if conflicts then
+                        failed UnixError.EAGAIN, withDescription description released r
+                    else
+                        ok 0,
+                        withDescription
+                            description
+                            { released with
+                                Lock = Some wanted
+                                Flocked = true
+                            }
+                            r
+
+                match d.Kind, operation with
+                | Kind.PipeRead, _
+                | Kind.PipeWrite, _ when r.Darwin -> Outcome.Refused, r
+                | _, FcntlFlockOp.Unlock ->
+                    ok 0,
+                    withDescription
+                        description
+                        { d with
+                            Lock = None
+                        }
+                        r
+                // A conversion, which this library refuses under Darwin.
+                | _, _ when r.Darwin && d.Lock.IsSome -> Outcome.Refused, r
+                | _, FcntlFlockOp.Shared -> acquire Lock.Shared
+                | _, FcntlFlockOp.Exclusive -> acquire Lock.Exclusive
         | FcntlOp.Close fd ->
             if Map.containsKey fd r.Fds then
                 ok 0,
@@ -336,6 +552,8 @@ module TestFcntlReference =
                 [
                     DirectoryEntryName.parseOrFail context "f",
                     SeedEntry.File (ImmutableArray<byte>.Empty, PermissionBits.parseOrFail context 0o666, None)
+                    DirectoryEntryName.parseOrFail context "d",
+                    SeedEntry.Directory (Map.empty, PermissionBits.parseOrFail context 0o755, None)
                 ]
 
         let image = UnixSystem.initial platform
@@ -351,7 +569,12 @@ module TestFcntlReference =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                            proc.Signals
                 }
             )
         | Error fault -> failwith $"could not build the system: %A{fault}"
@@ -372,20 +595,50 @@ module TestFcntlReference =
             | Error (FcntlRefusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
             | Error refusal -> failwith $"fcntl refused: %s{FcntlRefusal.describe refusal}"
 
-        match op with
-        | FcntlOp.Open (access, cloexec, synchronous, noFollow) ->
-            let flags =
-                { FcntlWorld.opening access with
-                    CloseOnExec = cloexec
-                    Synchronous = synchronous
-                    DataSynchronous = synchronous && not r.Darwin
-                    NoFollow = noFollow
-                }
-
-            match OpenFlagWords.openPath flags (PathArg.ofText "f") 0o644 system with
+        let openPath (flags : OpenFlags) (path : string) : Outcome * UnixSystem<int, string> =
+            match OpenFlagWords.openPath flags (PathArg.ofText path) 0o644 system with
             | Ok (answer, system) -> Outcome.Answered answer, system
             | Error (OpenRefusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
             | Error refusal -> failwith $"open refused: %A{refusal}"
+
+        // As `OpenFlagWords.encode` reads them: Linux's word holds both of
+        // `O_SYNC`'s bits whenever `Synchronous` is set.
+        let synchronised (synchronous : FcntlSyncRequest) (flags : OpenFlags) : OpenFlags =
+            match synchronous with
+            | FcntlSyncRequest.Neither -> flags
+            | FcntlSyncRequest.Sync ->
+                { flags with
+                    Synchronous = true
+                    DataSynchronous = not r.Darwin
+                }
+            | FcntlSyncRequest.SyncAndDataSync ->
+                { flags with
+                    Synchronous = true
+                    DataSynchronous = true
+                }
+
+        let thread = Lone.leader system
+
+        match op with
+        | FcntlOp.Open (access, cloexec, synchronous, noFollow, truncate) ->
+            let flags =
+                { FcntlWorld.opening access with
+                    CloseOnExec = cloexec
+                    NoFollow = noFollow
+                    Truncate = truncate
+                }
+                |> synchronised synchronous
+
+            openPath flags "f"
+        | FcntlOp.OpenDirectory (cloexec, synchronous) ->
+            let flags =
+                { FcntlWorld.opening FileAccessMode.ReadOnly with
+                    CloseOnExec = cloexec
+                    Directory = true
+                }
+                |> synchronised synchronous
+
+            openPath flags "d"
         | FcntlOp.Pipe (nonBlocking, cloexec) ->
             let flags =
                 (if nonBlocking then nonBlockBit r else 0)
@@ -426,14 +679,7 @@ module TestFcntlReference =
             | Error (Dup3Refusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
             | Error refusal -> failwith $"dup3 refused: %s{Dup3Refusal.describe refusal}"
         | FcntlOp.Write fd ->
-            match
-                WriteOutcomes.admitThenWrite
-                    (Lone.leader system)
-                    fd
-                    UserBuffer.Mapped
-                    (ImmutableArray.Create 1uy)
-                    system
-            with
+            match WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped (ImmutableArray.Create 1uy) system with
             | Ok (WriteStep.Returns (WriteAnswer.Completed n, system))
             | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, _, system)) ->
                 Outcome.Answered (SyscallAnswer.Completed n), system
@@ -441,6 +687,28 @@ module TestFcntlReference =
             | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed error, _, system)) ->
                 Outcome.Answered (SyscallAnswer.Failed error), system
             | other -> failwith $"write: %A{other}"
+        | FcntlOp.Pwrite fd ->
+            match WriteOutcomes.admitThenPwrite thread fd (ImmutableArray.Create 1uy) 0L system with
+            | Ok (WriteAnswer.Completed n, system) -> Outcome.Answered (SyscallAnswer.Completed n), system
+            | Ok (WriteAnswer.Failed error, system) -> Outcome.Answered (SyscallAnswer.Failed error), system
+            | Error refusal -> failwith $"pwrite refused: %A{refusal}"
+        | FcntlOp.Ftruncate (fd, length) ->
+            match UnixDescriptor.tryFtruncate fd length system with
+            | Ok (answer, system) -> Outcome.Answered answer, system
+            | Error refusal -> failwith $"ftruncate refused: %s{TruncationRefusal.describe refusal}"
+        | FcntlOp.Flock (fd, operation) ->
+            let word =
+                match operation with
+                | FcntlFlockOp.Shared -> 1 ||| 4
+                | FcntlFlockOp.Exclusive -> 2 ||| 4
+                | FcntlFlockOp.Unlock -> 8
+
+            match UnixDescriptor.tryFlock thread fd word system with
+            | Ok (SyscallOutcome.Answered answer, system) -> Outcome.Answered answer, system
+            | Ok (other, _) -> failwith $"a non-blocking flock answered %A{other}"
+            | Error (FLockRefusal.DarwinPipe _)
+            | Error FLockRefusal.DarwinConversion -> Outcome.Refused, system
+            | Error refusal -> failwith $"flock refused: %s{FLockRefusal.describe refusal}"
         | FcntlOp.Close fd ->
             match UnixDescriptor.tryClose fd system with
             | Ok (answer, system) -> Outcome.Answered answer, system
@@ -511,9 +779,29 @@ module TestFcntlReference =
                     FileAccessMode.ReadWrite
                 ]
 
+        let synchronous =
+            Gen.elements
+                [
+                    FcntlSyncRequest.Neither
+                    FcntlSyncRequest.Sync
+                    FcntlSyncRequest.SyncAndDataSync
+                ]
+
+        let flockOp =
+            Gen.elements [ FcntlFlockOp.Shared ; FcntlFlockOp.Exclusive ; FcntlFlockOp.Unlock ]
+
         Gen.frequency
             [
-                3, Gen.map4 (fun a c s n -> FcntlOp.Open (a, c, s, n)) access bool bool bool
+                3,
+                gen {
+                    let! a = access
+                    let! c = bool
+                    let! s = synchronous
+                    let! n = bool
+                    let! t = Gen.frequency [ 3, Gen.constant false ; 1, Gen.constant true ]
+                    return FcntlOp.Open (a, c, s, n, t)
+                }
+                1, Gen.map2 (fun c s -> FcntlOp.OpenDirectory (c, s)) bool synchronous
                 2, Gen.map2 (fun n c -> FcntlOp.Pipe (n, c)) bool bool
                 2, Gen.map FcntlOp.Dup fd
                 3,
@@ -539,17 +827,44 @@ module TestFcntlReference =
                     bool
                     (Gen.frequency [ 5, Gen.constant false ; 1, Gen.constant true ])
                 2, Gen.map FcntlOp.Write fd
+                1, Gen.map FcntlOp.Pwrite fd
+                1,
+                Gen.map2
+                    (fun f l -> FcntlOp.Ftruncate (f, l))
+                    fd
+                    (Gen.frequency [ 8, Gen.map int64 (Gen.choose (0, 4)) ; 1, Gen.constant -1L ])
+                3, Gen.map2 (fun f o -> FcntlOp.Flock (f, o)) fd flockOp
                 3, Gen.map FcntlOp.Close fd
             ]
 
     [<Test>]
-    let ``every descriptor-table call answers as the reference does, and leaves the same table`` () : unit =
+    let ``every descriptor-table call answers as the reference does, and leaves the same table and statuses of its flavour``
+        ()
+        : unit
+        =
         let property (cover : string -> unit) (platform : SimulatedUnixPlatform, ops : FcntlOp list) : unit =
             let mutable system = system platform
             let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 
             // The launched standard streams, as the reference sees them: each
-            // its own pipe end, the first read and the others write.
+            // its own pipe end, the first read and the others write, and each
+            // its own pipe.
+            let stream (kind : Kind) (object : int) (access : int) : Description =
+                {
+                    Kind = kind
+                    Reader = None
+                    Object = object
+                    Access = access
+                    NonBlocking = false
+                    Synchronous = false
+                    DataSynchronous = false
+                    NoFollow = false
+                    OpenedDirectory = false
+                    Written = false
+                    Flocked = false
+                    Lock = None
+                }
+
             let mutable reference =
                 {
                     Darwin = darwin
@@ -558,41 +873,12 @@ module TestFcntlReference =
                     Descriptions =
                         Map.ofList
                             [
-                                0,
-                                {
-                                    Kind = Kind.PipeRead
-                                    Reader = None
-                                    Access = 0
-                                    NonBlocking = false
-                                    Synchronous = false
-                                    DataSynchronous = false
-                                    NoFollow = false
-                                    Written = false
-                                }
-                                1,
-                                {
-                                    Kind = Kind.PipeWrite
-                                    Reader = None
-                                    Access = 1
-                                    NonBlocking = false
-                                    Synchronous = false
-                                    DataSynchronous = false
-                                    NoFollow = false
-                                    Written = false
-                                }
-                                2,
-                                {
-                                    Kind = Kind.PipeWrite
-                                    Reader = None
-                                    Access = 1
-                                    NonBlocking = false
-                                    Synchronous = false
-                                    DataSynchronous = false
-                                    NoFollow = false
-                                    Written = false
-                                }
+                                0, stream Kind.PipeRead 2 0
+                                1, stream Kind.PipeWrite 3 1
+                                2, stream Kind.PipeWrite 4 1
                             ]
                     Next = 3
+                    NextObject = 5
                 }
 
             for i, op in List.indexed ops do
@@ -641,11 +927,32 @@ module TestFcntlReference =
                     |> Expect.equal
                         where
                         (fd,
-                         Some
-                             {
-                                 CloseOnExec = cloexec
-                                 CloseOnFork = clofork
-                             })
+                         Some (
+                             if darwin then
+                                 DescriptorFlags.Darwin (closeOnExec = cloexec, closeOnFork = clofork)
+                             else
+                                 DescriptorFlags.Linux (closeOnExec = cloexec)
+                         ))
+
+                // Every descriptor's status word, whether or not the step
+                // asked for one.
+                for fd in Map.keys reference.Fds do
+                    let description, _, _ = reference.Fds.[fd]
+
+                    match UnixDescriptor.tryFcntl fd FcntlWorld.GetFl 0 system with
+                    | Ok (answer, _) ->
+                        answer
+                        |> Expect.equal
+                            (fun () -> $"%s{where ()}, F_GETFL of %d{fd}")
+                            (SyscallAnswer.Completed (int64 (statusWord reference reference.Descriptions.[description])))
+                    | Error refusal ->
+                        failwith $"%s{where ()}: F_GETFL of %d{fd} refused: %s{FcntlRefusal.describe refusal}"
+
+                // Every description's status is its machine's flavour's.
+                for KeyValue (id, description) in OpenFileTable.descriptions system.Machine.OpenFiles do
+                    if not (statusIsOf (SimulatedUnixPlatform.flavour platform) description.Status) then
+                        failwith
+                            $"%s{where ()}: description %O{id}'s status %A{description.Status} is not %O{platform}'s"
 
                 UnixSystem.checkInvariants system |> Expect.empty where
 
@@ -671,6 +978,12 @@ module TestFcntlReference =
                 "SetFl"
                 "Dup3"
                 "Write"
+                "Pwrite"
+                "Ftruncate"
+                "Flock"
+                "OpenDirectory"
+                "EAGAIN"
+                "ESPIPE"
             ] do
             if coverage.Count label = 0 then
                 failwith $"the property never reached %s{label}; reached %A{coverage.Reached |> List.sort}"
