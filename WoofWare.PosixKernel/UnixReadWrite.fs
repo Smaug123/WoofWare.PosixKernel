@@ -735,8 +735,8 @@ type private PReadTarget =
 /// What a `pwrite` will write into: a seekable object open for writing.
 [<RequireQualifiedAccess>]
 type private PWriteTarget =
-    /// A regular file.
-    | File of inode : InodeNumber
+    /// A regular file, reached through `through`.
+    | File of inode : InodeNumber * through : ReachedThrough
     /// A character device, whose driver answers.
     | CharacterDevice of device : CharacterDevice
 
@@ -751,9 +751,10 @@ type private DeviceRefusal =
 /// checked and before its buffer is screened.
 [<RequireQualifiedAccess>]
 type private WriteTarget =
-    /// A file. The offset is the description's own, and the write advances it —
-    /// which is the whole difference from `pwrite`.
-    | File of inode : InodeNumber * offset : int64
+    /// A file, reached through `through`. The offset is the description's
+    /// own, and the write advances it — which is the whole difference from
+    /// `pwrite`.
+    | File of inode : InodeNumber * offset : int64 * through : ReachedThrough
     /// A socket that is not an end of a connection, which answers only once
     /// the buffer screen has had its say, which on one flavour answers first.
     | Socket of socket : SocketId
@@ -1530,11 +1531,7 @@ module UnixReadWrite =
         : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
         =
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixSystem.%s{syscall}: fd %d{fd} names inode %O{inode}, which the filesystem does not contain. A descriptor outliving its inode means an unlink or rmdir removed a still-open file or directory; the open file description must keep it alive (this is a bug in this library)."
+            VirtualFileSystem.get "UnixReadWrite: the inode a read's descriptor names" inode system.Machine.FileSystem
 
         match entry.Content with
         | InodeContent.Directory _ ->
@@ -2836,9 +2833,11 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteTarget, UnixError>
         =
-        match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system) with
         | None -> Error UnixError.EBADF
-        | Some (descriptionId, description) ->
+        | Some reached ->
+
+        let descriptionId, description = reached.Id, reached.Description
 
         if not (FileAccessMode.permitsWrite description.AccessMode) then
             // `write(2)` on a descriptor not open for writing is EBADF on both
@@ -2878,7 +2877,8 @@ module UnixReadWrite =
                 )
             | None -> Ok (WriteTarget.Socket socketId)
         | OpenFileTarget.CharacterDevice (_, device, _) -> Ok (WriteTarget.CharacterDevice device)
-        | OpenFileTarget.File (inode, offset) -> Ok (WriteTarget.File (inode, offset))
+        | OpenFileTarget.File (inode, offset) ->
+            Ok (WriteTarget.File (inode, offset, ReachedDescription.through "UnixReadWrite.write" reached))
         | OpenFileTarget.Pipe (pipeId, PipeEnd.Write) ->
             Ok (WriteTarget.Pipe (pipeId, descriptionId, description.NonBlocking))
         | OpenFileTarget.Pipe (pipeId, PipeEnd.Read) ->
@@ -3305,7 +3305,7 @@ module UnixReadWrite =
                 Ok (WriteStep.Returns (WriteAdmission.Transfer taken, touchedByWrite pipeId system))
             | PipeWriteStep.TakesThenSleeps taken ->
                 Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (taken, count), system))
-        | WriteTarget.File (_, offset) ->
+        | WriteTarget.File (_, offset, _) ->
 
         // Ahead of the zero-length no-op below: Darwin's EFBIG at INT64_MAX
         // answers a count of zero too, measured.
@@ -3473,7 +3473,7 @@ module UnixReadWrite =
                                 Buffer = buffer
                             }
                             system))
-        | Ok (WriteTarget.File (inode, offset)) ->
+        | Ok (WriteTarget.File (inode, offset, through)) ->
 
         // Ahead of the zero-length no-op: Darwin's EFBIG at INT64_MAX answers
         // a count of zero too, measured.
@@ -3519,9 +3519,6 @@ module UnixReadWrite =
         // The commit comes first, so the advance cannot overflow: a write that
         // would carry the offset past what the model can represent has already
         // been refused there.
-        let through =
-            FileDescriptorRegistry.openedThrough "UnixReadWrite.write" fd (UnixSystemState.fileDescriptors system)
-
         // The offset is set on the committed system's descriptions, which hold
         // the records the commit queued.
         let committed =
@@ -4390,9 +4387,11 @@ module UnixReadWrite =
             Error UnixError.EINVAL
         else
 
-        match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system) with
         | None -> Error UnixError.EBADF
-        | Some description ->
+        | Some reached ->
+
+        let description = reached.Description
 
         // Whether this description was opened for writing at all. Two arms below
         // need it and neither may guess: for a pipe it breaks the ESPIPE/EBADF
@@ -4463,7 +4462,8 @@ module UnixReadWrite =
             // `PWriteRefusal` has no socket case.
             Error UnixError.ESPIPE
         | OpenFileTarget.File (inode, _)
-        | OpenFileTarget.Directory (inode, _) -> seekable (PWriteTarget.File inode)
+        | OpenFileTarget.Directory (inode, _) ->
+            seekable (PWriteTarget.File (inode, ReachedDescription.through "UnixReadWrite.pwrite" reached))
         // Seekable as far as `pwrite` asks: measured on Linux, 16@0 answers as
         // `write` does (`devices.c`, PWRITE rows).
         | OpenFileTarget.CharacterDevice (_, device, _) -> seekable (PWriteTarget.CharacterDevice device)
@@ -4586,7 +4586,7 @@ module UnixReadWrite =
             ->
             Error (PWriteRefusal.SignalAtPageBoundary bytes.Length)
         | PWriteTarget.CharacterDevice _ -> Ok (WriteAnswer.Completed (int64 bytes.Length), system)
-        | PWriteTarget.File inode ->
+        | PWriteTarget.File (inode, through) ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -4603,9 +4603,6 @@ module UnixReadWrite =
         | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
             Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
         | Ok mutation ->
-
-        let through =
-            FileDescriptorRegistry.openedThrough "UnixReadWrite.pwrite" fd (UnixSystemState.fileDescriptors system)
 
         let machine =
             UnixMachineState.commitFileSystem (ChangeNotice.Written through) mutation system.Machine
@@ -5180,10 +5177,12 @@ module UnixReadWrite =
 
         let registry = UnixSystemState.fileDescriptors system
 
-        match FileDescriptorRegistry.tryFind inFd registry, FileDescriptorRegistry.tryFind outFd registry with
+        match FileDescriptorRegistry.tryFind inFd registry, FileDescriptorRegistry.tryFindReached outFd registry with
         | None, _
         | _, None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
-        | Some source, Some destination ->
+        | Some source, Some destinationReached ->
+
+        let destination = destinationReached.Description
 
         let failed (error : UnixError) = Ok (SyscallAnswer.Failed error, system)
 
@@ -5279,7 +5278,7 @@ module UnixReadWrite =
             | Ok mutation ->
 
             let through =
-                FileDescriptorRegistry.openedThrough "UnixReadWrite.copyFileRange" outFd registry
+                ReachedDescription.through "UnixReadWrite.copyFileRange" destinationReached
 
             // The offsets are set on the committed system's descriptions,
             // which hold the records the commit queued.

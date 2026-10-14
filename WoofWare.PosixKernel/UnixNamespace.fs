@@ -222,7 +222,7 @@ type DirectoryRecord =
         /// itself and for `..` its parent, as `stat` would report them.
         Inode : InodeNumber
         /// `d_name`.
-        Name : DirectoryStreamName
+        Name : PathComponent
         /// `d_type`. Never unknown: measured on tmpfs and APFS, every entry,
         /// the dots included, reports its kind.
         Kind : DirectoryEntryKind
@@ -328,7 +328,7 @@ module internal RenameRefusal =
         | RenameRefusal.Sticky refusal -> StickyRefusal.describe refusal
         | RenameRefusal.Path refusal -> PathRefusal.describe refusal
         | RenameRefusal.MountPoint mountRoot ->
-            $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
+            $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it onto itself is 0, and to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
         | RenameRefusal.DeviceFileSystem (directory, name) ->
             $"the call would move \"%s{DirectoryEntryName.toEscaped name}\" out of inode %O{directory}, on the device filesystem, which holds only the nodes of the devices this kernel has drivers for; it removes none of them, because it could not then say what a real one answers for the name."
 
@@ -787,6 +787,65 @@ module UnixNamespace =
             failwith
                 $"%s{context}: about to create an inode in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
 
+    /// A new empty regular file bound as `name` in `directory`, which a walk
+    /// has just found free, with the permission bits a creating `open(2)`
+    /// gives `mode` and owned as any new inode there is: the file's inode, and
+    /// the system holding it. `operation` names the caller in the failure a
+    /// broken graph gives.
+    let private createRegularFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (directory : InodeNumber)
+        (name : DirectoryEntryName)
+        (mode : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : InodeNumber * UnixSystem<'Thread, 'Handler>
+        =
+        let parent = VirtualFileSystem.get operation directory system.Machine.FileSystem
+
+        let parentPermissions =
+            match parent.Content with
+            | InodeContent.Directory content -> content.Permissions
+            | InodeContent.RegularFile _
+            | InodeContent.Symlink _
+            | InodeContent.CharacterDevice _
+            | InodeContent.Socket _
+            | InodeContent.Fifo _ ->
+                failwith
+                    $"%s{operation}: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is not one now (this is a bug in this library)."
+
+        let permissions =
+            CreatingOpenRules.createdPermissions
+                (SimulatedUnixPlatform.creatingOpenRules system.Machine.UnixPlatform)
+                (Standing.toward system.Process.Credentials parent.Owner)
+                parentPermissions
+                system.Process.Umask
+                mode
+
+        let now = UnixMachineState.realtime system.Scheduling system.Machine
+
+        match
+            VirtualFileSystem.createFile
+                directory
+                name
+                permissions
+                (newInodeOwner operation directory system)
+                now
+                ImmutableArray<byte>.Empty
+                system.Machine.FileSystem
+        with
+        | Error error ->
+            // `createFile` refuses a name the directory already holds, and a
+            // parent that is not a directory. The walk has just established
+            // neither is the case, so either is a broken graph rather than
+            // something the caller did.
+            failwith
+                $"%s{operation}: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
+        | Ok (inode, mutation) ->
+            inode,
+            { system with
+                Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
+            }
+
     /// `openat`, of a path this kernel has already copied in, starting from
     /// `directory` if it is relative.
     let internal openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -978,59 +1037,17 @@ module UnixNamespace =
         with
         | CreatingOpenVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | CreatingOpenVerdict.Create (directory, name) ->
-            let parent =
-                match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
-                | Some ({
-                            Content = InodeContent.Directory parent
-                        } as entry) -> entry, parent
-                | Some _
-                | None ->
-                    failwith
-                        $"UnixNamespace.openPath: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
+            let inode, system =
+                createRegularFile "UnixNamespace.openPath" directory name mode system
 
-            let permissions =
-                CreatingOpenRules.createdPermissions
-                    rules
-                    (Standing.toward credentials (fst parent).Owner)
-                    (snd parent).Permissions
-                    system.Process.Umask
-                    mode
-
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
-
-            match
-                VirtualFileSystem.createFile
-                    directory
-                    name
-                    permissions
-                    (newInodeOwner "UnixNamespace.openPath" directory system)
-                    now
-                    ImmutableArray<byte>.Empty
-                    system.Machine.FileSystem
-            with
-            | Error error ->
-                // `createFile` refuses a name the directory already holds, and a
-                // parent that is not a directory. The walk has just established
-                // neither is the case, so either is a broken graph rather than
-                // something the caller did.
-                failwith
-                    $"UnixNamespace.openPath: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
-            | Ok (inode, mutation) ->
-                { system with
-                    Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
-                }
-                // A file this open created is not one it truncated, whatever
-                // `O_TRUNC` asked: measured on Darwin (`fcntl-dup.c`, WRITTEN
-                // rows), its description is not marked written.
-                |> opened false (ReachedThrough.ofEntry directory name) inode
+            // A file this open created is not one it truncated, whatever
+            // `O_TRUNC` asked: measured on Darwin (`fcntl-dup.c`, WRITTEN
+            // rows), its description is not marked written.
+            opened false (ReachedThrough.ofEntry directory name) inode system
         | CreatingOpenVerdict.OpenExisting inode ->
 
         let entry =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"UnixNamespace.openPath: resolution returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixNamespace.openPath" inode system.Machine.FileSystem
 
         match entry.Content with
         | InodeContent.Symlink _ ->
@@ -1333,17 +1350,11 @@ module UnixNamespace =
                     | None -> Error UnixError.EBADF
                     | Some description ->
 
-                    match description.Target with
-                    | OpenFileTarget.File (inode, _)
-                    | OpenFileTarget.Directory (inode, _)
-                    | OpenFileTarget.CharacterDevice (inode, _, _)
-                    | OpenFileTarget.Fifo (inode, _) -> Ok inode
-                    | OpenFileTarget.Pipe _
-                    | OpenFileTarget.Socket _
-                    | OpenFileTarget.Epoll _
-                    // The anonymous inode an epoll instance is on.
-                    | OpenFileTarget.Inotify _
-                    | OpenFileTarget.Kqueue _ -> Error UnixError.ENOENT
+                    // An epoll or inotify instance is on an anonymous
+                    // inode, which is no link either.
+                    match OpenFileTable.inodeOf description.Target with
+                    | Some inode -> Ok inode
+                    | None -> Error UnixError.ENOENT
 
                 Ok named, UnixError.ENOENT
             | AtPathTarget.CurrentDirectory
@@ -1371,11 +1382,7 @@ module UnixNamespace =
         | Ok (Ok inode) ->
 
         let record =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some record -> record
-            | None ->
-                failwith
-                    $"UnixNamespace.readlink: resolution returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixNamespace.readlink" inode system.Machine.FileSystem
 
         match record.Content with
         | InodeContent.Directory _
@@ -1628,11 +1635,8 @@ module UnixNamespace =
         | Some (name, target, next) ->
 
         let kind =
-            match VirtualFileSystem.tryGetContent target system.Machine.FileSystem with
-            | Some content -> DirectoryEntryKind.ofContent content
-            | None ->
-                failwith
-                    $"UnixNamespace.readDirectoryEntry: the entry \"%O{name}\" names inode %O{target}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            (VirtualFileSystem.get "UnixNamespace.readDirectoryEntry" target system.Machine.FileSystem).Content
+            |> DirectoryEntryKind.ofContent
 
         // A name a filesystem is mounted over reports the inode number of the
         // directory the mount covers, not the mounted root's: measured on both
@@ -1640,7 +1644,7 @@ module UnixNamespace =
         // on Linux (`mountpoint.c`).
         let reported =
             match name, VirtualFileSystem.mountOf target system.Machine.FileSystem with
-            | DirectoryStreamName.Entry _, Some mount -> mount.Covered
+            | PathComponent.Name _, Some mount -> mount.Covered
             | _, _ -> target
 
         let record : DirectoryRecord =
@@ -1859,48 +1863,8 @@ module UnixNamespace =
         | MkNodVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
         | MkNodVerdict.Refused refusal -> Error refusal
         | MkNodVerdict.CreateRegularFile (directory, name) ->
-
-        let parent =
-            match VirtualFileSystem.tryGet directory system.Machine.FileSystem with
-            | Some ({
-                        Content = InodeContent.Directory parent
-                    } as entry) -> entry, parent
-            | Some _
-            | None ->
-                failwith
-                    $"UnixNamespace.mknod: about to create \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, which the walk had established was a directory, but it is now absent or not a directory (this is a bug in this library)."
-
-        let permissions =
-            CreatingOpenRules.createdPermissions
-                rules
-                (Standing.toward credentials (fst parent).Owner)
-                (snd parent).Permissions
-                system.Process.Umask
-                mode
-
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
-
-        match
-            VirtualFileSystem.createFile
-                directory
-                name
-                permissions
-                (newInodeOwner "UnixNamespace.mknod" directory system)
-                now
-                ImmutableArray<byte>.Empty
-                system.Machine.FileSystem
-        with
-        | Error error ->
-            failwith
-                $"UnixNamespace.mknod: creating \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory} was refused with %O{error}, but the walk had just established that the directory exists and does not hold that name (this is a bug in this library)."
-        | Ok (_, mutation) ->
-
-        Ok (
-            SyscallAnswer.Completed 0L,
-            { system with
-                Machine = UnixMachineState.commitFileSystem ChangeNotice.Names mutation system.Machine
-            }
-        )
+            let _, system = createRegularFile "UnixNamespace.mknod" directory name mode system
+            Ok (SyscallAnswer.Completed 0L, system)
 
     /// `mknod`, with a refusal answered as the `Error` rather than raised.
     let internal tryMknod<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1997,20 +1961,7 @@ module UnixNamespace =
 
         // The covered directory, not the mounted root, is what a sticky
         // parent's rule consults; see `RemovalRefusal.MountPoint`.
-        let coveredInStickyDirectory =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, Some target) when
-                (VirtualFileSystem.mountOf target system.Machine.FileSystem).IsSome
-                ->
-                match VirtualFileSystem.tryGetDirectory directory system.Machine.FileSystem with
-                | Some content when PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0 ->
-                    Some target
-                | Some _
-                | None -> None
-            | ResolvedTarget.Entry _
-            | ResolvedTarget.Directory _ -> None
-
-        match coveredInStickyDirectory with
+        match RemovalChecks.mountPointInStickyDirectory resolution system.Machine.FileSystem with
         | Some mountRoot -> Error (RemovalRefusal.MountPoint mountRoot)
         | None ->
 
@@ -2102,20 +2053,7 @@ module UnixNamespace =
 
         // The covered directory, not the mounted root, is what a sticky
         // parent's rule consults; see `RemovalRefusal.MountPoint`.
-        let coveredInStickyDirectory =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, Some target) when
-                (VirtualFileSystem.mountOf target system.Machine.FileSystem).IsSome
-                ->
-                match VirtualFileSystem.tryGetDirectory directory system.Machine.FileSystem with
-                | Some content when PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0 ->
-                    Some target
-                | Some _
-                | None -> None
-            | ResolvedTarget.Entry _
-            | ResolvedTarget.Directory _ -> None
-
-        match coveredInStickyDirectory with
+        match RemovalChecks.mountPointInStickyDirectory resolution system.Machine.FileSystem with
         | Some mountRoot -> Error (RemovalRefusal.MountPoint mountRoot)
         | None ->
 
@@ -2487,22 +2425,25 @@ module UnixNamespace =
 
         // A mount point's own rows. Linux checks the permissions first and the
         // mount after (`rename("/dev", "/devx")` is EACCES at uid 1000 and EBUSY
-        // at uid 0), and that pair, a mount point renamed within its own
-        // directory, is all that has been measured. It is also all that can be
-        // answered: the mount point's own inode is the covered directory, whose
-        // owner a sticky parent consults and whose write bit a move to another
-        // directory consults, and this kernel holds only the mounted root.
+        // at uid 0), and a rename onto itself before either (`vfs_rename`
+        // answers 0 when source and target are one inode: measured by
+        // `mountpoint-self-rename.c`, as root and as uid 1000). Those, a mount
+        // point renamed within its own directory, are all that has been
+        // measured. They are also all that can be answered: the mount point's
+        // own inode is the covered directory, whose owner a sticky parent
+        // consults and whose write bit a move to another directory consults,
+        // and this kernel holds only the mounted root.
         let sticky (resolution : Resolution) : bool =
-            match resolution.Target with
-            | ResolvedTarget.Entry (directory, _, _) ->
-                match VirtualFileSystem.tryGetDirectory directory vfs with
-                | Some content -> PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0
-                | None -> false
-            | ResolvedTarget.Directory _ -> false
+            RemovalChecks.inStickyDirectory resolution vfs
 
         let verdict =
             match mountRootNamed sourceResolution, mountRootNamed destinationResolution, verdict with
             | None, None, verdict -> Ok verdict
+            | Some source, Some destination, Ok RenameVerdict.NoOp when
+                source = destination
+                && SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
+                ->
+                Ok (Ok RenameVerdict.NoOp)
             | Some mountRoot, None, verdict when not (sticky sourceResolution) && not (sticky destinationResolution) ->
                 match sourceResolution.Target, destinationResolution.Target, verdict with
                 | ResolvedTarget.Entry (sourceDirectory, _, _),
@@ -3091,13 +3032,10 @@ module UnixNamespace =
                 | Ok (PathStart.StartingObject inode) ->
                     // An unlinked regular file goes on: `LinkRules.verdict`
                     // answers it once the destination has been looked at.
-                    match VirtualFileSystem.tryGetContent inode vfs with
-                    | Some (InodeContent.Directory _) when VirtualFileSystem.isOrphanedDirectory inode vfs ->
+                    match (VirtualFileSystem.get "UnixNamespace.linkat" inode vfs).Content with
+                    | InodeContent.Directory _ when VirtualFileSystem.isOrphanedDirectory inode vfs ->
                         Error (LinkRefusal.NamelessSource inode)
-                    | Some _ -> Ok (Ok inode)
-                    | None ->
-                        failwith
-                            $"UnixNamespace.linkat: the descriptor names inode %O{inode}, which the filesystem does not contain (this is a bug in this library)."
+                    | _ -> Ok (Ok inode)
                 | Ok (PathStart.Walk _) ->
                     failwith
                         "UnixNamespace.linkat: an empty path naming its starting point walked instead (this is a bug in this library)."

@@ -552,11 +552,7 @@ module PathWalk =
         | None ->
 
         let content =
-            match VirtualFileSystem.tryGetContent target vfs with
-            | Some content -> content
-            | None ->
-                failwith
-                    $"VirtualFileSystem: directory inode %O{directory} binds \"%s{DirectoryEntryName.toEscaped name}\" to inode %O{target}, which the graph does not contain. Run VirtualFileSystem.checkInvariants."
+            (VirtualFileSystem.get "PathWalk: the target of an entry" target vfs).Content
 
         match content with
         | InodeContent.Symlink (linkTarget, _) ->
@@ -685,11 +681,7 @@ module PathWalk =
                     $"VirtualFileSystem: the walk found a link in inode %O{directory}, which it had established was a directory, but it is now absent or not a directory. The inode graph is inconsistent; run VirtualFileSystem.checkInvariants."
 
         let linkOwner =
-            match VirtualFileSystem.tryGet link vfs with
-            | Some inode -> inode.Owner
-            | None ->
-                failwith
-                    $"VirtualFileSystem: directory inode %O{directory} binds a link to inode %O{link}, which the graph does not contain. Run VirtualFileSystem.checkInvariants."
+            (VirtualFileSystem.get "PathWalk: the link an entry binds" link vfs).Owner
 
         if
             not (
@@ -815,11 +807,7 @@ module PathWalk =
         | None ->
 
         let content =
-            match VirtualFileSystem.tryGetContent target vfs with
-            | Some content -> content
-            | None ->
-                failwith
-                    $"VirtualFileSystem: directory inode %O{directory} binds \"%s{DirectoryEntryName.toEscaped name}\" to inode %O{target}, which the graph does not contain. Run VirtualFileSystem.checkInvariants."
+            (VirtualFileSystem.get "PathWalk: the target of an entry" target vfs).Content
 
         // A trailing separator forces the final symlink to be followed even
         // under NoFollowFinal: POSIX resolves "p/" as "p/.", and both
