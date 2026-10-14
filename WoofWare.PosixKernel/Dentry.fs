@@ -55,11 +55,7 @@ module internal ReachedThrough =
                 $"ReachedThrough.ofDirectory: inode %O{inode} is not a directory this filesystem holds (this is a bug in this library)."
         | Some directory ->
 
-        let name =
-            VirtualFileSystem.tryGetDirectory directory.Parent vfs
-            |> Option.bind (fun parent -> parent.Entries |> Map.tryFindKey (fun _ bound -> bound = inode))
-
-        match name with
+        match VirtualFileSystem.nameIn directory.Parent inode vfs with
         | Some name ->
             ReachedThrough.Name (
                 {

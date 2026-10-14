@@ -373,11 +373,7 @@ module UnixInotify =
         | Ok inode ->
 
         let found =
-            match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
-            | Some found -> found
-            | None ->
-                failwith
-                    $"UnixInotify.inotifyAddWatch: resolving %O{path} returned inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
+            VirtualFileSystem.get "UnixInotify.inotifyAddWatch" inode system.Machine.FileSystem
 
         let isDirectory =
             match found.Content with
