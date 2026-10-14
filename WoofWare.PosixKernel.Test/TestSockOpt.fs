@@ -60,6 +60,7 @@ module TestSockOpt =
                         Endpoint = loopback 40000us
                         LockedAddress = None
                         LockedPort = false
+                        PortHold = PortHold.Reserved
                     }
 
         let system =

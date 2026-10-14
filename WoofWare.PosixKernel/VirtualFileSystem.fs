@@ -7,7 +7,7 @@ open System.Collections.Immutable
 /// them, in a tree that finds the least name above a given one by descending
 /// rather than by walking every name below it; and, apart, those of them that
 /// hold a byte beyond ASCII, which are all a lookup by canonical equivalence
-/// need look through.
+/// need look through besides one found by its bytes.
 ///
 /// Equal and ordered by the names alone, so that two sets holding the same
 /// names are indistinguishable however they were assembled.
@@ -18,7 +18,7 @@ type internal SortedEntryNames =
         {
             Names : ImmutableSortedSet<DirectoryEntryName>
             /// The members of `Names` holding a byte beyond ASCII.
-            BeyondAscii : ImmutableSortedSet<DirectoryEntryName>
+            BeyondAscii : NamesBeyondAscii
         }
 
     override this.Equals (other : obj) : bool =
@@ -47,7 +47,7 @@ module internal SortedEntryNames =
     let empty : SortedEntryNames =
         {
             Names = ImmutableSortedSet.Create<DirectoryEntryName> order
-            BeyondAscii = ImmutableSortedSet.Create<DirectoryEntryName> order
+            BeyondAscii = NamesBeyondAscii.empty
         }
 
     let isEmpty (names : SortedEntryNames) : bool = names.Names.IsEmpty
@@ -60,22 +60,18 @@ module internal SortedEntryNames =
     let toList (names : SortedEntryNames) : DirectoryEntryName list = List.ofSeq names.Names
 
     /// The names that hold a byte beyond ASCII.
-    let beyondAscii (names : SortedEntryNames) : DirectoryEntryName seq = names.BeyondAscii :> _
+    let beyondAscii (names : SortedEntryNames) : NamesBeyondAscii = names.BeyondAscii
 
     let add (name : DirectoryEntryName) (names : SortedEntryNames) : SortedEntryNames =
         {
             Names = names.Names.Add name
-            BeyondAscii =
-                if EntryNameMatching.isAsciiName name then
-                    names.BeyondAscii
-                else
-                    names.BeyondAscii.Add name
+            BeyondAscii = NamesBeyondAscii.add name names.BeyondAscii
         }
 
     let remove (name : DirectoryEntryName) (names : SortedEntryNames) : SortedEntryNames =
         {
             Names = names.Names.Remove name
-            BeyondAscii = names.BeyondAscii.Remove name
+            BeyondAscii = NamesBeyondAscii.remove name names.BeyondAscii
         }
 
     // By `add`, so that one function decides what the index of names beyond
@@ -895,7 +891,7 @@ module VirtualFileSystem =
             let beyondAscii =
                 match Map.tryFind directory vfs.SortedNames with
                 | Some names -> SortedEntryNames.beyondAscii names
-                | None -> Seq.empty
+                | None -> NamesBeyondAscii.empty
 
             EntryNameMatching.lookUp vfs.NameMatching name content.Entries beyondAscii
 

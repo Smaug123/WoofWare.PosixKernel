@@ -130,8 +130,6 @@ module TestUnlinkRules =
         (candidate : string)
         : UnlinkVerdict
         =
-        let rules = SimulatedUnixPlatform.unlinkRules platform
-
         match
             PathWalk.resolveFull
                 (SimulatedUnixPlatform.pathLimits platform)
@@ -139,7 +137,7 @@ module TestUnlinkRules =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root tree)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator platform)
                 (path candidate)
                 tree
             |> Answered.errno

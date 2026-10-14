@@ -54,6 +54,7 @@ module TestSocketBinding =
             Endpoint = endpoint address port
             LockedAddress = None
             LockedPort = false
+            PortHold = PortHold.Reserved
         }
 
     let private loopback = Ipv4Address.loopback

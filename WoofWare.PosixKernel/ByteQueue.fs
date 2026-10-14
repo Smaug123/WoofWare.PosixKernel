@@ -21,20 +21,54 @@ type internal ByteQueue =
             Length : int
         }
 
-    /// Every byte held, oldest first.
-    member private this.Bytes : byte seq =
-        seq {
-            if this.Length > 0 then
-                for i in this.HeadTaken .. this.Head.Length - 1 do
-                    yield this.Head.[i]
-
-                for chunk in this.Rest do
-                    yield! chunk
-        }
+    /// Every chunk held, oldest first, each with the index of its first held
+    /// byte; none of them is wholly taken.
+    member private this.Chunks : (ImmutableArray<byte> * int) list =
+        if this.Length = 0 then
+            []
+        else
+            (this.Head, this.HeadTaken) :: [ for chunk in this.Rest -> chunk, 0 ]
 
     override this.Equals (other : obj) : bool =
         match other with
-        | :? ByteQueue as other -> this.Length = other.Length && Seq.forall2 (=) this.Bytes other.Bytes
+        | :? ByteQueue as other ->
+            // Most comparisons are of a queue with itself, reached through two
+            // states that share it.
+            if obj.ReferenceEquals (this, other) then
+                true
+            elif this.Length <> other.Length then
+                false
+            else
+                // Walk both queues' chunks at once, comparing the longest run
+                // the two current chunks both still hold.
+                let mutable mine = this.Chunks
+                let mutable theirs = other.Chunks
+                let mutable same = true
+
+                while same && not mine.IsEmpty do
+                    let mineChunk, mineStart = mine.Head
+                    let theirChunk, theirStart = theirs.Head
+                    let run = min (mineChunk.Length - mineStart) (theirChunk.Length - theirStart)
+
+                    same <-
+                        System.MemoryExtensions.SequenceEqual (
+                            mineChunk.AsSpan (mineStart, run),
+                            theirChunk.AsSpan (theirStart, run)
+                        )
+
+                    mine <-
+                        if mineStart + run = mineChunk.Length then
+                            mine.Tail
+                        else
+                            (mineChunk, mineStart + run) :: mine.Tail
+
+                    theirs <-
+                        if theirStart + run = theirChunk.Length then
+                            theirs.Tail
+                        else
+                            (theirChunk, theirStart + run) :: theirs.Tail
+
+                same
         | _ -> false
 
     override this.GetHashCode () : int = this.Length

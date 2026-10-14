@@ -136,6 +136,7 @@ module TestBind =
                     // delivery reverts a connect's source resolution to exactly it.
                     LockedAddress = Some Ipv4Address.loopback
                     LockedPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -448,11 +449,92 @@ module TestBind =
         attempt datagram datagramSystem
         |> shouldEqual (Error (BindRefusal.UnmodelledMulticast (SocketId 0L, multicast)))
 
-    /// The library refuses rather than inventing `EADDRINUSE` when a port-0 bind
-    /// finds the whole range taken.
-    [<Test>]
-    let ``an exhausted ephemeral range is refused`` () : unit =
-        let system = systemOn SimulatedUnixPlatform.linuxX64
+    /// A socket whose connect to 127.0.0.1:1, where nothing is bound, was
+    /// refused: blocking, or non-blocking with the refusal left pending.
+    /// `prepare` runs on the socket first. Answers the port the refused socket
+    /// reports.
+    let private refusedSocket
+        (platform : SimulatedUnixPlatform)
+        (blocking : bool)
+        (prepare : int -> UnixSystem<int, string> -> UnixSystem<int, string>)
+        : uint16 * UnixSystem<int, string>
+        =
+        let fd, system = stream platform
+        let system = prepare fd system
+
+        let system =
+            if blocking then
+                system
+            else
+                UnixSystemState.withFileDescriptors
+                    (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+                    system
+
+        let expected =
+            if blocking then
+                UnixError.ECONNREFUSED
+            else
+                UnixError.EINPROGRESS
+
+        match CopyIn.connect fd UserBuffer.Mapped exactLength (CopyIn.inet platform (loopback 1us)) system with
+        | Ok (SyscallAnswer.Failed error, system) when error = expected ->
+            match bindingOf (SocketId 0L) system with
+            | Some binding -> binding.Endpoint.Port, system
+            | None -> failwith "the refused socket reports no port"
+        | other -> failwith $"connect to a closed port: %A{other}"
+
+    /// What a fresh socket's bind of 127.0.0.1 at `port` answers beside the
+    /// refused one.
+    let private freshBind (port : uint16) (system : UnixSystem<int, string>) : BindAnswer =
+        let fd, system =
+            withSocket (SocketId 1L) (socketOfKind SocketKind.Stream SocketPhase.Idle) system
+
+        bindOrFail fd (loopback port) system |> fst
+
+    /// A refused connect gives back a port the socket's own implicit bind
+    /// chose, on both flavours, though `getsockname` goes on reporting it
+    /// (measured, `docs/probes/refused-connect-port`, rows Ib1, In1 and Is1).
+    [<TestCaseSource(nameof platforms)>]
+    let ``a refused connect's implicit port does not hold off a bind`` (platform : SimulatedUnixPlatform) : unit =
+        for blocking in [ true ; false ] do
+            let port, system = refusedSocket platform blocking (fun _ system -> system)
+
+            match freshBind port system with
+            | BindAnswer.Bound _ -> ()
+            | answer -> failwith $"blocking %b{blocking}: bind 127.0.0.1:%d{port} beside the refused socket: %A{answer}"
+
+    /// A port bind(2) chose is kept by Linux, as `tcp_set_state` keeps a
+    /// locked port, and given back by Darwin too (measured,
+    /// `docs/probes/refused-connect-port`, rows Xb1 and Xn1).
+    [<TestCaseSource(nameof platforms)>]
+    let ``a refused connect gives back a port bind chose under Darwin alone``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        for blocking in [ true ; false ] do
+            let port, system =
+                refusedSocket platform blocking (fun fd system -> bound fd (loopback 47000us) system |> snd)
+
+            port |> shouldEqual 47000us
+
+            let expected =
+                match SimulatedUnixPlatform.flavour platform with
+                | SimulatedUnixFlavour.Linux -> BindAnswer.Failed UnixError.EADDRINUSE
+                | SimulatedUnixFlavour.Darwin -> BindAnswer.Bound (SocketAddress.Inet (loopback port))
+
+            freshBind port system |> shouldEqual expected
+
+    /// A port-0 bind that finds the whole range taken: Linux answers
+    /// EADDRINUSE, leaving the socket unbound (measured,
+    /// `docs/probes/ephemeral-search`, the rows ending in B). Darwin answers
+    /// EADDRNOTAVAIL, but this library's search can pass over a port Darwin's
+    /// would take, so it refuses.
+    [<TestCaseSource(nameof platforms)>]
+    let ``an exhausted ephemeral range is answered under Linux and refused under Darwin``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        let system = systemOn platform
 
         // One port in the range, and a socket already holding it.
         let system =
@@ -472,8 +554,13 @@ module TestBind =
         let fd, system =
             withSocket (SocketId 0L) (socketOfKind SocketKind.Stream SocketPhase.Idle) system
 
-        CopyIn.bind fd UserBuffer.Mapped exactLength (CopyIn.inet SimulatedUnixPlatform.linuxX64 (loopback 0us)) system
-        |> shouldEqual (Error (BindRefusal.EphemeralPortsExhausted (40000us, 40000us)))
+        let expected =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> Ok (BindAnswer.Failed UnixError.EADDRINUSE, system)
+            | SimulatedUnixFlavour.Darwin -> Error (BindRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+        CopyIn.bind fd UserBuffer.Mapped exactLength (CopyIn.inet platform (loopback 0us)) system
+        |> shouldEqual expected
 
     /// The byte-count contract `connect` states, restated because `bind` is a
     /// second caller of it and a short copy here is just as silent.

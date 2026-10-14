@@ -225,11 +225,11 @@ type internal Resolution =
         /// Dispatching is only honest once both columns are measured at that
         /// operation's own scale, which is a per-syscall question rather than a
         /// property of this flag. `mkdir` is measured on both and dispatches
-        /// (`SimulatedUnixPlatform.mkDirRules` picks the walk that reproduces
+        /// (`SimulatedUnixPlatform.finalNameTrailingSeparator` picks the walk that reproduces
         /// each), and it never sees this flag set, because Linux's walk is
         /// `TrailingSeparatorPolicy.Ignore` and Darwin's acts on the following
         /// rather than reporting it. `unlink` is measured on both and dispatches
-        /// the same way (`SimulatedUnixPlatform.unlinkRules`); it destroys
+        /// the same way (`SimulatedUnixPlatform.finalNameTrailingSeparator`); it destroys
         /// nothing when the pair is set, since Darwin answers EPERM for the
         /// directory a followed link named and Linux never follows.
         ///

@@ -80,6 +80,7 @@ module TestListen =
                 Endpoint = endpoint
                 LockedAddress = Some endpoint.Address
                 LockedPort = true
+                PortHold = PortHold.Reserved
             }
 
     let private listenOrFail (fd : int) (backlog : int) (system : UnixSystem<int, string>) =
@@ -143,6 +144,7 @@ module TestListen =
                     Endpoint = where
                     LockedAddress = None
                     LockedPort = false
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -355,9 +357,9 @@ module TestListen =
             UnixSocket.tryListen fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
-    /// Only `Idle` and `Listening` have measured answers; the rest are refused
-    /// rather than guessed at, EISCONN for a connected socket being only
-    /// plausible.
+    /// Only `Idle`, `Listening` and `Refused` have measured answers; the rest
+    /// are refused rather than guessed at, EISCONN for a connected socket being
+    /// only plausible.
     [<TestCaseSource(nameof platforms)>]
     let ``a stream socket in an unmeasured phase is refused`` (platform : SimulatedUnixPlatform) : unit =
         let phases =
@@ -365,8 +367,6 @@ module TestListen =
                 SocketPhase.EstablishedPendingReport (ConnectionId 7L)
                 SocketPhase.Established (ConnectionId 7L, ConnectionEnd.Client)
                 SocketPhase.Established (ConnectionId 7L, ConnectionEnd.Server)
-                SocketPhase.Refused RefusalError.Pending
-                SocketPhase.Refused RefusalError.Reported
                 SocketPhase.DatagramPeer (SocketAddress.Inet (loopback 9000us))
             ]
 
@@ -379,6 +379,59 @@ module TestListen =
 
             UnixSocket.tryListen fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredPhase (SocketId 0L, phase)))
+
+    /// A socket whose connect was refused answers EINVAL, whether or not the
+    /// refusal has been reported, on both flavours (measured,
+    /// `docs/probes/refused-connect-port`, the rows ending in 3).
+    [<TestCaseSource(nameof platforms)>]
+    let ``a refused socket's listen is EINVAL`` (platform : SimulatedUnixPlatform) : unit =
+        for error in [ RefusalError.Pending ; RefusalError.Reported ] do
+            let fd, system =
+                withSocket
+                    (SocketId 0L)
+                    (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false (SocketPhase.Refused error))
+                    (systemOn platform)
+
+            match UnixSocket.tryListen fd 8 system with
+            | Ok (answer, after) ->
+                answer |> shouldEqual (ListenAnswer.Failed UnixError.EINVAL)
+                after |> shouldEqual system
+            | Error refusal -> failwith $"%A{error}: refused %A{refusal}"
+
+    /// A Linux socket whose refused connect gave its port back listens at a
+    /// port of its own choosing, as one with none would (measured,
+    /// `docs/probes/refused-connect-port`, row Ib3), so another socket having
+    /// since bound the port it gave back is nothing to it: the screen Linux's
+    /// listen makes of a binding is of the port it chooses.
+    [<Test>]
+    let ``a Linux socket that gave its port back listens beside whoever took it`` () : unit =
+        let platform = SimulatedUnixPlatform.linuxX64
+        let given = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+
+        let givenBack =
+            Some
+                {
+                    Endpoint = given
+                    LockedAddress = None
+                    LockedPort = false
+                    PortHold = PortHold.GivenBack
+                }
+
+        let fd, system =
+            withSocket (SocketId 0L) (socketWith SocketKind.Stream givenBack false SocketPhase.Idle) (systemOn platform)
+
+        let _, system =
+            withSocket
+                (SocketId 1L)
+                (socketWith SocketKind.Stream (boundAt (loopback 40000us)) false SocketPhase.Idle)
+                system
+
+        match UnixSocket.tryListen fd 8 system with
+        | Ok (ListenAnswer.Listening (SocketAddress.Inet endpoint), after) ->
+            endpoint.Address |> shouldEqual Ipv4Address.any
+            endpoint.Port |> shouldNotEqual 40000us
+            UnixSystem.checkInvariants after |> shouldEqual []
+        | other -> failwith $"listen answered %A{other}"
 
     /// The kind screen precedes the phase screen: a *datagram* socket in one of
     /// those phases is answered EOPNOTSUPP rather than refused, which is what
@@ -400,11 +453,17 @@ module TestListen =
         |> fst
         |> shouldEqual (ListenAnswer.Failed UnixError.EOPNOTSUPP)
 
-    /// The implicit bind can run out of ports, and the library refuses rather
-    /// than inventing an errno for it.
-    [<Test>]
-    let ``an exhausted ephemeral range is refused`` () : unit =
-        let system = systemOn SimulatedUnixPlatform.linuxX64
+    /// The implicit bind can run out of ports: Linux answers EADDRINUSE,
+    /// leaving the socket unbound (measured, `docs/probes/ephemeral-search`,
+    /// the rows ending in Lsr). Darwin answers EADDRNOTAVAIL, but this
+    /// library's search can pass over a port Darwin's would take, so it
+    /// refuses.
+    [<TestCaseSource(nameof platforms)>]
+    let ``an exhausted ephemeral range is answered under Linux and refused under Darwin``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        let system = systemOn platform
 
         let system =
             { system with
@@ -427,6 +486,7 @@ module TestListen =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
                             LockedAddress = None
                             LockedPort = false
+                            PortHold = PortHold.Reserved
                         })
                     false
                     SocketPhase.Idle)
@@ -435,5 +495,9 @@ module TestListen =
         let fd, system =
             withSocket (SocketId 0L) (socketWith SocketKind.Stream None false SocketPhase.Idle) system
 
-        UnixSocket.tryListen fd 8 system
-        |> shouldEqual (Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us)))
+        let expected =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
+            | SimulatedUnixFlavour.Darwin -> Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+        UnixSocket.tryListen fd 8 system |> shouldEqual expected

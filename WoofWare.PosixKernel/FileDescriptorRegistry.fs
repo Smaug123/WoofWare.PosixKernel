@@ -127,6 +127,36 @@ type SocketProtocol =
     /// UDP.
     | Udp
 
+/// How a socket holds the port its binding names.
+[<RequireQualifiedAccess>]
+type PortHold =
+    /// The port is reserved outright: `bind(2)` chose it, or the implicit bind
+    /// of a `listen(2)`, or of a datagram socket's `connect(2)` or write, or it
+    /// is the port of the listener an accepted socket came from.
+    | Reserved
+    /// A stream socket's `connect(2)` chose the port by its own implicit bind,
+    /// for the four-tuple it connects. Linux's search for another connect's
+    /// port shares such a port towards another destination, where it passes
+    /// over a reserved one.
+    | Connected
+    /// A refused TCP connect gave the port back: on Linux unless `bind(2)`
+    /// chose it (`InetBinding.LockedPort`), and on Darwin whatever chose it.
+    /// `getsockname` goes on reporting the port, but the socket holds it
+    /// against nothing. A Linux socket that has given its port back binds,
+    /// listens and connects as one with no port, choosing a new one at its
+    /// binding's address.
+    | GivenBack
+
+[<RequireQualifiedAccess>]
+module internal PortHold =
+    /// Whether the socket holds the port at all, against other sockets'
+    /// binds and against a search for a free port.
+    let isHeld (hold : PortHold) : bool =
+        match hold with
+        | PortHold.Reserved
+        | PortHold.Connected -> true
+        | PortHold.GivenBack -> false
+
 /// The local address an IP socket holds, once `bind(2)` — or a call that binds
 /// implicitly — has given it one. Generic in the family's endpoint and address,
 /// so that one definition serves IPv4 and IPv6 and an IPv4 binding cannot hold
@@ -152,6 +182,10 @@ type InetBinding<'Endpoint, 'Address> =
         /// `0.0.0.0:5555` dissolves to `0.0.0.0:5555` where one bound to
         /// `0.0.0.0:0` dissolves to nothing.
         LockedPort : bool
+        /// How the socket holds `Endpoint`'s port: reserved, chosen by a
+        /// stream connect for its four-tuple, or given back by a refused
+        /// connect.
+        PortHold : PortHold
     }
 
 /// An IPv4 socket's local address: the binding of an `AF_INET` socket, and the

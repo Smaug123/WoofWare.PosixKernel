@@ -6,6 +6,10 @@
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
+    <!-- NUnit runs a test per core, and the property tests allocate heavily. Under workstation
+         GC each blocking collection suspends every test while one thread collects; server GC
+         collects on every core. On a four-core Linux VM it took the suite from 658s to 401s. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
   </PropertyGroup>
 
   <ItemGroup>
@@ -209,10 +213,12 @@
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
     <Compile Include="TestEphemeralPorts.fs" />
+    <Compile Include="TestEphemeralSearchMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
     <Compile Include="TestImplicitSelfConnectMeasured.fs" />
+    <Compile Include="TestRefusedConnectPortMeasured.fs" />
     <Compile Include="TestSocketAddressLength.fs" />
     <Compile Include="TestSockaddrDecoding.fs" />
     <Compile Include="SocketLadder.fs" />
@@ -347,6 +353,18 @@
          `TestImplicitSelfConnectMeasured` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.darwin.txt" />
+    <!-- What a refused TCP connect left its socket holding, and what the socket's
+         next bind(2), listen(2) and connect(2) answered, measured per flavour by
+         docs/probes/refused-connect-port. `TestRefusedConnectPortMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.darwin.txt" />
+    <!-- Which ports a TCP socket's ephemeral search passed over, and what bind(2),
+         listen(2) and connect(2) answered when it found none, measured per
+         flavour by docs/probes/ephemeral-search. `TestEphemeralSearchMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
@@ -595,6 +613,11 @@
          fraction of the machine's, so that several test hosts running at once stay bounded too.
          Decimal, 8 GiB: runtimeconfig properties are parsed with base 0. -->
     <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="8589934592" />
+    <!-- Server GC divides the limit above among its heaps, one per core unless told otherwise,
+         and an object must fit in one heap's share: on an 18-core machine the 2 GiB buffers of
+         the LargeMemory fixtures, and TestPipeBuffer's huge write, ran out of memory. Two heaps
+         give each 4 GiB on every machine, and were as fast as one per core on a four-core VM. -->
+    <RuntimeHostConfigurationOption Include="System.GC.HeapCount" Value="2" />
   </ItemGroup>
 
   <ItemGroup>
