@@ -846,7 +846,12 @@ module TestFcntlMeasured =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -1206,8 +1211,14 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
             }
         )
 
@@ -1217,6 +1228,7 @@ module TestFcntlMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread

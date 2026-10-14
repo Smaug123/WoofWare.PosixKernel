@@ -542,6 +542,7 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
+                    (UnixSystemState.signalNumbering after)
                     (Lone.proc after).CoreDumps
                     (Lone.leader after)
                     threads

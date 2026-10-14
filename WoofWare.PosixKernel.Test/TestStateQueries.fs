@@ -174,13 +174,6 @@ module TestStateQueries =
             |> shouldEqual path
 
     [<Test>]
-    let ``signals is the process's own, read under its platform's numbering`` () : unit =
-        for platform in platforms do
-            UnixProcessState.signals (Lone.proc (initialOn platform))
-            |> SignalState.numbering
-            |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
-
-    [<Test>]
     let ``park is absent until a thread sleeps, and then names the syscall it sleeps in`` () : unit =
         for platform in platforms do
             let system = initialOn platform

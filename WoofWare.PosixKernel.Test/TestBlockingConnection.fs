@@ -966,8 +966,12 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -1580,6 +1584,7 @@ module TestBlockingConnection =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -2020,6 +2025,7 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -2152,7 +2158,7 @@ module TestBlockingConnection =
     [<Test>]
     let ``a signal the thread blocks leaves a sleeping transfer asleep, and pending`` () : unit =
         for platform in Machines.platforms do
-            let numbering = SignalState.numbering (Lone.proc (systemOn platform false)).Signals
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let sigBlock =

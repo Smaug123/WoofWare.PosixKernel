@@ -763,6 +763,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -778,6 +779,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread

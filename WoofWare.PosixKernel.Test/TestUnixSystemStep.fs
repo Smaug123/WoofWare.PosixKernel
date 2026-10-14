@@ -3573,9 +3573,11 @@ module TestUnixSystemStep =
                                 Signals =
                                     proc.Signals
                                     |> SignalState.setDisposition
+                                        (UnixSystemState.signalNumbering closed)
                                         Signal.SIGUSR1
                                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                     |> SignalState.enqueue
+                                        (UnixSystemState.signalNumbering closed)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome waiterThread

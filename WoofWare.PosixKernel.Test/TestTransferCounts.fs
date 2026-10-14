@@ -770,7 +770,12 @@ module TestTransferCounts =
                 system
                 |> Lone.mapProc (fun proc ->
                     { proc with
-                        Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                        Signals =
+                            SignalState.setDisposition
+                                (UnixSystemState.signalNumbering system)
+                                Signal.SIGPIPE
+                                SignalDisposition.Ignore
+                                proc.Signals
                     }
                 )
 

@@ -3961,10 +3961,9 @@ WoofWare.PosixKernel.SignalState inherit obj
 WoofWare.PosixKernel.SignalState.framesOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list
 WoofWare.PosixKernel.SignalState.maskOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
 WoofWare.PosixKernel.SignalState.maskToRestore [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask option
-WoofWare.PosixKernel.SignalState.numbering [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalNumbering
 WoofWare.PosixKernel.SignalState.pending [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
-WoofWare.PosixKernel.SignalState.pendingBlocked [static method]: 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
-WoofWare.PosixKernel.SignalState.pendingFor [static method]: 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
+WoofWare.PosixKernel.SignalState.pendingBlocked [static method]: WoofWare.PosixKernel.SignalNumbering -> 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
+WoofWare.PosixKernel.SignalState.pendingFor [static method]: WoofWare.PosixKernel.SignalNumbering -> 'Thread -> 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.PendingSignal list
 WoofWare.PosixKernel.SignalState.threadsWithFrames [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet
 WoofWare.PosixKernel.SignalState.threadsWithMasks [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet
 WoofWare.PosixKernel.SignalState.threadsWithMasksToRestore [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet

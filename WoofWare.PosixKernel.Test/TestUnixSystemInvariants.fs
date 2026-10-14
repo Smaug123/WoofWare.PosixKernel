@@ -823,7 +823,13 @@ module TestUnixSystemInvariants =
         // without it.
         let inHandler (inside : int) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
-            |> HandlerFrames.enter "h" 0 (Set.ofList [ 0 ; inside ]) inside (Set.singleton Signal.SIGINT)
+            |> HandlerFrames.enter
+                SignalNumbering.Linux
+                "h"
+                0
+                (Set.ofList [ 0 ; inside ])
+                inside
+                (Set.singleton Signal.SIGINT)
 
         system
         |> withThread None
@@ -846,6 +852,7 @@ module TestUnixSystemInvariants =
         let blocking (thread : int) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
             |> SignalState.changeMask
+                SignalNumbering.Linux
                 SignalMaskChange.Block
                 (SignalMask.ofSignals SignalNumbering.Linux (Set.singleton Signal.SIGINT))
                 thread
@@ -867,6 +874,7 @@ module TestUnixSystemInvariants =
         let directedAt (target : int voption) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
             |> SignalState.enqueue
+                SignalNumbering.Linux
                 {
                     Signal = Signal.SIGCHLD
                     Target = target
@@ -888,24 +896,6 @@ module TestUnixSystemInvariants =
         system
         |> withThread None
         |> withSignals (directedAt ValueNone)
-        |> UnixSystem.checkInvariants
-        |> shouldEqual []
-
-    [<Test>]
-    let ``a signal state reading signals under a foreign numbering is a defect`` () : unit =
-        // Reachable only by assembling the state by hand: `initial` derives
-        // the signal state's numbering from the platform it is given.
-        system
-        |> withSignals (SignalState.initial SignalNumbering.Darwin Set.empty)
-        |> UnixSystem.checkInvariants
-        |> shouldEqual
-            [
-                UnixSystemDefect.SignalNumberingMismatch (SignalNumbering.Darwin, SignalNumbering.Linux)
-            ]
-
-        // The control: the numbering `initial` derived is sound.
-        system
-        |> withSignals (SignalState.initial SignalNumbering.Linux Set.empty)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 

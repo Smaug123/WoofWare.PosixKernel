@@ -130,6 +130,14 @@ module internal UnixSystemState =
                 }
         }
 
+    /// The numbering `system`'s signals are read under: its machine's
+    /// platform's.
+    let signalNumbering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SignalNumbering
+        =
+        SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
+
     /// `system` with `signals` as its process's signal state.
     let withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (signals : SignalState<'Thread, 'Handler>)

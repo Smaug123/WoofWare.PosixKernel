@@ -359,6 +359,8 @@ module TestSyscallInterruption =
     /// `sent`, installed and then generated for `thread` alone: the system's
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        let numbering = UnixSystemState.signalNumbering system
+
         let signals =
             ((Lone.proc system).Signals, sent)
             ||> List.fold (fun signals sent ->
@@ -372,8 +374,9 @@ module TestSyscallInterruption =
                     | Sent.Ignored _ -> SignalDisposition.Ignore
 
                 signals
-                |> SignalState.setDisposition (signalOf sent) disposition
+                |> SignalState.setDisposition numbering (signalOf sent) disposition
                 |> SignalState.enqueue
+                    numbering
                     {
                         Signal = signalOf sent
                         Target = ValueSome thread
@@ -904,6 +907,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.setDisposition
+                                (UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -949,6 +953,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.enqueue
+                                (UnixSystemState.signalNumbering system)
                                 {
                                     Signal = Signal.SIGCONT
                                     Target = ValueSome 1

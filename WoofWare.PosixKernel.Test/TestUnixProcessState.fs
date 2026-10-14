@@ -50,7 +50,13 @@ module TestUnixProcessState =
             { empty with
                 Signals =
                     empty.Signals
-                    |> HandlerFrames.enter "h" 7 (Set.ofList [ 7 ; 8 ]) 7 (Set.singleton Signal.SIGTERM)
+                    |> HandlerFrames.enter
+                        SignalNumbering.Linux
+                        "h"
+                        7
+                        (Set.ofList [ 7 ; 8 ])
+                        7
+                        (Set.singleton Signal.SIGTERM)
             }
 
         SignalState.maskOf 7 proc.Signals

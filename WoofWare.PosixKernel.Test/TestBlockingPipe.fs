@@ -730,8 +730,12 @@ module TestBlockingPipe =
                     { proc with
                         Signals =
                             proc.Signals
-                            |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                             |> SignalState.setDisposition
+                                (UnixSystemState.signalNumbering bare)
+                                Signal.SIGPIPE
+                                SignalDisposition.Ignore
+                            |> SignalState.setDisposition
+                                (UnixSystemState.signalNumbering bare)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1081,6 +1085,7 @@ module TestBlockingPipe =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1336,8 +1341,12 @@ module TestBlockingPipe =
                 { proc with
                     Signals =
                         proc.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch
                                 { SignalCatch.ofHandler "h" with
@@ -1411,6 +1420,7 @@ module TestBlockingPipe =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome sleeper
@@ -2128,7 +2138,12 @@ module TestBlockingPipe =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            disposition
+                            proc.Signals
                 }
             )
 
@@ -2313,9 +2328,11 @@ module TestBlockingPipe =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR2
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h2"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR2
                                 Target = ValueSome sleeper

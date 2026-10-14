@@ -200,7 +200,7 @@ module UnixSignal =
             Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)))
         else
 
-        match Signal.ofRawSignoUnder (SignalState.numbering system.Process.Signals) signo with
+        match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
             ProcessSignal.generate
@@ -287,6 +287,7 @@ module UnixSignal =
         UnixThreadTable.requireReturning "UnixSignal.onReturnToUser" thread system.Threads
 
         SignalState.onReturnToUser
+            (UnixSystemState.signalNumbering system)
             system.Process.CoreDumps
             system.Leader
             (threadsOf system)
@@ -429,7 +430,7 @@ module UnixSignal =
             failwith
                 $"UnixSignal.pthreadKill: thread %O{target} is not one of the process's threads (this is a bug in the client)."
 
-        let numbering = SignalState.numbering system.Process.Signals
+        let numbering = UnixSystemState.signalNumbering system
 
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/raise-sweep.c`
         // on Linux 6.18.5 (glibc 2.41) and Darwin 27.0.0, from -1 to two past the
@@ -496,7 +497,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
         =
-        let numbering = SignalState.numbering system.Process.Signals
+        let numbering = UnixSystemState.signalNumbering system
 
         // Measured by `docs/plans/2026-08-23-posix-kernel-extraction/sigaction-sweep.c`
         // on Linux 6.18.5 (aarch64, glibc 2.41) and Darwin 27.0.0, from -1 to two
@@ -518,13 +519,15 @@ module UnixSignal =
         match numbering, newAction with
         | SignalNumbering.Darwin, _ when onlyDefault -> Error UnixError.EINVAL
         | SignalNumbering.Linux, Some _ when onlyDefault -> Error UnixError.EINVAL
-        | _, None -> Ok (SignalState.disposition signal system.Process.Signals, system)
+        | _, None -> Ok (SignalState.disposition numbering signal system.Process.Signals, system)
         | _, Some action ->
-            let old = SignalState.disposition signal system.Process.Signals
+            let old = SignalState.disposition numbering signal system.Process.Signals
 
             Ok (
                 old,
-                UnixSystemState.withSignals (SignalState.setDisposition signal action system.Process.Signals) system
+                UnixSystemState.withSignals
+                    (SignalState.setDisposition numbering signal action system.Process.Signals)
+                    system
             )
 
     /// `sigaction(3)` as a program calls it, through its C library, which on
@@ -598,6 +601,7 @@ module UnixSignal =
         =
         UnixThreadTable.requireIssuer $"UnixSignal.%s{operation}" thread system.Threads
 
+        let numbering = UnixSystemState.signalNumbering system
         let signals = system.Process.Signals
         let old = SignalState.maskOf thread signals
 
@@ -611,7 +615,7 @@ module UnixSignal =
         | None -> Ok (old, system)
         | Some set ->
 
-        match decodeHow (SignalState.numbering signals) how with
+        match decodeHow numbering how with
         | ValueNone -> Error UnixError.EINVAL
         | ValueSome change ->
             let set = SignalMask.without screened set
@@ -623,7 +627,7 @@ module UnixSignal =
 
             let signals =
                 (signals, targets)
-                ||> List.fold (fun signals target -> SignalState.changeMask change set target signals)
+                ||> List.fold (fun signals target -> SignalState.changeMask numbering change set target signals)
 
             Ok (old, UnixSystemState.withSignals signals system)
 
@@ -673,7 +677,7 @@ module UnixSignal =
         // C library 0xfffefeff (without 9 and 17, with bit 31). Through glibc,
         // a SIG_SETMASK naming neither 32 nor 33 cleared both where the raw call
         // had set them, and a SIG_UNBLOCK naming only them left both set.
-        let numbering = SignalState.numbering system.Process.Signals
+        let numbering = UnixSystemState.signalNumbering system
         changeMaskUnder "pthreadSigmask" MaskScope.Caller (screenedByCLibrary numbering) thread how set system
 
     /// The first thread of `before` other than `caller`, with the first signal
@@ -695,7 +699,7 @@ module UnixSignal =
             let blockedBefore = SignalState.maskOf other was
             let blockedAfter = SignalState.maskOf other now
 
-            SignalState.pendingFor before.Leader other was
+            SignalState.pendingFor (UnixSystemState.signalNumbering before) before.Leader other was
             |> List.tryFind (fun entry ->
                 SignalMask.contains entry.Signal blockedBefore
                 && not (SignalMask.contains entry.Signal blockedAfter)
@@ -711,7 +715,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>, SigprocmaskRefusal<'Thread>>
         =
-        let numbering = SignalState.numbering system.Process.Signals
+        let numbering = UnixSystemState.signalNumbering system
 
         match numbering with
         | SignalNumbering.Linux ->
@@ -789,7 +793,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
-        match SignalState.numbering system.Process.Signals with
+        match UnixSystemState.signalNumbering system with
         | SignalNumbering.Darwin ->
             failwith
                 "UnixSignal.rtSigprocmask: a Darwin process has no rt_sigprocmask system call; its raw sigprocmask and __pthread_sigmask are UnixSignal.sigprocmask and UnixSignal.pthreadSigmask (this is a bug in the client)."
@@ -817,7 +821,7 @@ module UnixSignal =
             failwith
                 $"UnixSignal.sigpending: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
 
-        SignalState.pendingBlocked system.Leader thread system.Process.Signals
+        SignalState.pendingBlocked (UnixSystemState.signalNumbering system) system.Leader thread system.Process.Signals
 
     /// `sigsuspend` with `temporary`, made by `thread`.
     let private suspendWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -830,7 +834,11 @@ module UnixSignal =
         UnixThreadTable.requireIssuer $"UnixSignal.%s{operation}" thread system.Threads
 
         let signals =
-            SignalState.suspend thread (temporary system.Process.Signals) system.Process.Signals
+            SignalState.suspend
+                (UnixSystemState.signalNumbering system)
+                thread
+                (temporary system.Process.Signals)
+                system.Process.Signals
 
         // A signal the temporary mask lets through ends the call as it is made,
         // without a sleep (the probe's "pending" and "two" rows answered within
@@ -933,7 +941,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
-        match SignalState.numbering system.Process.Signals with
+        match UnixSystemState.signalNumbering system with
         | SignalNumbering.Darwin ->
             failwith
                 "UnixSignal.rtSigsuspend: a Darwin process has no rt_sigsuspend system call; its sigsuspend is UnixSignal.sigsuspend (this is a bug in the client)."

@@ -31,6 +31,11 @@ module TestUnixThreadLifecycle =
             }
         )
 
+    /// `system` with `entry` generated, without deciding whether it takes
+    /// effect at once (`SignalState.enqueue`).
+    let private enqueueIn (entry : PendingSignal<int>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        mapSignals (SignalState.enqueue (UnixSystemState.signalNumbering system) entry) system
+
     /// A system with one epoll instance (a kqueue on Darwin), which a thread can park on
     /// in `flock`, and that instance's description.
     let private world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> * OpenFileDescriptionId =
@@ -103,26 +108,23 @@ module TestUnixThreadLifecycle =
                 |> withThread 2
                 |> HandlerFrames.enterIn "h" 1 (Set.ofList [ Signal.SIGUSR1 ; Signal.SIGUSR2 ])
                 |> HandlerFrames.enterIn "h" 2 (Set.singleton Signal.SIGUSR2)
-                |> mapSignals (
-                    SignalState.enqueue
-                        {
-                            Signal = Signal.SIGUSR1
-                            Target = ValueSome 1
-                        }
+                |> enqueueIn (
+                    {
+                        Signal = Signal.SIGUSR1
+                        Target = ValueSome 1
+                    }
                 )
-                |> mapSignals (
-                    SignalState.enqueue
-                        {
-                            Signal = Signal.SIGUSR2
-                            Target = ValueNone
-                        }
+                |> enqueueIn (
+                    {
+                        Signal = Signal.SIGUSR2
+                        Target = ValueNone
+                    }
                 )
-                |> mapSignals (
-                    SignalState.enqueue
-                        {
-                            Signal = Signal.SIGUSR2
-                            Target = ValueSome 2
-                        }
+                |> enqueueIn (
+                    {
+                        Signal = Signal.SIGUSR2
+                        Target = ValueSome 2
+                    }
                 )
 
             let after = exitOrFail 1 system
@@ -177,12 +179,11 @@ module TestUnixThreadLifecycle =
         |> withThread 1
         |> exitOrFail 1
         |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGUSR1)
-        |> mapSignals (
-            SignalState.enqueue
-                {
-                    Signal = Signal.SIGUSR1
-                    Target = ValueSome 0
-                }
+        |> enqueueIn (
+            {
+                Signal = Signal.SIGUSR1
+                Target = ValueSome 0
+            }
         )
 
     [<Test>]
@@ -265,19 +266,17 @@ module TestUnixThreadLifecycle =
                 |> withThread 3
                 |> UnixWait.park 3 (flockOn queue)
                 |> HandlerFrames.enterIn "h" 2 (Set.singleton Signal.SIGUSR2)
-                |> mapSignals (
-                    SignalState.enqueue
-                        {
-                            Signal = Signal.SIGUSR2
-                            Target = ValueSome 2
-                        }
+                |> enqueueIn (
+                    {
+                        Signal = Signal.SIGUSR2
+                        Target = ValueSome 2
+                    }
                 )
-                |> mapSignals (
-                    SignalState.enqueue
-                        {
-                            Signal = Signal.SIGUSR1
-                            Target = ValueNone
-                        }
+                |> enqueueIn (
+                    {
+                        Signal = Signal.SIGUSR1
+                        Target = ValueNone
+                    }
                 )
 
             let ended = UnixThreadLifecycle.exitGroup 1 257 system
@@ -528,6 +527,7 @@ module TestUnixThreadLifecycle =
 
                     match
                         HandlerFrames.tryEnter
+                            (UnixSystemState.signalNumbering system)
                             "h"
                             (Lone.leader system)
                             threads
@@ -543,7 +543,7 @@ module TestUnixThreadLifecycle =
                     ->
                     mapSignals (HandlerFrames.leave thread) system, model
                 | Op.Mask (thread, signal) when live thread && not (Set.contains thread model.Parked) ->
-                    let numbering = SignalState.numbering (Lone.proc system).Signals
+                    let numbering = UnixSystemState.signalNumbering system
 
                     let block =
                         match numbering with
@@ -560,21 +560,19 @@ module TestUnixThreadLifecycle =
                     | Ok (_, after) -> after, model
                     | Error errno -> failwith $"pthread_sigmask(SIG_BLOCK) failed with %O{errno}"
                 | Op.EnqueueOnThread (thread, signal) when live thread ->
-                    mapSignals
-                        (SignalState.enqueue
-                            {
-                                Signal = signal
-                                Target = ValueSome thread
-                            })
+                    enqueueIn
+                        ({
+                            Signal = signal
+                            Target = ValueSome thread
+                        })
                         system,
                     model
                 | Op.EnqueueOnProcess signal ->
-                    mapSignals
-                        (SignalState.enqueue
-                            {
-                                Signal = signal
-                                Target = ValueNone
-                            })
+                    enqueueIn
+                        ({
+                            Signal = signal
+                            Target = ValueNone
+                        })
                         system,
                     model
                 | Op.Park thread when live thread ->

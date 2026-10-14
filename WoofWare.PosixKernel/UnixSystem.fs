@@ -577,12 +577,6 @@ type UnixSystemDefect<'Thread> =
     /// A pending signal is directed at a thread the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
     | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
-    /// The process's signal state reads signals under a numbering other than
-    /// its machine's platform assigns, so a signal in the signal tables may
-    /// have a different number, or none, under the kernel's numbering.
-    /// `initial` derives the one from the other, so this is a state assembled
-    /// some other way.
-    | SignalNumberingMismatch of signals : SignalNumbering * platform : SignalNumbering
     /// The machine's mount claims a filesystem type its flavour cannot report,
     /// so `fstatfs` on a file would answer a fact no such machine could tell.
     | FileSystemTypeNotReportable of flavour : SimulatedUnixFlavour * fileSystemType : EmulatedFileSystemType
@@ -3147,23 +3141,9 @@ module UnixSystem =
 
 
         // The signal state against the thread table: every thread it names must
-        // be one, or the delivery that reads it has nowhere to go. And against
-        // the machine's platform: the state checks every signal against
-        // the numbering it was built with, so a state built under the wrong
-        // one holds signals the kernel would number differently, or not at all.
+        // be one, or the delivery that reads it has nowhere to go.
         let signals =
             let signals = system.Process.Signals
-
-            let numberings =
-                let stateNumbering = SignalState.numbering signals
-
-                let platformNumbering =
-                    SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
-
-                if stateNumbering = platformNumbering then
-                    []
-                else
-                    [ UnixSystemDefect.SignalNumberingMismatch (stateNumbering, platformNumbering) ]
 
             let frames =
                 SignalState.threadsWithFrames signals
@@ -3221,7 +3201,7 @@ module UnixSystem =
                     | ValueNone -> None
                 )
 
-            numberings @ frames @ masks @ toRestore @ targets
+            frames @ masks @ toRestore @ targets
 
         let supplementaryGroups =
             let count = List.length system.Process.Credentials.SupplementaryGroups

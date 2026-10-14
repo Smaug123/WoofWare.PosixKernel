@@ -992,7 +992,7 @@ module TestMultiProcessFuzz =
                 | SignalMaskChange.SetMask -> block + 2
 
             let set =
-                SignalMask.ofSignals (SignalState.numbering (Proc.state pid view).Signals) (Set.singleton signal)
+                SignalMask.ofSignals (UnixSystemState.signalNumbering view) (Set.singleton signal)
 
             match UnixSignal.pthreadSigmask thread how (Some set) view with
             | Ok (_, after) -> returnToUser after
@@ -1297,8 +1297,7 @@ module TestMultiProcessFuzz =
 
             match mask SignalMaskChange.Block signal view with
             | Made.Answered blocked ->
-                let signo =
-                    Signal.toRawSignoUnder (SignalState.numbering (Proc.state pid blocked).Signals) signal
+                let signo = Signal.toRawSignoUnder (UnixSystemState.signalNumbering blocked) signal
 
                 match UnixSignal.tryPthreadKill thread signo blocked with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, raised))) -> returnToUser raised

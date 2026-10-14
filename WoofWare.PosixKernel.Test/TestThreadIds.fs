@@ -441,7 +441,7 @@ module TestThreadIds =
         // alone. The new thread's mask was exactly its creator's, and the
         // creator's own pending signal was not pending on it.
         for system in [ linux ; darwin ] do
-            let numbering = SignalState.numbering (Lone.proc system).Signals
+            let numbering = UnixSystemState.signalNumbering system
 
             let blocking (signals : Signal list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match
@@ -501,7 +501,7 @@ module TestThreadIds =
         // return restores its own thread's mask alone.
         for system in [ linux ; darwin ] do
             let usr1 =
-                Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) Signal.SIGUSR1
+                Signal.toRawSignoUnder (UnixSystemState.signalNumbering system) Signal.SIGUSR1
 
             let system =
                 match UnixSignal.sigaction usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) system with

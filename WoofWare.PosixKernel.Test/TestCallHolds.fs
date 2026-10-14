@@ -85,7 +85,10 @@ module TestCallHolds =
                 { proc with
                     Signals =
                         proc.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
                 }
             )
 

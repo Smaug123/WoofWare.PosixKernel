@@ -735,8 +735,12 @@ module TestBlockingAccept =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -1193,6 +1197,7 @@ module TestBlockingAccept =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
+                                (UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1494,6 +1499,7 @@ module TestBlockingAccept =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
