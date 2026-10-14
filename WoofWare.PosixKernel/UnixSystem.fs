@@ -751,6 +751,10 @@ type UnixSystemDefect<'Thread> =
     /// or under Linux an idle one, whose port, under Linux, `bind(2)` did not
     /// choose.
     | PortGivenBackOutsideRefusal of socket : SocketId * phase : SocketPhase
+    /// The filesystem mounted at `root` is `mounted`, which is not what the
+    /// machine says it mounted at `/dev` (`UnixMachineState.DeviceMount`),
+    /// whose configuration `stat(2)` and `statfs(2)` report for it.
+    | MountNotDeviceMount of root : InodeNumber * mounted : MountedFileSystem * deviceMount : MountedFileSystem
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -2177,6 +2181,16 @@ module UnixSystem =
             else
                 [ UnixSystemDefect.FileSystemTypeNotReportable (flavour, fsType) ]
 
+        // The graph records which filesystem it has mounted, and the machine
+        // the configuration of that mount; the two must name one filesystem.
+        let deviceMount =
+            let expected = DeviceFileSystemMount.mounted machine.DeviceMount
+
+            VirtualFileSystem.mounts machine.FileSystem
+            |> Map.toList
+            |> List.filter (fun (_, mount) -> mount.FileSystem <> expected)
+            |> List.map (fun (root, mount) -> UnixSystemDefect.MountNotDeviceMount (root, mount.FileSystem, expected))
+
         let protectedFiles =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
@@ -2571,6 +2585,7 @@ module UnixSystem =
         @ parkOrdinalDuplicates
         @ bindings
         @ fileSystemType
+        @ deviceMount
         @ protectedFiles
         @ symlinkPermissions
         @ userBufferCheck

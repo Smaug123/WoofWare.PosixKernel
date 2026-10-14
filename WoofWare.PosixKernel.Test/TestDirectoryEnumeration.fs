@@ -59,12 +59,12 @@ module TestDirectoryEnumeration =
         (directory : InodeNumber)
         (cursor : DirectoryCursor)
         (vfs : VirtualFileSystem)
-        : DirectoryStreamName list
+        : PathComponent list
         =
         // Capped, and the cap is not paranoia: a cursor that failed to advance
         // strictly — `>=` where the rule is `>` — would hand back one name for
         // ever, and an uncapped drain would hang the suite rather than fail it.
-        let rec go (cursor : DirectoryCursor) (fuel : int) (acc : DirectoryStreamName list) =
+        let rec go (cursor : DirectoryCursor) (fuel : int) (acc : PathComponent list) =
             if fuel <= 0 then
                 failwith $"the stream over %O{directory} did not terminate: %A{List.rev acc |> List.truncate 8} ..."
 
@@ -74,7 +74,7 @@ module TestDirectoryEnumeration =
 
         go cursor 1000 []
 
-    let private strings (entries : DirectoryStreamName list) : string list =
+    let private strings (entries : PathComponent list) : string list =
         entries |> List.map (fun e -> e.ToString ())
 
     /// The root, and a directory `d` beneath it holding the named entries as
@@ -119,11 +119,11 @@ module TestDirectoryEnumeration =
         let root = VirtualFileSystem.root vfs
 
         match VirtualFileSystem.nextDirectoryEntry directory DirectoryCursor.Start vfs with
-        | Some (DirectoryStreamName.DotDot, parent, next) ->
+        | Some (PathComponent.Parent, parent, next) ->
             parent |> shouldEqual root
 
             match VirtualFileSystem.nextDirectoryEntry directory next vfs with
-            | Some (DirectoryStreamName.Dot, inode, _) -> inode |> shouldEqual directory
+            | Some (PathComponent.Current, inode, _) -> inode |> shouldEqual directory
             | other -> failwith $"expected ., got %O{other}"
         | other -> failwith $"expected .., got %O{other}"
 
@@ -135,7 +135,7 @@ module TestDirectoryEnumeration =
         let root = VirtualFileSystem.root vfs
 
         match VirtualFileSystem.nextDirectoryEntry root DirectoryCursor.Start vfs with
-        | Some (DirectoryStreamName.DotDot, parent, _) -> parent |> shouldEqual root
+        | Some (PathComponent.Parent, parent, _) -> parent |> shouldEqual root
         | other -> failwith $"expected .., got %O{other}"
 
     [<Test>]
@@ -158,7 +158,7 @@ module TestDirectoryEnumeration =
             | other -> failwith $"test setup: %O{other}"
 
         match VirtualFileSystem.nextDirectoryEntry directory DirectoryCursor.Start vfs with
-        | Some (DirectoryStreamName.Entry n, inode, _) ->
+        | Some (PathComponent.Name n, inode, _) ->
             n |> shouldEqual (name "f")
             inode |> shouldEqual expected
         | other -> failwith $"expected an entry, got %O{other}"
@@ -176,7 +176,7 @@ module TestDirectoryEnumeration =
         let rec go (cursor : DirectoryCursor) (vfs : VirtualFileSystem) (acc : string list) =
             match VirtualFileSystem.nextDirectoryEntry directory cursor vfs with
             | None -> List.rev acc, vfs
-            | Some (DirectoryStreamName.Entry n, _, next) ->
+            | Some (PathComponent.Name n, _, next) ->
                 go next (unbind directory (PathText.ofName n) vfs) (PathText.ofName n :: acc)
             | Some (_, _, next) -> go next vfs acc
 
@@ -261,9 +261,9 @@ module TestDirectoryEnumeration =
                 drain directory DirectoryCursor.Start vfs
                 |> List.choose (fun e ->
                     match e with
-                    | DirectoryStreamName.Entry n -> Some (PathText.ofName n)
-                    | DirectoryStreamName.Dot
-                    | DirectoryStreamName.DotDot -> None
+                    | PathComponent.Name n -> Some (PathText.ofName n)
+                    | PathComponent.Current
+                    | PathComponent.Parent -> None
                 )
                 |> List.sort
 
@@ -283,9 +283,9 @@ module TestDirectoryEnumeration =
                 drain directory DirectoryCursor.Start vfs
                 |> List.choose (fun e ->
                     match e with
-                    | DirectoryStreamName.Entry n -> Some (PathText.ofName n)
-                    | DirectoryStreamName.Dot
-                    | DirectoryStreamName.DotDot -> None
+                    | PathComponent.Name n -> Some (PathText.ofName n)
+                    | PathComponent.Current
+                    | PathComponent.Parent -> None
                 )
 
             seen = List.sort seen && List.length (List.distinct seen) = List.length seen
@@ -302,7 +302,7 @@ module TestDirectoryEnumeration =
             let rec go (cursor : DirectoryCursor) (vfs : VirtualFileSystem) =
                 match VirtualFileSystem.nextDirectoryEntry directory cursor vfs with
                 | None -> vfs
-                | Some (DirectoryStreamName.Entry n, _, next) -> go next (unbind directory (PathText.ofName n) vfs)
+                | Some (PathComponent.Name n, _, next) -> go next (unbind directory (PathText.ofName n) vfs)
                 | Some (_, _, next) -> go next vfs
 
             match VirtualFileSystem.tryGetContent directory (go DirectoryCursor.Start vfs) with

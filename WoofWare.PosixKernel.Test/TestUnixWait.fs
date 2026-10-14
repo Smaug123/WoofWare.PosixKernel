@@ -274,6 +274,50 @@ module TestUnixWait =
 
         exn.Message |> shouldContainText "without clearing the first"
 
+    /// Every park the library makes goes through `UnixWait.parkWaiting`, which
+    /// a Debug build holds to the call's having nothing to wake it yet, a
+    /// signal aside.
+    [<Test>]
+    let ``parkWaiting refuses a park whose own condition already holds, a signal aside`` () : unit =
+#if DEBUG
+        // The lock the call waits for is free.
+        let exn =
+            Assert.Throws<exn> (fun () -> UnixWait.parkWaiting 3 (parkOfThread 3) (releaseLock system) |> ignore)
+
+        exn.Message |> shouldContainText "FlockGrantable"
+
+        // Held, it parks.
+        UnixWait.parkWaiting 3 (parkOfThread 3) system
+        |> fun parked -> UnixThreadTable.parkedFor 3 (Lone.threads parked)
+        |> shouldEqual (Some (parkOfThread 3))
+
+        // A signal deliverable to the thread is the finishing call's to
+        // answer, not a reason to refuse the park.
+        let signalled =
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition
+                            Signal.SIGUSR1
+                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                        |> SignalState.enqueue
+                            {
+                                Signal = Signal.SIGUSR1
+                                Target = ValueSome 1
+                            }
+                }
+            )
+
+        let parked = UnixWait.parkWaiting 1 (parkOfThread 1) signalled
+
+        UnixWait.satisfied 1 parked
+        |> shouldEqual (Some (Set.singleton WakePrimitive.SignalDeliverable))
+#else
+        Assert.Ignore "parkWaiting checks a park's condition only in a Debug build."
+#endif
+
     /// The exclusive queue each park waits on, as `UnixWait.wakes` states it: an
     /// `epoll_wait` on its epoll instance, an `accept` on its listener, and under
     /// Linux a pipe `read` on the pipe's readers and a pipe `write` on its

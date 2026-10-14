@@ -198,3 +198,22 @@ What the columns say, and what each is load-bearing for:
   ".." and "dir/.." all answer the destination's ENOTDIR — so what is early is
   `FinalNavigation.Root`, the one case that consumed no component at all. This
   is `RenameRules.sourceScreen`.
+
+## `mountpoint-self-rename.c` — a mount point renamed onto itself
+
+```
+container run --rm -v "$PWD:/probe" gcc:14 sh -c \
+    'gcc -O0 -Wall -o /tmp/p /probe/mountpoint-self-rename.c && /tmp/p'
+```
+
+`measured-mountpoint-self-rename-linux.txt` is Linux 6.18.5 aarch64, run as root,
+which then becomes uid 1000 for its last three rows. Its first two lines show
+the fixture: `/dev` is on another `st_dev` than `/`, and `/proc/self/mountinfo`
+lists a devtmpfs there, so the rows below rename a real mount point.
+
+* `rename("/dev", "/dev")` and `rename("/dev", "//dev")` answer 0 and change
+  nothing, as root and as uid 1000: `vfs_rename` answers a rename of one inode
+  onto itself before its mount-point EBUSY and before any permission check.
+* The controls change the answer: `rename("/dev", "/devx")` is EBUSY as root and
+  EACCES as uid 1000, the rows `mountpoint.c` measured, and a plain directory
+  renamed to another name moves.

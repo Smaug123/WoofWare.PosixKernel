@@ -1602,6 +1602,16 @@ module OpenFileTable =
     let tryFind (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescription option =
         Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Description)
 
+    /// The description `id` names and the name it was opened through
+    /// (`openedThrough`), if it is live: one lookup, so the two agree.
+    let internal tryFindOpenedThrough
+        (id : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : (OpenFileDescription * ReachedThrough option) option
+        =
+        Map.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Description, entry.OpenedThrough)
+
     /// Every live description and its identity, in identity order, for a walk
     /// that would otherwise build `descriptions` only to read it once.
     let internal toSeq (table : OpenFileTable) : (OpenFileDescriptionId * OpenFileDescription) seq =
@@ -1630,7 +1640,7 @@ module OpenFileTable =
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
-    let private inodeOf (target : OpenFileTarget) : InodeNumber option =
+    let internal inodeOf (target : OpenFileTarget) : InodeNumber option =
         match target with
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
@@ -2919,6 +2929,32 @@ module OpenFileTable =
         =
         defects true descriptorTables table
 
+/// What a live descriptor names, as one lookup finds it: its open file
+/// description, the description's identity, and the name it was opened
+/// through.
+type internal ReachedDescription =
+    {
+        /// The description's identity.
+        Id : OpenFileDescriptionId
+        /// The description.
+        Description : OpenFileDescription
+        /// The name the description was opened through: `Some` exactly for
+        /// one onto an inode (`OpenFileTable.namesInode`).
+        OpenedThrough : ReachedThrough option
+    }
+
+[<RequireQualifiedAccess>]
+module internal ReachedDescription =
+    /// The name `reached` was opened through, which `operation`, named in the
+    /// failure, has found onto an inode. Loudly partial: a description onto an
+    /// inode always records one.
+    let through (operation : string) (reached : ReachedDescription) : ReachedThrough =
+        match reached.OpenedThrough with
+        | Some through -> through
+        | None ->
+            failwith
+                $"%s{operation}: open file description %O{reached.Id} records no name it was opened through, though it is onto an inode (this is a bug in this library)."
+
 [<RequireQualifiedAccess>]
 module FileDescriptorRegistry =
     /// A table entry naming `id`, with neither descriptor flag.
@@ -3013,19 +3049,24 @@ module FileDescriptorRegistry =
         tryFindWithId fd registry
         |> Option.map (fun (id, description) -> OpenFileDescription.object id description)
 
-    /// The name the description `fd` names was opened through
-    /// (`OpenFileTable.openedThrough`). Loudly partial: `operation`, named in
-    /// the message, has just found `fd` naming a description onto an inode.
-    let internal openedThrough (operation : string) (fd : int) (registry : FileDescriptorRegistry) : ReachedThrough =
-        let recorded =
-            named fd registry.Descriptors.Fds
-            |> Option.bind (fun id -> OpenFileTable.openedThrough id registry.OpenFiles)
-
-        match recorded with
-        | Some through -> through
-        | None ->
-            failwith
-                $"%s{operation}: fd %d{fd} names no description onto an inode, though the caller found it naming one moments ago (this is a bug in this library)."
+    /// What `fd` names, if `fd` is live: its description, the description's
+    /// identity, and the name it was opened through, from one lookup, for a
+    /// caller that needs more than one of them.
+    let internal tryFindReached (fd : int) (registry : FileDescriptorRegistry) : ReachedDescription option =
+        named fd registry.Descriptors.Fds
+        |> Option.map (fun id ->
+            match OpenFileTable.tryFindOpenedThrough id registry.OpenFiles with
+            | Some (description, through) ->
+                ({
+                    Id = id
+                    Description = description
+                    OpenedThrough = through
+                }
+                : ReachedDescription)
+            | None ->
+                failwith
+                    $"file descriptor %d{fd} names open file description %O{id}, which is not present in the table (this is a bug in this library: every descriptor names a description in the table)"
+        )
 
     /// What `fd` refers to and where in it, if `fd` is live. For the callers
     /// that move or consume the file offset.

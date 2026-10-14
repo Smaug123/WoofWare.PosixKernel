@@ -2433,7 +2433,7 @@ module TestVirtualFileSystemAgainstHost =
 
             match VirtualFileSystem.nextDirectoryEntry inode cursor vfs with
             | None -> acc
-            | Some (DirectoryStreamName.Entry name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
+            | Some (PathComponent.Name name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
             | Some (_, _, next) -> go next (fuel - 1) acc
 
         go DirectoryCursor.Start 1000 [] |> List.sort

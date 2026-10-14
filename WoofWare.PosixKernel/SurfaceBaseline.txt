@@ -675,14 +675,14 @@ WoofWare.PosixKernel.DirectoryPosition.NewCursor [static method]: WoofWare.Posix
 WoofWare.PosixKernel.DirectoryPosition.NewUnenumerable [static method]: System.Int64 -> WoofWare.PosixKernel.DirectoryPosition
 WoofWare.PosixKernel.DirectoryPosition.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DirectoryRecord inherit obj, implements WoofWare.PosixKernel.DirectoryRecord System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryRecord System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.DirectoryRecord..ctor [constructor]: (WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.DirectoryStreamName, WoofWare.PosixKernel.DirectoryEntryKind)
+WoofWare.PosixKernel.DirectoryRecord..ctor [constructor]: (WoofWare.PosixKernel.InodeNumber, WoofWare.PosixKernel.PathComponent, WoofWare.PosixKernel.DirectoryEntryKind)
 WoofWare.PosixKernel.DirectoryRecord.Equals [method]: (WoofWare.PosixKernel.DirectoryRecord, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.DirectoryRecord.get_Inode [method]: unit -> WoofWare.PosixKernel.InodeNumber
 WoofWare.PosixKernel.DirectoryRecord.get_Kind [method]: unit -> WoofWare.PosixKernel.DirectoryEntryKind
-WoofWare.PosixKernel.DirectoryRecord.get_Name [method]: unit -> WoofWare.PosixKernel.DirectoryStreamName
+WoofWare.PosixKernel.DirectoryRecord.get_Name [method]: unit -> WoofWare.PosixKernel.PathComponent
 WoofWare.PosixKernel.DirectoryRecord.Inode [property]: [read-only] WoofWare.PosixKernel.InodeNumber
 WoofWare.PosixKernel.DirectoryRecord.Kind [property]: [read-only] WoofWare.PosixKernel.DirectoryEntryKind
-WoofWare.PosixKernel.DirectoryRecord.Name [property]: [read-only] WoofWare.PosixKernel.DirectoryStreamName
+WoofWare.PosixKernel.DirectoryRecord.Name [property]: [read-only] WoofWare.PosixKernel.PathComponent
 WoofWare.PosixKernel.DirectorySourceRefusal inherit obj, implements WoofWare.PosixKernel.DirectorySourceRefusal System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectorySourceRefusal System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.DirectorySourceRefusal+Tags inherit obj
 WoofWare.PosixKernel.DirectorySourceRefusal+Tags.BeforeDestination [static field]: int = 0
@@ -698,30 +698,6 @@ WoofWare.PosixKernel.DirectorySourceRefusal.IsBeforeDestination [property]: [rea
 WoofWare.PosixKernel.DirectorySourceRefusal.IsLast [property]: [read-only] bool
 WoofWare.PosixKernel.DirectorySourceRefusal.Last [static property]: [read-only] WoofWare.PosixKernel.DirectorySourceRefusal
 WoofWare.PosixKernel.DirectorySourceRefusal.Tag [property]: [read-only] int
-WoofWare.PosixKernel.DirectoryStreamName inherit obj, implements WoofWare.PosixKernel.DirectoryStreamName System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DirectoryStreamName System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
-WoofWare.PosixKernel.DirectoryStreamName+Entry inherit WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName+Entry.get_name [method]: unit -> WoofWare.PosixKernel.DirectoryEntryName
-WoofWare.PosixKernel.DirectoryStreamName+Entry.name [property]: [read-only] WoofWare.PosixKernel.DirectoryEntryName
-WoofWare.PosixKernel.DirectoryStreamName+Tags inherit obj
-WoofWare.PosixKernel.DirectoryStreamName+Tags.Dot [static field]: int = 0
-WoofWare.PosixKernel.DirectoryStreamName+Tags.DotDot [static field]: int = 1
-WoofWare.PosixKernel.DirectoryStreamName+Tags.Entry [static field]: int = 2
-WoofWare.PosixKernel.DirectoryStreamName.Dot [static property]: [read-only] WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName.DotDot [static property]: [read-only] WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName.Equals [method]: (WoofWare.PosixKernel.DirectoryStreamName, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.DirectoryStreamName.get_Dot [static method]: unit -> WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName.get_DotDot [static method]: unit -> WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName.get_IsDot [method]: unit -> bool
-WoofWare.PosixKernel.DirectoryStreamName.get_IsDotDot [method]: unit -> bool
-WoofWare.PosixKernel.DirectoryStreamName.get_IsEntry [method]: unit -> bool
-WoofWare.PosixKernel.DirectoryStreamName.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.DirectoryStreamName.IsDot [property]: [read-only] bool
-WoofWare.PosixKernel.DirectoryStreamName.IsDotDot [property]: [read-only] bool
-WoofWare.PosixKernel.DirectoryStreamName.IsEntry [property]: [read-only] bool
-WoofWare.PosixKernel.DirectoryStreamName.NewEntry [static method]: WoofWare.PosixKernel.DirectoryEntryName -> WoofWare.PosixKernel.DirectoryStreamName
-WoofWare.PosixKernel.DirectoryStreamName.Tag [property]: [read-only] int
-WoofWare.PosixKernel.DirectoryStreamNameModule inherit obj
-WoofWare.PosixKernel.DirectoryStreamNameModule.toByteString [static method]: WoofWare.PosixKernel.DirectoryStreamName -> WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.DualModeBinding inherit obj, implements WoofWare.PosixKernel.DualModeBinding System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DualModeBinding System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.DualModeBinding+Mapped inherit WoofWare.PosixKernel.DualModeBinding
 WoofWare.PosixKernel.DualModeBinding+Mapped.get_Item [method]: unit -> WoofWare.PosixKernel.InetBinding<WoofWare.PosixKernel.Ipv4Endpoint, WoofWare.PosixKernel.Ipv4Address>
@@ -2970,6 +2946,8 @@ WoofWare.PosixKernel.PathComponent.IsParent [property]: [read-only] bool
 WoofWare.PosixKernel.PathComponent.NewName [static method]: WoofWare.PosixKernel.DirectoryEntryName -> WoofWare.PosixKernel.PathComponent
 WoofWare.PosixKernel.PathComponent.Parent [static property]: [read-only] WoofWare.PosixKernel.PathComponent
 WoofWare.PosixKernel.PathComponent.Tag [property]: [read-only] int
+WoofWare.PosixKernel.PathComponentModule inherit obj
+WoofWare.PosixKernel.PathComponentModule.toByteString [static method]: WoofWare.PosixKernel.PathComponent -> WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.PathLimits inherit System.ValueType, implements WoofWare.PosixKernel.PathLimits System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PathLimits System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.PathLimits.Equals [method]: (WoofWare.PosixKernel.PathLimits, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.PathLimitsModule inherit obj

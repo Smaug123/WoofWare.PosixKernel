@@ -2290,7 +2290,7 @@ module UnixConnection =
                             DeclaredLength = declaredLength
                         }
 
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
     /// `accept(2)`, made by `thread`: take the oldest completed connection off
@@ -2426,7 +2426,7 @@ module UnixConnection =
 
                 Ok (
                     AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                    UnixWait.park thread parkedAgain system
+                    UnixWait.parkWaiting thread parkedAgain system
                 )
         | phase ->
             failwith

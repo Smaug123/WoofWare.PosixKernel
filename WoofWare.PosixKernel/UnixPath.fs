@@ -145,7 +145,9 @@ module DirectoryEntryName =
                 $"%s{context}: %s{describe error}. A FileName that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with FileName.parse instead."
 
 /// <summary>
-/// One component of a path a process supplies, between two separators.
+/// One component of a path a process supplies, between two separators; or one
+/// name a directory stream hands back, which is "." or ".." or a name the
+/// directory binds.
 /// </summary>
 [<RequireQualifiedAccess>]
 type PathComponent =
@@ -166,6 +168,31 @@ type PathComponent =
     | Parent
     /// <summary>An ordinary entry name, to be looked up in the directory reached so far.</summary>
     | Name of name : DirectoryEntryName
+
+    /// The component rendered for a diagnostic; `PathComponent.toByteString`
+    /// is what `readdir(3)` puts in `d_name`.
+    override this.ToString () : string =
+        match this with
+        | PathComponent.Current -> "."
+        | PathComponent.Parent -> ".."
+        | PathComponent.Name name -> DirectoryEntryName.toEscaped name
+
+[<RequireQualifiedAccess>]
+module PathComponent =
+    let private ofLiteral (name : string) : UnixByteString =
+        match UnixByteString.ofString name with
+        | Ok bytes -> bytes
+        | Error defect -> failwith $"PathComponent: %s{UnixPathText.describe defect}"
+
+    let private dot : UnixByteString = ofLiteral "."
+    let private dotDot : UnixByteString = ofLiteral ".."
+
+    /// The bytes of the component: what `readdir(3)` puts in `d_name`.
+    let toByteString (name : PathComponent) : UnixByteString =
+        match name with
+        | PathComponent.Current -> dot
+        | PathComponent.Parent -> dotDot
+        | PathComponent.Name name -> DirectoryEntryName.toByteString name
 
 /// <summary>
 /// Why a .NET string is not usable as a Unix path a process supplies.
