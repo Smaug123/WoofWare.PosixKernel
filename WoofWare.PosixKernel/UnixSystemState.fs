@@ -130,6 +130,14 @@ module internal UnixSystemState =
                 }
         }
 
+    /// The numbering `system`'s signals are read under: its machine's
+    /// platform's.
+    let signalNumbering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : SignalNumbering
+        =
+        SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
+
     /// `system` with `signals` as its process's signal state.
     let withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (signals : SignalState<'Thread, 'Handler>)
@@ -339,6 +347,114 @@ type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Hand
     /// The process has ended, and never returns from the call.
     | ProcessEnded of EndedProcess<'Thread, 'Handler>
 
+/// Where the systems sit in a call's answer, built from the `Shape` module's
+/// functions, which nest as the answer's type does: `kill`'s
+/// `Result<Result<ProcessFate<_, _, _>, UnixError>, KillRefusal>` is
+/// `Shape.result (Shape.result Shape.fate)`.
+///
+/// `'InView` is the answer as a call's body gives it, each system in it a
+/// `'View`, and `'InKernel` is that answer with each of those systems put back
+/// as a `'Kernel`, which `Shape.map` does. `Entry` takes shapes whose `'View`
+/// and `'Kernel` are both `UnixSystem`: the system a call's body runs over,
+/// and the one the call hands back.
+[<Struct>]
+type internal Shape<'View, 'Kernel, 'InView, 'InKernel> =
+    // `'View` and `'Kernel` are separate parameters, though `Entry` makes both
+    // `UnixSystem`, so that a primitive generic in them has no way to make a
+    // `'Kernel` but to put a `'View` back: the compiler rejects one that leaves
+    // a system where it was, or puts one back twice.
+    private | Shape of map : (('View -> 'Kernel) -> 'InView -> 'InKernel)
+
+[<RequireQualifiedAccess>]
+module internal Shape =
+
+    /// `answer` with `put` applied once to each system in it, where `shape`
+    /// says they sit, and nothing else in it changed.
+    let map<'View, 'Kernel, 'InView, 'InKernel>
+        (put : 'View -> 'Kernel)
+        (shape : Shape<'View, 'Kernel, 'InView, 'InKernel>)
+        (answer : 'InView)
+        : 'InKernel
+        =
+        match shape with
+        | Shape map -> map put answer
+
+    /// An answer holding no system, however it nests.
+    let answer<'View, 'Kernel, 'Answer> : Shape<'View, 'Kernel, 'Answer, 'Answer> =
+        Shape (fun (_ : 'View -> 'Kernel) (answer : 'Answer) -> answer)
+
+    /// A system alone.
+    let system<'View, 'Kernel> : Shape<'View, 'Kernel, 'View, 'Kernel> =
+        Shape (fun (put : 'View -> 'Kernel) (view : 'View) -> put view)
+
+    /// An answer holding no system, and the system the call left.
+    let withSystem<'View, 'Kernel, 'Answer> : Shape<'View, 'Kernel, 'Answer * 'View, 'Answer * 'Kernel> =
+        Shape (fun (put : 'View -> 'Kernel) ((answer : 'Answer), (view : 'View)) -> answer, put view)
+
+    /// A `Result` whose `Ok` is shaped as `ok` says. Its `Error` holds no
+    /// system.
+    let result<'View, 'Kernel, 'InView, 'InKernel, 'Error>
+        (ok : Shape<'View, 'Kernel, 'InView, 'InKernel>)
+        : Shape<'View, 'Kernel, Result<'InView, 'Error>, Result<'InKernel, 'Error>>
+        =
+        Shape (fun (put : 'View -> 'Kernel) (result : Result<'InView, 'Error>) ->
+            match result with
+            | Ok answer -> Ok (map put ok answer)
+            | Error error -> Error error
+        )
+
+    /// A `CallProgress` whose `Answered` is shaped as `answered` says. Its
+    /// paused value is left as it is, holding the system the call paused in:
+    /// the call's resumption answers from that system, and puts it back
+    /// through `Entry.resume`.
+    let progress<'View, 'Kernel, 'Paused, 'InView, 'InKernel>
+        (answered : Shape<'View, 'Kernel, 'InView, 'InKernel>)
+        : Shape<'View, 'Kernel, CallProgress<'Paused, 'InView>, CallProgress<'Paused, 'InKernel>>
+        =
+        Shape (fun (put : 'View -> 'Kernel) (progress : CallProgress<'Paused, 'InView>) ->
+            match progress with
+            | CallProgress.Answered answer -> CallProgress.Answered (map put answered answer)
+            | CallProgress.NeedsCopyIn paused -> CallProgress.NeedsCopyIn paused
+        )
+
+    /// A process that ended. Nothing in it is a system a call can be made in,
+    /// so it is left as it is.
+    let ended<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Shape<
+              UnixSystem<'Thread, 'Handler>,
+              UnixSystem<'Thread, 'Handler>,
+              EndedProcess<'Thread, 'Handler>,
+              EndedProcess<'Thread, 'Handler>
+           > =
+        let leave
+            (_ : UnixSystem<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
+            (ended : EndedProcess<'Thread, 'Handler>)
+            : EndedProcess<'Thread, 'Handler>
+            =
+            ended
+
+        Shape leave
+
+    /// A `ProcessFate`: the system the process carries on as, or the process
+    /// ended, shaped as `ended` says.
+    let fate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Shape<
+              UnixSystem<'Thread, 'Handler>,
+              UnixSystem<'Thread, 'Handler>,
+              ProcessFate<'Outcome, 'Thread, 'Handler>,
+              ProcessFate<'Outcome, 'Thread, 'Handler>
+           > =
+        let putBack
+            (put : UnixSystem<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
+            (fate : ProcessFate<'Outcome, 'Thread, 'Handler>)
+            : ProcessFate<'Outcome, 'Thread, 'Handler>
+            =
+            match fate with
+            | ProcessFate.Continues (outcome, system) -> ProcessFate.Continues (outcome, put system)
+            | ProcessFate.ProcessEnded ended' -> ProcessFate.ProcessEnded (map put ended ended')
+
+        Shape putBack
+
 /// What the thread making a call must be doing as it makes it, which `Entry`
 /// checks before the call runs.
 [<RequireQualifiedAccess>]
@@ -352,18 +468,24 @@ type internal CallerRequirement =
     /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
     /// thread returning to user mode.
     | Returning
-    /// Any thread of the process, parked or not.
+    /// Any thread of the process, parked or not: what `UnixScheduling.dispatch`
+    /// requires of the thread it reports running.
     | Exists
 
-/// The way into a call. Each function fails with `InvalidOperationException`
-/// unless `caller` is a thread of the system's process that meets
-/// `requirement`, and otherwise answers what `body` answers for the system:
-/// `operation` names the function the client called. There is one function
-/// for each shape of answer.
+/// The way into a call, and out of one resumed after it paused to copy from
+/// the caller's memory; and the way into a query about one process.
 [<RequireQualifiedAccess>]
 module internal Entry =
 
-    let private require<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The check `call` makes before its body runs: fails with
+    /// `InvalidOperationException` unless `caller` is a thread of the system's
+    /// process that meets `requirement`. `operation` names the function the
+    /// client called.
+    ///
+    /// For a call that must allocate nothing, which the closures `call` takes
+    /// would make it do: `UnixScheduling.dispatch`, which a client makes
+    /// before every instruction.
+    let admit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (requirement : CallerRequirement)
         (caller : Caller<'Thread>)
@@ -386,63 +508,56 @@ module internal Entry =
             UnixThreadTable.requireThread operation thread system.Threads
             |> ignore<UnixThreadState>
 
-    /// A call whose answer holds no system.
-    let answer<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+    /// A call: fails with `InvalidOperationException` unless `caller` is a
+    /// thread of the system's process that meets `requirement`, and otherwise
+    /// answers what `body` answers for the system. `shape` says where the
+    /// systems sit in that answer, and each is handed back as the body left
+    /// it. `operation` names the function the client called.
+    let call<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (requirement : CallerRequirement)
         (caller : Caller<'Thread>)
+        (shape : Shape<UnixSystem<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
+        (body : UnixSystem<'Thread, 'Handler> -> 'InView)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'InKernel
+        =
+        admit operation requirement caller system
+        // `id`: the body runs over the system the call hands back.
+        Shape.map id shape (body system)
+
+    /// A call resumed after it paused to copy from the caller's memory:
+    /// `answer`, which the resumption gave from the system the paused value
+    /// held. `shape` says where the systems sit in it, and each is handed back
+    /// as the resumption left it.
+    ///
+    /// The caller is not checked again. It was checked as the call began, and
+    /// the paused value holds the system, so nothing can have happened to the
+    /// caller since.
+    let resume<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
+        (shape : Shape<UnixSystem<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
+        (answer : 'InView)
+        : 'InKernel
+        =
+        // `id`: the resumption runs over the system the call hands back.
+        Shape.map id shape answer
+
+    /// A question about the process `pid` that no thread of it asks, such as
+    /// which threads it has: fails with `InvalidOperationException` unless
+    /// `pid` is the system's process, and otherwise answers what `body`
+    /// answers for the system. `operation` names the function the client
+    /// called.
+    ///
+    /// The answer holds no system, so nothing is handed back.
+    let query<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (pid : ProcessId)
         (body : UnixSystem<'Thread, 'Handler> -> 'Answer)
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Answer
         =
-        require operation requirement caller system
-        body system
+        if pid <> system.Process.ProcessId then
+            invalidOp
+                $"%s{operation}: the question is about process %O{pid}, but the system holds process %O{system.Process.ProcessId} and no other, so it cannot be asked of it (this is a bug in the client)."
 
-    /// A call that answers with the system it leaves.
-    let withSystem<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
-        (operation : string)
-        (requirement : CallerRequirement)
-        (caller : Caller<'Thread>)
-        (body : UnixSystem<'Thread, 'Handler> -> 'Answer * UnixSystem<'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : 'Answer * UnixSystem<'Thread, 'Handler>
-        =
-        require operation requirement caller system
-        body system
-
-    /// A call that answers with the system it leaves, or with an error.
-    let result<'Thread, 'Handler, 'Answer, 'Error when 'Thread : comparison and 'Handler : equality>
-        (operation : string)
-        (requirement : CallerRequirement)
-        (caller : Caller<'Thread>)
-        (body : UnixSystem<'Thread, 'Handler> -> Result<'Answer * UnixSystem<'Thread, 'Handler>, 'Error>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<'Answer * UnixSystem<'Thread, 'Handler>, 'Error>
-        =
-        require operation requirement caller system
-        body system
-
-    /// A call that can end the process.
-    let fate<'Thread, 'Handler, 'Outcome when 'Thread : comparison and 'Handler : equality>
-        (operation : string)
-        (requirement : CallerRequirement)
-        (caller : Caller<'Thread>)
-        (body : UnixSystem<'Thread, 'Handler> -> ProcessFate<'Outcome, 'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : ProcessFate<'Outcome, 'Thread, 'Handler>
-        =
-        require operation requirement caller system
-        body system
-
-    /// A call that can stop where the kernel copies from the caller's memory,
-    /// whose paused value holds the system.
-    let progress<'Thread, 'Handler, 'Paused, 'Answer when 'Thread : comparison and 'Handler : equality>
-        (operation : string)
-        (requirement : CallerRequirement)
-        (caller : Caller<'Thread>)
-        (body : UnixSystem<'Thread, 'Handler> -> CallProgress<'Paused, 'Answer>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : CallProgress<'Paused, 'Answer>
-        =
-        require operation requirement caller system
         body system

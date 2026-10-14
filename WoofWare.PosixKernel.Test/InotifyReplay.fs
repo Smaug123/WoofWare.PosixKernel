@@ -150,11 +150,35 @@ module internal InotifyReplay =
         | SyscallAnswer.Completed value -> $"%d{value}"
         | SyscallAnswer.Failed error -> $"-1 %O{error}"
 
-    let init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+    /// `inotify_init1(flags)` by the leader of the process `pid`, which must
+    /// succeed.
+    let init1In (pid : ProcessId) (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid system)) flags system with
         | Ok (Ok created) -> created
         | other -> failwith $"inotify_init1(0x%x{flags}): %A{other}"
 
+    /// `init1In` the only process on the machine.
+    let init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        init1In (Lone.pid system) flags system
+
+    /// `inotify_add_watch(fd, path, mask)` by the leader of the process `pid`.
+    let addWatchIn
+        (pid : ProcessId)
+        (fd : int)
+        (path : string)
+        (mask : uint32)
+        (system : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        match
+            Eager.tryInotifyAddWatchAs (Caller.make pid (Proc.leader pid system)) fd (PathArg.ofText path) mask system
+        with
+        | Ok answered -> answered
+        | Error refusal ->
+            failwith
+                $"inotify_add_watch(%d{fd}, %s{path}, 0x%x{mask}) refused: %s{InotifyAddWatchRefusal.describe refusal}"
+
+    /// `addWatchIn` the only process on the machine.
     let addWatch
         (fd : int)
         (path : string)
@@ -162,13 +186,22 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
-        | Ok answered -> answered
-        | Error refusal ->
-            failwith
-                $"inotify_add_watch(%d{fd}, %s{path}, 0x%x{mask}) refused: %s{InotifyAddWatchRefusal.describe refusal}"
+        addWatchIn (Lone.pid system) fd path mask system
 
-    /// `addWatch`, which must succeed: the watch descriptor.
+    /// `addWatchIn`, which must succeed: the watch descriptor.
+    let watchIn
+        (pid : ProcessId)
+        (fd : int)
+        (path : string)
+        (mask : uint32)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match addWatchIn pid fd path mask system with
+        | SyscallAnswer.Completed wd, system -> int wd, system
+        | SyscallAnswer.Failed error, _ -> failwith $"inotify_add_watch(%d{fd}, %s{path}): %O{error}"
+
+    /// `watchIn` the only process on the machine.
     let watch
         (fd : int)
         (path : string)
@@ -176,19 +209,22 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match addWatch fd path mask system with
-        | SyscallAnswer.Completed wd, system -> int wd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"inotify_add_watch(%d{fd}, %s{path}): %O{error}"
+        watchIn (Lone.pid system) fd path mask system
 
     let rmWatch (fd : int) (wd : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyRmWatch fd wd system with
+        match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
         | Ok answered -> answered
         | Error refusal -> failwith $"inotify_rm_watch(%d{fd}, %d{wd}) refused: %s{InotifyRefusal.describe refusal}"
 
-    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+    /// A close of `fd` by the leader of the process `pid`, which must succeed.
+    let closeIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixDescriptor.tryClose (Caller.make pid (Proc.leader pid system)) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"close(%d{fd}): %A{other}"
+
+    /// `closeIn` the only process on the machine.
+    let close (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        closeIn (Lone.pid system) fd system
 
     let private completed (call : string) (result : Result<SyscallAnswer * UnixSystem<int, string>, 'r>) =
         match result with
@@ -256,15 +292,27 @@ module internal InotifyReplay =
         =
         openFdIn (Lone.pid system) flags path mode system
 
-    let write (fd : int) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    /// The probe's `write` of `text` through `fd`, by thread 0 of the process
+    /// `pid`.
+    let writeIn
+        (pid : ProcessId)
+        (fd : int)
+        (text : string)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
         let bytes = ImmutableArray.CreateRange (Encoding.ASCII.GetBytes text)
 
         match
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
+            WriteOutcomes.admitThenWriteAs (Caller.make pid 0) fd UserBuffer.Mapped bytes system
             |> WriteOutcomes.returned
         with
         | Ok (WriteAnswer.Completed _, system) -> system
         | other -> failwith $"write(%d{fd}): %A{other}"
+
+    /// `writeIn` the only process on the machine.
+    let write (fd : int) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        writeIn (Lone.pid system) fd text system
 
     let pwrite
         (fd : int)
@@ -280,10 +328,12 @@ module internal InotifyReplay =
         | other -> failwith $"pwrite(%d{fd}): %A{other}"
 
     let ftruncate (fd : int) (length : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixDescriptor.tryFtruncate fd length system |> completed $"ftruncate(%d{fd})"
+        UnixDescriptor.tryFtruncate (Callers.leader system) fd length system
+        |> completed $"ftruncate(%d{fd})"
 
     let fchmod (fd : int) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixPathResolution.tryFchmod fd mode system |> completed $"fchmod(%d{fd})"
+        UnixPathResolution.tryFchmod (Callers.leader system) fd mode system
+        |> completed $"fchmod(%d{fd})"
 
     let fchown
         (fd : int)
@@ -292,12 +342,12 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixPathResolution.tryFchown fd (Option.map user uid) (Option.map group gid) system
+        UnixPathResolution.tryFchown (Callers.leader system) fd (Option.map user uid) (Option.map group gid) system
         |> completed $"fchown(%d{fd})"
 
     /// `futimens(fd, times)`: `utimensat` of a null path.
     let futimens (fd : int) (times : TimesArgument) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixPathResolution.tryUtimensat fd NullablePathArgument.Null times 0 system
+        UnixPathResolution.tryUtimensat (Callers.leader system) fd NullablePathArgument.Null times 0 system
         |> completed $"futimens(%d{fd})"
 
     /// Linux's `AT_EMPTY_PATH`.
@@ -311,12 +361,12 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixReadWrite.tryCopyFileRange source destination (uint64 count) 0 system with
+        match UnixReadWrite.tryCopyFileRange (Callers.leader system) source destination (uint64 count) 0 system with
         | Ok (SyscallAnswer.Completed _, system) -> system
         | other -> failwith $"copy_file_range(%d{source}, %d{destination}): %A{other}"
 
     let readFile (fd : int) (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 count) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
         | other -> failwith $"read(%d{fd}): %A{other}"
 
@@ -346,7 +396,7 @@ module internal InotifyReplay =
     /// The refusal of `chmod(path, mode)`, which must be of a change an
     /// inotify watch could hear of through a name this kernel does not keep.
     let chmodRefusal (path : string) (mode : int) (system : UnixSystem<int, string>) : UnplacedChangeRefusal =
-        UnixPathResolution.tryChmod (PathArg.ofText path) mode system
+        UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText path) mode system
         |> unplaced
             $"chmod(%s{path})"
             (fun refusal ->
@@ -367,14 +417,14 @@ module internal InotifyReplay =
         let fd, system =
             openFdIn pid (openFlags FileAccessMode.WriteOnly true false true) path 0o644 system
 
-        system |> write fd text |> close fd
+        system |> writeIn pid fd text |> closeIn pid fd
 
     /// `writeFileIn` the only process on the machine.
     let writeFile (path : string) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         writeFileIn (Lone.pid system) path text system
 
     let chmod (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixPathResolution.tryChmod (PathArg.ofText path) mode system
+        UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText path) mode system
         |> completed $"chmod(%s{path})"
 
     let chown
@@ -384,7 +434,12 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixPathResolution.tryChown (PathArg.ofText path) (Option.map user uid) (Option.map group gid) system
+        UnixPathResolution.tryChown
+            (Callers.leader system)
+            (PathArg.ofText path)
+            (Option.map user uid)
+            (Option.map group gid)
+            system
         |> completed $"chown(%s{path})"
 
     /// Linux's `AT_FDCWD`.
@@ -398,7 +453,13 @@ module internal InotifyReplay =
 
     /// `utimensat(AT_FDCWD, path, times, 0)`.
     let utimensat (path : string) (times : TimesArgument) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixPathResolution.tryUtimensat atFdCwd (NullablePathArgument.NotNull (PathArg.ofText path)) times 0 system
+        UnixPathResolution.tryUtimensat
+            (Callers.leader system)
+            atFdCwd
+            (NullablePathArgument.NotNull (PathArg.ofText path))
+            times
+            0
+            system
         |> completed $"utimensat(%s{path})"
 
     /// A `struct timespec` of `seconds`, or of a marker when `nanoseconds` is one.
@@ -408,17 +469,34 @@ module internal InotifyReplay =
             Nanoseconds = nanoseconds
         }
 
-    let mkdir (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryMkdir (PathArg.ofText path) mode system
+    /// `mkdir(path, mode)` by the leader of the process `pid`, which must
+    /// succeed.
+    let mkdirIn
+        (pid : ProcessId)
+        (path : string)
+        (mode : int)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        UnixNamespace.tryMkdir (Caller.make pid (Proc.leader pid system)) (PathArg.ofText path) mode system
         |> completed $"mkdir(%s{path})"
 
+    /// `mkdirIn` the only process on the machine.
+    let mkdir (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        mkdirIn (Lone.pid system) path mode system
+
     let rmdir (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryRmdir (PathArg.ofText path) system
+        UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofText path) system
         |> completed $"rmdir(%s{path})"
 
-    let unlink (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryUnlink (PathArg.ofText path) system
+    /// `unlink(path)` by the leader of the process `pid`, which must succeed.
+    let unlinkIn (pid : ProcessId) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        UnixNamespace.tryUnlink (Caller.make pid (Proc.leader pid system)) (PathArg.ofText path) system
         |> completed $"unlink(%s{path})"
+
+    /// `unlinkIn` the only process on the machine.
+    let unlink (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        unlinkIn (Lone.pid system) path system
 
     let link (existing : string) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Eager.tryLink (PathArg.ofText existing) (PathArg.ofText path) system
@@ -433,7 +511,7 @@ module internal InotifyReplay =
         |> completed $"rename(%s{source}, %s{destination})"
 
     let chdir (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixPathResolution.tryChdir (PathArg.ofText path) system
+        UnixPathResolution.tryChdir (Callers.leader system) (PathArg.ofText path) system
         |> completed $"chdir(%s{path})"
 
     /// The number of the inode `path` names, following a final symbolic link.
@@ -593,14 +671,14 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : ReadRecord list * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 count) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) -> parse bytes, system
         | other -> failwith $"read(%d{fd}, %d{count}): %A{other}"
 
     /// Every record the non-blocking instance `fd` holds, read until `EAGAIN`.
     let drainRecords (fd : int) (system : UnixSystem<int, string>) : ReadRecord list * UnixSystem<int, string> =
         let rec go (acc : ReadRecord list) (system : UnixSystem<int, string>) =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 (1 <<< 20)) system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 (1 <<< 20)) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) -> go (acc @ parse bytes) system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), system) -> acc, system
             | other -> failwith $"read(%d{fd}): %A{other}"

@@ -58,9 +58,10 @@ module TestGetGroups =
             systemWith SimulatedUnixPlatform.macOsArm64 (Credentials.ofIds (uid 501u) (gid 12u) [])
 
         for system, expected in [ linux, 8u ; darwin, 12u ] do
-            UnixDescriptor.effectiveGroupId system |> shouldEqual (gid expected)
+            UnixDescriptor.effectiveGroupId (Callers.leader system) system
+            |> shouldEqual (gid expected)
 
-            match UnixSystem.tryStep 0 Syscall.GetEffectiveGroupId system with
+            match UnixSystem.tryStep (Callers.thread 0 system) Syscall.GetEffectiveGroupId system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed answer), after) ->
                 answer |> shouldEqual (int64 expected)
                 after |> shouldEqual system
@@ -116,7 +117,9 @@ module TestGetGroups =
 
             let system = systemWith SimulatedUnixPlatform.linuxX64 credentials
             let count = List.length credentials.SupplementaryGroups
-            let actual = UnixDescriptor.tryGetgroups destination size system
+
+            let actual =
+                UnixDescriptor.tryGetgroups (Callers.leader system) destination size system
 
             // The screens, in the order the probe found them: the sign of the
             // size, then a size of 0 asking only for the count, then a size too
@@ -184,13 +187,17 @@ module TestGetGroups =
             ]
 
         for given, reported in rows do
-            UnixDescriptor.tryGetgroups UserBuffer.Mapped 256 (linuxWithGroups given)
+            let system = linuxWithGroups given
+
+            UnixDescriptor.tryGetgroups (Callers.leader system) UserBuffer.Mapped 256 system
             |> shouldEqual (copied reported)
 
         // An effective group that is not in the list is not reported.
-        Credentials.ofIds (uid 1000u) (gid 4242u) ([ 30u ; 10u ; 20u ] |> List.map gid)
-        |> systemWith SimulatedUnixPlatform.linuxX64
-        |> UnixDescriptor.tryGetgroups UserBuffer.Mapped 3
+        let system =
+            Credentials.ofIds (uid 1000u) (gid 4242u) ([ 30u ; 10u ; 20u ] |> List.map gid)
+            |> systemWith SimulatedUnixPlatform.linuxX64
+
+        UnixDescriptor.tryGetgroups (Callers.leader system) UserBuffer.Mapped 3 system
         |> shouldEqual (copied [ 10u ; 20u ; 30u ])
 
     [<Test>]
@@ -215,7 +222,7 @@ module TestGetGroups =
             ]
 
         for size, destination, expected in rows do
-            (size, destination, UnixDescriptor.tryGetgroups destination size unsorted)
+            (size, destination, UnixDescriptor.tryGetgroups (Callers.leader unsorted) destination size unsorted)
             |> shouldEqual (size, destination, expected)
 
         // With no groups at all there is nothing to copy, so no buffer faults.
@@ -227,7 +234,7 @@ module TestGetGroups =
                 1, copied []
                 -1, failed UnixError.EINVAL
             ] do
-            (size, UnixDescriptor.tryGetgroups nothing size empty)
+            (size, UnixDescriptor.tryGetgroups (Callers.leader empty) nothing size empty)
             |> shouldEqual (size, expected)
 
     // ------------------------------------------------------------------ Darwin
@@ -239,7 +246,8 @@ module TestGetGroups =
                 Credentials.ofIds (uid 501u) (gid 20u) groups
                 |> systemWith SimulatedUnixPlatform.macOsArm64
 
-            let actual = UnixDescriptor.tryGetgroups destination size system
+            let actual =
+                UnixDescriptor.tryGetgroups (Callers.leader system) destination size system
 
             if size < 0 then
                 // Measured at -1, -2, -16, -65536, INT_MIN + 1 and INT_MIN,
@@ -365,7 +373,7 @@ module TestGetGroupsAgainstHost =
                         [ "storage", storage, UserBuffer.Mapped ; "NULL", 0n, UserBuffer.Unmapped 0UL ] do
                         let expected = host platform size address capacity
 
-                        match UnixDescriptor.tryGetgroups classified size system with
+                        match UnixDescriptor.tryGetgroups (Callers.leader system) classified size system with
                         | Ok answer -> (size, where, answer) |> shouldEqual (size, where, expected)
                         | Error (GetGroupsRefusal.UnmeasuredGroupList refused) ->
                             // The model refuses Darwin's list outright, and only

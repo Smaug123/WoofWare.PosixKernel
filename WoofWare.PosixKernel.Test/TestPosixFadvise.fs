@@ -85,6 +85,8 @@ module TestPosixFadvise =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeOf system path))
                 (inodeOf system path)
                 mode
@@ -93,7 +95,10 @@ module TestPosixFadvise =
         fd, Lone.withFileDescriptors registry system
 
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         fd, Lone.withFileDescriptors registry system
 
@@ -123,7 +128,7 @@ module TestPosixFadvise =
             |> openedAt "/dir/file" FileAccessMode.ReadWrite
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     [<Test>]
@@ -134,7 +139,7 @@ module TestPosixFadvise =
             systemOn SimulatedUnixPlatform.linuxX64
             |> openedAt "/dir/file" FileAccessMode.ReadOnly
 
-        UnixDescriptor.tryPosixFadvise fd 0L 0L Advice.Sequential system
+        UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L Advice.Sequential system
         |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     [<Test>]
@@ -144,7 +149,7 @@ module TestPosixFadvise =
             |> openedAt "/dir" FileAccessMode.ReadOnly
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     [<Test>]
@@ -154,7 +159,7 @@ module TestPosixFadvise =
         let fd, system = systemOn SimulatedUnixPlatform.linuxX64 |> socket
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     [<Test>]
@@ -164,7 +169,7 @@ module TestPosixFadvise =
         let fd, system = systemOn SimulatedUnixPlatform.linuxX64 |> withEpoll
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     [<TestCase 0>]
@@ -177,7 +182,7 @@ module TestPosixFadvise =
         let system = systemOn SimulatedUnixPlatform.linuxX64
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.ESPIPE))
 
     [<Test>]
@@ -185,7 +190,7 @@ module TestPosixFadvise =
         let system = systemOn SimulatedUnixPlatform.linuxX64
 
         for advice in everyAdvice do
-            UnixDescriptor.tryPosixFadvise 99 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) 99 0L 0L advice system
             |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.EBADF))
 
     // -------------------------------------------------------- offset and length
@@ -197,7 +202,7 @@ module TestPosixFadvise =
             systemOn SimulatedUnixPlatform.linuxX64
             |> openedAt "/dir/file" FileAccessMode.ReadWrite
 
-        UnixDescriptor.tryPosixFadvise fd 0L length Advice.Normal system
+        UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L length Advice.Normal system
         |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.EINVAL))
 
     [<TestCase(-1L, 0L)>]
@@ -213,7 +218,7 @@ module TestPosixFadvise =
             systemOn SimulatedUnixPlatform.linuxX64
             |> openedAt "/dir/file" FileAccessMode.ReadWrite
 
-        UnixDescriptor.tryPosixFadvise fd offset length Advice.Normal system
+        UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length Advice.Normal system
         |> shouldEqual (Ok FileAdviceAnswer.Completed)
 
     // ------------------------------------------------------------------ ordering
@@ -222,7 +227,7 @@ module TestPosixFadvise =
     let ``a bad descriptor beats a bad length`` () : unit =
         let system = systemOn SimulatedUnixPlatform.linuxX64
 
-        UnixDescriptor.tryPosixFadvise 99 0L -1L Advice.Normal system
+        UnixDescriptor.tryPosixFadvise (Callers.leader system) 99 0L -1L Advice.Normal system
         |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.EBADF))
 
     [<Test>]
@@ -231,7 +236,7 @@ module TestPosixFadvise =
         // range check the generic path makes.
         let system = systemOn SimulatedUnixPlatform.linuxX64
 
-        UnixDescriptor.tryPosixFadvise 0 0L -1L Advice.Normal system
+        UnixDescriptor.tryPosixFadvise (Callers.leader system) 0 0L -1L Advice.Normal system
         |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.ESPIPE))
 
     [<Test>]
@@ -244,13 +249,13 @@ module TestPosixFadvise =
             |> openedAt "/dir/file" FileAccessMode.ReadWrite
 
         for advice in [ 6 ; 7 ; -1 ; Int32.MaxValue ; Int32.MinValue ] do
-            UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
             |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.EINVAL))
 
-            UnixDescriptor.tryPosixFadvise 99 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) 99 0L 0L advice system
             |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.EBADF))
 
-            UnixDescriptor.tryPosixFadvise 0 0L 0L advice system
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) 0 0L 0L advice system
             |> shouldEqual (Ok (FileAdviceAnswer.Failed UnixError.ESPIPE))
 
     /// The measured rule, restated independently of the implementation: the
@@ -285,7 +290,10 @@ module TestPosixFadvise =
 
         let property (kindIndex : int) (offset : int64) (length : int64) (advice : int) : bool =
             let kind, fd = kinds.[abs (kindIndex % kinds.Length)]
-            UnixDescriptor.tryPosixFadvise fd offset length advice system = Ok (oracle kind length advice)
+
+            UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system = Ok (
+                oracle kind length advice
+            )
 
         FsCheck.Check.One (FsCheck.Config.QuickThrowOnFailure.WithMaxTest 2000, property)
 
@@ -293,7 +301,7 @@ module TestPosixFadvise =
         for kind, fd in kinds do
             for advice in -2 .. 8 do
                 for length in [ -1L ; 0L ; 1L ] do
-                    UnixDescriptor.tryPosixFadvise fd 0L length advice system
+                    UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L length advice system
                     |> shouldEqual (Ok (oracle kind length advice))
 
     // ---------------------------------------------------- platform availability
@@ -304,7 +312,7 @@ module TestPosixFadvise =
 
         for fd in [ 0 ; 99 ] do
             for advice in [ 0 ; 6 ] do
-                UnixDescriptor.tryPosixFadvise fd 0L 0L advice system
+                UnixDescriptor.tryPosixFadvise (Callers.leader system) fd 0L 0L advice system
                 |> shouldEqual (Error PosixFadviseRefusal.NotProvided)
 
 

@@ -191,7 +191,7 @@ module TestSignalMaskAgainstHost =
                                 | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
                             )
 
-                        match UnixSignal.pthreadSigmask 0 how modelSet system with
+                        match UnixSignal.pthreadSigmask (Callers.thread 0 system) how modelSet system with
                         | Ok (modelOld, after) ->
                             (how, set, rc, SignalMask.toWord modelOld)
                             |> shouldEqual (how, set, 0, wordOfBuffer old)
@@ -206,7 +206,10 @@ module TestSignalMaskAgainstHost =
                         let now : byte[] = Array.zeroCreate sigsetBytes
                         pthread_sigmask (sigBlock, null, now) |> ignore<int>
 
-                        (how, set, SignalState.maskOf 0 (UnixSystem.signals system) |> SignalMask.toWord)
+                        (how,
+                         set,
+                         SignalState.maskOf 0 (UnixSystem.signals (Lone.pid system) system)
+                         |> SignalMask.toWord)
                         |> shouldEqual (how, set, wordOfBuffer now)
             finally
                 pthread_sigmask (sigSetMask, original, null) |> ignore<int>

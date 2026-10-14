@@ -96,7 +96,7 @@ module SocketFuzz =
     /// `close(2)`. A refusal is the model's, and is reported as one; an errno
     /// comes back, because that is an answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> raise (ModelRefusal $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}")
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -289,6 +289,7 @@ module SocketFuzz =
         =
         match
             UnixPoll.tryEpollCtl
+                (Callers.leader state.Kernel)
                 (slotFd epoll state)
                 op
                 (slotFd target state)
@@ -473,7 +474,12 @@ module SocketFuzz =
                 // shrink towards.
                 failwith $"close of fd %d{fd} answered %O{error}, which is not EBADF"
         | FuzzOp.Dup (slot, newSlot) ->
-            match FileDescriptorRegistry.dup (slotFd slot state) (Lone.fileDescriptors state.Kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (slotFd slot state)
+                    (Lone.fileDescriptors state.Kernel)
+            with
             | Ok (fd, registry) ->
                 "ok",
                 assignSlot
@@ -485,7 +491,9 @@ module SocketFuzz =
             | Error FileDescriptorDupError.BadFd -> "EBADF", state
         | FuzzOp.NewEpoll slot ->
             let fd, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors state.Kernel)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (Lone.fileDescriptors state.Kernel)
 
             "ok",
             assignSlot
@@ -555,7 +563,7 @@ module SocketFuzz =
             // registered here for the call is never left behind in the state.
             let polling = Threads.ensure pollThread state.Kernel
 
-            match UnixPoll.tryPoll pollThread [ entry ] 0 polling with
+            match UnixPoll.tryPoll (Callers.thread pollThread polling) [ entry ] 0 polling with
             | Error refusal -> raise (ModelRefusal $"poll of fd %d{fd} refused: %s{PollRefusal.describe refusal}")
             | Ok (PollOutcome.WouldBlock condition, _) ->
                 failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 parked on %A{condition}."

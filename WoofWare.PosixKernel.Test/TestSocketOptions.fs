@@ -531,7 +531,7 @@ module TestSocketOptions =
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"bind answered %A{other}"
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | other -> failwith $"listen answered %A{other}"
 
@@ -558,7 +558,7 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
@@ -659,18 +659,18 @@ module TestSocketOptions =
         let system = connectTo 5000us client system
 
         let accepted, system =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> Ok system
             | Ok (SyscallAnswer.Failed error, _) -> failwith $"close answered %O{error}"
             | Error refusal -> Error refusal
 
         let read (fd : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"%O{platform} fd %d{fd}: expected a read to answer, got %A{other}"
 
@@ -691,7 +691,7 @@ module TestSocketOptions =
         | Ok reset ->
             UnixSystem.checkInvariants reset |> shouldEqual []
 
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u reset with
+            match UnixConnection.tryAccept (Callers.thread 0 reset) listener UserBuffer.Mapped 16u reset with
             | Ok (AcceptOutcome.Accepted (fd, _, _), reset) ->
                 read fd reset |> shouldEqual (ReadAnswer.Failed UnixError.ECONNRESET)
             | other -> failwith $"%O{platform}: accepting the reset connection answered %A{other}"
@@ -722,10 +722,11 @@ module TestSocketOptions =
             let system = connectTo 5000us client system
             // A negative length: Linux takes the connection, then answers
             // EINVAL and drops it.
-            client, UnixConnection.tryAccept 0 listener UserBuffer.Mapped System.UInt32.MaxValue system
+            client,
+            UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped System.UInt32.MaxValue system
 
         let clientRead (client : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 client UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) client UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"expected the client's read to answer, got %A{other}"
 

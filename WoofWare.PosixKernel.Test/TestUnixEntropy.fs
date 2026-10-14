@@ -93,7 +93,7 @@ module TestUnixEntropy =
         let property (flags : uint32, buffer : UserBuffer, count : uint64) : unit =
             let system = linux ()
 
-            match UnixEntropy.tryGetRandom 0 buffer count flags system with
+            match UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer count flags system with
             | Ok (GetRandomAnswer.Failed error, after) ->
                 error |> shouldEqual UnixError.EINVAL
                 after |> shouldEqual system
@@ -119,7 +119,14 @@ module TestUnixEntropy =
 
                             let outcome =
                                 try
-                                    Ok (UnixEntropy.tryGetRandom thread UserBuffer.Mapped 8UL flags system)
+                                    Ok (
+                                        UnixEntropy.tryGetRandom
+                                            (Callers.thread thread system)
+                                            UserBuffer.Mapped
+                                            8UL
+                                            flags
+                                            system
+                                    )
                                 with e ->
                                     Error e
 
@@ -145,7 +152,9 @@ module TestUnixEntropy =
             let expected, pool = EntropyPool.draw (int count) system.Machine.EntropyPool
 
             for flags in validFlags do
-                match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped (uint64 count) flags system with
+                match
+                    UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped (uint64 count) flags system
+                with
                 | Ok (GetRandomAnswer.Completed draw, after) ->
                     Seq.toArray (EntropyDraw.bytes draw) |> shouldEqual (Seq.toArray expected)
                     after.Machine.EntropyPool |> shouldEqual pool
@@ -162,16 +171,16 @@ module TestUnixEntropy =
         let system = linux ()
 
         for buffer in [ UserBuffer.Mapped ; UserBuffer.Opaque ; UserBuffer.Unmapped 0UL ] do
-            match UnixEntropy.tryGetRandom 0 buffer 0UL 0u system with
+            match UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer 0UL 0u system with
             | Ok (GetRandomAnswer.Completed draw, after) ->
                 EntropyDraw.count draw |> shouldEqual 0
                 after |> shouldEqual system
             | other -> failwith $"%O{buffer}: expected nothing to move, got %O{other}"
 
-        UnixEntropy.tryGetRandom 0 (UserBuffer.Unmapped UInt64.MaxValue) 0UL 0u system
+        UnixEntropy.tryGetRandom (Callers.thread 0 system) (UserBuffer.Unmapped UInt64.MaxValue) 0UL 0u system
         |> shouldEqual (Ok (GetRandomAnswer.Failed UnixError.EFAULT, system))
 
-        UnixEntropy.tryGetRandom 0 UserBuffer.Addressless 0UL 0u system
+        UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Addressless 0UL 0u system
         |> shouldEqual (Error (GetRandomRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
     /// An address the screen passes but the copy cannot write through is EFAULT,
@@ -182,14 +191,16 @@ module TestUnixEntropy =
             let count = uint64 count + 1UL
             let system = linux ()
 
-            UnixEntropy.tryGetRandom 0 (UserBuffer.Unmapped 0UL) count 0u system
+            UnixEntropy.tryGetRandom (Callers.thread 0 system) (UserBuffer.Unmapped 0UL) count 0u system
             |> shouldEqual (Ok (GetRandomAnswer.Failed UnixError.EFAULT, system))
 
         Check.One (config, property)
 
     [<Test>]
     let ``getrandom into an opaque buffer is refused at the copy`` () : unit =
-        UnixEntropy.tryGetRandom 0 UserBuffer.Opaque 5UL 0u (linux ())
+        let system = linux ()
+
+        UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Opaque 5UL 0u system
         |> shouldEqual (Error (GetRandomRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
     /// One call moves at most `UnixEntropy.getRandomMaxTransfer` bytes, however
@@ -205,7 +216,7 @@ module TestUnixEntropy =
             let system = linux ()
             let pool = system.Machine.EntropyPool
 
-            match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped count 0u system with
+            match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped count 0u system with
             | Ok (GetRandomAnswer.Completed draw, after) ->
                 EntropyDraw.count draw |> shouldEqual limit
                 after.Machine.EntropyPool |> shouldEqual (snd (EntropyPool.take limit pool))
@@ -219,7 +230,9 @@ module TestUnixEntropy =
             | other -> failwith $"%d{count} bytes: expected a short transfer, got %O{other}"
 
         // At the limit itself nothing is cut short.
-        match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped maxTransfer 0u (linux ()) with
+        let system = linux ()
+
+        match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped maxTransfer 0u system with
         | Ok (GetRandomAnswer.Completed draw, _) -> EntropyDraw.count draw |> shouldEqual limit
         | other -> failwith $"expected the whole request, got %O{other}"
 
@@ -242,7 +255,7 @@ module TestUnixEntropy =
                 && PendingSignal.transferrerHasSignal pending
                 && buffer = UserBuffer.Mapped
 
-            match UnixEntropy.tryGetRandom 0 buffer count GetRandomFlags.Insecure system with
+            match UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer count GetRandomFlags.Insecure system with
             | Error (GetRandomRefusal.SignalAtPageBoundary refusedCount) ->
                 refused |> shouldEqual true
                 refusedCount |> shouldEqual (int moved)
@@ -272,7 +285,9 @@ module TestUnixEntropy =
     [<Test>]
     let ``Darwin has no getrandom`` () : unit =
         let property (flags : uint32, buffer : UserBuffer, count : uint64) : unit =
-            UnixEntropy.tryGetRandom 0 buffer count flags (darwin ())
+            let system = darwin ()
+
+            UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer count flags system
             |> shouldEqual (Error (GetRandomRefusal.NoSuchSyscall SimulatedUnixFlavour.Darwin))
 
         Check.One (
@@ -292,7 +307,7 @@ module TestUnixEntropy =
             let system = darwin ()
             let expected, pool = EntropyPool.draw (int length) system.Machine.EntropyPool
 
-            match UnixEntropy.tryGetEntropy UserBuffer.Mapped (uint64 length) system with
+            match UnixEntropy.tryGetEntropy (Callers.leader system) UserBuffer.Mapped (uint64 length) system with
             | Ok (GetEntropyAnswer.Completed draw, after) ->
                 Seq.toArray (EntropyDraw.bytes draw) |> shouldEqual (Seq.toArray expected)
                 after.Machine.EntropyPool |> shouldEqual pool
@@ -312,14 +327,18 @@ module TestUnixEntropy =
         let property (buffer : UserBuffer, length : uint64) : unit =
             let system = darwin ()
 
-            UnixEntropy.tryGetEntropy buffer length system
+            UnixEntropy.tryGetEntropy (Callers.leader system) buffer length system
             |> shouldEqual (Ok (GetEntropyAnswer.Failed UnixError.EINVAL, system))
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip bufferGen tooLong)) property)
 
     [<Test>]
     let ``getentropy at the limit is answered`` () : unit =
-        match UnixEntropy.tryGetEntropy UserBuffer.Mapped UnixEntropy.getEntropyMaxLength (darwin ()) with
+        let system = darwin ()
+
+        match
+            UnixEntropy.tryGetEntropy (Callers.leader system) UserBuffer.Mapped UnixEntropy.getEntropyMaxLength system
+        with
         | Ok (GetEntropyAnswer.Completed draw, _) ->
             uint64 (EntropyDraw.count draw) |> shouldEqual UnixEntropy.getEntropyMaxLength
         | other -> failwith $"expected bytes, got %O{other}"
@@ -338,7 +357,7 @@ module TestUnixEntropy =
                 UserBuffer.Unmapped 0UL
                 UserBuffer.Unmapped UInt64.MaxValue
             ] do
-            match UnixEntropy.tryGetEntropy buffer 0UL system with
+            match UnixEntropy.tryGetEntropy (Callers.leader system) buffer 0UL system with
             | Ok (GetEntropyAnswer.Completed draw, after) ->
                 EntropyDraw.count draw |> shouldEqual 0
                 after |> shouldEqual system
@@ -350,21 +369,25 @@ module TestUnixEntropy =
 
         for address in [ 0UL ; UInt64.MaxValue ] do
             for length in [ 1UL ; 5UL ; UnixEntropy.getEntropyMaxLength ] do
-                UnixEntropy.tryGetEntropy (UserBuffer.Unmapped address) length system
+                UnixEntropy.tryGetEntropy (Callers.leader system) (UserBuffer.Unmapped address) length system
                 |> shouldEqual (Ok (GetEntropyAnswer.Failed UnixError.EFAULT, system))
 
     [<Test>]
     let ``getentropy into a buffer it cannot write is refused at the copy`` () : unit =
-        UnixEntropy.tryGetEntropy UserBuffer.Opaque 5UL (darwin ())
+        let system = darwin ()
+
+        UnixEntropy.tryGetEntropy (Callers.leader system) UserBuffer.Opaque 5UL system
         |> shouldEqual (Error (GetEntropyRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        UnixEntropy.tryGetEntropy UserBuffer.Addressless 5UL (darwin ())
+        UnixEntropy.tryGetEntropy (Callers.leader system) UserBuffer.Addressless 5UL system
         |> shouldEqual (Error (GetEntropyRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
     let ``Linux has no getentropy`` () : unit =
         let property (buffer : UserBuffer, length : uint64) : unit =
-            UnixEntropy.tryGetEntropy buffer length (linux ())
+            let system = linux ()
+
+            UnixEntropy.tryGetEntropy (Callers.leader system) buffer length system
             |> shouldEqual (Error (GetEntropyRefusal.NoSuchSyscall SimulatedUnixFlavour.Linux))
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip bufferGen countGen)) property)
@@ -382,9 +405,16 @@ module TestUnixEntropy =
             let whole, _ = EntropyPool.draw 1000 system.Machine.EntropyPool
             let firstRounded = (int first + 7) / 8 * 8
 
-            match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped (uint64 first) 0u system with
+            match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped (uint64 first) 0u system with
             | Ok (GetRandomAnswer.Completed a, afterFirst) ->
-                match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped (uint64 second) 0u afterFirst with
+                match
+                    UnixEntropy.tryGetRandom
+                        (Callers.thread 0 afterFirst)
+                        UserBuffer.Mapped
+                        (uint64 second)
+                        0u
+                        afterFirst
+                with
                 | Ok (GetRandomAnswer.Completed b, _) ->
                     Seq.toArray (EntropyDraw.bytes a)
                     |> shouldEqual (whole |> Seq.take (int first) |> Seq.toArray)

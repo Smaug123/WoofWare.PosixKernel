@@ -114,9 +114,11 @@ module TestConnectionWriteResetMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
             }
@@ -135,11 +137,14 @@ module TestConnectionWriteResetMeasured =
 
         let server, system = KeventWorld.accept listener system
         let system = KeventWorld.close listener system
-        let _, system = UnixDescriptor.setNonBlocking server false system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server false system
+
         client, server, system
 
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 
@@ -154,11 +159,11 @@ module TestConnectionWriteResetMeasured =
 
     /// `thread` returns to user mode, running every handler it takes.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -264,7 +269,9 @@ module TestConnectionWriteResetMeasured =
 
         let system = returnToUser 1 system
         let soError, system = soError client system
-        let _, system = UnixDescriptor.setNonBlocking client true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
         let second, secondSigPipe, _ =
             WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped (bytesOf 100) system
@@ -353,6 +360,7 @@ module TestConnectionWriteResetMeasured =
                         { proc with
                             Signals =
                                 SignalState.enqueue
+                                    (UnixSystemState.signalNumbering system)
                                     {
                                         Signal = Signal.SIGUSR1
                                         Target = ValueSome 1
@@ -412,10 +420,13 @@ module TestConnectionWriteResetMeasured =
 
         // The hog's drain: everything the reader holds, and everything still
         // on its way to it, read without blocking.
-        let _, system = UnixDescriptor.setNonBlocking server true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
         let rec drain (total : int64) (system : UnixSystem<int, string>) =
-            match UnixReadWrite.tryRead 0 server UserBuffer.Mapped (uint64 (1 <<< 22)) system with
+            match
+                UnixReadWrite.tryRead (Callers.thread 0 system) server UserBuffer.Mapped (uint64 (1 <<< 22)) system
+            with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed got), system) when got.Length > 0 ->
                 drain (total + int64 got.Length) system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), system) -> total, system

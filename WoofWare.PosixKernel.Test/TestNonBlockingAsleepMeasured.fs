@@ -146,8 +146,12 @@ module TestNonBlockingAsleepMeasured =
                 { system.Process with
                     Signals =
                         system.Process.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch
                                 { SignalCatch.ofHandler "h" with
@@ -215,7 +219,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.write thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.write (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofWrite where
 
     /// `thread` reads up to `count` bytes through `fd`.
@@ -227,7 +231,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.read thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.read (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofRead where
 
     /// `thread` makes the transfer's call of `count` bytes through `fd`.
@@ -248,19 +252,20 @@ module TestNonBlockingAsleepMeasured =
     /// The woken sleeper's call, finished.
     let private finish (where : string) (transfer : Transfer) (system : UnixSystem<int, string>) =
         if isWrite transfer then
-            UnixReadWrite.finishWrite sleeper system |> ofWrite where
+            UnixReadWrite.finishWrite (Callers.thread sleeper system) system
+            |> ofWrite where
         else
-            UnixReadWrite.finishRead sleeper system |> ofRead where
+            UnixReadWrite.finishRead (Callers.thread sleeper system) system |> ofRead where
 
     /// The sleeper returns to user mode: every handler it takes runs and
     /// returns. How many ran.
     let rec private returnToUser (where : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixSignal.onReturnToUser sleeper system with
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
         | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> 0, system
         | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system) ->
             let system =
                 (system, frames)
-                ||> List.fold (fun system frame -> UnixSignal.sigreturn sleeper frame.Id system)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
 
             let more, system = returnToUser where system
             List.length frames + more, system
@@ -269,7 +274,7 @@ module TestNonBlockingAsleepMeasured =
     /// Non-blocking writes of `chunk` bytes through `fd` by the leader until
     /// EAGAIN.
     let private filled (where : string) (fd : int) (chunk : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec fill (system : UnixSystem<int, string>) =
             match writeCall where system.Leader fd chunk system with
@@ -278,11 +283,11 @@ module TestNonBlockingAsleepMeasured =
             | other, _ -> failwith $"%s{where}: filling fd %d{fd} came to %A{other}"
 
         let system = fill system
-        UnixDescriptor.setNonBlocking fd false system |> snd
+        UnixDescriptor.setNonBlocking (Callers.leader system) fd false system |> snd
 
     /// Non-blocking reads through `fd` by the leader until EAGAIN.
     let private drained (where : string) (fd : int) (system : UnixSystem<int, string>) =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec drain (system : UnixSystem<int, string>) =
             match readCall where system.Leader fd 65536 system with
@@ -300,7 +305,7 @@ module TestNonBlockingAsleepMeasured =
         | Transfer.PipeWritePartlyIn
         | Transfer.PipeRead ->
             let readFd, writeFd, system =
-                match UnixPipe.pipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.pipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Pipe2Answer.Created (r, w), system -> r, w, system
                 | other -> failwith $"%s{where}: pipe2 came to %A{other}"
 
@@ -324,7 +329,9 @@ module TestNonBlockingAsleepMeasured =
 
             let server, system = KeventWorld.accept listener system
             let system = KeventWorld.close listener system
-            let _, system = UnixDescriptor.setNonBlocking server false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server false system
 
             match transfer with
             | Transfer.ConnectionWriteNothingTaken -> client, server, filled where client 65536 system
@@ -377,7 +384,7 @@ module TestNonBlockingAsleepMeasured =
 
         let system =
             if row.NonBlock then
-                UnixDescriptor.setNonBlocking callFd true system |> snd
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system |> snd
             else
                 system
 
@@ -389,7 +396,7 @@ module TestNonBlockingAsleepMeasured =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
 
         let system =
-            match UnixSignal.pthreadKill sleeper signo system with
+            match UnixSignal.pthreadKill (Callers.leader system) sleeper signo system with
             | Ok (ProcessFate.Continues (_, system)) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 
@@ -432,7 +439,8 @@ module TestNonBlockingAsleepMeasured =
         match row.Then with
         | None -> ()
         | Some measured ->
-            let _, system = UnixDescriptor.setNonBlocking callFd true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) callFd true system
 
             match issue where row.Transfer sleeper callFd 1 system with
             | Step.Answered answer, _ when answer = measured -> ()

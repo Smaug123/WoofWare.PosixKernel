@@ -1059,9 +1059,11 @@ module TestInotifyDelivery =
         match op with
         | Op.Create (i, exclusive) -> opened (openFlags FileAccessMode.WriteOnly true exclusive false) i
         | Op.OpenTruncate i -> opened (openFlags FileAccessMode.WriteOnly false false true) i
-        | Op.MkDir i -> UnixNamespace.tryMkdir (path i) 0o755 system |> unrefused
-        | Op.RmDir i -> UnixNamespace.tryRmdir (path i) system |> unrefused
-        | Op.Unlink i -> UnixNamespace.tryUnlink (path i) system |> unrefused
+        | Op.MkDir i ->
+            UnixNamespace.tryMkdir (Callers.leader system) (path i) 0o755 system
+            |> unrefused
+        | Op.RmDir i -> UnixNamespace.tryRmdir (Callers.leader system) (path i) system |> unrefused
+        | Op.Unlink i -> UnixNamespace.tryUnlink (Callers.leader system) (path i) system |> unrefused
         | Op.Link (existing, i) -> Eager.tryLink (path existing) (path i) system |> unrefused
         | Op.Symlink (target, i) -> Eager.trySymlink (path target) (path i) system |> unrefused
         | Op.Rename (source, destination) -> Eager.tryRename (path source) (path destination) system |> unrefused
@@ -1072,11 +1074,14 @@ module TestInotifyDelivery =
                 | Form.Dot -> paths.[i] + "/."
                 | Form.Slash -> paths.[i] + "/"
 
-            UnixPathResolution.tryChmod (PathArg.ofText text) mode system |> unrefused
+            UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText text) mode system
+            |> unrefused
         | Op.Chown (i, neither) ->
             let id = if neither then None else Some UserId.root
             let gid = if neither then None else Some (group 0u)
-            UnixPathResolution.tryChown (path i) id gid system |> unrefused
+
+            UnixPathResolution.tryChown (Callers.leader system) (path i) id gid system
+            |> unrefused
         | Op.Utimes (i, times) ->
             let access, modification =
                 match times with
@@ -1085,6 +1090,7 @@ module TestInotifyDelivery =
                 | Times.ModificationOnly -> timespec 0L utimeOmit, timespec 2L 0L
 
             UnixPathResolution.tryUtimensat
+                (Callers.leader system)
                 linuxAtFdCwd
                 (NullablePathArgument.NotNull (path i))
                 (TimesArgument.Fields (access, modification))
@@ -1094,7 +1100,9 @@ module TestInotifyDelivery =
         | Op.AddWatch (instance, i, mask, dontFollow) ->
             Eager.tryInotifyAddWatch fds.[instance] (path i) (mask ||| (if dontFollow then 0x02000000u else 0u)) system
             |> unrefused
-        | Op.RmWatch (instance, wd) -> UnixInotify.tryInotifyRmWatch fds.[instance] wd system |> unrefused
+        | Op.RmWatch (instance, wd) ->
+            UnixInotify.tryInotifyRmWatch (Callers.leader system) fds.[instance] wd system
+            |> unrefused
         | Op.Open (i, readOnly) ->
             let access =
                 if readOnly then
@@ -1133,9 +1141,15 @@ module TestInotifyDelivery =
             | Ok (WriteAnswer.Completed written, system) -> Some (SyscallAnswer.Completed written, system)
             | Ok (WriteAnswer.Failed error, system) -> Some (SyscallAnswer.Failed error, system)
             | Error refusal -> failwith $"%A{op}: refused: %A{refusal}"
-        | Op.Ftruncate slot -> UnixDescriptor.tryFtruncate (slotOf slot) 0L system |> mustAnswer
-        | Op.Fchmod (slot, mode) -> UnixPathResolution.tryFchmod (slotOf slot) mode system |> mustAnswer
-        | Op.Close slot -> UnixDescriptor.tryClose (slotOf slot) system |> mustAnswer
+        | Op.Ftruncate slot ->
+            UnixDescriptor.tryFtruncate (Callers.leader system) (slotOf slot) 0L system
+            |> mustAnswer
+        | Op.Fchmod (slot, mode) ->
+            UnixPathResolution.tryFchmod (Callers.leader system) (slotOf slot) mode system
+            |> mustAnswer
+        | Op.Close slot ->
+            UnixDescriptor.tryClose (Callers.leader system) (slotOf slot) system
+            |> mustAnswer
         | other -> failwith $"%A{other} is not a call through a kept descriptor"
 
     /// Numbers each cookie by the order it first appears in.

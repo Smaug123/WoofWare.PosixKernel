@@ -61,7 +61,7 @@ module TestInotifyInvariants =
         |> Configured.expectOk InotifyLimitsRefusal.describe
 
     let private init1 (flags : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixInotify.tryInotifyInit1 flags system with
+        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
         | Ok (Ok created) -> created
         | other -> failwith $"inotify_init1: %A{other}"
 
@@ -300,7 +300,7 @@ module TestInotifyInvariants =
     [<Test>]
     let ``a read parked on something other than an instance is a defect`` () : unit =
         let fd, system =
-            match UnixPoll.tryEpollCreate1 0 linux with
+            match UnixPoll.tryEpollCreate1 (Callers.leader linux) 0 linux with
             | Ok (Ok created) -> created
             | other -> failwith $"%A{other}"
 
@@ -326,16 +326,16 @@ module TestInotifyInvariants =
     let ``an instance under the Darwin flavour is a defect, and every call is refused`` () : unit =
         let darwin = bootWith id SimulatedUnixPlatform.macOsArm64
 
-        UnixInotify.tryInotifyInit1 0 darwin
+        UnixInotify.tryInotifyInit1 (Callers.leader darwin) 0 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
         Eager.tryInotifyAddWatch 0 (PathArg.ofText "d1") 0x100u darwin
         |> shouldEqual (Error (InotifyAddWatchRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
-        UnixInotify.tryInotifyRmWatch 0 1 darwin
+        UnixInotify.tryInotifyRmWatch (Callers.leader darwin) 0 1 darwin
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0) darwin with
+        match UnixSystem.tryStep (Callers.thread 0 darwin) (Syscall.InotifyInit1 0) darwin with
         | Error (SyscallRefusal.Inotify (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)) -> ()
         | other -> failwith $"%A{other}"
 
@@ -345,7 +345,11 @@ module TestInotifyInvariants =
         |> shouldEqual (Error (InotifyLimitsRefusal.NotReadOn SimulatedUnixFlavour.Darwin))
 
         let fd, registry =
-            FileDescriptorRegistry.createInotify UserId.root false (Lone.fileDescriptors darwin)
+            FileDescriptorRegistry.createInotify
+                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                UserId.root
+                false
+                (Lone.fileDescriptors darwin)
 
         let forged = Lone.withFileDescriptors registry darwin
         let id = idOf fd forged
@@ -466,7 +470,7 @@ module TestInotifyInvariants =
             |> Machines.inProcess
                 pid
                 (fun view ->
-                    match UnixInotify.tryInotifyInit1 0x800 view with
+                    match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) 0x800 view with
                     | Ok (Ok (fd, view)) -> Ok fd, view
                     | Ok (Error error) -> Error error, view
                     | Error refusal -> failwith $"%A{refusal}"
@@ -483,7 +487,14 @@ module TestInotifyInvariants =
             |> Machines.inProcess
                 pid
                 (fun view ->
-                    match Eager.tryInotifyAddWatch fd (PathArg.ofText path) 0x100u view with
+                    match
+                        Eager.tryInotifyAddWatchAs
+                            (Caller.make pid (Proc.leader pid view))
+                            fd
+                            (PathArg.ofText path)
+                            0x100u
+                            view
+                    with
                     | Ok answered -> answered
                     | Error refusal -> failwith $"%A{refusal}"
                 )
@@ -519,19 +530,22 @@ module TestInotifyInvariants =
     [<Test>]
     let ``step answers inotify_init1 and inotify_rm_watch as the functions do`` () : unit =
         let viaStep =
-            match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0x800) linux with
+            match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x800) linux with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), system) -> int fd, system
             | other -> failwith $"%A{other}"
 
         viaStep |> shouldEqual (init1 0x800 linux)
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyInit1 0x1) linux with
+        match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux with
         | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINVAL), system) -> system |> shouldEqual linux
         | other -> failwith $"%A{other}"
 
         let system, _, _ = instance
 
-        match UnixSystem.tryStep 0 (Syscall.InotifyRmWatch (3, 1)) system, UnixInotify.tryInotifyRmWatch 3 1 system with
+        match
+            UnixSystem.tryStep (Callers.thread 0 system) (Syscall.InotifyRmWatch (3, 1)) system,
+            UnixInotify.tryInotifyRmWatch (Callers.leader system) 3 1 system
+        with
         | Ok (SyscallOutcome.Answered stepped, afterStep), Ok (answered, after) ->
             stepped |> shouldEqual answered
             afterStep |> shouldEqual after
@@ -585,6 +599,7 @@ module TestInotifyInvariants =
                     { proc with
                         Signals =
                             SignalState.setDisposition
+                                (UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                 proc.Signals
@@ -635,9 +650,9 @@ module TestInotifyInvariants =
                 | defects -> failwith $"after %A{op}: %A{defects}"
 
             let finishReader () =
-                match UnixWait.satisfied 1 system with
+                match UnixWait.satisfied (Callers.thread 1 system) system with
                 | Some woken when not (Set.isEmpty woken) ->
-                    match UnixReadWrite.tryFinishRead 1 system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), after) ->
                         cover Label.ReaderInterrupted
                         system <- after
@@ -650,12 +665,14 @@ module TestInotifyInvariants =
                     | other -> failwith $"finishing the read: %A{other}"
 
                     // Its handler runs and returns, as the client would see to.
-                    match UnixSignal.tryOnReturnToUser 1 system with
+                    match UnixSignal.tryOnReturnToUser (Callers.thread 1 system) system with
                     | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) -> system <- after
                     | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
                         system <-
                             (after, frames)
-                            ||> List.fold (fun system frame -> UnixSignal.sigreturn 1 frame.Id system)
+                            ||> List.fold (fun system frame ->
+                                UnixSignal.sigreturn (Callers.thread 1 system) frame.Id system
+                            )
                     | other -> failwith $"%A{other}"
                 | _ -> ()
 
@@ -665,7 +682,12 @@ module TestInotifyInvariants =
                     match Array.tryFindIndex Option.isNone slots with
                     | None -> ()
                     | Some free ->
-                        match UnixInotify.tryInotifyInit1 (if nonBlocking then 0x800 else 0) system with
+                        match
+                            UnixInotify.tryInotifyInit1
+                                (Callers.leader system)
+                                (if nonBlocking then 0x800 else 0)
+                                system
+                        with
                         | Ok (Ok (fd, after)) ->
                             system <- after
                             slots.[free] <- Some fd
@@ -680,7 +702,7 @@ module TestInotifyInvariants =
                 | Op.Remove (slot, wd) ->
                     let fd = slots.[slot] |> Option.defaultValue 99
 
-                    match UnixInotify.tryInotifyRmWatch fd wd system with
+                    match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
                     | Ok (_, after) ->
                         system <- after
 
@@ -714,7 +736,14 @@ module TestInotifyInvariants =
                         ()
                     else
 
-                    match UnixReadWrite.tryRead (if asleep then 0 else 1) fd buffer (uint64 count) system with
+                    match
+                        UnixReadWrite.tryRead
+                            (Callers.thread (if asleep then 0 else 1) system)
+                            fd
+                            buffer
+                            (uint64 count)
+                            system
+                    with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         if bytes.Length > 0 then
                             cover Label.ReadTookRecords
@@ -732,7 +761,7 @@ module TestInotifyInvariants =
                 | Op.Dup slot ->
                     match slots.[slot], Array.tryFindIndex Option.isNone slots with
                     | Some fd, Some free ->
-                        match UnixDescriptor.tryDup fd system with
+                        match UnixDescriptor.tryDup (Callers.leader system) fd system with
                         | Ok (SyscallAnswer.Completed copy, after) ->
                             system <- after
                             slots.[free] <- Some (int copy)
@@ -745,7 +774,7 @@ module TestInotifyInvariants =
                         if asleep then
                             cover Label.ClosedUnderSleepingReader
 
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
                         | Ok (_, after) ->
                             system <- after
                             slots.[slot] <- None
@@ -758,6 +787,7 @@ module TestInotifyInvariants =
                                 { proc with
                                     Signals =
                                         SignalState.enqueue
+                                            (UnixSystemState.signalNumbering system)
                                             {
                                                 Signal = Signal.SIGUSR1
                                                 Target = ValueSome 1
@@ -948,7 +978,7 @@ module TestInotifyInvariants =
                 AccessMode = FileAccessMode.ReadOnly
                 NonBlocking = false
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
             }
 
         Assert.Throws<exn> (fun () ->

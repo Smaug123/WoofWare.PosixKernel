@@ -45,17 +45,20 @@ module TestWakeCondition =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
-        let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
+        let blockedFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         // Two kqueues, for `KqueueDrained`'s two live answers: fds 5 and 6. The world is
         // Linux's, which has no kqueue; the primitive asks only of the description.
         let _, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let drainedFd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId registry
+            FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Linux (Lone.proc system).ProcessId registry
 
         let registry =
             match FileDescriptorRegistry.tryFindId drainedFd registry with
@@ -86,7 +89,7 @@ module TestWakeCondition =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listenerFd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listenerFd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -137,9 +140,11 @@ module TestWakeCondition =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -156,7 +161,7 @@ module TestWakeCondition =
         let system, _, _ = world
 
         let created (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match UnixInotify.tryInotifyInit1 0 system with
+            match UnixInotify.tryInotifyInit1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"creating an inotify instance: %A{other}"
 
@@ -169,7 +174,7 @@ module TestWakeCondition =
             | other -> failwith $"watching the root: %A{other}"
 
         let system =
-            match UnixInotify.tryInotifyRmWatch queuedFd 1 system with
+            match UnixInotify.tryInotifyRmWatch (Callers.leader system) queuedFd 1 system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"removing the watch: %A{other}"
 

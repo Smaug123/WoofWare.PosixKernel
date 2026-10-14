@@ -230,7 +230,7 @@ module TestReadLinkMode =
         (system : UnixSystem<int, string>)
         : Result<ReadLinkAnswer, ReadLinkRefusal>
         =
-        UnixNamespace.tryReadlink (PathArg.ofText path) buffer capacity system
+        UnixNamespace.tryReadlink (Callers.leader system) (PathArg.ofText path) buffer capacity system
 
     // ------------------------------------------------------------ Darwin: the owner
 
@@ -365,6 +365,7 @@ module TestReadLinkMode =
                     | other -> failwith $"%s{context}: the probe passed no dirfd %s{other}"
 
                 UnixNamespace.tryReadlinkat
+                    (Callers.leader system)
                     dirfd
                     (PathArg.ofText (pathArgument path))
                     (bufferArgument buffer)
@@ -381,7 +382,7 @@ module TestReadLinkMode =
         else
 
         let status (policy : SymlinkPolicy) : string =
-            match UnixPathResolution.tryStat policy (PathArg.ofText "l") system with
+            match UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofText "l") system with
             | Ok (FileStatusAnswer.Reported _) -> "ok"
             | Ok (FileStatusAnswer.Failed error) -> $"%A{error}"
             | Error refusal -> $"refused: %A{refusal}"
@@ -671,7 +672,14 @@ module TestReadLinkMode =
         let answer =
             if case.FromDescriptor then
                 let dirfd, system = opened "." system
-                UnixNamespace.tryReadlinkat dirfd (PathArg.ofText "l") case.Buffer case.Capacity system
+
+                UnixNamespace.tryReadlinkat
+                    (Callers.leader system)
+                    dirfd
+                    (PathArg.ofText "l")
+                    case.Buffer
+                    case.Capacity
+                    system
             else
                 readlink "l" case.Buffer case.Capacity system
 

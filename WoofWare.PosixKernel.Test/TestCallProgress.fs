@@ -44,7 +44,7 @@ module TestCallProgress =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte (i % 251)))
 
     let private nonBlocking (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        snd (UnixDescriptor.setNonBlocking fd value system)
+        snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd value system)
 
     /// A pipe on `platform`, `prefill` bytes into it as far as it takes them
     /// without blocking, and its write end blocking or not as `writeNonBlocking`
@@ -56,7 +56,9 @@ module TestCallProgress =
         : int * UnixSystem<int, string>
         =
         let writeFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped (systemOn platform) with
+            let system = systemOn platform
+
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (_, writeFd), system) -> writeFd, system
             | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
@@ -97,7 +99,7 @@ module TestCallProgress =
             =
             let writeFd, system = pipeWith platform prefill writeNonBlocking
 
-            match UnixReadWrite.write 0 writeFd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.write (Callers.thread 0 system) writeFd UserBuffer.Mapped (uint64 count) system with
             | CallProgress.Answered _ -> cover Reached.Answered
             | CallProgress.NeedsCopyIn paused ->
                 let range = PausedWrite.copyRange paused
@@ -138,8 +140,10 @@ module TestCallProgress =
             (coverage.Count reached >= 20) |> shouldEqual true
 
     let private socketOn (platform : SimulatedUnixPlatform) : int * UnixSystem<int, string> =
+        let system = systemOn platform
+
         // AF_INET and SOCK_STREAM are 2 and 1 under both flavours.
-        match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 (systemOn platform) with
+        match UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system with
         | Ok (fd, system) -> fd, system
         | Error error -> failwith $"socket failed with %O{error}"
 
@@ -147,7 +151,7 @@ module TestCallProgress =
     let ``a bind that copies no bytes of its sockaddr answers without stopping`` () : unit =
         let fd, system = socketOn SimulatedUnixPlatform.linuxX64
 
-        match UnixSocket.bind fd UserBuffer.Mapped 0u system with
+        match UnixSocket.bind (Callers.leader system) fd UserBuffer.Mapped 0u system with
         | CallProgress.Answered (BindAnswer.Failed _, after) -> (after = system) |> shouldEqual true
         | other -> failwith $"a bind of a zero-length sockaddr answered %A{other}"
 
@@ -155,7 +159,7 @@ module TestCallProgress =
     let ``a bind resumed with other than the bytes it asked for fails loudly`` () : unit =
         let fd, system = socketOn SimulatedUnixPlatform.linuxX64
 
-        match UnixSocket.bind fd UserBuffer.Mapped 16u system with
+        match UnixSocket.bind (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | CallProgress.NeedsCopyIn paused ->
             let range = PausedBind.copyRange paused
 
@@ -287,6 +291,7 @@ module TestCallProgress =
 
         match
             UnixSocket.getsockopt
+                (Callers.leader system)
                 fd
                 (SimulatedUnixPlatform.socketOptionLevel platform)
                 (SimulatedUnixPlatform.reuseAddressOption platform)

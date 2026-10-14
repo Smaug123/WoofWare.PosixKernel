@@ -366,6 +366,7 @@ module TestUnconnectedSocketTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
                         proc.Signals
@@ -398,7 +399,7 @@ module TestUnconnectedSocketTransfer =
                 | other -> failwith $"the kernel would not bind %A{row}: %A{other}"
 
         let listening (system : UnixSystem<int, string>) =
-            match UnixSocket.tryListen fd 4 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 4 system with
             | Ok (ListenAnswer.Listening _, system) -> Some system
             | Ok (ListenAnswer.Failed _, _)
             | Error _ -> None
@@ -413,7 +414,7 @@ module TestUnconnectedSocketTransfer =
         built
         |> Option.map (fun system ->
             if row.NonBlocking then
-                match UnixDescriptor.setNonBlocking fd true system with
+                match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
                 | SetNonBlockingAnswer.Set, system -> fd, system
                 | other, _ -> failwith $"the kernel would not set O_NONBLOCK: %A{other}"
             else
@@ -474,7 +475,7 @@ module TestUnconnectedSocketTransfer =
     let private kernelAgrees (row : Row) (fd : int) (system : UnixSystem<int, string>) : bool =
         match row.Call with
         | Call.Read count ->
-            match UnixReadWrite.tryRead 1 fd UserBuffer.Mapped count system, row.Seen with
+            match UnixReadWrite.tryRead (Callers.thread 1 system) fd UserBuffer.Mapped count system, row.Seen with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after), Seen.ReturnedZero ->
                 bytes.IsEmpty && after = system
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after), Seen.Failed seen ->

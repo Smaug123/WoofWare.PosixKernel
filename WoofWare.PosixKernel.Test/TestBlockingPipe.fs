@@ -573,11 +573,11 @@ module TestBlockingPipe =
 
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -716,7 +716,7 @@ module TestBlockingPipe =
                  |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)),
                  [ 0 ; 1 ; 2 ])
                 ||> List.fold (fun system fd ->
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"%A{refusal}"
                 )
@@ -731,8 +731,12 @@ module TestBlockingPipe =
                     { proc with
                         Signals =
                             proc.Signals
-                            |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                             |> SignalState.setDisposition
+                                (UnixSystemState.signalNumbering bare)
+                                Signal.SIGPIPE
+                                SignalDisposition.Ignore
+                            |> SignalState.setDisposition
+                                (UnixSystemState.signalNumbering bare)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -742,7 +746,7 @@ module TestBlockingPipe =
                 )
 
             let mutable system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped bare with
+                match UnixPipe.tryPipe2 (Callers.leader bare) 0 UserBuffer.Mapped bare with
                 | Ok (Pipe2Answer.Created (0, 1), system) -> system
                 | other -> failwith $"pipe2: %A{other}"
 
@@ -816,6 +820,13 @@ module TestBlockingPipe =
                 let woken (thread : int) =
                     Map.tryFind thread reference.Parks |> Option.exists (fun park -> park.Woken)
 
+                // A call that names no thread of its own is made by the first
+                // thread in no call, and by none while every thread is in one.
+                let idleCaller = List.tryFind idle threads
+
+                let caller (system : UnixSystem<int, string>) : Caller<int> =
+                    Callers.thread (Option.get idleCaller) system
+
                 // The op with its thread resolved, or `None` where no thread can
                 // take it.
                 let resolved =
@@ -831,7 +842,7 @@ module TestBlockingPipe =
                     | BlockingPipeOp.Close _
                     | BlockingPipeOp.Dup _
                     | BlockingPipeOp.Dup2 _
-                    | BlockingPipeOp.SetNonBlocking _
+                    | BlockingPipeOp.SetNonBlocking _ -> idleCaller |> Option.map (fun _ -> op)
                     | BlockingPipeOp.Wake -> Some op
 
                 match resolved with
@@ -958,7 +969,7 @@ module TestBlockingPipe =
                             UserBuffer.Unmapped 8UL
 
                     let seen, actual =
-                        fromRead (UnixReadWrite.tryRead thread fd buffer (uint64 count) system)
+                        fromRead (UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system)
 
                     compare where expected seen
                     cover (label flavourName "read" seen)
@@ -983,7 +994,7 @@ module TestBlockingPipe =
                     let after, afterReference =
                         closing
                             fd
-                            (UnixDescriptor.tryClose fd)
+                            (fun system -> UnixDescriptor.tryClose (caller system) fd system)
                             (if Map.containsKey fd reference.Fds then
                                  SyscallAnswer.Completed 0L
                              else
@@ -1006,7 +1017,7 @@ module TestBlockingPipe =
                             closing
                                 newFd
                                 (fun system ->
-                                    UnixDescriptor.tryDup2 oldFd newFd system
+                                    UnixDescriptor.tryDup2 (caller system) oldFd newFd system
                                     |> Result.mapError (fun refusal ->
                                         match refusal with
                                         | Dup2Refusal.ClosingTarget refusal -> refusal
@@ -1032,7 +1043,7 @@ module TestBlockingPipe =
                             | Some _ when newFd >= 0 -> SyscallAnswer.Completed (int64 newFd)
                             | _ -> SyscallAnswer.Failed UnixError.EBADF
 
-                        match UnixDescriptor.tryDup2 oldFd newFd system with
+                        match UnixDescriptor.tryDup2 (caller system) oldFd newFd system with
                         | Ok (answer, after) ->
                             answer |> shouldEqual expected
                             system <- after
@@ -1048,7 +1059,7 @@ module TestBlockingPipe =
                             failwith
                                 $"%s{where ()}: dup2 onto a closed or the same descriptor was refused: %s{Dup2Refusal.describe refusal}"
                 | BlockingPipeOp.Dup fd ->
-                    let answer, after = Answered.dup fd system
+                    let answer, after = Answered.dup (caller system) fd system
 
                     match Map.tryFind fd reference.Fds with
                     | None -> answer |> shouldEqual (SyscallAnswer.Failed UnixError.EBADF)
@@ -1065,7 +1076,7 @@ module TestBlockingPipe =
 
                     system <- after
                 | BlockingPipeOp.SetNonBlocking (fd, value) ->
-                    let _, after = UnixDescriptor.setNonBlocking fd value system
+                    let _, after = UnixDescriptor.setNonBlocking (caller system) fd value system
                     system <- after
 
                     match Map.tryFind fd reference.Fds with
@@ -1082,6 +1093,7 @@ module TestBlockingPipe =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1140,7 +1152,7 @@ module TestBlockingPipe =
 
                     let seen, actual =
                         match call with
-                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead thread system)
+                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead (Callers.thread thread system) system)
                         | Call.Writing (_, payload, _, _) -> fromWrite (libraryFinishWrite thread payload system)
 
                     compare where expected seen
@@ -1337,8 +1349,12 @@ module TestBlockingPipe =
                 { proc with
                     Signals =
                         proc.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch
                                 { SignalCatch.ofHandler "h" with
@@ -1348,12 +1364,12 @@ module TestBlockingPipe =
             )
 
         let system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (3, 4), system) -> system
             | other -> failwith $"pipe2: %A{other}"
 
         // Filled by non-blocking writes, as the probe fills it.
-        let _, system = UnixDescriptor.setNonBlocking 4 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 4 true system
 
         let rec fill (remaining : int) (system : UnixSystem<int, string>) =
             if remaining = 0 then
@@ -1371,11 +1387,11 @@ module TestBlockingPipe =
                 | other -> failwith $"filling: %A{other}"
 
         let system = fill prefill system
-        let _, system = UnixDescriptor.setNonBlocking 4 false system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 4 false system
         system
 
     let private readerAsleep (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixReadWrite.tryRead sleeper 3 UserBuffer.Mapped 16UL system with
+        match UnixReadWrite.tryRead (Callers.thread sleeper system) 3 UserBuffer.Mapped 16UL system with
         | Ok (ReadOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -1402,7 +1418,7 @@ module TestBlockingPipe =
         | other -> failwith $"expected to write %d{count}, got %A{other}"
 
     let private closed (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing %d{fd}: %A{other}"
 
@@ -1412,6 +1428,7 @@ module TestBlockingPipe =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome sleeper
@@ -1423,7 +1440,7 @@ module TestBlockingPipe =
     /// The sleeper's call, finished.
     let private finished (payloadOfWrite : byte list option) (system : UnixSystem<int, string>) : Seen =
         match payloadOfWrite with
-        | None -> fst (fromRead (UnixReadWrite.tryFinishRead sleeper system))
+        | None -> fst (fromRead (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system))
         | Some payload -> fst (fromWrite (libraryFinishWrite sleeper payload system))
 
     /// What the sleeper sleeps in, in the table test.
@@ -1576,7 +1593,9 @@ module TestBlockingPipe =
                                 | Ok (WriteStep.WouldBlock (_, system)) -> system
                                 | other -> failwith $"%A{other}"
                             else
-                                match UnixReadWrite.tryRead thread 3 UserBuffer.Mapped 1UL system with
+                                match
+                                    UnixReadWrite.tryRead (Callers.thread thread system) 3 UserBuffer.Mapped 1UL system
+                                with
                                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                                 | other -> failwith $"%A{other}"
                         )
@@ -1614,7 +1633,9 @@ module TestBlockingPipe =
         let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> Threads.spawn 2
 
         let system =
-            match UnixReadWrite.tryRead 2 3 UserBuffer.Mapped 1UL (readerAsleep system) with
+            let asleep = readerAsleep system
+
+            match UnixReadWrite.tryRead (Callers.thread 2 asleep) 3 UserBuffer.Mapped 1UL asleep with
             | Ok (ReadOutcome.WouldBlock _, system) -> system
             | other -> failwith $"%A{other}"
 
@@ -1626,7 +1647,7 @@ module TestBlockingPipe =
 
         let system = leaderReads 1 system
 
-        match UnixReadWrite.tryFinishRead sleeper system with
+        match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system with
         | Ok (ReadOutcome.WouldBlock _, system) ->
             let system = leaderWrites 1 system
 
@@ -1680,11 +1701,11 @@ module TestBlockingPipe =
             let system = pipeHolding platform false 0
 
             let system =
-                match UnixReadWrite.tryRead sleeper 3 (UserBuffer.Unmapped 1UL) 8UL system with
+                match UnixReadWrite.tryRead (Callers.thread sleeper system) 3 (UserBuffer.Unmapped 1UL) 8UL system with
                 | Ok (ReadOutcome.WouldBlock _, system) -> leaderWrites 3 system
                 | other -> failwith $"%A{other}"
 
-            match UnixReadWrite.tryFinishRead sleeper system with
+            match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EFAULT), system) ->
                 PipeBuffer.held (UnixMachineState.pipe (PipeId 3L) system.Machine).Buffer
                 |> shouldEqual 3
@@ -1736,7 +1757,7 @@ module TestBlockingPipe =
 
             let system =
                 if dupKept then
-                    match Answered.dup 3 system with
+                    match Answered.dup (Callers.leader system) 3 system with
                     | SyscallAnswer.Completed _, system -> system
                     | other -> failwith $"%A{other}"
                 else
@@ -1754,7 +1775,7 @@ module TestBlockingPipe =
             |> shouldEqual [ sleeper ]
 
             let system =
-                match UnixReadWrite.tryFinishRead sleeper system with
+                match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                     List.ofSeq bytes |> shouldEqual (payload 3 3)
                     returnToUser sleeper system
@@ -1788,7 +1809,7 @@ module TestBlockingPipe =
 
             let system =
                 if dupKept then
-                    match Answered.dup 4 system with
+                    match Answered.dup (Callers.leader system) 4 system with
                     | SyscallAnswer.Completed _, system -> system
                     | other -> failwith $"%A{other}"
                 else
@@ -1814,7 +1835,7 @@ module TestBlockingPipe =
             UnixSystem.checkInvariants system |> shouldEqual []
 
             let system = leaderReads (65536 - 4096 + 1) system
-            let _, system = UnixDescriptor.setNonBlocking 3 true system
+            let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 3 true system
 
             match ReadOutcomes.read 3 UserBuffer.Mapped 1UL system with
             | Ok (answer, _) ->
@@ -1829,12 +1850,12 @@ module TestBlockingPipe =
 
     /// `thread` asleep in a read of up to 16 bytes through `fd`.
     let private readerAsleepThrough (thread : int) (fd : int) (system : UnixSystem<int, string>) =
-        match UnixReadWrite.tryRead thread fd UserBuffer.Mapped 16UL system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Mapped 16UL system with
         | Ok (ReadOutcome.WouldBlock _, system) -> system
         | other -> failwith $"expected thread %d{thread}'s read through fd %d{fd} to sleep, got %A{other}"
 
     let private dupped (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match Answered.dup fd system with
+        match Answered.dup (Callers.leader system) fd system with
         | SyscallAnswer.Completed newFd, system -> int newFd, system
         | other -> failwith $"dup of %d{fd}: %A{other}"
 
@@ -1872,7 +1893,7 @@ module TestBlockingPipe =
             let system =
                 (system, [ sleeper ; 2 ])
                 ||> List.fold (fun system thread ->
-                    match UnixReadWrite.tryFinishRead thread system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.IsEmpty -> system
                     | other ->
                         failwith
@@ -1951,7 +1972,7 @@ module TestBlockingPipe =
         let system = pipeHolding SimulatedUnixPlatform.macOsArm64 false 0
 
         let condition, system =
-            match UnixReadWrite.tryRead sleeper 3 UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread sleeper system) 3 UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.WouldBlock condition, system) -> condition, system
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -1982,26 +2003,28 @@ module TestBlockingPipe =
                 | SimulatedUnixFlavour.Linux -> false
 
             let system = pipeHolding platform false 0
-            UnixWait.satisfied sleeper system |> shouldEqual None
-            UnixWait.satisfied 99 system |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper system) system |> shouldEqual None
+            UnixWait.satisfied (Callers.thread 99 system) system |> shouldEqual None
 
             let condition, asleep =
-                match UnixReadWrite.tryRead sleeper 3 UserBuffer.Mapped 16UL system with
+                match UnixReadWrite.tryRead (Callers.thread sleeper system) 3 UserBuffer.Mapped 16UL system with
                 | Ok (ReadOutcome.WouldBlock condition, system) -> condition, system
                 | other -> failwith $"expected the read to sleep, got %A{other}"
 
             let reader =
                 FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors asleep) |> Option.get
 
-            UnixWait.satisfied sleeper asleep |> shouldEqual (Some Set.empty)
-            UnixWait.satisfied 99 asleep |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper asleep) asleep
+            |> shouldEqual (Some Set.empty)
+
+            UnixWait.satisfied (Callers.thread 99 asleep) asleep |> shouldEqual None
 
             let written = leaderWrites 1 asleep
 
-            UnixWait.satisfied sleeper written
+            UnixWait.satisfied (Callers.thread sleeper written) written
             |> shouldEqual (Some (Set.singleton (WakePrimitive.PipeHasBytes reader)))
 
-            UnixWait.satisfied sleeper written
+            UnixWait.satisfied (Callers.thread sleeper written) written
             |> shouldEqual (Some (WakeCondition.satisfied sleeper condition written))
 
             // The descriptor the call was made through closes under it: the
@@ -2009,7 +2032,7 @@ module TestBlockingPipe =
             // ends the call.
             let closedUnder = closed 3 asleep
 
-            UnixWait.satisfied sleeper closedUnder
+            UnixWait.satisfied (Callers.thread sleeper closedUnder) closedUnder
             |> shouldEqual (
                 Some (
                     if darwin then
@@ -2023,13 +2046,13 @@ module TestBlockingPipe =
             // parked, and the condition it slept on names a description that
             // has gone.
             let finished =
-                match UnixReadWrite.tryFinishRead sleeper written with
+                match UnixReadWrite.tryFinishRead (Callers.thread sleeper written) written with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                 | other -> failwith $"expected the read to finish, got %A{other}"
 
             let gone = closed 3 finished
             descriptionExists reader gone |> shouldEqual false
-            UnixWait.satisfied sleeper gone |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper gone) gone |> shouldEqual None
 
             Assert.Throws<exn> (fun () -> WakeCondition.satisfied sleeper condition gone |> ignore<Set<WakePrimitive>>)
             |> ignore<exn>
@@ -2052,14 +2075,14 @@ module TestBlockingPipe =
         |> shouldEqual [ sleeper ]
 
         let system =
-            match UnixReadWrite.tryFinishRead sleeper system with
+            match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.IsEmpty -> system
             | other -> failwith $"expected end of file, got %A{other}"
 
         let system = leaderWrites 3 system
         UnixWait.wakes (Set.singleton 2) system |> List.map fst |> shouldEqual [ 2 ]
 
-        match UnixReadWrite.tryFinishRead 2 system with
+        match UnixReadWrite.tryFinishRead (Callers.thread 2 system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
             List.ofSeq bytes |> shouldEqual (payload 3 3)
             UnixSystem.checkInvariants system |> shouldEqual []
@@ -2085,7 +2108,7 @@ module TestBlockingPipe =
             let description =
                 FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Error (CloseRefusal.DarwinWokenTransfer (refusedOn, thread)) ->
                 (refusedOn, thread) |> shouldEqual (description, sleeper)
             | other -> failwith $"expected the close of fd %d{fd} to be refused, got %A{other}"
@@ -2102,13 +2125,13 @@ module TestBlockingPipe =
 
         pipeHolding platform false 65536
         |> writerAsleep 1000
-        |> fun system -> UnixDescriptor.setNonBlocking 4 true system |> snd
+        |> fun system -> UnixDescriptor.setNonBlocking (Callers.leader system) 4 true system |> snd
         |> leaderReads 1
         |> refused 4
 
         let system = pipeHolding platform false 0 |> readerAsleep |> closed 4 |> closed 3
 
-        match UnixReadWrite.tryFinishRead sleeper system with
+        match UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), _) when bytes.IsEmpty -> ()
         | other -> failwith $"expected end of file, got %A{other}"
 
@@ -2129,7 +2152,12 @@ module TestBlockingPipe =
             system
             |> Lone.mapProc (fun proc ->
                 { proc with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                    Signals =
+                        SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            disposition
+                            proc.Signals
                 }
             )
 
@@ -2156,7 +2184,9 @@ module TestBlockingPipe =
         |> shouldEqual [ Signal.SIGPIPE, ValueNone ]
 
         // The default at the close: the process would end.
-        match UnixDescriptor.tryClose 4 (asleep () |> withSigpipe SignalDisposition.Default) with
+        let system = asleep () |> withSigpipe SignalDisposition.Default
+
+        match UnixDescriptor.tryClose (Callers.leader system) 4 system with
         | Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess)) ->
             thread |> shouldEqual sleeper
         | other -> failwith $"expected the close to be refused, got %A{other}"
@@ -2172,7 +2202,7 @@ module TestBlockingPipe =
             }
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"
@@ -2187,7 +2217,9 @@ module TestBlockingPipe =
         let access, _, _ = times duplicate system
         access |> shouldEqual closedAt
 
-        match UnixReadWrite.tryFinishRead sleeper (later system) with
+        let woken = later system
+
+        match UnixReadWrite.tryFinishRead (Callers.thread sleeper woken) woken with
         | Ok (_, after) -> times duplicate after |> shouldEqual (times duplicate system)
         | other -> failwith $"%A{other}"
 
@@ -2214,7 +2246,7 @@ module TestBlockingPipe =
             }
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"
@@ -2260,7 +2292,7 @@ module TestBlockingPipe =
             let after =
                 match writing with
                 | None ->
-                    match UnixReadWrite.tryFinishRead sleeper ended with
+                    match UnixReadWrite.tryFinishRead (Callers.thread sleeper ended) ended with
                     | Ok (ReadOutcome.WouldBlock _, _) -> failwith $"%s{name}: slept again"
                     | Ok (_, after) -> after
                     | other -> failwith $"%s{name}: %A{other}"
@@ -2314,9 +2346,11 @@ module TestBlockingPipe =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR2
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h2"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR2
                                 Target = ValueSome sleeper
@@ -2352,7 +2386,7 @@ module TestBlockingPipe =
             for prefill, expected in [ 65536, 4096L ; 0, 69632L ] do
                 let system = pipeHolding platform false prefill |> writerAsleep 200000
                 // Setting the flag wakes nothing (section I).
-                let _, system = UnixDescriptor.setNonBlocking 4 true system
+                let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 4 true system
                 UnixWait.wakes (Set.singleton sleeper) system |> shouldEqual []
                 let system = leaderReads 4096 system
                 finished (Some (payload 7 200000)) system |> shouldEqual (Seen.Wrote expected)
@@ -2373,12 +2407,14 @@ module TestBlockingPipe =
                         | Ok (WriteStep.WouldBlock (_, system)) -> system
                         | other -> failwith $"%A{other}"
                     else
-                        match UnixReadWrite.tryRead thread 3 UserBuffer.Mapped 1UL system with
+                        match UnixReadWrite.tryRead (Callers.thread thread system) 3 UserBuffer.Mapped 1UL system with
                         | Ok (ReadOutcome.WouldBlock _, system) -> system
                         | other -> failwith $"%A{other}"
 
                 let system = system |> sleep sleeper |> sleep 2
-                let _, system = UnixDescriptor.setNonBlocking (if writing then 4 else 3) true system
+
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) (if writing then 4 else 3) true system
 
                 let system =
                     if writing then
@@ -2393,7 +2429,7 @@ module TestBlockingPipe =
                     if writing then
                         fromWrite (libraryFinishWrite thread (payload thread 4096) system)
                     else
-                        fromRead (UnixReadWrite.tryFinishRead thread system)
+                        fromRead (UnixReadWrite.tryFinishRead (Callers.thread thread system) system)
 
                 let first, after = finish sleeper system
 
@@ -2411,7 +2447,7 @@ module TestBlockingPipe =
         // Section N3: on Linux a sleeper woken and beaten to what woke it
         // sleeps on, whatever the flag says.
         let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> readerAsleep
-        let _, system = UnixDescriptor.setNonBlocking 3 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 3 true system
         let system = leaderWrites 1 system
 
         UnixWait.wakes (Set.singleton sleeper) system
@@ -2420,13 +2456,13 @@ module TestBlockingPipe =
 
         let system = leaderReads 1 system
 
-        fst (fromRead (UnixReadWrite.tryFinishRead sleeper system))
+        fst (fromRead (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) system))
         |> shouldEqual Seen.Sleeps
 
         let system =
             pipeHolding SimulatedUnixPlatform.linuxX64 false 65536 |> writerAsleep 4096
 
-        let _, system = UnixDescriptor.setNonBlocking 4 true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) 4 true system
         let system = leaderReads 4096 system |> leaderWrites 4096
 
         fst (fromWrite (libraryFinishWrite sleeper (payload 7 4096) system))
@@ -2444,7 +2480,10 @@ module TestBlockingPipe =
 
             for nonBlocking in [ false ; true ] do
                 let system = pipeHolding platform false 65536 |> writerAsleep size
-                let _, system = UnixDescriptor.setNonBlocking 4 nonBlocking system
+
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) 4 nonBlocking system
+
                 let system = leaderReads 50 system
                 let woken = UnixWait.wakes (Set.singleton sleeper) system |> List.map fst
                 woken |> shouldEqual (if nonBlocking && not linux then [ sleeper ] else [])

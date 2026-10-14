@@ -244,8 +244,8 @@ module internal KeventRefusal =
 [<RequireQualifiedAccess>]
 module UnixKqueue =
 
-    /// `kqueue`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryKqueue` once `Entry` has admitted its caller.
+    let private tryKqueueIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
         =
@@ -267,18 +267,32 @@ module UnixKqueue =
         // descriptor, O_RDWR, not O_NONBLOCK; and (`fcntl-dup.c`, KIND rows)
         // F_GETFD reports FD_CLOEXEC|FD_CLOFORK.
         let fd, registry =
-            FileDescriptorRegistry.createKqueue system.Process.ProcessId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                system.Process.ProcessId
+                (UnixSystemState.fileDescriptors system)
             |> fun (fd, registry) ->
                 fd,
                 FileDescriptorRegistry.setFlags
                     fd
-                    {
-                        CloseOnExec = true
-                        CloseOnFork = true
-                    }
+                    (DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true))
                     registry
 
         Ok (fd, UnixSystemState.withFileDescriptors registry system)
+
+    /// `kqueue`, with a refusal answered as the `Error` rather than raised.
+    let internal tryKqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
+        =
+        Entry.call
+            "UnixKqueue.kqueue"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            tryKqueueIn
+            system
 
     /// <summary>
     /// `kqueue(2)`: create a kqueue, owned by the calling process, and a
@@ -289,10 +303,11 @@ module UnixKqueue =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kqueue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : int * UnixSystem<'Thread, 'Handler>
         =
-        tryKqueue system
+        tryKqueue caller system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe
 
     /// Whether a close has drained the kqueue `kqueue`: the same question the
@@ -590,8 +605,8 @@ module UnixKqueue =
             Ok (ChangelistOutcome.Failed (UnixError.EFAULT, echoed, system))
         | other -> other
 
-    /// `kevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryKevent` once `Entry` has admitted its caller.
+    let private tryKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (kq : int)
         (nchanges : int)
@@ -605,8 +620,6 @@ module UnixKqueue =
         if List.length changes > max nchanges 0 then
             failwith
                 $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
-
-        UnixThreadTable.requireIssuer "UnixKqueue.kevent" thread system.Threads
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -700,8 +713,28 @@ module UnixKqueue =
         else
             park (Some (now + duration))
 
+    /// `kevent`, with a refusal answered as the `Error` rather than raised.
+    let internal tryKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (kq : int)
+        (nchanges : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (eventlist : UserBuffer)
+        (timeout : KeventTimeout)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        =
+        Entry.call
+            "UnixKqueue.kevent"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryKeventIn (Caller.thread caller) kq nchanges changes nevents eventlist timeout)
+            system
+
     /// <summary>
-    /// `kevent(2)`, made by `thread` through the descriptor `kq`, with a
+    /// `kevent(2)`, made by `caller` through the descriptor `kq`, with a
     /// changelist of `nchanges` entries and room for `nevents` events in
     /// `eventlist`.
     ///
@@ -736,10 +769,10 @@ module UnixKqueue =
     /// reports leaves it if it was added with `EV_CLEAR` and otherwise goes
     /// back to the tail; entries the walk did not reach stay queued in order.
     /// With nothing to report, a timeout of zero returns
-    /// no events at once; a positive one parks `thread` until an event is
-    /// reportable or that much time has passed on the machine's monotonic
-    /// clock, and a null one parks it until an event is reportable. A parked
-    /// wait is finished with `finishKevent`.
+    /// no events at once; a positive one parks the caller's thread until an
+    /// event is reportable or that much time has passed on the machine's
+    /// monotonic clock, and a null one parks it until an event is reportable.
+    /// A parked wait is finished with `finishKevent`.
     ///
     /// Every waiter on one kqueue is woken by an event to report and by the
     /// close that drains it, and a deadline or a signal is each waiter's own.
@@ -747,12 +780,12 @@ module UnixKqueue =
     /// Refused are a change this library does not apply,
     /// a copy of events to an eventlist that is not `Mapped`, and an echo into
     /// an `Opaque` or `Addressless` one.
-    /// `thread` must not already be parked. Under the Linux flavour every call
-    /// is refused: Linux has no kqueue.
+    /// The caller's thread must not already be parked. Under the Linux flavour
+    /// every call is refused: Linux has no kqueue.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let kevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (kq : int)
         (nchanges : int)
         (changes : Kevent list)
@@ -762,7 +795,7 @@ module UnixKqueue =
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryKevent thread kq nchanges changes nevents eventlist timeout system
+        tryKevent caller kq nchanges changes nevents eventlist timeout system
         |> Refusal.orRaise "UnixKqueue.kevent" KeventRefusal.kind KeventRefusal.describe
 
     let private finishKeventHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -836,8 +869,8 @@ module UnixKqueue =
                 UnixWait.parkWaiting thread parkedAgain swept
             )
 
-    /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishKevent` once `Entry` has admitted its caller.
+    let private tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
@@ -855,8 +888,22 @@ module UnixKqueue =
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixKqueue.finishKevent" held after
         )
 
+    /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        =
+        Entry.call
+            "UnixKqueue.finishKevent"
+            CallerRequirement.Woken
+            caller
+            (Shape.result Shape.withSystem)
+            (tryFinishKeventIn (Caller.thread caller))
+            system
+
     /// <summary>
-    /// Finish the `kevent` wait `thread` is parked in, as a woken real wait does.
+    /// Finish the `kevent` wait `caller` is parked in, as a woken real wait does.
     ///
     /// Answers `EBADF` when a close has drained the kqueue; the events it has to
     /// report (as `kevent` reports them), up to the call's `nevents`; no events
@@ -872,13 +919,13 @@ module UnixKqueue =
     /// Reporting events copies them out to the eventlist the call was made
     /// with; see `kevent` for the eventlists that refuses.
     ///
-    /// `thread` must be parked in a `kevent`.
+    /// `caller` must be parked in a `kevent`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let finishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : KeventOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishKevent thread system
+        tryFinishKevent caller system
         |> Refusal.orRaise "UnixKqueue.finishKevent" KeventRefusal.kind KeventRefusal.describe

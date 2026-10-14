@@ -33,7 +33,7 @@ module TestMultiProcess =
 
         let machine = Machines.ofSystem first
 
-        ((([ UnixSystem.processId first ], machine)), [ 2..count ])
+        ((([ Lone.pid first ], machine)), [ 2..count ])
         ||> List.fold (fun (pids, machine) _ ->
             match Machines.tryLaunch (launchOn platform) machine with
             | Ok (pid, machine) -> pids @ [ pid ], machine
@@ -84,7 +84,7 @@ module TestMultiProcess =
         // A thread of the first process takes the next thread ID, so the
         // second process gets the one after.
         let worker, first =
-            match UnixThreadLifecycle.trySpawn 0 1 (CpuId 0) first with
+            match UnixThreadLifecycle.trySpawn (Callers.thread 0 first) 1 (CpuId 0) first with
             | Ok (SpawnAnswer.Spawned worker, first) -> worker, first
             | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn: %O{error}"
             | Error refusal -> failwith $"spawn: %s{SpawnRefusal.describe refusal}"
@@ -99,14 +99,13 @@ module TestMultiProcess =
         ProcessId.toInt32 pid |> shouldEqual 4244
 
         let view = viewOf pid machine
-        UnixSystem.processId view |> shouldEqual pid
+        UnixSystem.processIds view |> shouldEqual (Set.singleton pid)
 
         UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid view))
         |> OsThreadId.toUInt64
         |> shouldEqual 4244UL
 
-        Machines.processIds machine
-        |> shouldEqual (Set.ofList [ UnixSystem.processId first ; pid ])
+        Machines.processIds machine |> shouldEqual (Set.ofList [ Lone.pid first ; pid ])
 
         assertClean machine
 
@@ -254,11 +253,17 @@ module TestMultiProcess =
 
     // ---------------------------------------------------------- shared machine
 
-    let private bindAt (port : uint16) (view : UnixSystem<int, string>) : BindAnswer * UnixSystem<int, string> =
-        let fd, view = KeventWorld.stream true view
+    let private bindAt
+        (pid : ProcessId)
+        (port : uint16)
+        (view : UnixSystem<int, string>)
+        : BindAnswer * UnixSystem<int, string>
+        =
+        let fd, view = KeventWorld.streamIn pid true view
 
         match
-            CopyIn.bind
+            CopyIn.bindAs
+                (Caller.make pid (Proc.leader pid view))
                 fd
                 UserBuffer.Mapped
                 16u
@@ -274,17 +279,17 @@ module TestMultiProcess =
             let pids, machine = machineOf platform 2
             let a, b = pids.[0], pids.[1]
 
-            let answer, machine = inProcess a (bindAt 8080us) machine
+            let answer, machine = inProcess a (bindAt a 8080us) machine
 
             match answer with
             | BindAnswer.Bound _ -> ()
             | other -> failwith $"the first bind answered %A{other}"
 
-            let answer, machine = inProcess b (bindAt 8080us) machine
+            let answer, machine = inProcess b (bindAt b 8080us) machine
             answer |> shouldEqual (BindAnswer.Failed UnixError.EADDRINUSE)
 
             // ...and a different port is free to it.
-            let answer, machine = inProcess b (bindAt 8081us) machine
+            let answer, machine = inProcess b (bindAt b 8081us) machine
 
             match answer with
             | BindAnswer.Bound _ -> ()
@@ -330,10 +335,10 @@ module TestMultiProcess =
             // first open is 3.
             fds |> shouldEqual [ 3 ; 3 ]
 
-            let write (text : string) (view : UnixSystem<int, string>) =
+            let write (pid : ProcessId) (text : string) (view : UnixSystem<int, string>) =
                 match
-                    WriteOutcomes.writeBytes
-                        0
+                    WriteOutcomes.writeBytesAs
+                        (Caller.make pid 0)
                         1
                         (ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text))
                         view
@@ -341,9 +346,9 @@ module TestMultiProcess =
                 | Ok (WriteStep.Returns (_, view)) -> (), view
                 | other -> failwith $"write: %A{other}"
 
-            let (), machine = inProcess pids.[0] (write "first") machine
-            let (), machine = inProcess pids.[1] (write "second") machine
-            let (), machine = inProcess pids.[0] (write "again") machine
+            let (), machine = inProcess pids.[0] (write pids.[0] "first") machine
+            let (), machine = inProcess pids.[1] (write pids.[1] "second") machine
+            let (), machine = inProcess pids.[0] (write pids.[0] "again") machine
 
             UnixSystem.delivered (viewOf pids.[0] machine)
             |> DeliveryLog.toList
@@ -359,14 +364,29 @@ module TestMultiProcess =
 
             assertClean machine
 
-    let private mkdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        Answered.mkdir (PathArg.ofText path) 0o755 view
+    let private mkdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        Answered.mkdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) 0o755 view
 
-    let private chdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        Answered.chdir (PathArg.ofText path) view
+    let private chdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        Answered.chdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) view
 
-    let private rmdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        match UnixNamespace.tryRmdir (PathArg.ofText path) view with
+    let private rmdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        match UnixNamespace.tryRmdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) view with
         | Ok answered -> answered
         | Error refusal -> failwith $"rmdir: %s{RemovalRefusal.describe refusal}"
 
@@ -376,11 +396,11 @@ module TestMultiProcess =
             let pids, machine = machineOf platform 2
             let a, b = pids.[0], pids.[1]
 
-            let _, machine = inProcess a (mkdir "/d") machine
-            let _, machine = inProcess a (chdir "/d") machine
+            let _, machine = inProcess a (mkdir a "/d") machine
+            let _, machine = inProcess a (chdir a "/d") machine
             let standing = (Proc.state a (viewOf a machine)).CurrentDirectoryInode
 
-            let answer, machine = inProcess b (rmdir "/d") machine
+            let answer, machine = inProcess b (rmdir b "/d") machine
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
 
             // No name reaches it, and it is still there: a stands in it.
@@ -391,7 +411,7 @@ module TestMultiProcess =
             assertClean machine
 
             // Stepping out lets it go.
-            let _, machine = inProcess a (chdir "/") machine
+            let _, machine = inProcess a (chdir a "/") machine
 
             VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
             |> shouldEqual None
@@ -404,7 +424,7 @@ module TestMultiProcess =
         let first = viewOf pids.[0] machine
         let second = viewOf pids.[1] machine
 
-        let _, second = KeventWorld.dup 1 second
+        let _, second = KeventWorld.dupIn pids.[1] 1 second
         let machine' = Machines.unfocus second machine
 
         let error = Assert.Throws<exn> (fun () -> Machines.unfocus first machine' |> ignore)
@@ -430,13 +450,13 @@ module TestMultiProcess =
         Machines.holdsProcessOf first machine |> shouldEqual true
 
         // Another process's change goes stale only the machine in `first`.
-        let _, second = KeventWorld.dup 1 second
+        let _, second = KeventWorld.dupIn pids.[1] 1 second
         let machine = Machines.unfocus second machine
         Machines.holdsProcessOf first machine |> shouldEqual true
 
         // A change of `first`'s own process, written back from another view of it, is one
         // `first` never saw.
-        let _, machine = inProcess pids.[0] (KeventWorld.dup 1) machine
+        let _, machine = inProcess pids.[0] (KeventWorld.dupIn pids.[0] 1) machine
         Machines.holdsProcessOf first machine |> shouldEqual false
 
         // A process the machine does not hold.

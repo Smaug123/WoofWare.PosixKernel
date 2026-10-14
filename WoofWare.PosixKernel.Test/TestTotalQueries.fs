@@ -131,7 +131,7 @@ module TestTotalQueries =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let socketIdOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-                match UnixSystem.descriptorTarget fd system with
+                match UnixSystem.descriptorTarget (Lone.pid system) fd system with
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"descriptor %d{fd} names %A{other} rather than a socket"
 
@@ -144,7 +144,7 @@ module TestTotalQueries =
                         let socketId = socketIdOf fd system
 
                         if close then
-                            match UnixDescriptor.tryClose fd system with
+                            match UnixDescriptor.tryClose (Callers.leader system) fd system with
                             | Ok (SyscallAnswer.Completed _, system) -> live, Set.add socketId closed, system
                             | other -> failwith $"closing socket descriptor %d{fd}: %A{other}"
                         else
@@ -195,16 +195,18 @@ module TestTotalQueries =
             let child = 1
 
             if unknown <> 0 && unknown <> child then
-                Map.tryFind unknown (UnixSystem.threads system) |> shouldEqual None
+                Map.tryFind unknown (UnixSystem.threads (Lone.pid system) system)
+                |> shouldEqual None
 
-            Map.tryFind child (UnixSystem.threads system) |> shouldEqual None
+            Map.tryFind child (UnixSystem.threads (Lone.pid system) system)
+            |> shouldEqual None
 
             let tid, system =
-                match UnixThreadLifecycle.trySpawn 0 child (CpuId cpu.Get) system with
+                match UnixThreadLifecycle.trySpawn (Callers.thread 0 system) child (CpuId cpu.Get) system with
                 | Ok (SpawnAnswer.Spawned tid, system) -> tid, system
                 | other -> failwith $"spawning thread %d{child}: %A{other}"
 
-            match Map.tryFind child (UnixSystem.threads system) with
+            match Map.tryFind child (UnixSystem.threads (Lone.pid system) system) with
             | Some thread ->
                 UnixThreadState.cpu thread |> shouldEqual (CpuId cpu.Get)
                 UnixThreadState.osThreadId thread |> shouldEqual tid
@@ -212,10 +214,11 @@ module TestTotalQueries =
             | None -> failwith $"thread %d{child} was spawned, but the process holds no thread by that name"
 
             let system =
-                match UnixThreadLifecycle.tryExitThread child 0 system with
+                match UnixThreadLifecycle.tryExitThread (Callers.thread child system) 0 system with
                 | Ok (ProcessFate.Continues ((), system)) -> system
                 | other -> failwith $"thread %d{child}'s exit: %A{other}"
 
-            Map.tryFind child (UnixSystem.threads system) |> shouldEqual None
+            Map.tryFind child (UnixSystem.threads (Lone.pid system) system)
+            |> shouldEqual None
 
         Check.One (Config.QuickThrowOnFailure, property)

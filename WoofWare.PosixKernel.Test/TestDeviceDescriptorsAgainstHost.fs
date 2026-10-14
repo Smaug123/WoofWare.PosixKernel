@@ -176,7 +176,7 @@ module TestDeviceDescriptorsAgainstHost =
         let writeOnly, system = modelOpen FileAccessMode.WriteOnly path system
 
         let read (fd : int) (buffer : UserBuffer) (count : uint64) : Answer =
-            match UnixReadWrite.tryRead 0 fd buffer count system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd buffer count system with
             | Ok (ReadOutcome.Answered answer, _) -> ofRead answer
             | other -> failwith $"the model's read: %A{other}"
 
@@ -197,7 +197,7 @@ module TestDeviceDescriptorsAgainstHost =
                     for offset in [ 0L ; -5L ; System.Int64.MaxValue ] do
                         $"lseek %d{offset} %d{whence}",
                         hostAnswer (hostLSeek (host, offset, whence)),
-                        (match UnixDescriptor.tryLseek fd offset whence system with
+                        (match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
                          | Ok (answer, _) -> ofSyscall answer
                          | Error refusal -> failwith $"the model's lseek: %A{refusal}")
 
@@ -228,7 +228,7 @@ module TestDeviceDescriptorsAgainstHost =
                 for offset in [ 0L ; 1L <<< 40 ; -1L ; System.Int64.MaxValue ] do
                     $"pread 16@%d{offset}",
                     hostAnswer (int64 (hostPRead (host, Array.zeroCreate 16, 16un, offset))),
-                    (match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 16UL offset system with
+                    (match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 16UL offset system with
                      | Ok (answer, _) -> ofRead answer
                      | Error refusal -> failwith $"the model's pread: %A{refusal}")
 
@@ -252,7 +252,7 @@ module TestDeviceDescriptorsAgainstHost =
                 for length in [ 0L ; 10L ; -1L ] do
                     $"ftruncate %d{length}",
                     hostAnswer (int64 (hostFTruncate (host, length))),
-                    (match UnixDescriptor.tryFtruncate fd length system with
+                    (match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
                      | Ok (answer, _) -> ofSyscall answer
                      | Error refusal -> failwith $"the model's ftruncate: %A{refusal}")
 
@@ -264,21 +264,21 @@ module TestDeviceDescriptorsAgainstHost =
                     ] do
                     $"posix_fadvise %d{offset} %d{length} %d{advice}",
                     fromErrno (hostFadvise (host, offset, length, advice)),
-                    (match UnixDescriptor.tryPosixFadvise fd offset length advice system with
+                    (match UnixDescriptor.tryPosixFadvise (Callers.leader system) fd offset length advice system with
                      | Ok FileAdviceAnswer.Completed -> Ok 0L
                      | Ok (FileAdviceAnswer.Failed error) -> Error error
                      | Error refusal -> failwith $"the model's posix_fadvise: %A{refusal}")
 
                 "FIONREAD",
                 hostFionread host,
-                (match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+                (match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
                  | Ok (BytesAvailableAnswer.Reported count) -> Ok (int64 count)
                  | Ok (BytesAvailableAnswer.Failed error) -> Error error
                  | Error refusal -> failwith $"the model's FIONREAD: %A{refusal}")
 
                 "tcgetattr",
                 hostAnswer (int64 (hostTcGetAttr (host, Array.zeroCreate 256))),
-                (match UnixDescriptor.terminalAttributes fd system with
+                (match UnixDescriptor.terminalAttributes (Callers.leader system) fd system with
                  | TerminalAttributesAnswer.NotATerminal error -> Error error)
 
                 for events in [ 0s ; 1s ; 4s ; 0x7FFFs ] do
@@ -286,7 +286,7 @@ module TestDeviceDescriptorsAgainstHost =
                     hostPollOnce host events,
                     (match
                         UnixPoll.tryPoll
-                            0
+                            (Callers.thread 0 system)
                             [
                                 {
                                     Fd = fd
@@ -311,11 +311,21 @@ module TestDeviceDescriptorsAgainstHost =
                  finally
                      hostClose epoll |> ignore<int>),
                 (let queueFd, registry =
-                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+                    FileDescriptorRegistry.createEpoll
+                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        (Lone.fileDescriptors system)
 
                  let system = Lone.withFileDescriptors registry system
 
-                 match UnixPoll.tryEpollCtl queueFd 1 fd (EpollEventArgument.Readable (1u, 0UL)) system with
+                 match
+                     UnixPoll.tryEpollCtl
+                         (Callers.leader system)
+                         queueFd
+                         1
+                         fd
+                         (EpollEventArgument.Readable (1u, 0UL))
+                         system
+                 with
                  | Ok (EpollCtlAnswer.Changed, _) -> Ok 0L
                  | Ok (EpollCtlAnswer.Failed EpollCtlError.TargetNotPollable, _) -> Error UnixError.EPERM
                  | other -> failwith $"the model's epoll_ctl: %A{other}")
@@ -325,9 +335,9 @@ module TestDeviceDescriptorsAgainstHost =
                  let second = hostAnswer (int64 (hostFlock (hostWriteOnly, 6)))
                  hostFlock (host, 8) |> ignore<int>
                  first |> Result.bind (fun _ -> second)),
-                (match UnixDescriptor.tryFlock 0 fd 6 system with
+                (match UnixDescriptor.tryFlock (Callers.thread 0 system) fd 6 system with
                  | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), locked) ->
-                     match UnixDescriptor.tryFlock 0 writeOnly 6 locked with
+                     match UnixDescriptor.tryFlock (Callers.thread 0 locked) writeOnly 6 locked with
                      | Ok (SyscallOutcome.Answered answer, _) -> ofSyscall answer
                      | other -> failwith $"the model's second flock: %A{other}"
                  | other -> failwith $"the model's first flock: %A{other}")

@@ -40,7 +40,7 @@ module TestSocketTable =
     /// `close(2)`. A refusal crashes the test; an errno comes back, because that
     /// is an answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -89,6 +89,7 @@ module TestSocketTable =
         =
         let registry =
             FileDescriptorRegistry.Unchecked.ofParts
+                SimulatedUnixFlavour.Linux
                 (descriptions |> List.map (fun (fd, id, _) -> fd, id) |> Map.ofList)
                 (descriptions
                  |> List.map (fun (_, id, target) ->
@@ -98,7 +99,7 @@ module TestSocketTable =
                          AccessMode = FileAccessMode.ReadWrite
                          NonBlocking = false
                          Flock = None
-                         Status = OpenFileStatus.none
+                         Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                      }
                  )
                  |> Map.ofList)
@@ -189,7 +190,12 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let duped, kernel =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors kernel)
+            with
             | Ok (duped, registry) -> duped, Lone.withFileDescriptors registry kernel
             | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
@@ -218,7 +224,9 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let epoll, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                (Lone.fileDescriptors kernel)
 
         let kernel = Lone.withFileDescriptors registry kernel
 
@@ -392,7 +400,12 @@ module TestSocketTable =
                     | Error e -> failwith $"unexpected close error: %O{e}"
                 | 2
                 | 3 ->
-                    match FileDescriptorRegistry.dup live.[rng.Next live.Length] (Lone.fileDescriptors kernel) with
+                    match
+                        FileDescriptorRegistry.dup
+                            (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                            live.[rng.Next live.Length]
+                            (Lone.fileDescriptors kernel)
+                    with
                     | Ok (_, registry) ->
                         kernel <- Lone.withFileDescriptors registry kernel
 
@@ -419,11 +432,15 @@ module TestSocketTable =
                             match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
                             | Some (InodeContent.Directory _) ->
                                 FileDescriptorRegistry.openDirectory
+                                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
                             | _ ->
                                 FileDescriptorRegistry.openFile
+                                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly
@@ -514,7 +531,10 @@ module TestSocketTable =
                             | Some (InodeContent.Symlink _)
                             | None -> ()
                 | 6 ->
-                    let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+                    let _, registry =
+                        FileDescriptorRegistry.createEpoll
+                            (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                            (Lone.fileDescriptors kernel)
 
                     kernel <- Lone.withFileDescriptors registry kernel
                 | _ ->

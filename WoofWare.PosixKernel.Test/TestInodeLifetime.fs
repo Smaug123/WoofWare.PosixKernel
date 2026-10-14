@@ -96,11 +96,15 @@ module TestInodeLifetime =
             match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
             | Some (InodeContent.Directory _) ->
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
                     (Lone.fileDescriptors kernel)
             | _ ->
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -133,7 +137,7 @@ module TestInodeLifetime =
             }
 
     let private closed (fd : int) (kernel : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd kernel with
+        match UnixDescriptor.tryClose (Callers.leader kernel) fd kernel with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> failwith $"could not close fd %d{fd}: %O{error}"
         | Ok (SyscallAnswer.Completed _, system) -> system
@@ -314,7 +318,12 @@ module TestInodeLifetime =
         let fd, held = opened a kernel
 
         let duplicate, held =
-            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors held) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour held.Machine.UnixPlatform)
+                    fd
+                    (Lone.fileDescriptors held)
+            with
             | Ok (duplicate, registry) -> duplicate, Lone.withFileDescriptors registry held
             | Error error -> failwith $"could not dup fd %d{fd}: %O{error}"
 

@@ -77,7 +77,7 @@ module internal SockOptCalls =
             UnixSocket.trySetsockoptBytes fd level optionName value optionLength supplied system
 
         let actual =
-            UnixSocket.trySetsockopt fd level optionName value optionLength system
+            UnixSocket.trySetsockopt (Callers.leader system) fd level optionName value optionLength system
             |> CallProgress.resumeWith (fun paused ->
                 let range = PausedSetSockOpt.copyRange paused
 
@@ -112,7 +112,7 @@ module internal SockOptCalls =
             UnixSocket.tryGetsockoptLength fd level optionName value length read system
 
         let actual =
-            UnixSocket.tryGetsockopt fd level optionName value length system
+            UnixSocket.tryGetsockopt (Callers.leader system) fd level optionName value length system
             |> CallProgress.resumeWith (UnixSocket.tryGetsockoptWithLength cell)
 
         agreeing "getsockopt" expected actual

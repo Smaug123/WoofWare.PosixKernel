@@ -85,24 +85,37 @@ module TestCallHolds =
                 { proc with
                     Signals =
                         proc.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
+                            Signal.SIGPIPE
+                            SignalDisposition.Ignore
                 }
             )
 
         let system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created _, system) -> system
             | other -> failwith $"pipe2: %A{other}"
 
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
-            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            let _, registry =
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (Lone.fileDescriptors system)
 
             Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->
-            match UnixKqueue.tryKqueue system with
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"kqueue: %A{refusal}"
+
+    /// The first of the process's threads parked in no call, to make a call
+    /// that names no thread of its own; `None` while every thread is parked.
+    let private awake (system : UnixSystem<int, string>) : Caller<int> option =
+        Lone.threads system
+        |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+        |> Option.map (fun thread -> Callers.thread thread system)
 
     let private fds (system : UnixSystem<int, string>) : (int * OpenFileDescriptionId * OpenFileTarget) list =
         let registry = Lone.fileDescriptors system
@@ -422,12 +435,13 @@ module TestCallHolds =
                             Holds = Map.remove thread model.Holds
                         }
                 | Op.Close i ->
-                    match fds system with
-                    | [] -> system, model
-                    | all ->
+                    match fds system, awake system with
+                    | [], _
+                    | _, None -> system, model
+                    | all, Some caller ->
                         let fd, id, _ = all.[i % all.Length]
 
-                        match UnixDescriptor.tryClose fd system with
+                        match UnixDescriptor.tryClose caller fd system with
                         | Error _ -> system, model
                         | Ok (_, after) ->
                             // Under Darwin a close of the descriptor a pipe transfer
@@ -463,12 +477,13 @@ module TestCallHolds =
 
                             after, model
                 | Op.Dup i ->
-                    match fds system with
-                    | [] -> system, model
-                    | all ->
+                    match fds system, awake system with
+                    | [], _
+                    | _, None -> system, model
+                    | all, Some caller ->
                         let fd, _, _ = all.[i % all.Length]
 
-                        match UnixDescriptor.tryDup fd system with
+                        match UnixDescriptor.tryDup caller fd system with
                         | Ok (_, after) -> after, model
                         | Error refusal -> failwith $"dup: %A{refusal}"
                 | Op.Spawn c ->
@@ -486,7 +501,7 @@ module TestCallHolds =
 
                     let before = ThreadIdAllocator.live system.Machine.ThreadIds
 
-                    match UnixThreadLifecycle.trySpawn parent child (CpuId 0) system with
+                    match UnixThreadLifecycle.trySpawn (Callers.thread parent system) child (CpuId 0) system with
                     | Error refusal -> failwith $"spawn: %s{SpawnRefusal.describe refusal}"
                     | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn: %O{error}"
                     | Ok (SpawnAnswer.Spawned id, after) ->
@@ -502,9 +517,18 @@ module TestCallHolds =
 
                     if thread = Lone.leader system then
                         system, model
+                    elif (UnixThreadTable.parkedFor thread (Lone.threads system)).IsSome then
+                        // A thread asleep in a call is not making another.
+                        Assert.Throws<System.InvalidOperationException> (fun () ->
+                            UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system
+                            |> ignore
+                        )
+                        |> ignore
+
+                        system, model
                     else
 
-                    match UnixThreadLifecycle.tryExitThread thread 0 system with
+                    match UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system with
                     | Ok (ProcessFate.Continues ((), after)) ->
                         cover Reached.Exit
 
@@ -512,7 +536,6 @@ module TestCallHolds =
                         { model with
                             Tids = Map.remove thread model.Tids
                         }
-                    | Error (ThreadExitRefusal.Parked _) -> system, model
                     | other -> failwith $"exit of %d{thread}: %A{other}"
                 | Op.ExitGroup t ->
                     let thread = liveThread t
@@ -523,7 +546,7 @@ module TestCallHolds =
 
                     // Every thread goes, with the holds its call had and its thread
                     // ID; descriptors are not closed, so what they name stays.
-                    let ended = UnixThreadLifecycle.exitGroup thread 0 system
+                    let ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
 
                     if not model.Holds.IsEmpty then
                         cover Reached.EndedWithHolds

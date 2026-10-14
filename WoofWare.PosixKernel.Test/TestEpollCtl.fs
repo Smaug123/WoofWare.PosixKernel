@@ -52,7 +52,10 @@ module TestEpollCtl =
         Lone.withFileDescriptors registry system
 
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
 
@@ -81,7 +84,10 @@ module TestEpollCtl =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -99,6 +105,8 @@ module TestEpollCtl =
     let private withFile (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite
@@ -107,7 +115,12 @@ module TestEpollCtl =
         fd, withRegistry registry system
 
     let private dupOf (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
+        match
+            FileDescriptorRegistry.dup
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                fd
+                (Lone.fileDescriptors system)
+        with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup of fd %d{fd} failed: %O{error}"
 
@@ -132,7 +145,7 @@ module TestEpollCtl =
         (system : UnixSystem<int, string>)
         : Result<EpollCtlAnswer * UnixSystem<int, string>, EpollCtlRefusal>
         =
-        UnixPoll.tryEpollCtl epfd op fd (EpollEventArgument.Readable (events, 42UL)) system
+        UnixPoll.tryEpollCtl (Callers.leader system) epfd op fd (EpollEventArgument.Readable (events, 42UL)) system
 
     let private applied
         (epfd : int)
@@ -370,7 +383,7 @@ module TestEpollCtl =
                         // than the call it describes, and there are ~68,000 cells.
                         let describe () = $"%A{row} events 0x%08x{events}"
 
-                        match UnixPoll.tryEpollCtl epfd row.Op fd argument system with
+                        match UnixPoll.tryEpollCtl (Callers.leader system) epfd row.Op fd argument system with
                         | Ok (EpollCtlAnswer.Changed, _) ->
                             if row.Op <> del then
                                 answeredCommits <- answeredCommits + 1
@@ -593,7 +606,13 @@ module TestEpollCtl =
             |> List.fold
                 (fun system (index, (name, fd, _)) ->
                     match
-                        UnixPoll.tryEpollCtl queueFd add fd (EpollEventArgument.Readable (mask, uint64 index)) system
+                        UnixPoll.tryEpollCtl
+                            (Callers.leader system)
+                            queueFd
+                            add
+                            fd
+                            (EpollEventArgument.Readable (mask, uint64 index))
+                            system
                     with
                     | Ok (EpollCtlAnswer.Changed, system) -> system
                     | other -> failwith $"%s{name}: ADD of mask 0x%08x{mask} answered %A{other}"
@@ -647,6 +666,7 @@ module TestEpollCtl =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     queueFd
                     add
                     socketFd
@@ -666,6 +686,7 @@ module TestEpollCtl =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     queueFd
                     modify
                     socketFd
@@ -696,13 +717,21 @@ module TestEpollCtl =
 
         for op in [ add ; modify ; 0 ; 4 ; -1 ; Int32.MaxValue ; Int32.MinValue ] do
             // Ahead of even a descriptor that is not open.
-            UnixPoll.tryEpollCtl 99 op 98 EpollEventArgument.Unreadable registered
+            UnixPoll.tryEpollCtl (Callers.leader registered) 99 op 98 EpollEventArgument.Unreadable registered
             |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.EventUnreadable, registered))
 
-        UnixPoll.tryEpollCtl 99 del 98 EpollEventArgument.Unreadable registered
+        UnixPoll.tryEpollCtl (Callers.leader registered) 99 del 98 EpollEventArgument.Unreadable registered
         |> shouldEqual (Ok (EpollCtlAnswer.Failed EpollCtlError.BadEpollFd, registered))
 
-        match UnixPoll.tryEpollCtl queueFd del socketFd EpollEventArgument.Unreadable registered with
+        match
+            UnixPoll.tryEpollCtl
+                (Callers.leader registered)
+                queueFd
+                del
+                socketFd
+                EpollEventArgument.Unreadable
+                registered
+        with
         | Ok (EpollCtlAnswer.Changed, after) -> (epollOf queueFd after).Registrations |> shouldEqual Map.empty
         | other -> failwith $"%A{other}"
 
@@ -728,8 +757,11 @@ module TestEpollCtl =
                     EpollEventArgument.Readable (EpollEvents.In ||| edge, 1UL)
                     EpollEventArgument.Unreadable
                 ] do
-                UnixPoll.tryEpollCtl queueFd op socketFd argument darwin |> shouldEqual expected
-                UnixPoll.tryEpollCtl 99 op 99 argument darwin |> shouldEqual expected
+                UnixPoll.tryEpollCtl (Callers.leader darwin) queueFd op socketFd argument darwin
+                |> shouldEqual expected
+
+                UnixPoll.tryEpollCtl (Callers.leader darwin) 99 op 99 argument darwin
+                |> shouldEqual expected
 
     /// A level-triggered request is refused only where it would commit: a
     /// failure that precedes the commit is still the kernel's answer.

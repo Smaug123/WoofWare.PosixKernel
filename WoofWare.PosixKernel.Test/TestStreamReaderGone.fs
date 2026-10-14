@@ -45,7 +45,12 @@ module TestStreamReaderGone =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        disposition
+                        proc.Signals
             }
         )
 
@@ -155,7 +160,7 @@ module TestStreamReaderGone =
                     DeliveryLog.toList system.Machine.Delivered
                     |> List.map (fun delivery ->
                         let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
-                        launchedInto |> shouldEqual (UnixSystem.processId system)
+                        launchedInto |> shouldEqual (Lone.pid system)
                         fd, List.ofSeq delivery.Bytes
                     )
 
@@ -207,6 +212,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
+                                (UnixSystemState.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads
@@ -256,7 +262,7 @@ module TestStreamReaderGone =
             assertSound "launched" system
 
             let closed =
-                match UnixDescriptor.tryClose 1 system with
+                match UnixDescriptor.tryClose (Callers.leader system) 1 system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close 1: %A{other}"
 
@@ -274,8 +280,8 @@ module TestStreamReaderGone =
             for fd in [ 1 ; 99 ] do
                 let admit =
                     Assert.Throws<System.InvalidOperationException> (fun () ->
-                        UnixReadWrite.tryAdmitWrite 7 fd UserBuffer.Mapped 1UL system
-                        |> ignore<Result<WriteStep<WriteAdmission, int, string>, WriteRefusal>>
+                        UnixReadWrite.tryWrite (Callers.thread 7 system) fd UserBuffer.Mapped 1UL system
+                        |> ignore
                     )
 
                 admit.Message

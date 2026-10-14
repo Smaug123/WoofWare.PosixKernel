@@ -76,7 +76,7 @@ module TestStateQueries =
             uptime |> shouldEqual (List.sum advances)
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual uptime
 
-            match UnixClock.tryClockGettime (fullPrecisionSinceBoot platform) system with
+            match UnixClock.tryClockGettime (Callers.leader system) (fullPrecisionSinceBoot platform) system with
             | Ok (Ok reading) ->
                 UnixTimestamp.seconds reading * 1_000_000_000L
                 + int64 (UnixTimestamp.nanoseconds reading)
@@ -111,7 +111,7 @@ module TestStateQueries =
                                 expected
                             else
                                 {
-                                    Endpoint = ExternalEndpoint (UnixSystem.processId after, fd)
+                                    Endpoint = ExternalEndpoint (Lone.pid after, fd)
                                     Bytes = bytes
                                 }
                                 :: expected
@@ -174,13 +174,6 @@ module TestStateQueries =
             |> shouldEqual path
 
     [<Test>]
-    let ``signals is the process's own, read under its platform's numbering`` () : unit =
-        for platform in platforms do
-            UnixProcessState.signals (Lone.proc (initialOn platform))
-            |> SignalState.numbering
-            |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
-
-    [<Test>]
     let ``park is absent until a thread sleeps, and then names the syscall it sleeps in`` () : unit =
         for platform in platforms do
             let system = initialOn platform
@@ -189,12 +182,12 @@ module TestStateQueries =
             |> shouldEqual None
 
             let system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (3, 4), system) -> system
                 | other -> failwith $"pipe2: %A{other}"
 
             let system =
-                match UnixReadWrite.tryRead 0 3 UserBuffer.Mapped 16UL system with
+                match UnixReadWrite.tryRead (Callers.thread 0 system) 3 UserBuffer.Mapped 16UL system with
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 
@@ -227,15 +220,15 @@ module TestStateQueries =
                         (CpuId 0))
                 |> UnixSystem.advanceClock 1_234L
 
-            UnixSystem.leader system |> shouldEqual (Lone.leader system)
-            UnixSystem.threads system |> shouldEqual (Lone.threads system)
+            UnixSystem.leader (Lone.pid system) system |> shouldEqual (Lone.leader system)
+            UnixSystem.threads (Lone.pid system) system |> shouldEqual (Lone.threads system)
             UnixSystem.platform system |> shouldEqual platform
             UnixSystem.processorCount system |> shouldEqual 3
-            UnixSystem.environment system |> shouldEqual [ entry ]
-            UnixSystem.processPath system |> shouldEqual (Some path)
+            UnixSystem.environment (Lone.pid system) system |> shouldEqual [ entry ]
+            UnixSystem.processPath (Lone.pid system) system |> shouldEqual (Some path)
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual 1_234L
 
-            UnixSystem.signals system
+            UnixSystem.signals (Lone.pid system) system
             |> shouldEqual (UnixProcessState.signals (Lone.proc system))
 
             UnixSystem.delivered system
@@ -243,10 +236,10 @@ module TestStateQueries =
 
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do
-                UnixSystem.descriptorTarget fd system
+                UnixSystem.descriptorTarget (Lone.pid system) fd system
                 |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system))
 
-            UnixSystem.descriptorTarget 3 system |> shouldEqual None
+            UnixSystem.descriptorTarget (Lone.pid system) 3 system |> shouldEqual None
 
             // And a write that reaches the client is what `delivered` reports.
             match WriteOutcomes.writeBytes 0 1 (ImmutableArray.Create<byte> [| 7uy |]) system with

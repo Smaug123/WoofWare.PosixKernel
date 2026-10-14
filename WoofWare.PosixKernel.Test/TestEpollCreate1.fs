@@ -45,7 +45,7 @@ module TestEpollCreate1 =
         ]
 
     let private created (flags : int) (system : UnixSystem<int, string>) : bool =
-        match UnixPoll.tryEpollCreate1 flags system with
+        match UnixPoll.tryEpollCreate1 (Callers.leader system) flags system with
         | Ok (Ok _) -> true
         | Ok (Error UnixError.EINVAL) -> false
         | other -> failwith $"flags 0x%x{flags}: expected an epoll instance or EINVAL, got %A{other}"
@@ -77,9 +77,12 @@ module TestEpollCreate1 =
     let ``an epoll instance is created exactly for 0 and EPOLL_CLOEXEC, on the lowest free descriptor`` () : unit =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.fileDescriptors linux)
 
-        let _, withTwo = FileDescriptorRegistry.createEpoll queueSystem
+        let _, withTwo =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux queueSystem
 
         let holed =
             Lone.withFileDescriptors
@@ -89,13 +92,15 @@ module TestEpollCreate1 =
                 linux
 
         let property (flags : int) : unit =
-            match UnixPoll.tryEpollCreate1 flags holed with
+            match UnixPoll.tryEpollCreate1 (Callers.leader holed) flags holed with
             | Ok (Ok (fd, after)) ->
                 (flags = 0 || flags = cloExec) |> shouldEqual true
                 fd |> shouldEqual epoll
 
                 let expectedFd, expectedRegistry =
-                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors holed)
+                    FileDescriptorRegistry.createEpoll
+                        (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                        (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
 
@@ -104,9 +109,9 @@ module TestEpollCreate1 =
                 let expectedRegistry =
                     FileDescriptorRegistry.setFlags
                         fd
-                        { DescriptorFlags.none with
-                            CloseOnExec = (flags = cloExec)
-                        }
+                        (DescriptorFlags.closingOnExec
+                            (SimulatedUnixPlatform.flavour holed.Machine.UnixPlatform)
+                            (flags = cloExec))
                         expectedRegistry
 
                 after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)
@@ -120,7 +125,7 @@ module TestEpollCreate1 =
     [<Test>]
     let ``Darwin has no epoll, so every call is refused`` () : unit =
         let property (flags : int) : unit =
-            UnixPoll.tryEpollCreate1 flags darwin
+            UnixPoll.tryEpollCreate1 (Callers.leader darwin) flags darwin
             |> shouldEqual (Error (EpollCreateRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin))
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 200, Prop.forAll (Arb.fromGen flagsGen) property)

@@ -1966,12 +1966,17 @@ module TestShutdownAgainstHost =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -2035,7 +2040,7 @@ module TestShutdownAgainstHost =
                     s
 
             let s =
-                match UnixSocket.tryListen listener 4 s with
+                match UnixSocket.tryListen (Callers.leader s) listener 4 s with
                 | Ok (ListenAnswer.Listening _, s) -> s
                 | other -> failwith $"listen: %A{other}"
 
@@ -2058,13 +2063,13 @@ module TestShutdownAgainstHost =
                 | other -> failwith $"connect: %A{other}"
 
             let server, s =
-                match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u s with
+                match UnixConnection.tryAccept (Callers.thread 1 s) listener UserBuffer.Mapped 16u s with
                 | Ok (AcceptOutcome.Accepted (accepted, _, _), s) -> accepted, s
                 | other -> failwith $"accept: %A{other}"
 
             let s = kernelClose listener s
-            let _, s = UnixDescriptor.setNonBlocking client true s
-            let _, s = UnixDescriptor.setNonBlocking server true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) client true s
+            let _, s = UnixDescriptor.setNonBlocking (Callers.leader s) server true s
             system <- s
             fds <- Map.ofList [ c, client ; p, server ]
 
@@ -2140,7 +2145,7 @@ module TestShutdownAgainstHost =
                 (this :> IShutdownPair).ShutdownRaw e raw
 
             member this.ShutdownRaw e how =
-                match UnixConnection.tryShutdown (this.Fd e) how system with
+                match UnixConnection.tryShutdown (Callers.leader system) (this.Fd e) how system with
                 | Ok (answer, after) ->
                     UnixSystem.checkInvariants after |> shouldEqual []
                     system <- after
@@ -2154,7 +2159,7 @@ module TestShutdownAgainstHost =
                 | Error refusal -> failwith $"shutdown refused: %s{ShutdownRefusal.describe refusal}"
 
             member this.Close e =
-                match UnixDescriptor.tryClose (this.Fd e) system with
+                match UnixDescriptor.tryClose (Callers.leader system) (this.Fd e) system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     system <- after
                     fds <- Map.remove e fds
@@ -2199,7 +2204,7 @@ module TestShutdownAgainstHost =
                 (this :> IShutdownPair).Close e
 
             member this.Fionread e =
-                match UnixDescriptor.tryBytesAvailable (this.Fd e) UserBuffer.Mapped system with
+                match UnixDescriptor.tryBytesAvailable (Callers.leader system) (this.Fd e) UserBuffer.Mapped system with
                 | Ok (BytesAvailableAnswer.Reported count) -> count
                 | other -> failwith $"FIONREAD: %A{other}"
 
@@ -2209,7 +2214,7 @@ module TestShutdownAgainstHost =
                 let revents, after =
                     match
                         UnixPoll.tryPoll
-                            (Lone.leader system)
+                            (Callers.leader system)
                             [
                                 {
                                     Fd = fd
@@ -2249,7 +2254,7 @@ module TestShutdownAgainstHost =
                         let events, s =
                             match
                                 UnixKqueue.tryKevent
-                                    (Lone.leader s)
+                                    (Callers.leader s)
                                     kq
                                     2
                                     changes
@@ -2295,7 +2300,7 @@ module TestShutdownAgainstHost =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
                     let ep, s =
-                        match UnixPoll.tryEpollCreate1 0 system with
+                        match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
@@ -2305,7 +2310,13 @@ module TestShutdownAgainstHost =
                             let fd = this.Fd e
 
                             match
-                                UnixPoll.tryEpollCtl ep 1 fd (EpollEventArgument.Readable (0x80002005u, uint64 fd)) s
+                                UnixPoll.tryEpollCtl
+                                    (Callers.leader s)
+                                    ep
+                                    1
+                                    fd
+                                    (EpollEventArgument.Readable (0x80002005u, uint64 fd))
+                                    s
                             with
                             | Ok (EpollCtlAnswer.Changed, s) -> s
                             | other -> failwith $"epoll_ctl: %A{other}"
@@ -2329,7 +2340,7 @@ module TestShutdownAgainstHost =
                     let s =
                         match
                             UnixKqueue.tryKevent
-                                (Lone.leader s)
+                                (Callers.leader s)
                                 kq
                                 changes.Length
                                 changes
@@ -2354,7 +2365,7 @@ module TestShutdownAgainstHost =
 
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    match UnixPoll.tryEpollWait (Lone.leader system) port 4 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Callers.leader system) port 4 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, after) ->
                         system <- after
 
@@ -2369,7 +2380,7 @@ module TestShutdownAgainstHost =
                 | SimulatedUnixFlavour.Darwin ->
                     match
                         UnixKqueue.tryKevent
-                            (Lone.leader system)
+                            (Callers.leader system)
                             port
                             0
                             []
@@ -2424,7 +2435,7 @@ module TestShutdownAgainstHost =
                 let answer, s =
                     match CopyIn.bind fresh UserBuffer.Mapped 16u address s with
                     | Ok (BindAnswer.Bound _, s) ->
-                        match UnixSocket.tryListen fresh 4 s with
+                        match UnixSocket.tryListen (Callers.leader s) fresh 4 s with
                         | Ok (ListenAnswer.Listening _, s) -> "bind-ok listen-ok", s
                         | Ok (ListenAnswer.Failed error, s) -> $"bind-ok listen-%A{error}", s
                         | Error refusal -> failwith $"listen refused: %A{refusal}"
@@ -2455,7 +2466,7 @@ module TestShutdownAgainstHost =
                     failwith $"getsockopt(SO_REUSEADDR) refused: %s{SocketOptionRefusal.describe refusal}"
 
             member this.PeerName e =
-                match UnixSocket.tryGetpeername (this.Fd e) UserBuffer.Mapped 16u system with
+                match UnixSocket.tryGetpeername (Callers.leader system) (this.Fd e) UserBuffer.Mapped 16u system with
                 | Ok (GetSockNameAnswer.Reported _) -> "ok"
                 | Ok (GetSockNameAnswer.Failed (error, _)) -> $"%A{error}"
                 | Error refusal -> failwith $"getpeername refused: %s{GetSockNameRefusal.describe refusal}"
@@ -2506,7 +2517,7 @@ module TestShutdownAgainstHost =
             | Error refusal -> failwith $"connect refused: %s{ConnectRefusal.describe refusal}"
 
         let shutdownOf (fd : int) (how : int) : ShutdownLine =
-            match UnixConnection.tryShutdown fd how system with
+            match UnixConnection.tryShutdown (Callers.leader system) fd how system with
             | Ok (answer, after) ->
                 system <- after
 
@@ -2520,7 +2531,7 @@ module TestShutdownAgainstHost =
             let l = created SocketKind.Stream SocketProtocol.Tcp
             system <- kernelBind l 0 system
 
-            match UnixSocket.tryListen l 4 system with
+            match UnixSocket.tryListen (Callers.leader system) l 4 system with
             | Ok (ListenAnswer.Listening _, after) -> system <- after
             | other -> failwith $"listen: %A{other}"
 
@@ -2531,7 +2542,7 @@ module TestShutdownAgainstHost =
             Datagram = fun () -> created SocketKind.Datagram SocketProtocol.Udp
             NotSocket =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- kernelClose writeFd after
                         readFd
@@ -2540,7 +2551,7 @@ module TestShutdownAgainstHost =
             // stays free, and the closed-fd rows ask about one, as the probe's do.
             NamesNothing =
                 fun () ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                    match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                     | Ok (Pipe2Answer.Created (readFd, writeFd), after) ->
                         system <- after |> kernelClose writeFd |> kernelClose readFd
                         readFd
@@ -2558,7 +2569,7 @@ module TestShutdownAgainstHost =
                 fun how ->
                     let l, port = listening ()
                     let f = created SocketKind.Stream SocketProtocol.Tcp
-                    let _, after = UnixDescriptor.setNonBlocking f true system
+                    let _, after = UnixDescriptor.setNonBlocking (Callers.leader system) f true system
                     system <- after
                     let first = connectAnswer f port
 
@@ -2732,7 +2743,7 @@ module TestShutdownAgainstHost =
                         let system = if bound then kernelBind fd 0 system else system
                         let socket = kernelSocketOf fd system
 
-                        match flavour, UnixConnection.tryShutdown fd how system with
+                        match flavour, UnixConnection.tryShutdown (Callers.leader system) fd how system with
                         | SimulatedUnixFlavour.Darwin, Ok (ShutdownAnswer.Failed UnixError.ENOTCONN, after) ->
                             after |> shouldEqual system
                         | SimulatedUnixFlavour.Linux, Error (ShutdownRefusal.LinuxUnconnected refused) ->
@@ -2745,16 +2756,16 @@ module TestShutdownAgainstHost =
             let system = kernelBind listener 0 system
 
             let system =
-                match UnixSocket.tryListen listener 4 system with
+                match UnixSocket.tryListen (Callers.leader system) listener 4 system with
                 | Ok (ListenAnswer.Listening _, system) -> system
                 | other -> failwith $"listen: %A{other}"
 
             for how in [ 0 ; 1 ; 2 ] do
-                UnixConnection.tryShutdown listener how system
+                UnixConnection.tryShutdown (Callers.leader system) listener how system
                 |> Result.map fst
                 |> shouldEqual (Error (ShutdownRefusal.Listener (kernelSocketOf listener system)))
 
             // A `how` out of range is screened before the state.
-            UnixConnection.tryShutdown listener 3 system
+            UnixConnection.tryShutdown (Callers.leader system) listener 3 system
             |> Result.map fst
             |> shouldEqual (Ok (ShutdownAnswer.Failed UnixError.EINVAL))

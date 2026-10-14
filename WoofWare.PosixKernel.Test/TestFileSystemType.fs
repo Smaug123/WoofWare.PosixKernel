@@ -295,14 +295,14 @@ module TestFileSystemType =
         let rootFd, system = openPath "/" system
 
         [
-            UnixPathResolution.fstatfs fileFd system
-            UnixPathResolution.fstatfs dirFd system
-            UnixPathResolution.fstatfs rootFd system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/f")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/d")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "/")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "ld")) system
-            Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context "d/")) system
+            UnixPathResolution.fstatfs (Callers.leader system) fileFd system
+            UnixPathResolution.fstatfs (Callers.leader system) dirFd system
+            UnixPathResolution.fstatfs (Callers.leader system) rootFd system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/f")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/d")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "/")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "ld")) system
+            Answered.statfs (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail context "d/")) system
         ]
 
     // ----------------------------------------------------------- type fields
@@ -541,7 +541,7 @@ module TestFileSystemType =
                 let system = systemWith platform mount
 
                 for fd in [ 0 ; 1 ; 2 ] do
-                    UnixPathResolution.fstatfs fd system
+                    UnixPathResolution.fstatfs (Callers.leader system) fd system
                     |> shouldEqual (measuredNotOnAMount flavour PseudoFileSystem.Pipe)
 
                 FileSystemStatistics.ofObject platform mount (OpenFileObject.Socket (SocketId 3L))
@@ -557,7 +557,7 @@ module TestFileSystemType =
                 systemWith platform (EmulatedMount.defaultFor (SimulatedUnixPlatform.flavour platform))
 
             for fd in [ -1 ; 3 ; 4242 ; Int32.MaxValue ; Int32.MinValue ] do
-                UnixPathResolution.fstatfs fd system
+                UnixPathResolution.fstatfs (Callers.leader system) fd system
                 |> shouldEqual (FileSystemStatisticsAnswer.Failed UnixError.EBADF)
 
     [<Test>]
@@ -571,11 +571,11 @@ module TestFileSystemType =
         let fd, system = openPath "/f" system
 
         let device =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) -> status.DeviceId
             | other -> failwith $"fstat: %A{other}"
 
-        match UnixPathResolution.fstatfs fd system with
+        match UnixPathResolution.fstatfs (Callers.leader system) fd system with
         | FileSystemStatisticsAnswer.Reported (FileSystemStatistics.Darwin darwin) ->
             darwin.FileSystemIdResult
             |> shouldEqual (
@@ -613,7 +613,10 @@ module TestFileSystemType =
 
                 for path, expected in measuredPathRows do
                     let answer =
-                        Answered.statfs (PathArg.ofPath (UnixPath.parseOrFail context path)) system
+                        Answered.statfs
+                            (Callers.leader system)
+                            (PathArg.ofPath (UnixPath.parseOrFail context path))
+                            system
 
                     match expected, answer with
                     | Some error, FileSystemStatisticsAnswer.Failed actual when actual = error -> ()
@@ -651,13 +654,19 @@ module TestFileSystemType =
                 let parsed = UnixPath.parseOrFail context path
 
                 let viaStat =
-                    match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath parsed) system with
+                    match
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.Follow
+                            (PathArg.ofPath parsed)
+                            system
+                    with
                     | Ok (FileStatusAnswer.Failed error) -> Some error
                     | Ok (FileStatusAnswer.Reported _) -> None
                     | Error refusal -> failwith $"test bug: stat refused: %s{StatRefusal.describe refusal}"
 
                 let viaStatfs =
-                    match Answered.statfs (PathArg.ofPath parsed) system with
+                    match Answered.statfs (Callers.leader system) (PathArg.ofPath parsed) system with
                     | FileSystemStatisticsAnswer.Failed error -> Some error
                     | FileSystemStatisticsAnswer.Reported _ -> None
 
@@ -690,7 +699,10 @@ module TestFileSystemType =
                 }
 
             for fd in [ 0 ; 4242 ] do
-                Assert.Throws (fun () -> UnixPathResolution.fstatfs fd incoherent |> ignore<FileSystemStatisticsAnswer>)
+                Assert.Throws (fun () ->
+                    UnixPathResolution.fstatfs (Callers.leader incoherent) fd incoherent
+                    |> ignore<FileSystemStatisticsAnswer>
+                )
                 |> ignore<exn>
 
             // Including arguments the kernel cannot copy in, which fail before
@@ -702,7 +714,10 @@ module TestFileSystemType =
                     PathArgumentBytes.Unreadable
                     PathArg.ofText (String.replicate 5000 "a")
                 ] do
-                Assert.Throws (fun () -> Answered.statfs path incoherent |> ignore<FileSystemStatisticsAnswer>)
+                Assert.Throws (fun () ->
+                    Answered.statfs (Callers.leader incoherent) path incoherent
+                    |> ignore<FileSystemStatisticsAnswer>
+                )
                 |> ignore<exn>
 
             for target in
@@ -830,7 +845,7 @@ module TestFileSystemType =
                 systemWith (HostPlatform.platformOf flavour) (EmulatedMount.defaultFor flavour)
 
             HostFileSystemType.statisticsFor flavour 4242
-            |> shouldEqual (UnixPathResolution.fstatfs 4242 system)
+            |> shouldEqual (UnixPathResolution.fstatfs (Callers.leader system) 4242 system)
         )
 
     /// A read-only descriptor onto this host's directory of the filesystem the

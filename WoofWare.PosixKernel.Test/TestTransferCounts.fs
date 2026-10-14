@@ -109,6 +109,8 @@ module TestTransferCounts =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -661,7 +663,13 @@ module TestTransferCounts =
 
         let reopen (inode : InodeNumber) (mode : FileAccessMode) =
             let fd, registry =
-                FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode mode registry
+                FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (ForgedName.ofInode system inode)
+                    inode
+                    mode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
 
@@ -671,21 +679,31 @@ module TestTransferCounts =
         | "stdout" -> 1, system
         | "dir" ->
             let fd, registry =
-                FileDescriptorRegistry.openDirectory (ForgedName.ofInode system rootInode) rootInode registry
+                FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (ForgedName.ofInode system rootInode)
+                    rootInode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
         | "event queue" ->
             // The flavour's own: an epoll instance, or a kqueue.
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create registry
 
             fd, Lone.withFileDescriptors registry system
         | "socket" ->
-            let fd, registry = FileDescriptorRegistry.createSocket socketId registry
+            let fd, registry =
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    socketId
+                    registry
 
             fd,
             { system with
@@ -717,6 +735,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -733,6 +753,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -770,7 +792,12 @@ module TestTransferCounts =
                 system
                 |> Lone.mapProc (fun proc ->
                     { proc with
-                        Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                        Signals =
+                            SignalState.setDisposition
+                                (UnixSystemState.signalNumbering system)
+                                Signal.SIGPIPE
+                                SignalDisposition.Ignore
+                                proc.Signals
                     }
                 )
 
@@ -914,6 +941,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -988,6 +1017,8 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -1047,7 +1078,8 @@ module TestTransferCounts =
                 | Ok (GetCwdAnswer.Failed error) -> Ok (Error error)
                 | Error refusal -> Error refusal
 
-            let actual = UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity system
+            let actual =
+                UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped capacity system
 
             if normalise expected <> normalise actual then
                 failwith $"%A{machine} at capacity %d{capacity}: expected %A{expected}, got %A{actual}"
@@ -1129,7 +1161,7 @@ module TestTransferCountsLarge =
                 0L
                 (TestTransferCounts.systemOn (SimulatedUnixPlatform.linuxX64, None))
 
-        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
+        match UnixReadWrite.write (Callers.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
         | CallProgress.NeedsCopyIn paused ->
             (PausedWrite.copyRange paused).ByteCount
             |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
@@ -1138,7 +1170,7 @@ module TestTransferCountsLarge =
             |> ignore
         | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
-        match UnixReadWrite.pwrite 0 fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
+        match UnixReadWrite.pwrite (Callers.thread 0 system) fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
         | CallProgress.NeedsCopyIn paused ->
             (PausedPWrite.copyRange paused).ByteCount
             |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)

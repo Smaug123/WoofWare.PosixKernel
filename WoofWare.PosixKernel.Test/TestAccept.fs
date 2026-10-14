@@ -60,7 +60,10 @@ module TestAccept =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -159,7 +162,7 @@ module TestAccept =
         (system : UnixSystem<int, string>)
         : AcceptOutcome * UnixSystem<int, string>
         =
-        match UnixConnection.tryAccept 0 fd destination declaredLength system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd destination declaredLength system with
         | Ok result -> result
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{AcceptRefusal.describe refusal}"
 
@@ -348,12 +351,15 @@ module TestAccept =
         // things a descriptor can name that are not sockets.
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
                 (Lone.fileDescriptors system)
 
-        let queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry system
 
@@ -431,7 +437,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -469,7 +475,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
             |> shouldEqual (Error (AcceptRefusal.UnmodelledDomain (SocketId 0L, domain)))
 
     [<TestCaseSource(nameof platforms)>]
@@ -482,7 +488,7 @@ module TestAccept =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
             |> shouldEqual (Error (AcceptRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
     /// The park itself, and what finishes it, are `TestBlockingAccept`'s.
@@ -490,7 +496,7 @@ module TestAccept =
     let ``an empty queue on a blocking listener parks the caller`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.WouldBlock condition, _) ->
             condition
             |> shouldEqual (
@@ -512,7 +518,7 @@ module TestAccept =
     let ``a copy-out through an unmapped destination is refused`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 1
 
-        UnixConnection.tryAccept 0 fd (UserBuffer.Unmapped 4096UL) 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd (UserBuffer.Unmapped 4096UL) 16u system
         |> shouldEqual (Error (AcceptRefusal.UnmeasuredCopyOutFault (SocketId 0L)))
 
     /// A destination whose bytes the client cannot produce is a different
@@ -533,7 +539,7 @@ module TestAccept =
         for destination, expected in rows do
             let fd, _, system = listenerWith platform 1
 
-            UnixConnection.tryAccept 0 fd destination 16u system
+            UnixConnection.tryAccept (Callers.thread 0 system) fd destination 16u system
             |> shouldEqual (Error (AcceptRefusal.Buffer expected))
 
     /// A refusal carries no system, so the connection it would have handed over
@@ -543,7 +549,7 @@ module TestAccept =
     let ``a refused copy-out leaves the connection queued`` (platform : SimulatedUnixPlatform) : unit =
         let fd, connections, system = listenerWith platform 1
 
-        UnixConnection.tryAccept 0 fd UserBuffer.Opaque 16u system
+        UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u system
         |> shouldEqual (Error (AcceptRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
         queueOf (SocketId 0L) system |> shouldEqual connections
@@ -555,7 +561,7 @@ module TestAccept =
     let ``an empty queue outranks an unwritable buffer`` (platform : SimulatedUnixPlatform) : unit =
         let fd, _, system = listenerWith platform 0
 
-        match UnixConnection.tryAccept 0 fd UserBuffer.Opaque 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Opaque 16u system with
         | Ok (AcceptOutcome.WouldBlock _, _) -> ()
         | other -> failwith $"expected the accept to park, got %A{other}"
 
@@ -643,7 +649,7 @@ module TestAccept =
             FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system)
 
         let duplicate, registry =
-            match FileDescriptorRegistry.dup fd registry with
+            match FileDescriptorRegistry.dup (SimulatedUnixPlatform.flavour platform) fd registry with
             | Ok result -> result
             | Error error -> failwith $"could not dup: %A{error}"
 
@@ -689,7 +695,10 @@ module TestAccept =
             withSocket (SocketId 0L) socket (systemOn SimulatedUnixPlatform.linuxX64)
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system |> ignore<_>)
+            Assert.Throws<exn> (fun () ->
+                UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system
+                |> ignore<_>
+            )
 
         e.Message |> shouldContainText "socket invariants forbid"
 

@@ -407,22 +407,22 @@ module TestPeerNameAgainstHost =
 
             let system = bindTo fd address system
 
-            match UnixSocket.tryListen fd 16 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 16 system with
             | Ok (ListenAnswer.Listening _, system) -> fd, (modelName fd system).Port, system
             | other -> failwith $"the model's listen answered %A{other}"
 
         let nonBlocking (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.setNonBlocking fd true system with
+            match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
             | SetNonBlockingAnswer.Set, system -> system
             | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
 
         let accept (listener : int) (system : UnixSystem<int, string>) =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"the model's accept answered %A{other}"
 
         let close (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | Ok (SyscallAnswer.Failed error, _) -> failwith $"the model's close answered %O{error}"
             | Error refusal -> failwith $"the model refused a close: %s{CloseRefusal.describe refusal}"
@@ -759,7 +759,7 @@ module TestPeerNameAgainstHost =
             | Destination.Null
             | Destination.Faulting -> None
 
-        match UnixSocket.tryGetpeername fd userBuffer declared system with
+        match UnixSocket.tryGetpeername (Callers.leader system) fd userBuffer declared system with
         | Error refusal -> failwith $"the model refused: %s{GetSockNameRefusal.describe refusal}"
         | Ok (GetSockNameAnswer.Reported (copied, reported)) ->
             {

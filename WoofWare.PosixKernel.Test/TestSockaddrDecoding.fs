@@ -115,7 +115,7 @@ module TestSockaddrDecoding =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let listen (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSocket.tryListen fd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"setUp: listen answered %O{other}"
 
@@ -148,7 +148,7 @@ module TestSockaddrDecoding =
                 fd, system |> bindTo fd 5000us |> listen fd
             | Socket.NonBlockingFresh kind ->
                 let fd, system = create kind system
-                fd, snd (UnixDescriptor.setNonBlocking fd true system)
+                fd, snd (UnixDescriptor.setNonBlocking (Callers.leader system) fd true system)
 
         (if closedDescriptor then 99 else fd), system
 

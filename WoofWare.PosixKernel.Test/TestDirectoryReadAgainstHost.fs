@@ -243,7 +243,13 @@ module TestDirectoryReadAgainstHost =
         | SyscallAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
 
     let private modelInode (path : string) (system : UnixSystem<int, string>) : InodeNumber =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (rooted path)) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (rooted path))
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Inode
         | other -> failwith $"model stat %s{path}: %A{other}"
 
@@ -311,7 +317,7 @@ module TestDirectoryReadAgainstHost =
                         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                     let system =
-                        Answered.mkdir (PathArg.ofPath (rooted "d")) 0o755 system
+                        Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted "d")) 0o755 system
                         |> completed "mkdir d"
                         |> snd
 
@@ -322,7 +328,11 @@ module TestDirectoryReadAgainstHost =
                                 hostMkdir (Path.Combine (hostD, name), 0o755u)
                                 |> hostSucceeded $"mkdir %s{name}"
 
-                                Answered.mkdir (PathArg.ofPath (rooted $"d/%s{name}")) 0o755 system
+                                Answered.mkdir
+                                    (Callers.leader system)
+                                    (PathArg.ofPath (rooted $"d/%s{name}"))
+                                    0o755
+                                    system
                                 |> completed $"mkdir %s{name}"
                                 |> snd
                             else
@@ -332,7 +342,7 @@ module TestDirectoryReadAgainstHost =
                                     Answered.openPath creating (rooted $"d/%s{name}") 0o644 system
                                     |> completed $"creat %s{name}"
 
-                                match UnixDescriptor.tryClose (int fd) system with
+                                match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
                                 | Ok (SyscallAnswer.Completed _, system) -> system
                                 | other -> failwith $"model close: %A{other}"
                         )
@@ -408,7 +418,8 @@ module TestDirectoryReadAgainstHost =
                                     let hostFd = hostDup target.HostFd
                                     hostSucceeded "dup" hostFd
 
-                                    let modelFd, system = Answered.dup target.ModelFd system |> completed "dup"
+                                    let modelFd, system =
+                                        Answered.dup (Callers.leader system) target.ModelFd system |> completed "dup"
 
                                     live <-
                                         live
@@ -427,7 +438,9 @@ module TestDirectoryReadAgainstHost =
                                     hostLSeek (target.HostFd, 0L, 0) |> shouldEqual 0L
 
                                     let answer, system =
-                                        match UnixDescriptor.tryLseek target.ModelFd 0L 0 system with
+                                        match
+                                            UnixDescriptor.tryLseek (Callers.leader system) target.ModelFd 0L 0 system
+                                        with
                                         | Ok result -> result
                                         | Error refusal -> failwith $"model rewind refused: %A{refusal}"
 
@@ -442,7 +455,7 @@ module TestDirectoryReadAgainstHost =
                                     hostClose target.HostFd |> hostSucceeded "close"
                                     live <- live |> List.filter (fun l -> l.HostFd <> target.HostFd)
 
-                                    match UnixDescriptor.tryClose target.ModelFd system with
+                                    match UnixDescriptor.tryClose (Callers.leader system) target.ModelFd system with
                                     | Ok (SyscallAnswer.Completed _, system) -> system
                                     | other -> failwith $"model close: %A{other}"
                             | HostDirectoryStep.Read which ->
@@ -470,7 +483,12 @@ module TestDirectoryReadAgainstHost =
                                             List.rev acc, system
                                         else
 
-                                        match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                                        match
+                                            UnixNamespace.tryReadDirectoryEntry
+                                                (Callers.leader system)
+                                                target.ModelFd
+                                                system
+                                        with
                                         | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> List.rev acc, system
                                         | Ok (ReadDirectoryAnswer.Entry record, system) ->
                                             let name = record.Name.ToString ()
@@ -532,14 +550,17 @@ module TestDirectoryReadAgainstHost =
                             ||> List.fold (fun system (name, isDirectory) ->
                                 let answer =
                                     if isDirectory then
-                                        Answered.rmdir (rooted $"d/%s{name}") system
+                                        Answered.rmdir (Callers.leader system) (rooted $"d/%s{name}") system
                                     else
-                                        Answered.unlink (rooted $"d/%s{name}") system
+                                        Answered.unlink (Callers.leader system) (rooted $"d/%s{name}") system
 
                                 answer |> completed $"remove %s{name}" |> snd
                             )
 
-                        let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
+                        let system =
+                            Answered.rmdir (Callers.leader system) (rooted "d") system
+                            |> completed "rmdir d"
+                            |> snd
 
                         for target in live do
                             let host =
@@ -548,7 +569,9 @@ module TestDirectoryReadAgainstHost =
                                 | Ok records -> failwith $"host read of a removed directory yielded %A{records}"
                                 | Error error -> ReadDirectoryAnswer.Failed error
 
-                            match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                            match
+                                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) target.ModelFd system
+                            with
                             | Ok (model, _) -> model |> shouldEqual host
                             | Error refusal -> failwith $"model read of a removed directory refused: %A{refusal}"
                 finally
@@ -602,7 +625,7 @@ module TestDirectoryReadAgainstHost =
                     Answered.openPath creating (rooted "f") 0o644 system |> completed "creat f"
 
                 let system =
-                    match UnixDescriptor.tryClose (int fd) system with
+                    match UnixDescriptor.tryClose (Callers.leader system) (int fd) system with
                     | Ok (_, system) -> system
                     | Error refusal -> failwith $"%A{refusal}"
 
@@ -628,7 +651,7 @@ module TestDirectoryReadAgainstHost =
                     | Error error -> ReadDirectoryAnswer.Failed error
 
                 let modelAnswer (fd : int) : ReadDirectoryAnswer =
-                    match UnixNamespace.tryReadDirectoryEntry fd system with
+                    match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
                     | Ok (answer, _) -> answer
                     | Error refusal -> failwith $"%A{refusal}"
 

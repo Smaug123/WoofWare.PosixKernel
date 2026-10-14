@@ -33,7 +33,7 @@ module TestDeviceFileSystemAgainstHost =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private modelStatus (system : UnixSystem<int, string>) (path : string) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
 
     [<Test>]
     let ``each device node's link count, device number and mode are the host's`` () : unit =
@@ -61,7 +61,9 @@ module TestDeviceFileSystemAgainstHost =
         HostStat.onMeasuredHost (fun flavour ->
             let system = booted flavour
 
-            match flavour, UnixPathResolution.tryStatfs (PathArg.ofText "/dev/null") system with
+            match
+                flavour, UnixPathResolution.tryStatfs (Callers.leader system) (PathArg.ofText "/dev/null") system
+            with
             | SimulatedUnixFlavour.Darwin, Error (PathRefusal.UnmodelledFileSystem _) -> ()
             | SimulatedUnixFlavour.Darwin, other -> failwith $"statfs on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux, Ok (FileSystemStatisticsAnswer.Reported statistics) ->

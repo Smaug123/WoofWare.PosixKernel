@@ -39,9 +39,12 @@ module TestUnixWait =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
-        let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
+        let blockedFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let registry =
             match FileDescriptorRegistry.flock lockerFd (FlockRequest.Acquire FlockMode.Exclusive) registry with
@@ -125,7 +128,10 @@ module TestUnixWait =
                 Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
             }
         | Op.CreateEpoll ->
-            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            let _, registry =
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (Lone.fileDescriptors system)
 
             withRegistry registry system
         | Op.Register thread ->
@@ -300,9 +306,11 @@ module TestUnixWait =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -312,7 +320,7 @@ module TestUnixWait =
 
         let parked = UnixWait.parkWaiting 1 (parkOfThread 1) signalled
 
-        UnixWait.satisfied 1 parked
+        UnixWait.satisfied (Callers.thread 1 parked) parked
         |> shouldEqual (Some (Set.singleton WakePrimitive.SignalDeliverable))
 #else
         Assert.Ignore "parkWaiting checks a park's condition only in a Debug build."
@@ -536,12 +544,14 @@ module TestUnixWait =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let readFd, writeFd, system =
-                match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                 | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
                 | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
             let socketFd, system =
-                match UnixSocket.socket SimulatedUnixPlatform.internetAddressFamily 1 0 system with
+                match
+                    UnixSocket.socket (Callers.leader system) SimulatedUnixPlatform.internetAddressFamily 1 0 system
+                with
                 | Ok (fd, system) -> fd, system
                 | Error error -> failwith $"socket failed with %O{error}"
 

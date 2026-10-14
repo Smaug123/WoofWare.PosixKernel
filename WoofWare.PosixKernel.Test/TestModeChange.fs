@@ -303,7 +303,7 @@ module TestModeChange =
     /// What `chmod` did, stated as the probe printed it: the errno or success,
     /// and the mode the inode then has.
     let private chmodAnswer (p : string) (requested : int) (system : UnixSystem<int, string>) =
-        match UnixPathResolution.tryChmod (PathArg.ofPath (path p)) requested system with
+        match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofPath (path p)) requested system with
         | Ok (answer, after) -> answer, after
         | Error refusal -> failwith $"chmod(%s{p}, 0o%o{requested}) was refused: %s{ChModRefusal.describe refusal}"
 
@@ -400,7 +400,7 @@ module TestModeChange =
             let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
             let standing = Standing.toward Owners.root by
 
-            UnixPathResolution.tryChmod (PathArg.ofPath (path "/t/f")) 0o644 system
+            UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofPath (path "/t/f")) 0o644 system
             |> shouldEqual (
                 Error (
                     ChModRefusal.UnmeasuredModeChange (
@@ -509,6 +509,8 @@ module TestModeChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
@@ -519,6 +521,8 @@ module TestModeChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 (Lone.fileDescriptors system)
@@ -526,7 +530,7 @@ module TestModeChange =
         fd, withDescriptors registry system
 
     let private fchmodAnswer (fd : int) (requested : int) (system : UnixSystem<int, string>) =
-        match UnixPathResolution.tryFchmod fd requested system with
+        match UnixPathResolution.tryFchmod (Callers.leader system) fd requested system with
         | Ok answer -> answer
         | Error refusal -> failwith $"fchmod(%d{fd}, 0o%o{requested}) was refused: %s{FChModRefusal.describe refusal}"
 
@@ -572,7 +576,7 @@ module TestModeChange =
 
             let inode = inodeAt system.Machine.FileSystem "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchmodAnswer fd 0o400 unlinked with
             | SyscallAnswer.Completed 0L, after ->
@@ -623,8 +627,9 @@ module TestModeChange =
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create (Lone.fileDescriptors system)
 
@@ -666,7 +671,7 @@ module TestModeChange =
                 | Some (OpenFileObject.Socket socket) -> socket
                 | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-            UnixPathResolution.tryFchmod fd 0o600 withSocket
+            UnixPathResolution.tryFchmod (Callers.leader withSocket) fd 0o600 withSocket
             |> shouldEqual (Error (FChModRefusal.Socket socket))
 
         for fd in [ 0 ; 1 ; 2 ] do
@@ -675,18 +680,18 @@ module TestModeChange =
 
             // `UnixSystem.initial` makes the launch table's pipes first, in
             // descriptor order.
-            UnixPathResolution.tryFchmod fd 0o600 linux
+            UnixPathResolution.tryFchmod (Callers.leader linux) fd 0o600 linux
             |> shouldEqual (Error (FChModRefusal.LaunchedPipe (PipeId (int64 fd))))
 
     // ------------------------------------------------------------- pipes
 
     let private pipeOrFail (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat(%d{fd}): %A{other}"
 
@@ -797,7 +802,7 @@ module TestModeChange =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly system
 
-        UnixPathResolution.tryFchmod fd 0o4755 withFd
+        UnixPathResolution.tryFchmod (Callers.leader withFd) fd 0o4755 withFd
         |> shouldEqual (
             Error (
                 FChModRefusal.UnmeasuredModeChange (
@@ -825,15 +830,21 @@ module TestModeChange =
 
         // A success, so the comparison covers the state the call moves, and a
         // failure.
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/lf" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/dang" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o604)) withFd
+        UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChMod (fd, 0o604)) withFd
         |> answered
         |> shouldEqual (fchmodAnswer fd 0o604 withFd)
 
@@ -843,18 +854,26 @@ module TestModeChange =
 
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly darwin
 
-        match UnixSystem.tryStep 0 (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0)) darwin with
+        match
+            UnixSystem.tryStep
+                (Callers.thread 0 darwin)
+                (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0))
+                darwin
+        with
         | Error (SyscallRefusal.FChModAt refusal) ->
             Error refusal
             |> shouldEqual (
-                UnixPathResolution.tryChmod (PathArg.ofPath (path "/t/f")) 0o644 darwin
+                UnixPathResolution.tryChmod (Callers.leader darwin) (PathArg.ofPath (path "/t/f")) 0o644 darwin
                 |> Result.map ignore
                 |> Result.mapError FChModAtRefusal.ChMod
             )
         | other -> failwith $"step chmod as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o644)) withFd with
+        match UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChMod (fd, 0o644)) withFd with
         | Error (SyscallRefusal.FChMod refusal) ->
             Error refusal
-            |> shouldEqual (UnixPathResolution.tryFchmod fd 0o644 withFd |> Result.map ignore)
+            |> shouldEqual (
+                UnixPathResolution.tryFchmod (Callers.leader withFd) fd 0o644 withFd
+                |> Result.map ignore
+            )
         | other -> failwith $"step fchmod as Darwin root: %A{other}"

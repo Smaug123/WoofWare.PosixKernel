@@ -5,7 +5,7 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// `UnixSystem.checkInvariants`, for the eight rules nothing else exercises.
+/// `UnixSystem.checkInvariants`, for the rules nothing else exercises.
 ///
 /// Five of these six were found by mutating each rule in turn and seeing which
 /// mutants no suite killed, and three of those are the same gap twice over: the
@@ -14,7 +14,10 @@ open WoofWare.PosixKernel
 /// The sixth, `CurrentDirectoryIsNotADirectory`, arrived with the setter that
 /// establishes the current directory. The seventh and eighth,
 /// `UnmodelledBindingHeld` and `DatagramPeerOfAnotherFamily`, guard states no
-/// syscall yet produces.
+/// syscall yet produces. `StatusNotOfFlavour` and `FlockHeldNotRecorded`
+/// guard an open file description's status against its machine's flavour and
+/// against its lock, and `DescriptorFlagsNotOfFlavour` a descriptor's flags
+/// against the flavour.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestUnixSystemInvariants =
@@ -79,6 +82,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
                         [
@@ -88,7 +92,7 @@ module TestUnixSystemInvariants =
                                 AccessMode = FileAccessMode.ReadWrite
                                 NonBlocking = false
                                 Flock = None
-                                Status = OpenFileStatus.none
+                                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                             }
                         ])
                     (OpenFileDescriptionId 1L))
@@ -116,6 +120,132 @@ module TestUnixSystemInvariants =
         |> shouldEqual [ UnixSystemDefect.SocketPhaseKindMismatch (SocketId 0L, kind, phase) ]
 
     // ------------------------------------------------------------------
+    // An open file description's status
+    // ------------------------------------------------------------------
+
+    /// A sound system of `platform` with the file `f` open for writing, and the
+    /// description its descriptor names.
+    let private withOpenFile
+        (platform : SimulatedUnixPlatform)
+        : UnixSystem<int, string> * int * OpenFileDescriptionId
+        =
+        let seed =
+            Map.ofList
+                [
+                    DirectoryEntryName.parseOrFail context "f",
+                    SeedEntry.File (ImmutableArray<byte>.Empty, PermissionBits.parseOrFail context 0o666, None)
+                ]
+
+        match UnixBootImage.tryWithFileSystem epoch Owners.linuxDefault seed (UnixSystem.initial platform) with
+        | Error fault -> failwith $"could not build the system: %A{fault}"
+        | Ok image ->
+            let system =
+                (Launched.bootWith (Launched.credentials Owners.root) UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
+
+            let fd, system =
+                FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadWrite) "f" system
+
+            match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
+            | Some id -> system, fd, id
+            | None -> failwith $"fd %d{fd} names no description"
+
+    /// `system` with the description `id`'s status replaced by `status`.
+    let private withStatus
+        (id : OpenFileDescriptionId)
+        (status : OpenFileStatus)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        { system with
+            Machine =
+                { system.Machine with
+                    OpenFiles = OpenFileTable.mapStatus id (fun _ -> status) system.Machine.OpenFiles
+                }
+        }
+
+    [<Test>]
+    let ``a description whose status is another flavour's is a defect`` () : unit =
+        for platform, other in
+            [
+                SimulatedUnixPlatform.linuxX64, SimulatedUnixFlavour.Darwin
+                SimulatedUnixPlatform.macOsArm64, SimulatedUnixFlavour.Linux
+            ] do
+            let system, _, id = withOpenFile platform
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            UnixSystem.checkInvariants system |> shouldEqual []
+
+            let foreign = OpenFileStatus.none other
+
+            system
+            |> withStatus id foreign
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.StatusNotOfFlavour (id, foreign, flavour) ]
+
+            // The control: the machine's own flavour's status, with every fact
+            // it can hold set.
+            let own =
+                match flavour with
+                | SimulatedUnixFlavour.Linux ->
+                    OpenFileStatus.Linux (sync = LinuxSync.FullSync, openedDirectory = true, openedNoFollow = true)
+                | SimulatedUnixFlavour.Darwin ->
+                    OpenFileStatus.Darwin (synchronous = true, dataSynchronous = true, written = true, flocked = true)
+
+            system |> withStatus id own |> UnixSystem.checkInvariants |> shouldEqual []
+
+    [<Test>]
+    let ``a descriptor whose flags are another flavour's is a defect`` () : unit =
+        for platform, other in
+            [
+                SimulatedUnixPlatform.linuxX64, SimulatedUnixFlavour.Darwin
+                SimulatedUnixPlatform.macOsArm64, SimulatedUnixFlavour.Linux
+            ] do
+            let system, fd, _ = withOpenFile platform
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            let withFlags (flags : DescriptorFlags) : UnixSystem<int, string> =
+                Lone.withFileDescriptors (FileDescriptorRegistry.setFlags fd flags (Lone.fileDescriptors system)) system
+
+            let foreign = DescriptorFlags.none other
+
+            withFlags foreign
+            |> UnixSystem.checkInvariants
+            |> shouldEqual [ UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, foreign, flavour) ]
+
+            // The control: the machine's own flavour's flags, every one set.
+            let own =
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> DescriptorFlags.Linux (closeOnExec = true)
+                | SimulatedUnixFlavour.Darwin -> DescriptorFlags.Darwin (closeOnExec = true, closeOnFork = true)
+
+            withFlags own |> UnixSystem.checkInvariants |> shouldEqual []
+
+    [<Test>]
+    let ``a Darwin description holding a lock its status does not record is a defect`` () : unit =
+        let lockExclusive = 2
+
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let system, fd, id = withOpenFile platform
+
+            let locked =
+                match UnixDescriptor.tryFlock (Callers.thread 0 system) fd lockExclusive system with
+                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
+                | other -> failwith $"flock: %A{other}"
+
+            UnixSystem.checkInvariants locked |> shouldEqual []
+
+            let unrecorded =
+                locked
+                |> withStatus id (OpenFileStatus.none (SimulatedUnixPlatform.flavour platform))
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin ->
+                UnixSystem.checkInvariants unrecorded
+                |> shouldEqual [ UnixSystemDefect.FlockHeldNotRecorded id ]
+            // Linux records no grant, so there is nothing to disagree with.
+            | SimulatedUnixFlavour.Linux -> UnixSystem.checkInvariants unrecorded |> shouldEqual []
+
+    // ------------------------------------------------------------------
     // The counters, at the boundary rather than past it
     // ------------------------------------------------------------------
 
@@ -130,6 +260,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
                         [
@@ -139,7 +270,7 @@ module TestUnixSystemInvariants =
                                 AccessMode = FileAccessMode.ReadWrite
                                 NonBlocking = false
                                 Flock = None
-                                Status = OpenFileStatus.none
+                                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                             }
                         ])
                     (OpenFileDescriptionId 1L))
@@ -213,6 +344,7 @@ module TestUnixSystemInvariants =
         let forged =
             (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
+                    SimulatedUnixFlavour.Linux
                     (Map.ofList [ 4, queueId ])
                     (Map.ofList
                         [
@@ -222,7 +354,7 @@ module TestUnixSystemInvariants =
                                 AccessMode = FileAccessMode.ReadWrite
                                 NonBlocking = false
                                 Flock = None
-                                Status = OpenFileStatus.none
+                                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                             }
                         ])
                     (OpenFileDescriptionId 1L))
@@ -510,7 +642,9 @@ module TestUnixSystemInvariants =
     [<Test>]
     let ``a thread parked on a live epoll instance or file is sound`` () : unit =
         let queueFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         let queueId =
             match FileDescriptorRegistry.tryFindWithId queueFd registry with
@@ -573,7 +707,10 @@ module TestUnixSystemInvariants =
         let (SocketId raw) = socketId
 
         let _, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         socketId,
         { system with
@@ -823,7 +960,13 @@ module TestUnixSystemInvariants =
         // without it.
         let inHandler (inside : int) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
-            |> HandlerFrames.enter "h" 0 (Set.ofList [ 0 ; inside ]) inside (Set.singleton Signal.SIGINT)
+            |> HandlerFrames.enter
+                SignalNumbering.Linux
+                "h"
+                0
+                (Set.ofList [ 0 ; inside ])
+                inside
+                (Set.singleton Signal.SIGINT)
 
         system
         |> withThread None
@@ -846,6 +989,7 @@ module TestUnixSystemInvariants =
         let blocking (thread : int) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
             |> SignalState.changeMask
+                SignalNumbering.Linux
                 SignalMaskChange.Block
                 (SignalMask.ofSignals SignalNumbering.Linux (Set.singleton Signal.SIGINT))
                 thread
@@ -867,6 +1011,7 @@ module TestUnixSystemInvariants =
         let directedAt (target : int voption) : SignalState<int, string> =
             SignalState.initial SignalNumbering.Linux Set.empty
             |> SignalState.enqueue
+                SignalNumbering.Linux
                 {
                     Signal = Signal.SIGCHLD
                     Target = target
@@ -888,24 +1033,6 @@ module TestUnixSystemInvariants =
         system
         |> withThread None
         |> withSignals (directedAt ValueNone)
-        |> UnixSystem.checkInvariants
-        |> shouldEqual []
-
-    [<Test>]
-    let ``a signal state reading signals under a foreign numbering is a defect`` () : unit =
-        // Reachable only by assembling the state by hand: `initial` derives
-        // the signal state's numbering from the platform it is given.
-        system
-        |> withSignals (SignalState.initial SignalNumbering.Darwin Set.empty)
-        |> UnixSystem.checkInvariants
-        |> shouldEqual
-            [
-                UnixSystemDefect.SignalNumberingMismatch (SignalNumbering.Darwin, SignalNumbering.Linux)
-            ]
-
-        // The control: the numbering `initial` derived is sound.
-        system
-        |> withSignals (SignalState.initial SignalNumbering.Linux Set.empty)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
@@ -977,14 +1104,11 @@ module TestUnixSystemInvariants =
     // `UnixSystem.initial`, `UnixThreadLifecycle.spawn` and the identity setters.
 
     let private spawned (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
-        match
-            UnixThreadLifecycle.trySpawn
-                0
-                1
-                (CpuId 0)
-                (UnixSystem.initial<int, string> platform
-                 |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
-        with
+        let booted =
+            UnixSystem.initial<int, string> platform
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        match UnixThreadLifecycle.trySpawn (Callers.thread 0 booted) 1 (CpuId 0) booted with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn failed: %O{error}"
         | Error refusal -> failwith $"spawn was refused: %s{SpawnRefusal.describe refusal}"

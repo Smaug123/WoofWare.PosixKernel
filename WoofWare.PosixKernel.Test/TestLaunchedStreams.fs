@@ -110,9 +110,7 @@ module TestLaunchedStreams =
 
     let private deliveredLog (system : UnixSystem<int, string>) : (Stream * byte list) list =
         DeliveryLog.toList system.Machine.Delivered
-        |> List.map (fun delivery ->
-            streamOf (UnixSystem.processId system) delivery.Endpoint, List.ofSeq delivery.Bytes
-        )
+        |> List.map (fun delivery -> streamOf (Lone.pid system) delivery.Endpoint, List.ofSeq delivery.Bytes)
 
     /// One write as a client issues it: admitted, and then given the bytes the
     /// admission asked for. A pipe the process made can lose its reader, and a
@@ -280,7 +278,12 @@ module TestLaunchedStreams =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -299,7 +302,7 @@ module TestLaunchedStreams =
             | Ok (WriteAnswer.Failed error, after) -> Some (Answer.WriteFailed error, after)
             | Error _ -> None
         | Op.Read (fd, count) ->
-            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped (uint64 count) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 Some (Answer.ReadBytes bytes.Length, after)
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Some (Answer.ReadFailed error, after)
@@ -311,21 +314,29 @@ module TestLaunchedStreams =
             | Ok (ReadOutcome.Restarts, _) -> failwith "a read that never slept restarted"
             | Error _ -> None
         | Op.Dup fd ->
-            let answer, after = Answered.dup fd system
+            let answer, after = Answered.dup (Callers.leader system) fd system
             Some (Answer.Syscall answer, after)
         | Op.Close fd ->
-            match UnixDescriptor.tryClose fd system with
+            match UnixDescriptor.tryClose (Callers.leader system) fd system with
             | Ok (answer, after) -> Some (Answer.Syscall answer, after)
             | Error _ -> None
         | Op.SetNonBlocking (fd, value) ->
-            let answer, after = UnixDescriptor.setNonBlocking fd value system
+            let answer, after =
+                UnixDescriptor.setNonBlocking (Callers.leader system) fd value system
+
             Some (Answer.NonBlocking answer, after)
         | Op.Poll fd ->
             match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
             | None -> Some (Answer.Level 0u, system)
             | Some id -> Some (Answer.Level (LinuxReadiness.ofDescription id system), system)
         | Op.Pipe2 ->
-            match UnixPipe.tryPipe2 (flavourNonBlock system.Machine.UnixPlatform) UserBuffer.Mapped system with
+            match
+                UnixPipe.tryPipe2
+                    (Callers.leader system)
+                    (flavourNonBlock system.Machine.UnixPlatform)
+                    UserBuffer.Mapped
+                    system
+            with
             | Ok (Pipe2Answer.Created _, after) -> Some (Answer.Syscall (SyscallAnswer.Completed 0L), after)
             | Ok (Pipe2Answer.Failed error, after) -> Some (Answer.Syscall (SyscallAnswer.Failed error), after)
             | Error _ -> None
@@ -421,7 +432,7 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
@@ -433,6 +444,7 @@ module TestLaunchedStreams =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     1
@@ -476,23 +488,27 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.Out ||| EpollEvents.EdgeTriggered
 
         for fd in [ 0 ; 1 ; 2 ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Changed, _) -> ()
             | other -> failwith $"fd %d{fd}: %A{other}"
 
         let readFd, system =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%A{other}"
 
-        match UnixPoll.tryEpollCtl epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system with
+        match
+            UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system
+        with
         | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual readFd
         | other -> failwith $"%A{other}"
 
@@ -516,7 +532,7 @@ module TestLaunchedStreams =
             let closed =
                 (system, [ 0 ; 1 ; 2 ])
                 ||> List.fold (fun system fd ->
-                    match UnixDescriptor.tryClose fd system with
+                    match UnixDescriptor.tryClose (Callers.leader system) fd system with
                     | Ok (SyscallAnswer.Completed 0L, system) -> system
                     | other -> failwith $"close %d{fd}: %A{other}"
                 )

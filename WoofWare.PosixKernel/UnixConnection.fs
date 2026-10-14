@@ -1864,8 +1864,8 @@ module UnixConnection =
         tryConnectBytes fd address declaredLength copied system
         |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
 
-    /// `connect`, with a refusal answered as the `Error` rather than raised.
-    let internal tryConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryConnect` once `Entry` has admitted its caller.
+    let private tryConnectIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
         (address : UserBuffer)
@@ -1876,11 +1876,6 @@ module UnixConnection =
               ConnectRefusal
            >
         =
-        // Loudly partial in an unregistered or parked thread, before anything is
-        // answered, as every call that can sleep is. The paused call holds the
-        // system it was made in, so the thread is still unparked when it resumes.
-        UnixThreadTable.requireIssuer "UnixConnection.connect" thread system.Threads
-
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd address declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
         | Ok (SockaddrCopyAdmission.Answered _) ->
@@ -1902,8 +1897,28 @@ module UnixConnection =
             |> CallProgress.NeedsCopyIn
             |> Ok
 
+    /// `connect`, with a refusal answered as the `Error` rather than raised.
+    let internal tryConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (address : UserBuffer)
+        (declaredLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<
+              CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>,
+              ConnectRefusal
+           >
+        =
+        Entry.call
+            "UnixConnection.connect"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.progress Shape.withSystem))
+            (tryConnectIn (Caller.thread caller) fd address declaredLength)
+            system
+
     /// <summary>
-    /// `connect(2)`, made by `thread`: point `fd` at the address in the
+    /// `connect(2)`, made by `caller`: point `fd` at the address in the
     /// `struct sockaddr` the caller declared `declaredLength` bytes long at
     /// `address`, or ask what pointing it there would answer.
     /// </summary>
@@ -1930,18 +1945,19 @@ module UnixConnection =
     /// that the table does not hold, fails loudly.
     /// </remarks>
     let connect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>
         =
-        tryConnect thread fd address declaredLength system
+        tryConnect caller fd address declaredLength system
         |> Refusal.orRaise "UnixConnection.connect" ConnectRefusal.kind ConnectRefusal.describe
 
-    /// `connectWithAddress`, with a refusal answered as the `Error` rather than raised.
-    let internal tryConnectWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryConnectWithAddress` before `Entry.resume` hands back the system it
+    /// answers in.
+    let private tryConnectWithAddressIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
         (paused : PausedConnect<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
@@ -1949,6 +1965,14 @@ module UnixConnection =
         CallProgress.requirePaused "UnixConnection.connectWithAddress" "UnixConnection.connect" paused
         CopyRange.require "UnixConnection.connectWithAddress" paused.Range copied
         finishConnect paused.Thread paused.Fd paused.Address paused.DeclaredLength copied paused.System
+
+    /// `connectWithAddress`, with a refusal answered as the `Error` rather than raised.
+    let internal tryConnectWithAddress<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (copied : ImmutableArray<byte>)
+        (paused : PausedConnect<'Thread, 'Handler>)
+        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        =
+        Entry.resume (Shape.result Shape.withSystem) (tryConnectWithAddressIn copied paused)
 
     /// <summary>
     /// The rest of the `connect` `paused` stopped: `copied`, exactly the bytes
@@ -2013,7 +2037,10 @@ module UnixConnection =
             let (SocketId rawAcceptedId) = acceptedId
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket acceptedId (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    acceptedId
+                    (UnixSystemState.fileDescriptors system)
 
             let accepted =
                 {
@@ -2258,8 +2285,8 @@ module UnixConnection =
 
         Ok (AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), system)
 
-    /// `accept`, with a refusal answered as the `Error` rather than raised.
-    let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryAccept` once `Entry` has admitted its caller.
+    let private tryAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
         (destination : UserBuffer)
@@ -2267,8 +2294,6 @@ module UnixConnection =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
         =
-        UnixThreadTable.requireIssuer "UnixConnection.accept" thread system.Threads
-
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
         // descriptor answers EBADF and a non-socket ENOTSOCK whatever the
@@ -2363,7 +2388,24 @@ module UnixConnection =
                 Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
-    /// `accept(2)`, made by `thread`: take the oldest completed connection off
+    /// `accept`, with a refusal answered as the `Error` rather than raised.
+    let internal tryAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (destination : UserBuffer)
+        (declaredLength : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        =
+        Entry.call
+            "UnixConnection.accept"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryAcceptIn (Caller.thread caller) fd destination declaredLength)
+            system
+
+    /// `accept(2)`, made by `caller`: take the oldest completed connection off
     /// `fd`'s accept queue and hand back a descriptor onto the server side of
     /// it; or, for a blocking listener with nothing queued, sleep until a
     /// connection arrives.
@@ -2386,7 +2428,7 @@ module UnixConnection =
     /// queue included.
     ///
     /// A listener whose description is blocking and whose queue is empty parks
-    /// `thread` until a connection is queued, and the call is finished with
+    /// the caller's thread until a connection is queued, and the call is finished with
     /// `finishAccept`. It waits for ever: `SO_RCVTIMEO`, which bounds such a
     /// wait on Linux (and not on Darwin), is an option `setsockopt` refuses to
     /// set. Of several threads parked on one listener, a connection wakes the one
@@ -2405,16 +2447,16 @@ module UnixConnection =
     /// `SimulatedUnixPlatform.acceptedSocketInheritsNonBlocking`. A client whose
     /// own sockets want one answer on every platform clears it itself.
     ///
-    /// `thread` must not already be parked.
+    /// The caller's thread must not already be parked.
     let accept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryAccept thread fd destination declaredLength system
+        tryAccept caller fd destination declaredLength system
         |> Refusal.orRaise "UnixConnection.accept" AcceptRefusal.kind AcceptRefusal.describe
 
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2502,8 +2544,8 @@ module UnixConnection =
             failwith
                 $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
-    /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishAccept` once `Entry` has admitted its caller.
+    let private tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
@@ -2521,7 +2563,21 @@ module UnixConnection =
         | Ok (outcome, after) ->
             Ok (outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixConnection.finishAccept" held after)
 
-    /// Finish the `accept` `thread` is parked in: look at the listener's queue
+    /// `finishAccept`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        =
+        Entry.call
+            "UnixConnection.finishAccept"
+            CallerRequirement.Woken
+            caller
+            (Shape.result Shape.withSystem)
+            (tryFinishAcceptIn (Caller.thread caller))
+            system
+
+    /// Finish the `accept` `caller` is parked in: look at the listener's queue
     /// again, as a woken real accept does, and answer.
     ///
     /// Hands over the oldest connection on the queue, copying its peer address
@@ -2551,17 +2607,17 @@ module UnixConnection =
     /// answers `ECONNABORTED`, whatever is queued and whatever signal is
     /// pending, and leaves the queue as it is.
     ///
-    /// `thread` must be parked in an accept.
+    /// `caller` must be parked in an accept.
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : AcceptOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishAccept thread system
+        tryFinishAccept caller system
         |> Refusal.orRaise "UnixConnection.finishAccept" AcceptRefusal.kind AcceptRefusal.describe
 
-    /// `shutdown`, with a refusal answered as the `Error` rather than raised.
-    let internal tryShutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryShutdown` once `Entry` has admitted its caller.
+    let private tryShutdownIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (how : int)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -2666,6 +2722,22 @@ module UnixConnection =
 
         Ok (answer, SocketWake.signalTransfer connectionId wakes system)
 
+    /// `shutdown`, with a refusal answered as the `Error` rather than raised.
+    let internal tryShutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (how : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ShutdownAnswer * UnixSystem<'Thread, 'Handler>, ShutdownRefusal>
+        =
+        Entry.call
+            "UnixConnection.shutdown"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryShutdownIn fd how)
+            system
+
     /// `shutdown(2)` of `fd`, with `how` raw: `SHUT_RD` (0), `SHUT_WR` (1) or
     /// `SHUT_RDWR` (2) on both flavours.
     ///
@@ -2694,10 +2766,11 @@ module UnixConnection =
     /// A parked read or write on either end may have an answer afterwards;
     /// `UnixWait.wakes` finds it.
     let shutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (fd : int)
         (how : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : ShutdownAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryShutdown fd how system
+        tryShutdown caller fd how system
         |> Refusal.orRaise "UnixConnection.shutdown" ShutdownRefusal.kind ShutdownRefusal.describe

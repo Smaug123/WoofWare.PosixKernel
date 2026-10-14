@@ -176,6 +176,7 @@ module TestInodeOwner =
     let private ownerAt (path : string) (system : UnixSystem<int, string>) : InodeOwner =
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context path))
                 system
@@ -209,7 +210,13 @@ module TestInodeOwner =
             | other -> failwith $"expected the file to be created, got %O{other}"
 
         let system =
-            match Answered.mkdir (PathArg.ofPath (UnixPath.parseOrFail context "/p/dir")) 0o755 system with
+            match
+                Answered.mkdir
+                    (Callers.leader system)
+                    (PathArg.ofPath (UnixPath.parseOrFail context "/p/dir"))
+                    0o755
+                    system
+            with
             | SyscallAnswer.Completed 0L, system -> system
             | other -> failwith $"expected the directory to be created, got %O{other}"
 

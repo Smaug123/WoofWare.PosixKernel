@@ -119,9 +119,7 @@ module UnixPipe =
             else
                 Pipe2Flags.Creates (
                     flags &&& OpenFlagNumbering.LinuxNonBlock <> 0,
-                    { DescriptorFlags.none with
-                        CloseOnExec = flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0
-                    }
+                    DescriptorFlags.Linux (closeOnExec = (flags &&& OpenFlagNumbering.LinuxCloseOnExec <> 0))
                 )
         | SimulatedUnixFlavour.Darwin ->
             let accepted =
@@ -134,14 +132,14 @@ module UnixPipe =
             else
                 Pipe2Flags.Creates (
                     flags &&& OpenFlagNumbering.DarwinNonBlock <> 0,
-                    {
-                        CloseOnExec = flags &&& OpenFlagNumbering.DarwinCloseOnExec <> 0
-                        CloseOnFork = flags &&& OpenFlagNumbering.DarwinCloseOnFork <> 0
-                    }
+                    DescriptorFlags.Darwin (
+                        closeOnExec = (flags &&& OpenFlagNumbering.DarwinCloseOnExec <> 0),
+                        closeOnFork = (flags &&& OpenFlagNumbering.DarwinCloseOnFork <> 0)
+                    )
                 )
 
-    /// `pipe2`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryPipe2` once `Entry` has admitted its caller.
+    let private tryPipe2In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -218,7 +216,11 @@ module UnixPipe =
             }
 
         let (readFd, writeFd), registry =
-            FileDescriptorRegistry.createPipe pipeId nonBlocking (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createPipe
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                pipeId
+                nonBlocking
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             registry
@@ -237,6 +239,22 @@ module UnixPipe =
             }
             |> UnixSystemState.withFileDescriptors registry
         )
+
+    /// `pipe2`, with a refusal answered as the `Error` rather than raised.
+    let internal tryPipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (flags : int)
+        (destination : UserBuffer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Pipe2Answer * UnixSystem<'Thread, 'Handler>, Pipe2Refusal>
+        =
+        Entry.call
+            "UnixPipe.pipe2"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryPipe2In flags destination)
+            system
 
     /// `pipe2(2)`: make a pipe, with a descriptor onto each end, and store the
     /// two in the caller's array at `destination`.
@@ -259,10 +277,11 @@ module UnixPipe =
     /// the process's effective user and group, and stamped with the machine's
     /// realtime clock.
     let pipe2<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (flags : int)
         (destination : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : Pipe2Answer * UnixSystem<'Thread, 'Handler>
         =
-        tryPipe2 flags destination system
+        tryPipe2 caller flags destination system
         |> Refusal.orRaise "UnixPipe.pipe2" Pipe2Refusal.kind Pipe2Refusal.describe

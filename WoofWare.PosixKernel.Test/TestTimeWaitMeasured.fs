@@ -112,7 +112,7 @@ module TestTimeWaitMeasured =
         | other -> failwith $"binding %s{Ipv4Endpoint.toString endpoint}: %A{other |> Result.map fst}"
 
     let private listen (fd : int) (row : Row) : Result<ListenAnswer * Row, ListenRefusal> =
-        UnixSocket.tryListen fd 8 row.System
+        UnixSocket.tryListen (Callers.leader row.System) fd 8 row.System
         |> Result.map (fun (answer, system) ->
             answer,
             { row with
@@ -135,7 +135,7 @@ module TestTimeWaitMeasured =
         )
 
     let private accept (listener : int) (row : Row) : int * Row =
-        match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u row.System with
+        match UnixConnection.tryAccept (Callers.thread 0 row.System) listener UserBuffer.Mapped 16u row.System with
         | Ok (AcceptOutcome.Accepted (accepted, _, _), system) ->
             accepted,
             { row with
@@ -144,7 +144,7 @@ module TestTimeWaitMeasured =
         | other -> failwith $"accept: %A{other}"
 
     let private close (fd : int) (row : Row) : Row =
-        match UnixDescriptor.tryClose fd row.System with
+        match UnixDescriptor.tryClose (Callers.leader row.System) fd row.System with
         | Ok (SyscallAnswer.Completed 0L, system) ->
             { row with
                 System = system
@@ -275,7 +275,7 @@ module TestTimeWaitMeasured =
 
     /// What `getsockname(2)` reports of the socket behind `fd`.
     let private nameOf (fd : int) (row : Row) : Ipv4Endpoint =
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u row.System with
+        match UnixSocket.tryGetsockname (Callers.leader row.System) fd UserBuffer.Mapped 16u row.System with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr row.System.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> endpoint
@@ -630,7 +630,14 @@ module TestTimeWaitMeasured =
                         let answered, row = connectLine fd listenerX row
 
                         let accepted =
-                            match UnixConnection.tryAccept 0 row.X UserBuffer.Mapped 16u row.System with
+                            match
+                                UnixConnection.tryAccept
+                                    (Callers.thread 0 row.System)
+                                    row.X
+                                    UserBuffer.Mapped
+                                    16u
+                                    row.System
+                            with
                             | Ok (AcceptOutcome.Accepted _, _) -> "OK"
                             | other -> $"%A{other}"
 
@@ -737,7 +744,7 @@ module TestTimeWaitMeasured =
         replayed |> shouldEqual 6
 
     let private shutWrite (fd : int) (row : Row) : Row =
-        match UnixConnection.tryShutdown fd 1 row.System with
+        match UnixConnection.tryShutdown (Callers.leader row.System) fd 1 row.System with
         | Ok (ShutdownAnswer.Shut, system) ->
             { row with
                 System = system
@@ -747,7 +754,9 @@ module TestTimeWaitMeasured =
     /// The client writes until its send buffer is full, as the probe's
     /// non-blocking writes did until `EAGAIN`.
     let private fill (fd : int) (row : Row) : Row =
-        let system = UnixDescriptor.setNonBlocking fd true row.System |> snd
+        let system =
+            UnixDescriptor.setNonBlocking (Callers.leader row.System) fd true row.System
+            |> snd
 
         let chunk =
             Collections.Immutable.ImmutableArray.CreateRange (Array.create 4096 'x'B)

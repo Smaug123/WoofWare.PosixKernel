@@ -26,10 +26,31 @@ module Become =
         : UnixSystem<'Thread, 'Handler>
         =
         UnixCredentials.trySetgroups
+            (Callers.leader system)
             (List.length groups)
             (GroupListWords.Readable (groups |> List.map GroupId.toUInt32))
             system
         |> completed "setgroups"
+
+    let private setResGid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (real : GroupId option)
+        (effective : GroupId option)
+        (saved : GroupId option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        UnixCredentials.trySetresgid (Callers.leader system) real effective saved system
+        |> completed "setresgid"
+
+    let private setResUid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (real : UserId option)
+        (effective : UserId option)
+        (saved : UserId option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        UnixCredentials.trySetresuid (Callers.leader system) real effective saved system
+        |> completed "setresuid"
 
     /// The process, which must be privileged, as `credentials` in full: all
     /// six IDs and the supplementary groups.
@@ -40,16 +61,8 @@ module Become =
         =
         system
         |> setGroups credentials.SupplementaryGroups
-        |> UnixCredentials.trySetresgid
-            (Some credentials.RealGroup)
-            (Some credentials.EffectiveGroup)
-            (Some credentials.SavedGroup)
-        |> completed "setresgid"
-        |> UnixCredentials.trySetresuid
-            (Some credentials.RealUser)
-            (Some credentials.EffectiveUser)
-            (Some credentials.SavedUser)
-        |> completed "setresuid"
+        |> setResGid (Some credentials.RealGroup) (Some credentials.EffectiveGroup) (Some credentials.SavedGroup)
+        |> setResUid (Some credentials.RealUser) (Some credentials.EffectiveUser) (Some credentials.SavedUser)
 
     /// The process, whose real and saved user IDs must be 0, acting as
     /// `credentials`: its groups, and its effective user ID, with the real and
@@ -61,13 +74,8 @@ module Become =
         =
         system
         |> setGroups credentials.SupplementaryGroups
-        |> UnixCredentials.trySetresgid
-            (Some credentials.RealGroup)
-            (Some credentials.EffectiveGroup)
-            (Some credentials.SavedGroup)
-        |> completed "setresgid"
-        |> UnixCredentials.trySetresuid None (Some credentials.EffectiveUser) None
-        |> completed "setresuid"
+        |> setResGid (Some credentials.RealGroup) (Some credentials.EffectiveGroup) (Some credentials.SavedGroup)
+        |> setResUid None (Some credentials.EffectiveUser) None
 
     /// The process, whose real or saved user ID is 0, privileged again: its
     /// effective user ID set back to 0, and nothing else changed.
@@ -75,5 +83,4 @@ module Become =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        UnixCredentials.trySetresuid None (Some UserId.root) None system
-        |> completed "setresuid"
+        setResUid None (Some UserId.root) None system

@@ -69,7 +69,7 @@ module TestSocketErrorOption =
         NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
 
     let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking fd true system with
+        match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
         | SetNonBlockingAnswer.Set, system -> system
         | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
 
@@ -92,7 +92,7 @@ module TestSocketErrorOption =
         let fd, system = stream system
         let system = bindAt fd (loopback listenerPort) system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | Ok (answer, _) -> failwith $"listen answered %A{answer}"
         | Error refusal -> failwith $"listen refused: %s{ListenRefusal.describe refusal}"

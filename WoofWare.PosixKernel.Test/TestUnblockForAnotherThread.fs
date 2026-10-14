@@ -218,24 +218,25 @@ module TestUnblockForAnotherThread =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
         let port, system =
             match flavour with
             | SimulatedUnixFlavour.Darwin ->
-                match UnixKqueue.tryKqueue system with
+                match UnixKqueue.tryKqueue (Callers.leader system) system with
                 | Ok (fd, system) -> fd, system
                 | other -> failwith $"kqueue: %A{other}"
             | SimulatedUnixFlavour.Linux ->
                 let epoll, system =
-                    match UnixPoll.tryEpollCreate1 0 system with
+                    match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                     | Ok (Ok (fd, system)) -> fd, system
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
                     UnixPoll.tryEpollCtl
+                        (Callers.leader system)
                         epoll
                         1
                         listener
@@ -261,13 +262,21 @@ module TestUnblockForAnotherThread =
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 (Lone.fileDescriptors system)
 
         let waitingThrough, registry =
-            FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode FileAccessMode.ReadWrite registry
+            FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (ForgedName.ofInode system inode)
+                inode
+                FileAccessMode.ReadWrite
+                registry
 
         let system =
             { system with
@@ -279,12 +288,12 @@ module TestUnblockForAnotherThread =
             |> Lone.withFileDescriptors registry
 
         let system =
-            match UnixDescriptor.tryFlock holder lockedThrough 2 system with
+            match UnixDescriptor.tryFlock (Callers.thread holder system) lockedThrough 2 system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system) -> system
             | other -> failwith $"the holder's lock: %A{other}"
 
         let pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
-            match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
             | Ok (Pipe2Answer.Created (readEnd, writeEnd), system) -> readEnd, writeEnd, system
             | other -> failwith $"pipe2: %A{other}"
 
@@ -293,7 +302,8 @@ module TestUnblockForAnotherThread =
 
         // Filled by non-blocking writes, a page and then a byte at a time,
         // until nothing more fits.
-        let _, system = UnixDescriptor.setNonBlocking fullWrite true system
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) fullWrite true system
 
         let rec fill (chunk : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match
@@ -310,7 +320,9 @@ module TestUnblockForAnotherThread =
             | other -> failwith $"filling the pipe: %A{other}"
 
         let system = fill 4096 system
-        let _, system = UnixDescriptor.setNonBlocking fullWrite false system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) fullWrite false system
 
         {
             System = system
@@ -336,7 +348,7 @@ module TestUnblockForAnotherThread =
         match sleep with
         | Sleep.PollOfNothing ->
             UnixPoll.tryPoll
-                thread
+                (Callers.thread thread system)
                 [
                     {
                         Fd = -1
@@ -348,7 +360,7 @@ module TestUnblockForAnotherThread =
             |> parkedOrNot "the poll of nothing"
         | Sleep.PollListener ->
             UnixPoll.tryPoll
-                thread
+                (Callers.thread thread system)
                 [
                     {
                         Fd = world.Listener
@@ -359,13 +371,13 @@ module TestUnblockForAnotherThread =
                 system
             |> parkedOrNot "the poll"
         | Sleep.Accept ->
-            UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u system
+            UnixConnection.tryAccept (Callers.thread thread system) world.Listener UserBuffer.Mapped 16u system
             |> parkedOrNot "the accept"
         | Sleep.Flock ->
-            UnixDescriptor.tryFlock thread world.WaitingThrough 2 system
+            UnixDescriptor.tryFlock (Callers.thread thread system) world.WaitingThrough 2 system
             |> parkedOrNot "the flock"
         | Sleep.PipeRead ->
-            UnixReadWrite.tryRead thread world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
+            UnixReadWrite.tryRead (Callers.thread thread system) world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
             |> parkedOrNot "the read"
         | Sleep.PipeWrite ->
             match
@@ -382,15 +394,27 @@ module TestUnblockForAnotherThread =
         | Sleep.EventPort ->
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
-                UnixPoll.tryEpollWait thread world.Port 8 UserBuffer.Mapped -1 system
+                UnixPoll.tryEpollWait (Callers.thread thread system) world.Port 8 UserBuffer.Mapped -1 system
                 |> parkedOrNot "the epoll_wait"
             | SimulatedUnixFlavour.Darwin ->
-                UnixKqueue.tryKevent thread world.Port 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent
+                    (Callers.thread thread system)
+                    world.Port
+                    0
+                    []
+                    1
+                    UserBuffer.Mapped
+                    KeventTimeout.Null
+                    system
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
             let mask = SignalState.maskOf thread (Lone.proc system).Signals
-            UnixSignal.trySigsuspend thread mask system |> parkedOrNot "the sigsuspend"
-        | Sleep.Pause -> UnixSignal.tryPause thread system |> parkedOrNot "the pause"
+
+            UnixSignal.trySigsuspend (Callers.thread thread system) mask system
+            |> parkedOrNot "the sigsuspend"
+        | Sleep.Pause ->
+            UnixSignal.tryPause (Callers.thread thread system) system
+            |> parkedOrNot "the pause"
 
     let private orFail (what : string) (result : Result<'a * UnixSystem<int, string>, 'e>) : UnixSystem<int, string> =
         match result with
@@ -405,10 +429,14 @@ module TestUnblockForAnotherThread =
         let outcome =
             match case.Target with
             | Target.Process ->
-                UnixSignal.tryKill (ProcessId.toInt32 (UnixSystem.processId system)) raw system
+                UnixSignal.tryKill
+                    (Callers.thread case.Unblocker system)
+                    (ProcessId.toInt32 (Lone.pid system))
+                    raw
+                    system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
             | Target.Thread thread ->
-                UnixSignal.tryPthreadKill thread raw system
+                UnixSignal.tryPthreadKill (Callers.thread case.Unblocker system) thread raw system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
 
         match outcome with
@@ -432,7 +460,7 @@ module TestUnblockForAnotherThread =
 
         match case.Route with
         | Route.PthreadSigmaskUnblock ->
-            UnixSignal.pthreadSigmask case.Unblocker (unblockHow case.Flavour) (Some s) system
+            UnixSignal.pthreadSigmask (Callers.thread case.Unblocker system) (unblockHow case.Flavour) (Some s) system
             |> answered
         | Route.SigprocmaskUnblock
         | Route.SigprocmaskSetEmpty ->
@@ -441,7 +469,7 @@ module TestUnblockForAnotherThread =
                 | Route.SigprocmaskUnblock -> unblockHow case.Flavour, s
                 | _ -> setmaskHow case.Flavour, SignalMask.empty
 
-            match UnixSignal.trySigprocmask case.Unblocker how (Some set) system with
+            match UnixSignal.trySigprocmask (Callers.thread case.Unblocker system) how (Some set) system with
             | Ok answer -> answered answer
             | Error refusal -> Unblocked.Refused refusal
 
@@ -473,13 +501,17 @@ module TestUnblockForAnotherThread =
             match disposition with
             | None -> world.System
             | Some disposition ->
-                UnixSignal.sigaction (signo case.Flavour signal) (Some disposition) world.System
+                UnixSignal.sigaction
+                    (Callers.leader world.System)
+                    (signo case.Flavour signal)
+                    (Some disposition)
+                    world.System
                 |> orFail "sigaction"
 
         let system =
             (system, threads)
             ||> List.fold (fun system thread ->
-                UnixSignal.pthreadSigmask thread (setmaskHow case.Flavour) (Some s) system
+                UnixSignal.pthreadSigmask (Callers.thread thread system) (setmaskHow case.Flavour) (Some s) system
                 |> orFail "pthread_sigmask"
             )
 
@@ -542,6 +574,7 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
+                    (UnixSystemState.signalNumbering after)
                     (Lone.proc after).CoreDumps
                     (Lone.leader after)
                     threads

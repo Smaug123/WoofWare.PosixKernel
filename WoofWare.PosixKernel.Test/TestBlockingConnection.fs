@@ -75,7 +75,18 @@ type BlockingConnectionOp =
 [<Order(TestOrder.LongRunning)>]
 module TestBlockingConnection =
 
+    /// Whether `status` records Darwin's `FWASWRITTEN`, which Linux never sets.
+    let private markedWritten (status : OpenFileStatus) : bool =
+        match status with
+        | OpenFileStatus.Darwin (written = written) -> written
+        | OpenFileStatus.Linux _ -> false
+
     let private threads : int list = [ 0 ; 1 ; 2 ; 3 ]
+
+    /// The thread the reference fuzzer's probes of the kernel's ports are made
+    /// by: one of none of its calls, so awake whenever every one of `threads`
+    /// is asleep.
+    let private prober : int = 4
 
     let private port : uint16 = 6100us
 
@@ -575,21 +586,31 @@ module TestBlockingConnection =
     let private flagWord (platform : SimulatedUnixPlatform) (flags : MessageFlag list) : int =
         MessageFlag.encode (SimulatedUnixPlatform.flavour platform) flags |> Option.get
 
-    /// The woken write of `thread`, finished, and given the bytes of `payload` it
+    /// The woken write of `caller`, finished, and given the bytes of `payload` it
     /// asks for.
-    let private libraryFinishWrite (thread : int) (payload : byte list) (system : UnixSystem<int, string>) =
+    let private libraryFinishWriteAs
+        (caller : Caller<int>)
+        (payload : byte list)
+        (system : UnixSystem<int, string>)
+        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        =
         let bytesAt (offset : int) (count : int) =
             payload |> List.skip offset |> List.take count |> ImmutableArray.CreateRange
 
-        WriteOutcomes.finishWrite thread bytesAt system
+        WriteOutcomes.finishWriteAs caller bytesAt system
+
+    /// `libraryFinishWriteAs` the thread `thread` of the only process on the
+    /// machine.
+    let private libraryFinishWrite (thread : int) (payload : byte list) (system : UnixSystem<int, string>) =
+        libraryFinishWriteAs (Callers.thread thread system) payload system
 
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -967,8 +988,12 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     proc.Signals
-                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
                     |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -990,7 +1015,10 @@ module TestBlockingConnection =
 
         let server, system = KeventWorld.accept listener system
         let system = KeventWorld.close listener system
-        let _, system = UnixDescriptor.setNonBlocking server false system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server false system
+
         client, server, system
 
     let private connectionOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId =
@@ -1006,14 +1034,21 @@ module TestBlockingConnection =
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
-    /// Whether a fresh socket, with `SO_REUSEADDR` if `reuse`, is refused
-    /// `EADDRINUSE` binding loopback at `port`; any other answer fails.
-    let private bindRefused (reuse : bool) (port : uint16) (system : UnixSystem<int, string>) : bool =
-        let fresh, system = KeventWorld.stream false system
+    /// Whether a fresh socket, made by `caller` with `SO_REUSEADDR` if `reuse`,
+    /// is refused `EADDRINUSE` binding loopback at `port`; any other answer
+    /// fails.
+    let private bindRefused
+        (caller : Caller<int>)
+        (reuse : bool)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : bool
+        =
+        let fresh, system = KeventWorld.streamAs caller false system
         let system = if reuse then ReuseAddress.set true fresh system else system
         let address = CopyIn.inet system.Machine.UnixPlatform (KeventWorld.loopback port)
 
-        match CopyIn.bind fresh UserBuffer.Mapped 16u address system with
+        match CopyIn.bindAs caller fresh UserBuffer.Mapped 16u address system with
         | Ok (BindAnswer.Bound _, _) -> false
         | Ok (BindAnswer.Failed UnixError.EADDRINUSE, _) -> true
         | other -> failwith $"a bind of port %d{port}: %A{other}"
@@ -1084,6 +1119,7 @@ module TestBlockingConnection =
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
             let flavourName = if linux then "Linux" else "Darwin"
             let client, server, start = pair (systemOn platform restart)
+            let start = Threads.ensure prober start
             let connection = connectionOf client start
 
             let clientPort =
@@ -1155,6 +1191,14 @@ module TestBlockingConnection =
                 let woken (thread : int) =
                     Map.tryFind thread reference.Parks |> Option.exists (fun park -> park.Woken)
 
+                // A call of the descriptor family, or a shutdown, names no thread
+                // of its own, and is made by the first thread in no call, and by
+                // none while every thread is in one.
+                let idleCaller = List.tryFind idle threads
+
+                let caller (system : UnixSystem<int, string>) : Caller<int> =
+                    Callers.thread (Option.get idleCaller) system
+
                 let resolved =
                     match op with
                     | BlockingConnectionOp.Read (index, fd, count) ->
@@ -1171,15 +1215,16 @@ module TestBlockingConnection =
                             (fun t fd -> BlockingConnectionOp.Send (t, fd, count, noSignal, dontWait))
                             (pick idle index)
                             (fdAt fd)
-                    | BlockingConnectionOp.Close fd -> fdAt fd |> Option.map BlockingConnectionOp.Close
-                    | BlockingConnectionOp.Dup fd -> fdAt fd |> Option.map BlockingConnectionOp.Dup
+                    | BlockingConnectionOp.Close fd ->
+                        Option.map2 (fun _ fd -> BlockingConnectionOp.Close fd) idleCaller (fdAt fd)
+                    | BlockingConnectionOp.Dup fd ->
+                        Option.map2 (fun _ fd -> BlockingConnectionOp.Dup fd) idleCaller (fdAt fd)
                     | BlockingConnectionOp.SetNonBlocking (fd, value) ->
-                        fdAt fd
-                        |> Option.map (fun fd -> BlockingConnectionOp.SetNonBlocking (fd, value))
+                        Option.map2 (fun _ fd -> BlockingConnectionOp.SetNonBlocking (fd, value)) idleCaller (fdAt fd)
                     | BlockingConnectionOp.Linger (fd, on, seconds) ->
                         fdAt fd |> Option.map (fun fd -> BlockingConnectionOp.Linger (fd, on, seconds))
                     | BlockingConnectionOp.Shutdown (fd, how) ->
-                        fdAt fd |> Option.map (fun fd -> BlockingConnectionOp.Shutdown (fd, how))
+                        Option.map2 (fun _ fd -> BlockingConnectionOp.Shutdown (fd, how)) idleCaller (fdAt fd)
                     | BlockingConnectionOp.Signal index -> pick inCall index |> Option.map BlockingConnectionOp.Signal
                     | BlockingConnectionOp.Finish index -> pick woken index |> Option.map BlockingConnectionOp.Finish
                     | BlockingConnectionOp.Wake -> Some op
@@ -1201,7 +1246,14 @@ module TestBlockingConnection =
                         referenceRead thread fd count TcpReceiveCall.Read false reference
 
                     let seen, actual =
-                        fromRead (UnixReadWrite.tryRead thread fd UserBuffer.Mapped (uint64 count) system)
+                        fromRead (
+                            UnixReadWrite.tryRead
+                                (Callers.thread thread system)
+                                fd
+                                UserBuffer.Mapped
+                                (uint64 count)
+                                system
+                        )
 
                     compare expected seen
                     cover (label flavourName "read" seen)
@@ -1253,7 +1305,15 @@ module TestBlockingConnection =
                             ]
 
                     let seen, actual =
-                        match UnixReadWrite.tryRecv thread fd UserBuffer.Mapped (uint64 count) flags system with
+                        match
+                            UnixReadWrite.tryRecv
+                                (Callers.thread thread system)
+                                fd
+                                UserBuffer.Mapped
+                                (uint64 count)
+                                flags
+                                system
+                        with
                         | Error refusal -> failwith $"%s{where ()}: recv refused: %s{ReceiveRefusal.describe refusal}"
                         | Ok outcome -> fromRead (Ok outcome)
 
@@ -1405,7 +1465,7 @@ module TestBlockingConnection =
                             )
                         | None -> None
 
-                    match refusedFor, lingerRefusal, UnixDescriptor.tryClose fd system with
+                    match refusedFor, lingerRefusal, UnixDescriptor.tryClose (caller system) fd system with
                     | Some thread, _, Error (CloseRefusal.DarwinWokenTransfer (_, refused)) ->
                         refused |> shouldEqual thread
                         cover (label flavourName "close" Seen.RefusedClose)
@@ -1493,7 +1553,7 @@ module TestBlockingConnection =
                         failwith
                             $"%s{where ()}: close expected refusal for %A{expected}, or %A{lingering}, got %A{other}"
                 | BlockingConnectionOp.Dup fd ->
-                    let copy, after = KeventWorld.dup fd system
+                    let copy, after = KeventWorld.dupAs (caller system) fd system
                     system <- after
 
                     reference <-
@@ -1547,7 +1607,7 @@ module TestBlockingConnection =
                         | Some (TcpShutdownAnswer.NotConnected, _, model) -> Seen.Failed UnixError.ENOTCONN, model
 
                     let seen, actual =
-                        match UnixConnection.tryShutdown fd how system with
+                        match UnixConnection.tryShutdown (caller system) fd how system with
                         | Ok (ShutdownAnswer.Shut, after) -> Seen.Shut, Some after
                         | Ok (ShutdownAnswer.Failed error, after) -> Seen.Failed error, Some after
                         | Error (ShutdownRefusal.ReceiveShutBeforeUnsentBytes _) -> Seen.RefusedShutdown, None
@@ -1567,7 +1627,7 @@ module TestBlockingConnection =
                                 Model = model
                             }
                 | BlockingConnectionOp.SetNonBlocking (fd, value) ->
-                    let _, after = UnixDescriptor.setNonBlocking fd value system
+                    let _, after = UnixDescriptor.setNonBlocking (caller system) fd value system
                     system <- after
 
                     reference <-
@@ -1581,6 +1641,7 @@ module TestBlockingConnection =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
+                                        (UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1668,7 +1729,7 @@ module TestBlockingConnection =
 
                     let seen, actual =
                         match park.Call with
-                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead thread system)
+                        | Call.Reading _ -> fromRead (UnixReadWrite.tryFinishRead (Callers.thread thread system) system)
                         | Call.Writing (_, payload, _, call) ->
                             let seen, raised, actual =
                                 fromWriteRaising (libraryFinishWrite thread payload system)
@@ -1796,7 +1857,7 @@ module TestBlockingConnection =
                                     own.FinArrived && not own.FinPassive && ends.[connectionEnd].FinArrived)
 
                         for reuse in [ false ; true ] do
-                            let refused = bindRefused reuse endPort system
+                            let refused = bindRefused (Callers.thread prober system) reuse endPort system
 
                             if refused <> (held && (linux || not reuse)) then
                                 failwith
@@ -1817,7 +1878,7 @@ module TestBlockingConnection =
                     for KeyValue (fd, connectionEnd) in reference.Fds do
                         let written =
                             match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
-                            | Some (_, description) -> description.Status.Written
+                            | Some (_, description) -> markedWritten description.Status
                             | None -> failwith $"%s{where ()}: fd %d{fd} names no description"
 
                         if written <> Set.contains connectionEnd reference.Marked then
@@ -1958,7 +2019,19 @@ module TestBlockingConnection =
     // The rows of `tcp-blocking.c`, one at a time
     // ------------------------------------------------------------------
 
-    /// `thread` reads up to `count` bytes through `fd`, and sleeps.
+    /// `caller` reads up to `count` bytes through `fd`, and sleeps.
+    let private asleepReadingAs
+        (caller : Caller<int>)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match UnixReadWrite.tryRead caller fd UserBuffer.Mapped (uint64 count) system with
+        | Ok (ReadOutcome.WouldBlock _, system) -> system
+        | other -> failwith $"expected %O{caller}'s read to sleep, got %A{other}"
+
+    /// `asleepReadingAs` the thread `thread` of the only process on the machine.
     let private asleepReading
         (thread : int)
         (fd : int)
@@ -1966,11 +2039,21 @@ module TestBlockingConnection =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd UserBuffer.Mapped (uint64 count) system with
-        | Ok (ReadOutcome.WouldBlock _, system) -> system
-        | other -> failwith $"expected thread %d{thread}'s read to sleep, got %A{other}"
+        asleepReadingAs (Callers.thread thread system) fd count system
 
-    /// `thread` writes `bytes` through `fd`, and sleeps.
+    /// `caller` writes `bytes` through `fd`, and sleeps.
+    let private asleepWritingAs
+        (caller : Caller<int>)
+        (fd : int)
+        (bytes : byte list)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match WriteOutcomes.admitThenWriteAs caller fd UserBuffer.Mapped (ImmutableArray.CreateRange bytes) system with
+        | Ok (WriteStep.WouldBlock (_, system)) -> system
+        | other -> failwith $"expected %O{caller}'s write to sleep, got %A{other}"
+
+    /// `asleepWritingAs` the thread `thread` of the only process on the machine.
     let private asleepWriting
         (thread : int)
         (fd : int)
@@ -1978,30 +2061,53 @@ module TestBlockingConnection =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped (ImmutableArray.CreateRange bytes) system with
-        | Ok (WriteStep.WouldBlock (_, system)) -> system
-        | other -> failwith $"expected thread %d{thread}'s write to sleep, got %A{other}"
+        asleepWritingAs (Callers.thread thread system) fd bytes system
 
-    /// A write of `count` bytes through `fd` by thread 0 that returns, and its
-    /// count.
-    let private wrote (fd : int) (count : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
+    /// A write of `count` bytes through `fd` by thread 0 of the process `pid`
+    /// that returns, and its count.
+    let private wroteIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : int64 * UnixSystem<int, string>
+        =
         match
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped (ImmutableArray.CreateRange (payload 99 count)) system
+            WriteOutcomes.admitThenWriteAs
+                (Caller.make pid 0)
+                fd
+                UserBuffer.Mapped
+                (ImmutableArray.CreateRange (payload 99 count))
+                system
         with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, system)) -> n, system
         | other -> failwith $"expected a write of %d{count} through fd %d{fd} to return, got %A{other}"
 
-    /// A read of up to `count` bytes through `fd` by thread 0, which has
-    /// something to answer.
+    /// `wroteIn` the only process on the machine.
+    let private wrote (fd : int) (count : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
+        wroteIn (Lone.pid system) fd count system
+
+    /// A read of up to `count` bytes through `fd` by thread 0 of the process
+    /// `pid`, which has something to answer.
+    let private readNowIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : ReadAnswer * UnixSystem<int, string>
+        =
+        match UnixReadWrite.tryRead (Caller.make pid 0) fd UserBuffer.Mapped (uint64 count) system with
+        | Ok (ReadOutcome.Answered answer, system) -> answer, system
+        | other -> failwith $"expected a read through fd %d{fd} to answer, got %A{other}"
+
+    /// `readNowIn` the only process on the machine.
     let private readNow
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
         : ReadAnswer * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped (uint64 count) system with
-        | Ok (ReadOutcome.Answered answer, system) -> answer, system
-        | other -> failwith $"expected a read through fd %d{fd} to answer, got %A{other}"
+        readNowIn (Lone.pid system) fd count system
 
     let private wokenAmong (asleep : int list) (system : UnixSystem<int, string>) : int list =
         UnixWait.wakes (Set.ofList asleep) system |> List.map fst
@@ -2021,6 +2127,7 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     SignalState.enqueue
+                        (UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -2090,7 +2197,7 @@ module TestBlockingConnection =
                     | "fin" -> ReadAnswer.Completed ImmutableArray.Empty
                     | _ -> ReadAnswer.Failed UnixError.ECONNRESET
 
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered answer, after) ->
                     answer |> shouldEqual expected
                     UnixThreadTable.parkOf 1 (Lone.threads after) |> shouldEqual None
@@ -2114,14 +2221,15 @@ module TestBlockingConnection =
                 let system = asleepReading 1 client 4096 system |> signalled 1
                 wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
                 | Ok (ReadOutcome.Restarts, after) when restart ->
                     UnixThreadTable.parkOf 1 (Lone.threads after) |> shouldEqual None
                 | other -> failwith $"%O{platform} restart %b{restart}: the read came to %A{other}"
 
                 // The server's end full, so a write by it takes nothing.
-                let _, system = UnixDescriptor.setNonBlocking server true system
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
                 let rec fill (system : UnixSystem<int, string>) =
                     match
@@ -2137,7 +2245,10 @@ module TestBlockingConnection =
                     | other -> failwith $"filling: %A{other}"
 
                 let system = fill system
-                let _, system = UnixDescriptor.setNonBlocking server false system
+
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) server false system
+
                 let system = asleepWriting 2 server (payload 2 1000) system |> signalled 2
                 wokenAmong [ 2 ] system |> shouldEqual [ 2 ]
 
@@ -2153,7 +2264,7 @@ module TestBlockingConnection =
     [<Test>]
     let ``a signal the thread blocks leaves a sleeping transfer asleep, and pending`` () : unit =
         for platform in Machines.platforms do
-            let numbering = SignalState.numbering (Lone.proc (systemOn platform false)).Signals
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let sigBlock =
@@ -2162,7 +2273,7 @@ module TestBlockingConnection =
                 | SimulatedUnixFlavour.Darwin -> 1
 
             let blocking (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixSignal.pthreadSigmask thread sigBlock (Some usr1) system with
+                match UnixSignal.pthreadSigmask (Callers.thread thread system) sigBlock (Some usr1) system with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
@@ -2176,16 +2287,17 @@ module TestBlockingConnection =
             wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
             let system =
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                     List.ofSeq bytes |> shouldEqual (payload 99 100)
                     after
                 | other -> failwith $"%O{platform}: the read came to %A{other}"
 
-            UnixSignal.sigpending 1 system |> shouldEqual usr1
+            UnixSignal.sigpending (Callers.thread 1 system) system |> shouldEqual usr1
 
             // The server's end full, so a write by it takes nothing.
-            let _, system = UnixDescriptor.setNonBlocking server true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server true system
 
             let rec fill (system : UnixSystem<int, string>) =
                 match
@@ -2201,10 +2313,20 @@ module TestBlockingConnection =
                 | other -> failwith $"filling: %A{other}"
 
             let system = fill system
-            let _, system = UnixDescriptor.setNonBlocking server false system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) server false system
+
             let system = asleepWriting 2 server (payload 2 1000) system |> signalled 2
             wokenAmong [ 2 ] system |> shouldEqual []
-            UnixSignal.sigpending 2 system |> shouldEqual usr1
+
+            SignalState.pendingBlocked
+                (UnixSystemState.signalNumbering system)
+                (Lone.leader system)
+                2
+                (Lone.proc system).Signals
+            |> shouldEqual usr1
+
             UnixSystem.checkInvariants system |> shouldEqual []
 
     /// R-order: three readers asleep on one socket all wake for one byte, on
@@ -2224,12 +2346,12 @@ module TestBlockingConnection =
             wokenAmong [ 1 ; 2 ; 3 ] system |> shouldEqual [ 1 ; 2 ; 3 ]
 
             let system =
-                match UnixReadWrite.tryFinishRead 2 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 2 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) when bytes.Length = 1 -> after
                 | other -> failwith $"%O{platform}: %A{other}"
 
             for thread in [ 1 ; 3 ] do
-                match UnixReadWrite.tryFinishRead thread system with
+                match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
                 | Ok (ReadOutcome.WouldBlock _, _) -> ()
                 | other -> failwith $"%O{platform}: thread %d{thread} came to %A{other}"
 
@@ -2388,7 +2510,7 @@ module TestBlockingConnection =
             let system = asleepReading 2 client 4096 system
             let system = wrote server 10 system |> snd |> signalled 2
 
-            match UnixReadWrite.tryFinishRead 2 system, linux with
+            match UnixReadWrite.tryFinishRead (Callers.thread 2 system) system, linux with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed got), _), true -> got.Length |> shouldEqual 10
             | Error (ReadRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion _)), false -> ()
             | other, _ -> failwith $"%O{platform}: the read came to %A{other}"
@@ -2413,7 +2535,8 @@ module TestBlockingConnection =
                     if tookSome then
                         system
                     else
-                        let _, system = UnixDescriptor.setNonBlocking client true system
+                        let _, system =
+                            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
                         let rec fill (system : UnixSystem<int, string>) =
                             match
@@ -2428,7 +2551,8 @@ module TestBlockingConnection =
                             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> system
                             | other -> failwith $"filling: %A{other}"
 
-                        UnixDescriptor.setNonBlocking client false (fill system) |> snd
+                        let filled = fill system
+                        UnixDescriptor.setNonBlocking (Callers.leader filled) client false filled |> snd
 
                 let bytes = payload 6 (if tookSome then 600000 else 1000)
                 let system = asleepWriting 1 client bytes system
@@ -2460,7 +2584,7 @@ module TestBlockingConnection =
 
     /// `shutdown(fd, how)`, which must answer 0.
     let private shut (fd : int) (how : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixConnection.tryShutdown fd how system with
+        match UnixConnection.tryShutdown (Callers.leader system) fd how system with
         | Ok (ShutdownAnswer.Shut, after) -> after
         | other -> failwith $"shutdown(%d{fd}, %d{how}): %A{other}"
 
@@ -2496,7 +2620,7 @@ module TestBlockingConnection =
 
                     let expected = if answers then 0 else 1
 
-                    match UnixReadWrite.tryFinishRead 1 system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         bytes.Length |> shouldEqual expected
                         UnixSystem.checkInvariants after |> shouldEqual []
@@ -2525,7 +2649,8 @@ module TestBlockingConnection =
                         if tookSome then
                             system
                         else
-                            let _, system = UnixDescriptor.setNonBlocking client true system
+                            let _, system =
+                                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
                             let rec fill (system : UnixSystem<int, string>) =
                                 match
@@ -2540,7 +2665,8 @@ module TestBlockingConnection =
                                 | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> system
                                 | other -> failwith $"filling: %A{other}"
 
-                            UnixDescriptor.setNonBlocking client false (fill system) |> snd
+                            let filled = fill system
+                            UnixDescriptor.setNonBlocking (Callers.leader filled) client false filled |> snd
 
                     let bytes = payload 6 (if tookSome then 600000 else 1000)
                     let system = asleepWriting 1 client bytes system
@@ -2622,7 +2748,7 @@ module TestBlockingConnection =
                 let system = wrote server 100 system |> snd
                 wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                     bytes.Length |> shouldEqual 100
                     // The call's return let go of the socket's last reference.
@@ -2631,7 +2757,7 @@ module TestBlockingConnection =
             else
                 wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EBADF), _) -> ()
                 | other -> failwith $"%O{platform}: %A{other}"
 
@@ -2665,7 +2791,7 @@ module TestBlockingConnection =
         let system = asleepReading 1 client 4096 system
         let system = wrote server 10 system |> snd
 
-        match UnixDescriptor.tryClose client system with
+        match UnixDescriptor.tryClose (Callers.leader system) client system with
         | Error (CloseRefusal.DarwinWokenTransfer (_, thread)) -> thread |> shouldEqual 1
         | other -> failwith $"%A{other}"
 
@@ -2681,7 +2807,7 @@ module TestBlockingConnection =
         | "read" -> asleepReading thread fd 4096 system
         | "write" -> asleepWriting thread fd (payload 7 600000) system
         | "recv" ->
-            match UnixReadWrite.tryRecv thread fd UserBuffer.Mapped 4096UL 0 system with
+            match UnixReadWrite.tryRecv (Callers.thread thread system) fd UserBuffer.Mapped 4096UL 0 system with
             | Ok (ReadOutcome.WouldBlock _, system) -> system
             | other -> failwith $"expected thread %d{thread}'s recv to sleep, got %A{other}"
         | "send" ->
@@ -2721,15 +2847,15 @@ module TestBlockingConnection =
                     let refusal =
                         match how with
                         | "close" ->
-                            match UnixDescriptor.tryClose client system with
+                            match UnixDescriptor.tryClose (Callers.leader system) client system with
                             | Error refusal -> Some refusal
                             | Ok other -> failwith $"%s{row}: the close answered %A{other}"
                         | "dup2" ->
-                            match UnixDescriptor.tryDup2 0 client system with
+                            match UnixDescriptor.tryDup2 (Callers.leader system) 0 client system with
                             | Error (Dup2Refusal.ClosingTarget refusal) -> Some refusal
                             | other -> failwith $"%s{row}: %A{other}"
                         | _ ->
-                            match UnixDescriptor.tryDup3 0 client 0 system with
+                            match UnixDescriptor.tryDup3 (Callers.leader system) 0 client 0 system with
                             | Error (Dup3Refusal.ClosingTarget refusal) -> Some refusal
                             | other -> failwith $"%s{row}: %A{other}"
 
@@ -2750,13 +2876,13 @@ module TestBlockingConnection =
         let system = asleepReading 1 client 4096 system
 
         let system =
-            match UnixDescriptor.tryClose client system with
+            match UnixDescriptor.tryClose (Callers.leader system) client system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"%A{other}"
 
         UnixSystem.checkInvariants system |> shouldEqual []
 
-        UnixDescriptor.tryClose copy system
+        UnixDescriptor.tryClose (Callers.leader system) copy system
         |> shouldEqual (Error (CloseRefusal.LingeringCloseDeferredToCall (socketOf copy system, 1)))
 
     /// Darwin's close ends the call made through the descriptor, so nothing
@@ -2772,7 +2898,7 @@ module TestBlockingConnection =
         let system = asleepReading 1 client 4096 system
 
         let system =
-            match UnixDescriptor.tryClose client system with
+            match UnixDescriptor.tryClose (Callers.leader system) client system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"{{1, 0}}: %A{other}"
 
@@ -2789,7 +2915,7 @@ module TestBlockingConnection =
         let system = asleepWriting 1 client (payload 7 600000) system
         let socket = socketOf client system
 
-        match UnixDescriptor.tryClose client system with
+        match UnixDescriptor.tryClose (Callers.leader system) client system with
         | Error (CloseRefusal.Release (DescriptionReleaseRefusal.LingeringClose (refused, _, unsent))) ->
             refused |> shouldEqual socket
             unsent |> shouldBeGreaterThan 0
@@ -2809,7 +2935,7 @@ module TestBlockingConnection =
             let system = asleepReading 1 client 4096 system
 
             let system =
-                match UnixDescriptor.tryClose client system with
+                match UnixDescriptor.tryClose (Callers.leader system) client system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"read, time %d{seconds}: %A{other}"
 
@@ -2817,7 +2943,7 @@ module TestBlockingConnection =
             let system = wrote server 100 system |> snd
             wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-            match UnixReadWrite.tryFinishRead 1 system with
+            match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 bytes.Length |> shouldEqual 100
                 after.Machine.Sockets.Count |> shouldEqual (system.Machine.Sockets.Count - 1)
@@ -2831,7 +2957,7 @@ module TestBlockingConnection =
             let system = asleepWriting 1 client bytes system
 
             let system =
-                match UnixDescriptor.tryClose client system with
+                match UnixDescriptor.tryClose (Callers.leader system) client system with
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"write, time %d{seconds}: %A{other}"
 
@@ -2861,7 +2987,7 @@ module TestBlockingConnection =
             |> Option.get
 
         let system =
-            match UnixDescriptor.tryClose client system with
+            match UnixDescriptor.tryClose (Callers.leader system) client system with
             | Ok (_, system) -> system
             | other -> failwith $"%A{other}"
 
@@ -2906,13 +3032,14 @@ module TestBlockingConnection =
             let system = wrote server 1 system |> snd
 
             let system =
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered _, after) -> after
                 | other -> failwith $"%A{other}"
 
-            let _, system = UnixDescriptor.setNonBlocking client true system
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
-            match UnixReadWrite.tryFinishRead 2 system with
+            match UnixReadWrite.tryFinishRead (Callers.thread 2 system) system with
             | Error (ReadRefusal.ConnectionBecameNonBlocking _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -2928,7 +3055,9 @@ module TestBlockingConnection =
                     system
 
             let system = untilWoken system
-            let _, system = UnixDescriptor.setNonBlocking client true system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
             match finishedWrite 1 bytes system with
             | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> ()
@@ -3053,13 +3182,15 @@ module TestBlockingConnection =
         for platform in Machines.platforms do
             let pids, machine = Machines.withThreadsOn small platform 2 5
             let a, b = pids.[0], pids.[1]
-            let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
+
+            let listener, machine =
+                Machines.inProcess b (KeventWorld.listenerAtIn b port) machine
 
             let client, machine =
                 Machines.inProcess
                     a
                     (fun view ->
-                        let fd, view = KeventWorld.stream false view
+                        let fd, view = KeventWorld.streamIn a false view
 
                         match KeventWorld.connectIn a fd port view with
                         | SyscallAnswer.Completed 0L, view -> fd, view
@@ -3068,13 +3199,17 @@ module TestBlockingConnection =
                     machine
 
             let accepted, machine =
-                Machines.inProcess b (fun view -> KeventWorld.accept listener view) machine
+                Machines.inProcess b (fun view -> KeventWorld.acceptIn b listener view) machine
 
-            let machine = Machines.doIn a (asleepReading 1 client 4096) machine
+            let machine =
+                Machines.doIn a (asleepReadingAs (Caller.make a 1) client 4096) machine
+
             let asleep = Map.ofList [ a, Set.singleton 1 ]
             Machines.wakes asleep machine |> shouldEqual []
 
-            let machine = Machines.doIn b (fun view -> wrote accepted 100 view |> snd) machine
+            let machine =
+                Machines.doIn b (fun view -> wroteIn b accepted 100 view |> snd) machine
+
             Machines.assertClean machine
             Machines.wakes asleep machine |> List.map fst |> shouldEqual [ a, 1 ]
 
@@ -3082,7 +3217,7 @@ module TestBlockingConnection =
                 Machines.inProcess
                     a
                     (fun view ->
-                        match UnixReadWrite.tryFinishRead 1 view with
+                        match UnixReadWrite.tryFinishRead (Caller.make a 1) view with
                         | Ok (ReadOutcome.Answered answer, view) -> answer, view
                         | other -> failwith $"%A{other}"
                     )
@@ -3093,7 +3228,10 @@ module TestBlockingConnection =
 
             // Now a writer in `a`, which `b`'s reads wake.
             let bytes = payload 10 600000
-            let machine = Machines.doIn a (asleepWriting 2 client bytes) machine
+
+            let machine =
+                Machines.doIn a (asleepWritingAs (Caller.make a 2) client bytes) machine
+
             let asleep = Map.ofList [ a, Set.singleton 2 ]
             Machines.wakes asleep machine |> shouldEqual []
 
@@ -3102,7 +3240,8 @@ module TestBlockingConnection =
                     failwith "the writer never woke"
 
                 match Machines.wakes asleep machine with
-                | [] -> untilWoken (reads + 1) (Machines.doIn b (fun view -> readNow accepted 4096 view |> snd) machine)
+                | [] ->
+                    untilWoken (reads + 1) (Machines.doIn b (fun view -> readNowIn b accepted 4096 view |> snd) machine)
                 | woken -> woken |> List.map fst, machine
 
             let woken, machine = untilWoken 0 machine
@@ -3113,7 +3252,7 @@ module TestBlockingConnection =
                 Machines.doIn
                     a
                     (fun view ->
-                        match finishedWrite 2 bytes view with
+                        match libraryFinishWriteAs (Caller.make a 2) bytes view with
                         | Ok (WriteStep.WouldBlock (_, view)) -> view
                         | other -> failwith $"%A{other}"
                     )
@@ -3130,13 +3269,14 @@ module TestBlockingConnection =
         let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3147,7 +3287,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 
@@ -3188,7 +3328,7 @@ module TestBlockingConnection =
         written |> shouldEqual (int64 fits)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
@@ -3197,6 +3337,7 @@ module TestBlockingConnection =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3207,7 +3348,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 
@@ -3267,13 +3408,14 @@ module TestBlockingConnection =
         let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"epoll_create1: %A{other}"
 
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     client
@@ -3284,7 +3426,7 @@ module TestBlockingConnection =
             | other -> failwith $"epoll_ctl: %A{other}"
 
         let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
-            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            match UnixPoll.tryEpollWait (Callers.thread 3 system) epoll 2 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
             | other -> failwith $"epoll_wait: %A{other}"
 
@@ -3391,7 +3533,7 @@ module TestBlockingConnection =
         =
         match
             UnixReadWrite.tryRecv
-                thread
+                (Callers.thread thread system)
                 fd
                 UserBuffer.Mapped
                 (uint64 count)
@@ -3423,14 +3565,14 @@ module TestBlockingConnection =
         | Error refusal -> failwith $"send refused: %s{SendRefusal.describe refusal}"
 
     let private available (fd : int) (system : UnixSystem<int, string>) : int =
-        match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (BytesAvailableAnswer.Reported count) -> count
         | other -> failwith $"FIONREAD of fd %d{fd}: %A{other}"
 
     /// The server end full, written to non-blocking until `EAGAIN`, and the
     /// description blocking again.
     let private filled (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let _, system = UnixDescriptor.setNonBlocking fd true system
+        let _, system = UnixDescriptor.setNonBlocking (Callers.leader system) fd true system
 
         let rec fill (system : UnixSystem<int, string>) =
             match
@@ -3445,7 +3587,8 @@ module TestBlockingConnection =
             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> system
             | other -> failwith $"filling fd %d{fd}: %A{other}"
 
-        fill system |> UnixDescriptor.setNonBlocking fd false |> snd
+        let filled = fill system
+        UnixDescriptor.setNonBlocking (Callers.leader filled) fd false filled |> snd
 
     /// P-sleep: a blocking peek with nothing queued sleeps until bytes arrive,
     /// answers them, and leaves them queued.
@@ -3470,7 +3613,7 @@ module TestBlockingConnection =
             let expected = ImmutableArray.CreateRange (payload 99 10)
 
             let system =
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                     bytes |> shouldEqual expected
                     after
@@ -3498,7 +3641,9 @@ module TestBlockingConnection =
 
             for flags in [ [] ; [ MessageFlag.Peek ] ] do
                 let client, server, system = pair (systemOn platform false)
-                let _, system = UnixDescriptor.setNonBlocking client true system
+
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
                 match received 1 client 0 flags system with
                 | ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), _ when linux -> ()
@@ -3506,7 +3651,8 @@ module TestBlockingConnection =
                     bytes.IsEmpty |> shouldEqual true
                 | other -> failwith $"%O{platform} %A{flags}: non-blocking, %A{other}"
 
-                let _, system = UnixDescriptor.setNonBlocking client false system
+                let _, system =
+                    UnixDescriptor.setNonBlocking (Callers.leader system) client false system
 
                 match received 1 client 0 flags system with
                 | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ when not linux ->
@@ -3516,7 +3662,7 @@ module TestBlockingConnection =
                     let system = wrote server 10 system |> snd
                     wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-                    match UnixReadWrite.tryFinishRead 1 system with
+                    match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         bytes.IsEmpty |> shouldEqual true
                         available client after |> shouldEqual 10
@@ -3560,7 +3706,7 @@ module TestBlockingConnection =
             let system = KeventWorld.close server system
             wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-            match UnixReadWrite.tryFinishRead 1 system with
+            match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 bytes.IsEmpty |> shouldEqual true
 
@@ -3587,7 +3733,7 @@ module TestBlockingConnection =
             let system = KeventWorld.close server system
             wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-            match UnixReadWrite.tryFinishRead 1 system with
+            match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.ECONNRESET), after) ->
                 pendingError connection ConnectionEnd.Client after
                 |> shouldEqual (if linux then None else Some TcpError.ConnectionReset)
@@ -3607,7 +3753,7 @@ module TestBlockingConnection =
 
                 wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
 
-                match UnixReadWrite.tryFinishRead 1 system with
+                match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
                 | Ok (ReadOutcome.Restarts, _) when restart -> ()
                 | other -> failwith $"%O{platform} restart %b{restart}: %A{other}"
@@ -3743,7 +3889,7 @@ module TestBlockingConnection =
 
             let marked (fd : int) (system : UnixSystem<int, string>) : bool =
                 match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
-                | Some (_, description) -> description.Status.Written
+                | Some (_, description) -> markedWritten description.Status
                 | None -> failwith $"fd %d{fd} names no description"
 
             for call, count in [ "write", 10 ; "send", 10 ; "send", 0 ] do
@@ -3785,7 +3931,7 @@ module TestBlockingConnection =
             let system = KeventWorld.close client system
 
             match FileDescriptorRegistry.tryFindWithId copy (Lone.fileDescriptors system) with
-            | Some (_, description) -> description.Status.Written |> shouldEqual (call = TcpSendCall.Write)
+            | Some (_, description) -> markedWritten description.Status |> shouldEqual (call = TcpSendCall.Write)
             | None -> failwith "the copy names no description"
 
     /// A Darwin `write` that slept, woken and finished, marks its description
@@ -3813,7 +3959,7 @@ module TestBlockingConnection =
 
             let marked (system : UnixSystem<int, string>) : bool =
                 match FileDescriptorRegistry.tryFindWithId client (Lone.fileDescriptors system) with
-                | Some (_, description) -> description.Status.Written
+                | Some (_, description) -> markedWritten description.Status
                 | None -> failwith "the client names no description"
 
             // Asleep part way, it has marked nothing yet.
@@ -3865,7 +4011,7 @@ module TestBlockingConnection =
                 let sendModelled =
                     List.contains flag [ MessageFlag.DontWait ; MessageFlag.NoSignal ]
 
-                match UnixReadWrite.tryRecv 0 client UserBuffer.Mapped 10UL word system with
+                match UnixReadWrite.tryRecv (Callers.thread 0 system) client UserBuffer.Mapped 10UL word system with
                 | Error (ReceiveRefusal.UnmodelledFlags flags) when not receiveModelled -> flags |> shouldEqual [ flag ]
                 | Ok _ when receiveModelled -> ()
                 | other -> failwith $"%O{platform} recv with %A{flag}: %A{other}"
@@ -3880,7 +4026,7 @@ module TestBlockingConnection =
                 MessageFlag.encode flavour [ MessageFlag.Peek ; MessageFlag.WaitAll ; MessageFlag.OutOfBand ]
                 |> Option.get
 
-            match UnixReadWrite.tryRecv 0 client UserBuffer.Mapped 10UL word system with
+            match UnixReadWrite.tryRecv (Callers.thread 0 system) client UserBuffer.Mapped 10UL word system with
             | Error (ReceiveRefusal.UnmodelledFlags flags) ->
                 flags |> shouldEqual [ MessageFlag.OutOfBand ; MessageFlag.WaitAll ]
             | other -> failwith $"%O{platform}: %A{other}"
@@ -3893,7 +4039,7 @@ module TestBlockingConnection =
             let client, _, system = pair (systemOn platform false)
             let huge = uint64 System.Int32.MaxValue + 1UL
 
-            match UnixReadWrite.tryRecv 0 client UserBuffer.Mapped huge 0 system with
+            match UnixReadWrite.tryRecv (Callers.thread 0 system) client UserBuffer.Mapped huge 0 system with
             | Error (ReceiveRefusal.UnmeasuredCount count) -> count |> shouldEqual huge
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -3905,7 +4051,7 @@ module TestBlockingConnection =
             let listener, system = KeventWorld.listenerAt (port + 1us) system
 
             for fd in [ idle ; listener ] do
-                match UnixReadWrite.tryRecv 0 fd UserBuffer.Mapped 10UL 0 system with
+                match UnixReadWrite.tryRecv (Callers.thread 0 system) fd UserBuffer.Mapped 10UL 0 system with
                 | Error (ReceiveRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"
 

@@ -215,14 +215,16 @@ module TestQueuedOptions =
         let client, system = connectTo system
         let system = set listener (level, option) (valueOf accepted) system
 
-        match UnixConnection.tryAccept 1 listener UserBuffer.Mapped UInt32.MaxValue system with
+        match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped UInt32.MaxValue system with
         | Error refusal ->
             match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socket) -> Error (refusal, socket)
             | other -> failwith $"the listener's fd %d{listener} names %A{other}"
         | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) ->
             UnixSystem.checkInvariants system |> shouldEqual []
-            let _, system = UnixDescriptor.setNonBlocking client true system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
 
             let read =
                 match ReadOutcomes.read client UserBuffer.Mapped 16UL system with

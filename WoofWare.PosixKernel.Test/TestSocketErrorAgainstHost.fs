@@ -250,7 +250,7 @@ module TestSocketErrorAgainstHost =
             | other -> failwith $"the model's listener did not bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 16 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 16 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"the model's listener did not listen: %A{other}"
 
@@ -259,7 +259,7 @@ module TestSocketErrorAgainstHost =
 
         let system =
             if nonBlocking then
-                match UnixDescriptor.setNonBlocking fd true system with
+                match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
                 | SetNonBlockingAnswer.Set, system -> system
                 | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
             else
@@ -441,7 +441,7 @@ module TestSocketErrorAgainstHost =
 
                             Some (observed host, observed model, system)
                         | Operation.Listen ->
-                            match UnixSocket.tryListen modelFd 4 system with
+                            match UnixSocket.tryListen (Callers.leader system) modelFd 4 system with
                             | Error _ -> None
                             | Ok (answer, system) ->
 

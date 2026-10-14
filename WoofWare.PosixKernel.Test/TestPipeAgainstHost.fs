@@ -163,7 +163,7 @@ module TestPipeAgainstHost =
         (system : UnixSystem<int, string>)
         : UnixTimestamp * UnixTimestamp * UnixTimestamp
         =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported s) -> s.AccessTime, s.ModificationTime, s.StatusChangeTime
         | other -> failwith $"model fstat of %d{fd}: %A{other}"
 
@@ -221,7 +221,12 @@ module TestPipeAgainstHost =
                     system
                     |> Lone.mapProc (fun proc ->
                         { proc with
-                            Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                            Signals =
+                                SignalState.setDisposition
+                                    (UnixSystemState.signalNumbering system)
+                                    Signal.SIGPIPE
+                                    SignalDisposition.Ignore
+                                    proc.Signals
                         }
                     )
 
@@ -250,7 +255,7 @@ module TestPipeAgainstHost =
                         hostSetNonBlocking (nativeint fd, 1) |> shouldEqual 0
 
                 let created, modelFds =
-                    match UnixPipe.tryPipe2 flags UserBuffer.Mapped initial with
+                    match UnixPipe.tryPipe2 (Callers.leader initial) flags UserBuffer.Mapped initial with
                     | Ok (Pipe2Answer.Created (r, w), system) -> system, (r, w)
                     | other -> failwith $"model pipe2: %A{other}"
 
@@ -273,7 +278,7 @@ module TestPipeAgainstHost =
                 let hostWrite0 = hostStatus hostFds.[1]
 
                 let modelStatus fd =
-                    match UnixPathResolution.tryFstat fd system with
+                    match UnixPathResolution.tryFstat (Callers.leader system) fd system with
                     | Ok (FileStatusAnswer.Reported s) -> s
                     | other -> failwith $"%A{other}"
 
@@ -420,7 +425,9 @@ module TestPipeAgainstHost =
                                 else
                                     hostReadAt (hostFd, 8n, unativeint count)
 
-                            match UnixReadWrite.tryRead (Lone.leader system) modelFd buffer (uint64 count) system with
+                            match
+                                UnixReadWrite.tryRead (Callers.leader system) modelFd buffer (uint64 count) system
+                            with
                             | Ok (ReadOutcome.WouldBlock _, _) ->
                                 // The host would sleep: asked without blocking,
                                 // it must find nothing to take.
@@ -450,7 +457,9 @@ module TestPipeAgainstHost =
                             | Some (modelFd, hostFd, _, group) ->
                                 hostSetNonBlocking (nativeint hostFd, (if value then 1 else 0)) |> shouldEqual 0
 
-                                let answer, after = UnixDescriptor.setNonBlocking modelFd value system
+                                let answer, after =
+                                    UnixDescriptor.setNonBlocking (Callers.leader system) modelFd value system
+
                                 answer |> shouldEqual SetNonBlockingAnswer.Set
                                 system <- after
                                 nonBlocking <- Map.add group value nonBlocking
@@ -463,7 +472,7 @@ module TestPipeAgainstHost =
                                 if hostNew < 0 then
                                     failwith $"%s{where ()}: host dup failed"
 
-                                match Answered.dup modelFd system with
+                                match Answered.dup (Callers.leader system) modelFd system with
                                 | SyscallAnswer.Completed modelNew, after ->
                                     slots <- slots @ [ int modelNew, hostNew, pipeEnd, group ]
                                     system <- after
@@ -474,7 +483,7 @@ module TestPipeAgainstHost =
                             | Some (modelFd, hostFd, _, _ as closing) ->
                                 hostClose hostFd |> shouldEqual 0
 
-                                match UnixDescriptor.tryClose modelFd system with
+                                match UnixDescriptor.tryClose (Callers.leader system) modelFd system with
                                 | Ok (SyscallAnswer.Completed _, after) -> system <- after
                                 | other -> failwith $"%s{where ()}: model close %A{other}"
 
@@ -487,7 +496,7 @@ module TestPipeAgainstHost =
                             if hostBytesAvailable (nativeint hostFd, &available) <> 0 then
                                 failwith $"%s{where ()}: host FIONREAD failed"
 
-                            UnixDescriptor.tryBytesAvailable modelFd UserBuffer.Mapped system
+                            UnixDescriptor.tryBytesAvailable (Callers.leader system) modelFd UserBuffer.Mapped system
                             |> shouldEqual (Ok (BytesAvailableAnswer.Reported available))
 
                             let h = hostStatus hostFd
@@ -549,7 +558,7 @@ module TestPipeAgainstHost =
                             UnixError.ofRawErrnoUnder numbering (Marshal.GetLastPInvokeError ())
                             |> shouldEqual (Some UnixError.ESPIPE)
 
-                            match UnixDescriptor.tryLseek modelFd 0L 1 system with
+                            match UnixDescriptor.tryLseek (Callers.leader system) modelFd 0L 1 system with
                             | Ok (SyscallAnswer.Failed UnixError.ESPIPE, _) -> ()
                             | other -> failwith $"%s{where ()}: model lseek %A{other}"
 
@@ -558,7 +567,7 @@ module TestPipeAgainstHost =
                             UnixError.ofRawErrnoUnder numbering (Marshal.GetLastPInvokeError ())
                             |> shouldEqual (Some UnixError.ENOTTY)
 
-                            UnixDescriptor.terminalAttributes modelFd system
+                            UnixDescriptor.terminalAttributes (Callers.leader system) modelFd system
                             |> shouldEqual (TerminalAttributesAnswer.NotATerminal UnixError.ENOTTY)
 
                         // Which timestamps the call moved, on the descriptors that
@@ -634,11 +643,11 @@ module TestPipeAgainstHost =
                         Error (UnixError.ofRawErrnoUnder numbering errno)
 
                 let model : Result<Pipe2Answer * UnixSystem<int, string>, Pipe2Refusal> =
-                    UnixPipe.tryPipe2
-                        flags
-                        UserBuffer.Mapped
-                        (UnixSystem.initial platform
-                         |> (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)))
+                    let system =
+                        UnixSystem.initial platform
+                        |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+                    UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system
 
                 match model, host with
                 | Ok (Pipe2Answer.Created _, _), Ok () -> ()

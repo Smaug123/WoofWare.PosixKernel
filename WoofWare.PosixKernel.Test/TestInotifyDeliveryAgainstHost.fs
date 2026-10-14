@@ -458,17 +458,27 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostMkdir (onHost paths.[path], 0o755)))
-                                (UnixNamespace.tryMkdir (PathArg.ofText paths.[path]) 0o755 system.Value)
+                                (UnixNamespace.tryMkdir
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    0o755
+                                    system.Value)
                         | Op.RmDir path ->
                             answered
                                 op
                                 (hostAnswer (hostRmdir (onHost paths.[path])))
-                                (UnixNamespace.tryRmdir (PathArg.ofText paths.[path]) system.Value)
+                                (UnixNamespace.tryRmdir
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    system.Value)
                         | Op.Unlink path ->
                             answered
                                 op
                                 (hostAnswer (hostUnlink (onHost paths.[path])))
-                                (UnixNamespace.tryUnlink (PathArg.ofText paths.[path]) system.Value)
+                                (UnixNamespace.tryUnlink
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText paths.[path])
+                                    system.Value)
                         | Op.Link (existing, path) ->
                             answered
                                 op
@@ -503,7 +513,11 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostChmod (onHost relative, mode)))
-                                (UnixPathResolution.tryChmod (PathArg.ofText relative) mode system.Value)
+                                (UnixPathResolution.tryChmod
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText relative)
+                                    mode
+                                    system.Value)
                         | Op.Chown (path, neither) ->
                             let user, group =
                                 if neither then
@@ -515,6 +529,7 @@ module TestInotifyDeliveryAgainstHost =
                                 op
                                 (hostAnswer (hostChown (onHost paths.[path], user, group)))
                                 (UnixPathResolution.tryChown
+                                    (Callers.leader system.Value)
                                     (PathArg.ofText paths.[path])
                                     (if neither then None else Some owner.User)
                                     (if neither then None else Some owner.Group)
@@ -537,6 +552,7 @@ module TestInotifyDeliveryAgainstHost =
                                     )
                                 ))
                                 (UnixPathResolution.tryUtimensat
+                                    (Callers.leader system.Value)
                                     -100
                                     (NullablePathArgument.NotNull (PathArg.ofText paths.[path]))
                                     (TimesArgument.Fields (
@@ -613,25 +629,32 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostFtruncate (hostFd, 0L)))
-                                (UnixDescriptor.tryFtruncate modelFd 0L system.Value)
+                                (UnixDescriptor.tryFtruncate (Callers.leader system.Value) modelFd 0L system.Value)
                         | Op.Fchmod (slot, mode) ->
                             let hostFd, modelFd = kept.[slot % kept.Count]
 
                             answered
                                 op
                                 (hostAnswer (hostFchmod (hostFd, mode)))
-                                (UnixPathResolution.tryFchmod modelFd mode system.Value)
+                                (UnixPathResolution.tryFchmod (Callers.leader system.Value) modelFd mode system.Value)
                         | Op.Close slot ->
                             let index = slot % kept.Count
                             let hostFd, modelFd = kept.[index]
                             kept.RemoveAt index
 
-                            answered op (hostAnswer (hostClose hostFd)) (UnixDescriptor.tryClose modelFd system.Value)
+                            answered
+                                op
+                                (hostAnswer (hostClose hostFd))
+                                (UnixDescriptor.tryClose (Callers.leader system.Value) modelFd system.Value)
                         | Op.RmWatch (instance, wd) ->
                             answered
                                 op
                                 (hostAnswer (hostRmWatch (hostFds.[instance], wd)))
-                                (UnixInotify.tryInotifyRmWatch modelFds.[instance] wd system.Value
+                                (UnixInotify.tryInotifyRmWatch
+                                    (Callers.leader system.Value)
+                                    modelFds.[instance]
+                                    wd
+                                    system.Value
                                  |> Result.mapError InotifyRefusal.describe)
 
                         for instance in 0..1 do

@@ -131,7 +131,10 @@ module TestReceiveSendMeasured =
                 | other, _ -> failwith $"connect: %A{other}"
 
             let server, system = KeventWorld.accept listener system
-            let _, system = UnixDescriptor.setNonBlocking client true system
+
+            let _, system =
+                UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
             let bad = 900
 
             FileDescriptorRegistry.tryFindId bad (Lone.fileDescriptors system)
@@ -159,7 +162,7 @@ module TestReceiveSendMeasured =
             for row in rows flavour "O" do
                 match row with
                 | [ "p-fionread-after" ; count ] ->
-                    UnixDescriptor.tryBytesAvailable server UserBuffer.Mapped system
+                    UnixDescriptor.tryBytesAvailable (Callers.leader system) server UserBuffer.Mapped system
                     |> shouldEqual (Ok (BytesAvailableAnswer.Reported (int count)))
                 | [ targetName ; bufferName ; length ; recvText ; sendText ; sigpipe ] ->
                     let where = $"%O{flavour} %s{targetName} %s{bufferName} %s{length}"
@@ -174,7 +177,7 @@ module TestReceiveSendMeasured =
                     sigpipe |> shouldEqual "sigpipe=0"
 
                     let received, after =
-                        match UnixReadWrite.tryRecv 0 fd buffer (uint64 count) 0 system with
+                        match UnixReadWrite.tryRecv (Callers.thread 0 system) fd buffer (uint64 count) 0 system with
                         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                             Ok (int64 bytes.Length), after
                         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Error error, after

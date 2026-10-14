@@ -81,7 +81,9 @@ module TestSockOpt =
             }
 
         let queueFd, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         socketFd, queueFd, Lone.withFileDescriptors registry system
 
@@ -477,7 +479,7 @@ module TestSockOpt =
                         let rawDomain, rawKind, rawProtocol =
                             NewSocket.arguments platform domain kind protocol
 
-                        match UnixSocket.trySocket rawDomain rawKind rawProtocol system with
+                        match UnixSocket.trySocket (Callers.leader system) rawDomain rawKind rawProtocol system with
                         | Ok (Ok (fd, system)) ->
                             created <- created + 1
                             let system = ReuseAddress.set true fd system
@@ -850,6 +852,6 @@ module TestSockOpt =
         let system = ReuseAddress.set true b system |> boundAt b (loopback 40000us)
         let system = ReuseAddress.set false b system
 
-        match UnixSocket.tryListen a 5 system with
+        match UnixSocket.tryListen (Callers.leader system) a 5 system with
         | Ok (answer, _) -> answer |> shouldEqual (ListenAnswer.Failed UnixError.EADDRINUSE)
         | Error refusal -> failwith $"expected an answer, got %s{ListenRefusal.describe refusal}"

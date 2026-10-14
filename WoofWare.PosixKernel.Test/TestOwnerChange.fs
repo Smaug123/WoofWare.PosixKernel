@@ -819,7 +819,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryChown (PathArg.ofPath (path p)) user group system with
+        match UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path p)) user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"chown(%s{p}) was refused: %s{ChOwnRefusal.describe refusal}"
 
@@ -830,7 +830,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryLchown (PathArg.ofPath (path p)) user group system with
+        match UnixPathResolution.tryLchown (Callers.leader system) (PathArg.ofPath (path p)) user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"lchown(%s{p}) was refused: %s{ChOwnRefusal.describe refusal}"
 
@@ -866,7 +866,7 @@ module TestOwnerChange =
 
                     match
                         reference rule standing request target raw,
-                        UnixPathResolution.tryChown (PathArg.ofPath (path p)) user group system
+                        UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path p)) user group system
                     with
                     | Error expected, Error actual ->
                         actual
@@ -1145,6 +1145,8 @@ module TestOwnerChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
@@ -1155,6 +1157,8 @@ module TestOwnerChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 (Lone.fileDescriptors system)
@@ -1168,7 +1172,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixPathResolution.tryFchown fd user group system with
+        match UnixPathResolution.tryFchown (Callers.leader system) fd user group system with
         | Ok answer -> answer
         | Error refusal -> failwith $"fchown(%d{fd}) was refused: %s{FChOwnRefusal.describe refusal}"
 
@@ -1220,7 +1224,7 @@ module TestOwnerChange =
             // A file whose last name has gone.
             let inode = inodeAt system.Machine.FileSystem "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchownAnswer fd None (Some memberGroup) unlinked with
             | SyscallAnswer.Completed 0L, after ->
@@ -1286,8 +1290,9 @@ module TestOwnerChange =
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create (Lone.fileDescriptors system)
 
@@ -1332,7 +1337,7 @@ module TestOwnerChange =
                     | Some (OpenFileObject.Socket socket) -> socket
                     | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
-                UnixPathResolution.tryFchown fd user group withSocket
+                UnixPathResolution.tryFchown (Callers.leader withSocket) fd user group withSocket
                 |> shouldEqual (Error (FChOwnRefusal.Socket socket))
 
         for fd in [ 0 ; 1 ; 2 ] do
@@ -1341,7 +1346,7 @@ module TestOwnerChange =
 
             // `UnixSystem.initial` makes the launch table's pipes first, in
             // descriptor order.
-            UnixPathResolution.tryFchown fd None None linux
+            UnixPathResolution.tryFchown (Callers.leader linux) fd None None linux
             |> shouldEqual (Error (FChOwnRefusal.LaunchedPipe (PipeId (int64 fd))))
 
     [<Test>]
@@ -1350,7 +1355,7 @@ module TestOwnerChange =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root (tree by)
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly system
 
-        UnixPathResolution.tryFchown fd None (Some (gid 12u)) withFd
+        UnixPathResolution.tryFchown (Callers.leader withFd) fd None (Some (gid 12u)) withFd
         |> shouldEqual (
             Error (
                 FChOwnRefusal.UnmeasuredOwnerChange (
@@ -1370,12 +1375,12 @@ module TestOwnerChange =
     // ------------------------------------------------------------- pipes
 
     let private pipeOrFail (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
-        match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+        match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
         | other -> failwith $"pipe2 did not make a pipe: %A{other}"
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat(%d{fd}): %A{other}"
 
@@ -1553,22 +1558,28 @@ module TestOwnerChange =
 
         let memberGroup = Some (gid 2000u)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0))
+            system
         |> answered
         |> shouldEqual (chownAnswer "/p/lf" None memberGroup system)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100))
+            system
         |> answered
         |> shouldEqual (lchownAnswer "/p/lf" None memberGroup system)
 
         UnixSystem.tryStep
-            0
+            (Callers.thread 0 system)
             (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/theirs"), Some (uid 1002u), None, 0))
             system
         |> answered
         |> shouldEqual (chownAnswer "/p/theirs" (Some (uid 1002u)) None system)
 
-        UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, memberGroup)) withFd
+        UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChOwn (fd, None, memberGroup)) withFd
         |> answered
         |> shouldEqual (fchownAnswer fd None memberGroup withFd)
 
@@ -1584,18 +1595,21 @@ module TestOwnerChange =
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0)
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0x20)
             ] do
-            match UnixSystem.tryStep 0 call darwin with
+            match UnixSystem.tryStep (Callers.thread 0 darwin) call darwin with
             | Error (SyscallRefusal.FChOwnAt refusal) ->
                 Error refusal
                 |> shouldEqual (
-                    UnixPathResolution.tryChown (PathArg.ofPath (path "/t/f")) None None darwin
+                    UnixPathResolution.tryChown (Callers.leader darwin) (PathArg.ofPath (path "/t/f")) None None darwin
                     |> Result.map ignore
                     |> Result.mapError FChOwnAtRefusal.ChOwn
                 )
             | other -> failwith $"step %A{call} as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, None)) withFd with
+        match UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChOwn (fd, None, None)) withFd with
         | Error (SyscallRefusal.FChOwn refusal) ->
             Error refusal
-            |> shouldEqual (UnixPathResolution.tryFchown fd None None withFd |> Result.map ignore)
+            |> shouldEqual (
+                UnixPathResolution.tryFchown (Callers.leader withFd) fd None None withFd
+                |> Result.map ignore
+            )
         | other -> failwith $"step fchown as Darwin root: %A{other}"

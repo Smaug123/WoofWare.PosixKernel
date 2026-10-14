@@ -43,33 +43,40 @@ module TestSignalDispositions =
 
     /// `SignalState.generate` in a process whose only thread is `t0`.
     let private generateIn
+        (numbering : SignalNumbering)
         (entry : PendingSignal<Thread>)
         (s : SignalState<Thread, Handler>)
         : SignalGeneration<Thread, Handler>
         =
-        match SignalState.generate CoreDumps.Suppressed t0 threads entry s with
+        match SignalState.generate numbering CoreDumps.Suppressed t0 threads entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
     /// What `t0` takes next.
     let private leaderDelivery
+        (numbering : SignalNumbering)
         (s : SignalState<Thread, Handler>)
         : SignalDelivery<Thread, Handler> option * SignalState<Thread, Handler>
         =
-        match SignalState.onReturnToUser CoreDumps.Suppressed t0 threads t0 s with
+        match SignalState.onReturnToUser numbering CoreDumps.Suppressed t0 threads t0 s with
         | Ok answer -> answer
         | Error refusal -> failwith $"onReturnToUser refused: %O{refusal}"
 
     /// `t0` inside a handler that blocks `signal`, delivered through a carrier
     /// the sweep is not looking at.
-    let private block (signal : Signal) (s : SignalState<Thread, Handler>) : SignalState<Thread, Handler> =
+    let private block
+        (numbering : SignalNumbering)
+        (signal : Signal)
+        (s : SignalState<Thread, Handler>)
+        : SignalState<Thread, Handler>
+        =
         let carrier =
             if signal = HandlerFrames.carrier then
                 Signal.SIGVTALRM
             else
                 HandlerFrames.carrier
 
-        HandlerFrames.enterVia carrier H t0 threads t0 (Set.singleton signal) s
+        HandlerFrames.enterVia numbering carrier H t0 threads t0 (Set.singleton signal) s
 
     /// `t0` returns from its handler for `signal`, and the frame of every
     /// handler it entered after.
@@ -153,12 +160,13 @@ module TestSignalDispositions =
                         for toward in everyDisposition @ [ Disposition.Handler H2 ] do
                             let blocked : SignalState<Thread, Handler> =
                                 SignalState.initial numbering Set.empty
-                                |> block signal
-                                |> SignalState.setDisposition signal (toDisposition from)
+                                |> block numbering signal
+                                |> SignalState.setDisposition numbering signal (toDisposition from)
 
                             let generated =
                                 match
                                     generateIn
+                                        numbering
                                         {
                                             Signal = signal
                                             Target = target
@@ -172,14 +180,20 @@ module TestSignalDispositions =
                                 SignalState.pending s |> List.exists (fun e -> e.Signal = signal)
 
                             let atGeneration = isPending generated
-                            let changed = SignalState.setDisposition signal (toDisposition toward) generated
+
+                            let changed =
+                                SignalState.setDisposition numbering signal (toDisposition toward) generated
+
                             let after = isPending changed
 
                             let delivered =
                                 changed
-                                |> SignalState.setDisposition signal (SignalDisposition.Catch (SignalCatch.ofHandler H))
+                                |> SignalState.setDisposition
+                                    numbering
+                                    signal
+                                    (SignalDisposition.Catch (SignalCatch.ofHandler H))
                                 |> unblock
-                                |> leaderDelivery
+                                |> leaderDelivery numbering
                                 |> fst
 
                             let expectedAtGeneration =
@@ -262,13 +276,20 @@ module TestSignalDispositions =
 
                                         let start : SignalState<Thread, Handler> =
                                             SignalState.initial numbering Set.empty
-                                            |> block firstSignal
-                                            |> block secondSignal
-                                            |> SignalState.setDisposition firstSignal (toDisposition firstDisposition)
-                                            |> SignalState.setDisposition secondSignal (toDisposition secondDisposition)
+                                            |> block numbering firstSignal
+                                            |> block numbering secondSignal
+                                            |> SignalState.setDisposition
+                                                numbering
+                                                firstSignal
+                                                (toDisposition firstDisposition)
+                                            |> SignalState.setDisposition
+                                                numbering
+                                                secondSignal
+                                                (toDisposition secondDisposition)
 
                                         let generate (signal : Signal) target (s : SignalState<Thread, Handler>) =
                                             generateIn
+                                                numbering
                                                 {
                                                     Signal = signal
                                                     Target = target
@@ -328,12 +349,14 @@ module TestSignalDispositions =
 
                             let s : SignalState<Thread, Handler> =
                                 SignalState.initial numbering Set.empty
-                                |> block firstSignal
+                                |> block numbering firstSignal
                                 |> SignalState.setDisposition
+                                    numbering
                                     firstSignal
                                     (SignalDisposition.Catch (SignalCatch.ofHandler H))
-                                |> SignalState.setDisposition secondSignal (toDisposition secondDisposition)
+                                |> SignalState.setDisposition numbering secondSignal (toDisposition secondDisposition)
                                 |> SignalState.enqueue
+                                    numbering
                                     {
                                         Signal = firstSignal
                                         Target = ValueNone
@@ -341,6 +364,7 @@ module TestSignalDispositions =
 
                             let s =
                                 generateIn
+                                    numbering
                                     {
                                         Signal = secondSignal
                                         Target = ValueNone

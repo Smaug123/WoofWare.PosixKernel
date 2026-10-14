@@ -51,7 +51,7 @@ module TestKqueueTimerReserved =
              let idle, system = KeventWorld.stream true system
 
              let (readEnd, writeEnd), system =
-                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
+                 match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
                  | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
                  | other -> failwith $"pipe did not make a pipe: %A{other}"
 
@@ -110,7 +110,15 @@ module TestKqueueTimerReserved =
                     }
                 ] do
                 match
-                    UnixKqueue.tryKevent 4 kq 1 [ change ] 1 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                    UnixKqueue.tryKevent
+                        (Callers.thread 4 system)
+                        kq
+                        1
+                        [ change ]
+                        1
+                        UserBuffer.Mapped
+                        (KeventTimeout.Readable (0L, 0L))
+                        system
                 with
                 | Error (KeventRefusal.UnmodelledFilter refused) -> refused |> shouldEqual change
                 | other -> failwith $"%A{change}: expected UnmodelledFilter, got %A{other}"
@@ -162,7 +170,7 @@ module TestKqueueTimerReserved =
                 let after =
                     match
                         UnixKqueue.tryKevent
-                            4
+                            (Callers.thread 4 system)
                             kq
                             (List.length changes)
                             changes
@@ -238,7 +246,7 @@ module TestKqueueTimerReserved =
         let mutable slept = 0
 
         let property (entries : PollEntry list) (connect : bool) : unit =
-            match UnixPoll.tryPoll 2 entries 1000 system with
+            match UnixPoll.tryPoll (Callers.thread 2 system) entries 1000 system with
             | Ok (PollOutcome.WouldBlock _, parked) ->
                 slept <- slept + 1
                 noTimerAnywhere parked
@@ -270,7 +278,7 @@ module TestKqueueTimerReserved =
         // of the listener alone sleeps, registers its read filter, and a connection queues it.
         match
             UnixPoll.tryPoll
-                2
+                (Callers.thread 2 system)
                 [
                     {
                         Fd = listener

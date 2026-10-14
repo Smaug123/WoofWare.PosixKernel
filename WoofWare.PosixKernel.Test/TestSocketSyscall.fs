@@ -72,7 +72,7 @@ module TestSocketSyscall =
                 disagreements.Add
                     $"socket(%d{domain}, 0x%x{socketType}, %d{protocol}): measured %A{answer}, %s{message}"
 
-            match UnixSocket.trySocket domain socketType protocol system, answer with
+            match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system, answer with
             | Ok (Error error), MeasuredSocketAnswer.Failed measured ->
                 if errno error <> measured then
                     describe $"library %O{error}"
@@ -88,8 +88,11 @@ module TestSocketSyscall =
                 if domainNumber platform socket.Domain <> domain then
                     describe $"library domain %O{socket.Domain}"
 
-                if UnixDescriptor.isNonBlocking fd after <> Some measuredNonBlocking then
-                    describe $"library non-blocking %A{UnixDescriptor.isNonBlocking fd after}"
+                if
+                    UnixDescriptor.isNonBlocking (Callers.leader after) fd after
+                    <> Some measuredNonBlocking
+                then
+                    describe $"library non-blocking %A{UnixDescriptor.isNonBlocking (Callers.leader after) fd after}"
 
                 // Linux reports the protocol it resolved; a protocol the caller
                 // named must be that one.
@@ -271,13 +274,13 @@ module TestSocketSyscall =
 
             second |> shouldEqual (first + 1)
 
-            match UnixDescriptor.tryClose first system with
+            match UnixDescriptor.tryClose (Callers.leader system) first system with
             | Ok (SyscallAnswer.Completed _, system) -> first, system
             | Ok (answer, _) -> failwith $"closing descriptor %d{first} answered %A{answer}"
             | Error _ -> failwith $"closing descriptor %d{first} was refused"
 
         let property (domain : int, socketType : int, protocol : int) : unit =
-            match UnixSocket.trySocket domain socketType protocol before with
+            match UnixSocket.trySocket (Callers.leader before) domain socketType protocol before with
             | Ok (Ok (fd, after)) ->
                 fd |> shouldEqual hole
 
@@ -307,8 +310,8 @@ module TestSocketSyscall =
             let baseType = baseType &&& 0xf
 
             let answer (socketType : int) =
-                match UnixSocket.trySocket domain socketType protocol system with
-                | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking fd after))
+                match UnixSocket.trySocket (Callers.leader system) domain socketType protocol system with
+                | Ok (Ok (fd, after)) -> Ok (Ok (UnixDescriptor.isNonBlocking (Callers.leader after) fd after))
                 | Ok (Error error) -> Ok (Error error)
                 | Error refusal -> Error (refusalKind refusal)
 

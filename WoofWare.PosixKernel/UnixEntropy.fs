@@ -194,8 +194,8 @@ module UnixEntropy =
             )
         )
 
-    /// `getRandom`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetRandom` once `Entry` has admitted its caller.
+    let private tryGetRandomIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
@@ -203,10 +203,6 @@ module UnixEntropy =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetRandomAnswer * UnixSystem<'Thread, 'Handler>, GetRandomRefusal>
         =
-        // A thread that cannot be making the call is the client's bug, whatever
-        // the call would have answered.
-        UnixThreadTable.requireIssuer "UnixEntropy.getRandom" thread system.Threads
-
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin as flavour -> Error (GetRandomRefusal.NoSuchSyscall flavour)
         | SimulatedUnixFlavour.Linux ->
@@ -237,6 +233,23 @@ module UnixEntropy =
         | Ok (Error error) -> Ok (GetRandomAnswer.Failed error, system)
         | Ok (Ok (draw, system)) -> Ok (GetRandomAnswer.Completed draw, system)
 
+    /// `getRandom`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (buffer : UserBuffer)
+        (count : uint64)
+        (flags : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetRandomAnswer * UnixSystem<'Thread, 'Handler>, GetRandomRefusal>
+        =
+        Entry.call
+            "UnixEntropy.getRandom"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryGetRandomIn (Caller.thread caller) buffer count flags)
+            system
+
     /// <summary>
     /// `getrandom(2)`: fill the caller's buffer with up to `count` bytes from
     /// the entropy pool, and return how many.
@@ -247,7 +260,7 @@ module UnixEntropy =
     ///
     /// Never blocks. Linux-only: under any other flavour the call is refused.
     ///
-    /// `thread` is the thread making the call, which must be one of the process's,
+    /// `caller` is the thread making the call, which must be one of the process's,
     /// and not asleep in another call.
     /// A request that moves more than a page, by a thread with a signal pending,
     /// is refused: a real one stops
@@ -255,18 +268,18 @@ module UnixEntropy =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getrandom` system call.</exception>
     let getRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetRandomAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryGetRandom thread buffer count flags system
+        tryGetRandom caller buffer count flags system
         |> Refusal.orRaise "UnixEntropy.getRandom" GetRandomRefusal.kind GetRandomRefusal.describe
 
-    /// `getEntropy`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetEntropy` once `Entry` has admitted its caller.
+    let private tryGetEntropyIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (length : uint64)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -292,6 +305,22 @@ module UnixEntropy =
         | Ok (Error error) -> Ok (GetEntropyAnswer.Failed error, system)
         | Ok (Ok (draw, system)) -> Ok (GetEntropyAnswer.Completed draw, system)
 
+    /// `getEntropy`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (buffer : UserBuffer)
+        (length : uint64)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetEntropyAnswer * UnixSystem<'Thread, 'Handler>, GetEntropyRefusal>
+        =
+        Entry.call
+            "UnixEntropy.getEntropy"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryGetEntropyIn buffer length)
+            system
+
     /// <summary>
     /// `getentropy(2)`: fill all `length` bytes of the caller's buffer from the
     /// entropy pool.
@@ -302,10 +331,11 @@ module UnixEntropy =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getentropy` system call.</exception>
     let getEntropy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (buffer : UserBuffer)
         (length : uint64)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetEntropyAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryGetEntropy buffer length system
+        tryGetEntropy caller buffer length system
         |> Refusal.orRaise "UnixEntropy.getEntropy" GetEntropyRefusal.kind GetEntropyRefusal.describe

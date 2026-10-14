@@ -48,7 +48,7 @@ module TestSocketEventDelivery =
     /// `close(2)`. A refusal crashes; an errno comes back, because that is an
     /// answer.
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : Result<UnixSystem<int, string>, UnixError> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Error refusal -> failwith $"close of fd %d{fd} refused: %s{CloseRefusal.describe refusal}"
         | Ok (SyscallAnswer.Failed error, _) -> Error error
         | Ok (SyscallAnswer.Completed _, system) -> Ok system
@@ -79,7 +79,10 @@ module TestSocketEventDelivery =
         EpollReadyList.hasDeliverableEvent queueId kernel
 
     let private addEpoll (kernel : UnixSystem<int, string>) : int * OpenFileDescriptionId * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                (Lone.fileDescriptors kernel)
 
         let queueId =
             match FileDescriptorRegistry.tryFindId fd registry with
@@ -149,7 +152,15 @@ module TestSocketEventDelivery =
         (kernel : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixPoll.tryEpollCtl queueFd 1 targetFd (EpollEventArgument.Readable (allInterest, data)) kernel with
+        match
+            UnixPoll.tryEpollCtl
+                (Callers.leader kernel)
+                queueFd
+                1
+                targetFd
+                (EpollEventArgument.Readable (allInterest, data))
+                kernel
+        with
         | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
         | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"registration failed: %O{reason}"
         | Error refusal -> failwith $"registration failed: %s{EpollCtlRefusal.describe refusal}"
@@ -397,7 +408,12 @@ module TestSocketEventDelivery =
             let _, c1, kernel = addStream kernel
 
             let dupFd, kernel =
-                match FileDescriptorRegistry.dup listenerFd (Lone.fileDescriptors kernel) with
+                match
+                    FileDescriptorRegistry.dup
+                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        listenerFd
+                        (Lone.fileDescriptors kernel)
+                with
                 | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
                 | Error error -> failwith $"dup failed: %O{error}"
 
@@ -430,7 +446,15 @@ module TestSocketEventDelivery =
         dataOf delivered |> shouldEqual [ 7UL ]
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 3 listenerFd (EpollEventArgument.Readable (allInterest, 7UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    listenerFd
+                    (EpollEventArgument.Readable (allInterest, 7UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
             | Error refusal -> failwith $"modify failed: %s{EpollCtlRefusal.describe refusal}"
@@ -453,7 +477,15 @@ module TestSocketEventDelivery =
         let _, kernel = connect c2 false (loopback 5001us) kernel
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 3 l2Fd (EpollEventArgument.Readable (allInterest, 2UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    l2Fd
+                    (EpollEventArgument.Readable (allInterest, 2UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
             | Error refusal -> failwith $"modify failed: %s{EpollCtlRefusal.describe refusal}"
@@ -584,7 +616,9 @@ module TestSocketEventDelivery =
         readyOf queueId kernel |> List.length |> shouldEqual 1
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 2 listenerFd EpollEventArgument.Unreadable kernel with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader kernel) queueFd 2 listenerFd EpollEventArgument.Unreadable kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"remove failed: %O{reason}"
             | Error refusal -> failwith $"remove failed: %s{EpollCtlRefusal.describe refusal}"
@@ -633,7 +667,15 @@ module TestSocketEventDelivery =
         let kernel = register queueFd listenerFd 7UL kernel
         let before = kernel.Machine.NextEventRegistrationOrdinal
 
-        match UnixPoll.tryEpollCtl queueFd 1 listenerFd (EpollEventArgument.Readable (allInterest, 8UL)) kernel with
+        match
+            UnixPoll.tryEpollCtl
+                (Callers.leader kernel)
+                queueFd
+                1
+                listenerFd
+                (EpollEventArgument.Readable (allInterest, 8UL))
+                kernel
+        with
         | Ok (EpollCtlAnswer.Changed, _) -> failwith "expected EEXIST"
         | Ok (EpollCtlAnswer.Failed reason, _) -> reason |> shouldEqual EpollCtlError.AlreadyRegistered
         | Error refusal -> failwith (EpollCtlRefusal.describe refusal)
@@ -692,7 +734,15 @@ module TestSocketEventDelivery =
         let serverFd, _, kernel = UnixConnection.acceptConnection listenerId kernel
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 1 clientFd (EpollEventArgument.Readable (emptyInterest, 5UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    1
+                    clientFd
+                    (EpollEventArgument.Readable (emptyInterest, 5UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"registration failed: %O{reason}"
             | Error refusal -> failwith $"registration failed: %s{EpollCtlRefusal.describe refusal}"
@@ -718,7 +768,15 @@ module TestSocketEventDelivery =
         let _, kernel = connect c2 false (loopback 5001us) kernel
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 3 clientFd (EpollEventArgument.Readable (allInterest, 5UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    clientFd
+                    (EpollEventArgument.Readable (allInterest, 5UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
             | Error refusal -> failwith $"modify failed: %s{EpollCtlRefusal.describe refusal}"
@@ -870,7 +928,15 @@ module TestSocketEventDelivery =
         // l1 watches WRITE alone: a queued connection raises only IN, and a
         // listener reports no ERR or HUP.
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 1 l1Fd (EpollEventArgument.Readable (writeInterest, 1UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    1
+                    l1Fd
+                    (EpollEventArgument.Readable (writeInterest, 1UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"registration failed: %O{reason}"
             | Error refusal -> failwith $"registration failed: %s{EpollCtlRefusal.describe refusal}"
@@ -884,7 +950,15 @@ module TestSocketEventDelivery =
         let _, kernel = connect c2 false (loopback 5002us) kernel
 
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 3 l1Fd (EpollEventArgument.Readable (allInterest, 1UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    l1Fd
+                    (EpollEventArgument.Readable (allInterest, 1UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
             | Error refusal -> failwith $"modify failed: %s{EpollCtlRefusal.describe refusal}"
@@ -915,7 +989,15 @@ module TestSocketEventDelivery =
             let _, c2, kernel = addStream kernel
 
             let ctl (op : int) (fd : int) (events : uint32) (data : uint64) kernel =
-                match UnixPoll.tryEpollCtl queueFd op fd (EpollEventArgument.Readable (events, data)) kernel with
+                match
+                    UnixPoll.tryEpollCtl
+                        (Callers.leader kernel)
+                        queueFd
+                        op
+                        fd
+                        (EpollEventArgument.Readable (events, data))
+                        kernel
+                with
                 | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
                 | other -> failwith $"bit %d{bit}: epoll_ctl answered %A{other}"
 
@@ -952,7 +1034,13 @@ module TestSocketEventDelivery =
 
         let kernel =
             match
-                UnixPoll.tryEpollCtl queueFd 3 listenerFd (EpollEventArgument.Readable (writeInterest, 6UL)) kernel
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    listenerFd
+                    (EpollEventArgument.Readable (writeInterest, 6UL))
+                    kernel
             with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
@@ -975,7 +1063,12 @@ module TestSocketEventDelivery =
         let _, c1, kernel = addStream kernel
 
         let dupFd, kernel =
-            match FileDescriptorRegistry.dup listenerFd (Lone.fileDescriptors kernel) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                    listenerFd
+                    (Lone.fileDescriptors kernel)
+            with
             | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -984,7 +1077,15 @@ module TestSocketEventDelivery =
         // Consume the two entries the not-ready listener never queued —
         // nothing pends yet, so nothing to consume; MOD the older entry.
         let kernel =
-            match UnixPoll.tryEpollCtl queueFd 3 listenerFd (EpollEventArgument.Readable (allInterest, 1UL)) kernel with
+            match
+                UnixPoll.tryEpollCtl
+                    (Callers.leader kernel)
+                    queueFd
+                    3
+                    listenerFd
+                    (EpollEventArgument.Readable (allInterest, 1UL))
+                    kernel
+            with
             | Ok (EpollCtlAnswer.Changed, kernel) -> kernel
             | Ok (EpollCtlAnswer.Failed reason, _) -> failwith $"modify failed: %O{reason}"
             | Error refusal -> failwith $"modify failed: %s{EpollCtlRefusal.describe refusal}"
@@ -1005,7 +1106,12 @@ module TestSocketEventDelivery =
             let queueFd, queueId, kernel = addEpoll initialSystem
 
             let dupFd, kernel =
-                match FileDescriptorRegistry.dup queueFd (Lone.fileDescriptors kernel) with
+                match
+                    FileDescriptorRegistry.dup
+                        (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                        queueFd
+                        (Lone.fileDescriptors kernel)
+                with
                 | Ok (fd, registry) -> fd, Lone.withFileDescriptors registry kernel
                 | Error error -> failwith $"dup failed: %O{error}"
 
@@ -1033,7 +1139,7 @@ module TestSocketEventDelivery =
             | Error error -> failwith $"close failed: %O{error}"
 
         // ...and so does the last one, leaving the epoll instance to the wait.
-        match UnixDescriptor.tryClose queueFd kernel with
+        match UnixDescriptor.tryClose (Callers.leader kernel) queueFd kernel with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             OpenFileTable.descriptions closed.Machine.OpenFiles
             |> Map.containsKey (

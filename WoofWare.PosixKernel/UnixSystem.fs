@@ -137,12 +137,6 @@ type internal SyscallRefusal<'Thread> =
     | SetGroups of SetGroupsRefusal
     /// `inotify_init1(2)` and `inotify_rm_watch(2)` alike.
     | Inotify of InotifyRefusal
-    /// The calling thread is not one of the process's threads, so it cannot be
-    /// making a call.
-    | NotAThread of thread : 'Thread * call : Syscall
-    /// The calling thread is asleep in another syscall: a thread makes one call
-    /// at a time, and a sleeping call is finished, not issued again.
-    | CallerAsleep of thread : 'Thread * park : ThreadPark * call : Syscall
 
 [<RequireQualifiedAccess>]
 module internal SyscallRefusal =
@@ -176,10 +170,6 @@ module internal SyscallRefusal =
         | SyscallRefusal.SetIds refusal -> $"setresuid or setresgid: %s{SetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetGroups refusal -> $"setgroups: %s{SetGroupsRefusal.describe refusal}"
         | SyscallRefusal.Inotify refusal -> $"inotify_init1 or inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
-        | SyscallRefusal.NotAThread (thread, call) ->
-            $"%A{call}: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
-        | SyscallRefusal.CallerAsleep (thread, park, call) ->
-            $"%A{call}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making another call. A thread makes one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallRefusal<'Thread>) : RefusalKind =
@@ -209,8 +199,6 @@ module internal SyscallRefusal =
         | SyscallRefusal.SetIds inner -> SetIdsRefusal.kind inner
         | SyscallRefusal.SetGroups inner -> SetGroupsRefusal.kind inner
         | SyscallRefusal.Inotify inner -> InotifyRefusal.kind inner
-        | SyscallRefusal.NotAThread _ -> RefusalKind.Misuse
-        | SyscallRefusal.CallerAsleep _ -> RefusalKind.Misuse
 
 /// A way this system's tables disagree with each other — a state no kernel
 /// could be in, and which the operations here exist to keep unreachable.
@@ -408,21 +396,17 @@ type UnixSystemDefect<'Thread> =
     /// process's `RLIMIT_NOFILE` reaches (`SimulatedUnixPlatform.descriptorBound`),
     /// which no call hands out.
     | DescriptorAtOrAboveBound of fd : int * bound : int
-    /// A descriptor carries `FD_CLOFORK` under the Linux flavour, which has no
-    /// such flag.
-    | CloseOnForkUnderLinux of fd : int
-    /// A description carries one of `O_SYNC` and `O_DSYNC` without the other
-    /// under the Linux flavour, whose `open(2)` sets both together and whose
-    /// `F_SETFL` changes neither.
-    | UnpairedSynchronisationUnderLinux of description : OpenFileDescriptionId
-    /// A description's status holds a fact the flavour's `F_GETFL` does not
-    /// report, which `OpenFileStatus` keeps only under the other flavour.
+    /// A descriptor's flags are the other flavour's, not those of the
+    /// machine's `flavour` (`DescriptorFlags.flavour`).
+    | DescriptorFlagsNotOfFlavour of fd : int * flags : DescriptorFlags * flavour : SimulatedUnixFlavour
+    /// A description's status is the other flavour's, not that of the
+    /// machine's `flavour` (`OpenFileStatus.flavour`).
     | StatusNotOfFlavour of
         description : OpenFileDescriptionId *
         status : OpenFileStatus *
         flavour : SimulatedUnixFlavour
-    /// Under the Darwin flavour, a description holds an `flock` lock and its
-    /// status does not record that one was granted (`OpenFileStatus.Flocked`).
+    /// A Darwin description holds an `flock` lock and its status does not
+    /// record that one was granted (`OpenFileStatus.Darwin`'s `flocked`).
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A thread is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
@@ -577,12 +561,6 @@ type UnixSystemDefect<'Thread> =
     /// A pending signal is directed at a thread the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
     | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
-    /// The process's signal state reads signals under a numbering other than
-    /// its machine's platform assigns, so a signal in the signal tables may
-    /// have a different number, or none, under the kernel's numbering.
-    /// `initial` derives the one from the other, so this is a state assembled
-    /// some other way.
-    | SignalNumberingMismatch of signals : SignalNumbering * platform : SignalNumbering
     /// The machine's mount claims a filesystem type its flavour cannot report,
     /// so `fstatfs` on a file would answer a fact no such machine could tell.
     | FileSystemTypeNotReportable of flavour : SimulatedUnixFlavour * fileSystemType : EmulatedFileSystemType
@@ -920,22 +898,24 @@ module UnixSystem =
             bootTime
             filesystem
 
-    /// The process's first thread, which it started with: its thread-group
-    /// leader.
+    /// The first thread of the process `pid`, which it started with: its
+    /// thread-group leader.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Thread
         =
-        system.Leader
+        Entry.query "UnixSystem.leader" pid (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Leader) system
 
-    /// Every thread the process has, by the client's name for it, which
+    /// Every thread the process `pid` has, by the client's name for it, which
     /// `UnixThreadState`'s readers read. A name the process has no thread by,
     /// because the thread was never created or has exited, has no entry.
     let threads<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        system.Threads
+        Entry.query "UnixSystem.threads" pid (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Threads) system
 
     /// Every write that has reached a client draining one of the machine's
     /// pipes, oldest first: the bytes the outside world has received from the
@@ -951,14 +931,20 @@ module UnixSystem =
         =
         UnixMachineState.delivered system.Machine
 
-    /// The process's signal state, which `SignalState`'s queries read.
+    /// The signal state of the process `pid`, which `SignalState`'s queries
+    /// read.
     let signals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : SignalState<'Thread, 'Handler>
         =
-        UnixProcessState.signals system.Process
+        Entry.query
+            "UnixSystem.signals"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.signals system.Process)
+            system
 
-    /// The environment the process was started with: the `envp` that
+    /// The environment the process `pid` was started with: the `envp` that
     /// `execve(2)` received, entry by entry, in order. Each entry is held
     /// exactly as given, whether or not it is `NAME=VALUE`.
     ///
@@ -966,21 +952,31 @@ module UnixSystem =
     /// `setenv(3)` and `putenv(3)` change the process's own copy in user
     /// space, which this library does not model.
     let environment<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixByteString list
         =
-        UnixProcessState.environment system.Process
+        Entry.query
+            "UnixSystem.environment"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.environment system.Process)
+            system
 
-    /// The path of the executable that started the process, or `None` if it has
-    /// none. `None` is an answer rather than a missing value: this library
+    /// The path of the executable that started the process `pid`, or `None` if
+    /// it has none. `None` is an answer rather than a missing value: this library
     /// models no `exec(2)`, so a process has a path only if its launch set one
     /// (`ProcessLaunch.withProcessPath`). The path is not resolved against the
     /// filesystem, so a client that wants it to name a file seeds the file.
     let processPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
-        UnixProcessState.processPath system.Process
+        Entry.query
+            "UnixSystem.processPath"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.processPath system.Process)
+            system
 
     /// The platform the machine impersonates.
     let platform<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1021,14 +1017,19 @@ module UnixSystem =
             Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
         }
 
-    /// The process's descriptor table, which `FileDescriptorRegistry`'s queries
-    /// read: every descriptor it holds, and the open file description each
-    /// names.
+    /// The descriptor table of the process `pid`, which
+    /// `FileDescriptorRegistry`'s queries read: every descriptor it holds, and
+    /// the open file description each names.
     let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileDescriptorRegistry
         =
-        UnixSystemState.fileDescriptors system
+        Entry.query
+            "UnixSystem.fileDescriptors"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixSystemState.fileDescriptors system)
+            system
 
     /// The machine's open file descriptions, which `OpenFileTable`'s queries
     /// read: every one any descriptor names, and any a call in flight holds.
@@ -1045,28 +1046,44 @@ module UnixSystem =
         =
         system.Machine.FileSystem
 
-    /// The inode of the directory the process is standing in. The path
+    /// The inode of the directory the process `pid` is standing in. The path
     /// `getcwd(3)` reports is `UnixPathResolution.currentDirectoryPath`.
     let currentDirectoryInode<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : InodeNumber
         =
-        system.Process.CurrentDirectoryInode
+        Entry.query
+            "UnixSystem.currentDirectoryInode"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.CurrentDirectoryInode)
+            system
 
-    /// Who the process is: all six of its IDs, and its supplementary groups.
+    /// Who the process `pid` is: all six of its IDs, and its supplementary
+    /// groups.
     let credentials<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : Credentials
         =
-        system.Process.Credentials
+        Entry.query
+            "UnixSystem.credentials"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.Credentials)
+            system
 
-    /// The process's file-mode creation mask, without replacing it as `umask`
-    /// does.
+    /// The file-mode creation mask of the process `pid`, without replacing it
+    /// as `umask` does.
     let fileModeCreationMask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (system : UnixSystem<'Thread, 'Handler>)
         : PermissionBits
         =
-        system.Process.Umask
+        Entry.query
+            "UnixSystem.fileModeCreationMask"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.Umask)
+            system
 
     /// The machine's entropy pool, from which every random-bytes syscall draws.
     let entropyPool<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1172,35 +1189,50 @@ module UnixSystem =
         =
         UnixMachineState.socketReadinessLevel socketId system.Machine
 
-    /// What the descriptor `fd` names, or `None` if the process has no such
-    /// descriptor open.
+    /// What the descriptor `fd` of the process `pid` names, or `None` if the
+    /// process has no such descriptor open.
     let descriptorTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
         (fd : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : OpenFileTarget option
         =
-        FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
+        Entry.query
+            "UnixSystem.descriptorTarget"
+            pid
+            (fun (system : UnixSystem<'Thread, 'Handler>) ->
+                FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
+            )
+            system
 
-    /// The process ID, as `getpid(2)` reports it.
-    ///
-    /// Total, and changes nothing: `getpid` cannot fail.
-    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The ID of every process the system holds, of which a query can ask and
+    /// in which a call can be made.
+    let processIds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<ProcessId>
+        =
+        // A view holds its own process and no other.
+        Set.singleton system.Process.ProcessId
+
+    /// `processId` once `Entry` has admitted its caller.
+    let private processIdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessId
         =
         system.Process.ProcessId
 
-    /// `umask(2)`: make `mask` the process's file-mode creation mask, and answer
-    /// the mask it replaces.
+    /// The process ID, as `getpid(2)` reports it to `caller`.
     ///
-    /// `mask` is raw, as the kernel takes it. The process keeps only the bits
-    /// `SimulatedUnixPlatform.umaskStoredBits` names, 0o777 on Linux and 0o7777
-    /// on Darwin, and ignores the rest, so a later call answers `mask` narrowed
-    /// to those bits. Total: `umask` cannot fail.
-    ///
-    /// The mask is the process's, shared by all its threads: measured on both,
-    /// a thread's `umask` is what every other thread's next call answers.
-    let umask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// Total, and changes nothing: `getpid` cannot fail.
+    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessId
+        =
+        Entry.call "UnixSystem.processId" CallerRequirement.Running caller Shape.answer processIdIn system
+
+    /// `umask` once `Entry` has admitted its caller.
+    let private umaskIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mask : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : PermissionBits * UnixSystem<'Thread, 'Handler>
@@ -1218,9 +1250,30 @@ module UnixSystem =
                 }
         }
 
+    /// `umask(2)`, made by `caller`: make `mask` the process's file-mode
+    /// creation mask, and answer the mask it replaces.
+    ///
+    /// `mask` is raw, as the kernel takes it. The process keeps only the bits
+    /// `SimulatedUnixPlatform.umaskStoredBits` names, 0o777 on Linux and 0o7777
+    /// on Darwin, and ignores the rest, so a later call answers `mask` narrowed
+    /// to those bits. Total: `umask` cannot fail.
+    ///
+    /// The mask is the process's, shared by all its threads: measured on both,
+    /// a thread's `umask` is what every other thread's next call answers.
+    let umask<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (mask : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : PermissionBits * UnixSystem<'Thread, 'Handler>
+        =
+        Entry.call "UnixSystem.umask" CallerRequirement.Running caller Shape.withSystem (umaskIn mask) system
+
     /// `step`, with a refusal answered as the `Error` rather than raised.
+    ///
+    /// Takes no caller check of its own: each case is made through its own
+    /// family's function, whose `Entry` checks `caller` before anything else.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (call : Syscall)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, SyscallRefusal<'Thread>>
@@ -1237,143 +1290,136 @@ module UnixSystem =
             result
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
 
-        match Map.tryFind thread system.Threads with
-        | None -> Error (SyscallRefusal.NotAThread (thread, call))
-        | Some {
-                   Parked = Some park
-               } -> Error (SyscallRefusal.CallerAsleep (thread, park, call))
-        | Some _ ->
-
         match call with
         | Syscall.GetEffectiveUserId ->
             Ok (
                 SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId system)))
+                    SyscallAnswer.Completed (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId caller system)))
                 ),
                 system
             )
         | Syscall.GetEffectiveGroupId ->
             Ok (
                 SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (GroupId.toUInt32 (UnixDescriptor.effectiveGroupId system)))
+                    SyscallAnswer.Completed (int64 (GroupId.toUInt32 (UnixDescriptor.effectiveGroupId caller system)))
                 ),
                 system
             )
         | Syscall.GetProcessId ->
             Ok (
-                SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (ProcessId.toInt32 (processId system)))),
+                SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (ProcessId.toInt32 (processId caller system)))),
                 system
             )
         | Syscall.Dup fd ->
-            UnixDescriptor.tryDup fd system
+            UnixDescriptor.tryDup caller fd system
             |> answered
             |> Result.mapError SyscallRefusal.Dup
         | Syscall.Fcntl (fd, command, argument) ->
-            UnixDescriptor.tryFcntl fd command argument system
+            UnixDescriptor.tryFcntl caller fd command argument system
             |> answered
             |> Result.mapError SyscallRefusal.Fcntl
         | Syscall.Dup2 (oldFd, newFd) ->
-            UnixDescriptor.tryDup2 oldFd newFd system
+            UnixDescriptor.tryDup2 caller oldFd newFd system
             |> answered
             |> Result.mapError SyscallRefusal.Dup2
         | Syscall.Dup3 (oldFd, newFd, flags) ->
-            UnixDescriptor.tryDup3 oldFd newFd flags system
+            UnixDescriptor.tryDup3 caller oldFd newFd flags system
             |> answered
             |> Result.mapError SyscallRefusal.Dup3
         | Syscall.LSeek (fd, offset, whence) ->
-            UnixDescriptor.tryLseek fd offset whence system
+            UnixDescriptor.tryLseek caller fd offset whence system
             |> answered
             |> Result.mapError SyscallRefusal.LSeek
         | Syscall.FLock (fd, operation) ->
-            UnixDescriptor.tryFlock thread fd operation system
+            UnixDescriptor.tryFlock caller fd operation system
             |> Result.mapError SyscallRefusal.FLock
         | Syscall.FTruncate (fd, length) ->
-            UnixDescriptor.tryFtruncate fd length system
+            UnixDescriptor.tryFtruncate caller fd length system
             |> answered
             |> Result.mapError SyscallRefusal.FTruncate
         | Syscall.Close fd ->
-            UnixDescriptor.tryClose fd system
+            UnixDescriptor.tryClose caller fd system
             |> answered
             |> Result.mapError SyscallRefusal.Close
         | Syscall.MkDirAt (dirfd, path, mode) ->
-            UnixNamespace.tryMkdirat dirfd path mode system
+            UnixNamespace.tryMkdirat caller dirfd path mode system
             |> answered
             |> Result.mapError SyscallRefusal.MkDir
         | Syscall.UnlinkAt (dirfd, path, flags) ->
-            UnixNamespace.tryUnlinkat dirfd path flags system
+            UnixNamespace.tryUnlinkat caller dirfd path flags system
             |> answered
             |> Result.mapError SyscallRefusal.UnlinkAt
         | Syscall.ChDir path ->
-            UnixPathResolution.tryChdir path system
+            UnixPathResolution.tryChdir caller path system
             |> answered
             |> Result.mapError SyscallRefusal.ChDir
         | Syscall.FChModAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFchmodat dirfd path mode flags system
+            UnixPathResolution.tryFchmodat caller dirfd path mode flags system
             |> answered
             |> Result.mapError SyscallRefusal.FChModAt
         | Syscall.FChMod (fd, mode) ->
-            UnixPathResolution.tryFchmod fd mode system
+            UnixPathResolution.tryFchmod caller fd mode system
             |> answered
             |> Result.mapError SyscallRefusal.FChMod
         | Syscall.FChOwnAt (dirfd, path, user, group, flags) ->
-            UnixPathResolution.tryFchownat dirfd path user group flags system
+            UnixPathResolution.tryFchownat caller dirfd path user group flags system
             |> answered
             |> Result.mapError SyscallRefusal.FChOwnAt
         | Syscall.FChOwn (fd, user, group) ->
-            UnixPathResolution.tryFchown fd user group system
+            UnixPathResolution.tryFchown caller fd user group system
             |> answered
             |> Result.mapError SyscallRefusal.FChOwn
         | Syscall.UMask mask ->
-            let previous, system = umask mask system
+            let previous, system = umask caller mask system
 
             Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (PermissionBits.toInt previous))), system)
         | Syscall.FAccessAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFaccessatEager dirfd path mode flags system
+            UnixPathResolution.tryFaccessatEager caller dirfd path mode flags system
             |> Result.map (fun answer -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Access
         | Syscall.SymlinkAt (target, dirfd, path) ->
-            UnixNamespace.trySymlinkatEager target dirfd path system
+            UnixNamespace.trySymlinkatEager caller target dirfd path system
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Symlink
         | Syscall.LinkAt (olddirfd, oldpath, newdirfd, newpath, flags) ->
-            UnixNamespace.tryLinkatEager olddirfd oldpath newdirfd newpath flags system
+            UnixNamespace.tryLinkatEager caller olddirfd oldpath newdirfd newpath flags system
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Link
         | Syscall.UTimensAt (dirfd, path, times, flags) ->
-            UnixPathResolution.tryUtimensat dirfd path times flags system
+            UnixPathResolution.tryUtimensat caller dirfd path times flags system
             |> answered
             |> Result.mapError SyscallRefusal.UTimensAt
         | Syscall.CopyFileRange (inFd, outFd, length, flags) ->
-            UnixReadWrite.tryCopyFileRange inFd outFd length flags system
+            UnixReadWrite.tryCopyFileRange caller inFd outFd length flags system
             |> answered
             |> Result.mapError SyscallRefusal.CopyFileRange
         | Syscall.FileClone (destination, source) ->
-            UnixDescriptor.tryFileClone destination source system
+            UnixDescriptor.tryFileClone caller destination source system
             |> Result.map (fun error -> SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
             |> Result.mapError SyscallRefusal.FileClone
         | Syscall.CloneFile (source, destination, flags) ->
-            UnixNamespace.tryCloneFileEager source destination flags system
+            UnixNamespace.tryCloneFileEager caller source destination flags system
             |> answered
             |> Result.mapError SyscallRefusal.CloneFile
         | Syscall.SetResUid (real, effective, saved) ->
-            UnixCredentials.trySetresuid real effective saved system
+            UnixCredentials.trySetresuid caller real effective saved system
             |> answered
             |> Result.mapError SyscallRefusal.SetIds
         | Syscall.SetResGid (real, effective, saved) ->
-            UnixCredentials.trySetresgid real effective saved system
+            UnixCredentials.trySetresgid caller real effective saved system
             |> answered
             |> Result.mapError SyscallRefusal.SetIds
         | Syscall.SetGroups (size, words) ->
-            UnixCredentials.trySetgroups size words system
+            UnixCredentials.trySetgroups caller size words system
             |> answered
             |> Result.mapError SyscallRefusal.SetGroups
         | Syscall.InotifyInit1 flags ->
-            match UnixInotify.tryInotifyInit1 flags system with
+            match UnixInotify.tryInotifyInit1 caller flags system with
             | Error refusal -> Error (SyscallRefusal.Inotify refusal)
             | Ok (Error error) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
             | Ok (Ok (fd, system)) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 fd)), system)
         | Syscall.InotifyRmWatch (fd, wd) ->
-            UnixInotify.tryInotifyRmWatch fd wd system
+            UnixInotify.tryInotifyRmWatch caller fd wd system
             |> answered
             |> Result.mapError SyscallRefusal.Inotify
 
@@ -1402,12 +1448,12 @@ module UnixSystem =
     /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (call : Syscall)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryStep thread call system
+        tryStep caller call system
         |> Refusal.orRaise "UnixSystem.step" SyscallRefusal.kind SyscallRefusal.describe
 
     /// Every way the machine's tables disagree with each other or with the
@@ -1959,6 +2005,8 @@ module UnixSystem =
             |> List.filter (fun (_, count) -> count > 1)
             |> List.map (fun (registeredAt, _) -> UnixSystemDefect.DuplicateEventRegistrationOrdinal registeredAt)
 
+        // Each description's status against the machine's flavour, and a
+        // Darwin description's lock against the grant its status records.
         let statusOfFlavour =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
@@ -1967,35 +2015,18 @@ module UnixSystem =
             |> List.collect (fun (id, description) ->
                 let status = description.Status
 
-                let foreign =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> status.Written || status.Flocked
-                    | SimulatedUnixFlavour.Darwin -> status.OpenedDirectory || status.OpenedNoFollow
-
                 let unrecorded =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> false
-                    | SimulatedUnixFlavour.Darwin -> description.Flock.IsSome && not status.Flocked
+                    match status with
+                    | OpenFileStatus.Darwin (flocked = flocked) -> description.Flock.IsSome && not flocked
+                    | OpenFileStatus.Linux _ -> false
 
                 [
-                    if foreign then
+                    if OpenFileStatus.flavour status <> flavour then
                         yield UnixSystemDefect.StatusNotOfFlavour (id, status, flavour)
                     if unrecorded then
                         yield UnixSystemDefect.FlockHeldNotRecorded id
                 ]
             )
-
-
-        let unpairedUnderLinux =
-            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> []
-            | SimulatedUnixFlavour.Linux ->
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
-                |> List.filter (fun (_, description) ->
-                    description.Status.Synchronous <> description.Status.DataSynchronous
-                )
-                |> List.map (fun (id, _) -> UnixSystemDefect.UnpairedSynchronisationUnderLinux id)
 
         // Every description is referenced: by a descriptor, or by a call in
         // flight that holds it. Both counts are the description's own: the
@@ -2637,7 +2668,6 @@ module UnixSystem =
         @ connectionFreshness
         @ ordinalFreshness
         @ ordinalDuplicates
-        @ unpairedUnderLinux
         @ statusOfFlavour
         @ unreferencedDescriptions
         @ lingeringHeldOnlyByCalls
@@ -2696,20 +2726,20 @@ module UnixSystem =
             |> List.filter (fun (fd, _) -> fd >= bound)
             |> List.map (fun (fd, _) -> UnixSystemDefect.DescriptorAtOrAboveBound (fd, bound))
 
-        let closeOnForkUnderLinux =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> []
-            | SimulatedUnixFlavour.Linux ->
-                let registry = UnixSystemState.fileDescriptors system
+        // Each descriptor's flags against the machine's flavour.
+        let flagsOfFlavour =
+            let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+            let registry = UnixSystemState.fileDescriptors system
 
-                FileDescriptorRegistry.fds registry
-                |> Map.toList
-                |> List.filter (fun (fd, _) ->
-                    match FileDescriptorRegistry.tryFindFlags fd registry with
-                    | Some flags -> flags.CloseOnFork
-                    | None -> false
-                )
-                |> List.map (fun (fd, _) -> UnixSystemDefect.CloseOnForkUnderLinux fd)
+            FileDescriptorRegistry.fds registry
+            |> Map.toList
+            |> List.choose (fun (fd, _) ->
+                match FileDescriptorRegistry.tryFindFlags fd registry with
+                | Some flags when DescriptorFlags.flavour flags <> flavour ->
+                    Some (UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, flags, flavour))
+                | Some _
+                | None -> None
+            )
 
 
         // Each thread's park against the descriptor table. A park names what the
@@ -3147,23 +3177,9 @@ module UnixSystem =
 
 
         // The signal state against the thread table: every thread it names must
-        // be one, or the delivery that reads it has nowhere to go. And against
-        // the machine's platform: the state checks every signal against
-        // the numbering it was built with, so a state built under the wrong
-        // one holds signals the kernel would number differently, or not at all.
+        // be one, or the delivery that reads it has nowhere to go.
         let signals =
             let signals = system.Process.Signals
-
-            let numberings =
-                let stateNumbering = SignalState.numbering signals
-
-                let platformNumbering =
-                    SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
-
-                if stateNumbering = platformNumbering then
-                    []
-                else
-                    [ UnixSystemDefect.SignalNumberingMismatch (stateNumbering, platformNumbering) ]
 
             let frames =
                 SignalState.threadsWithFrames signals
@@ -3221,7 +3237,7 @@ module UnixSystem =
                     | ValueNone -> None
                 )
 
-            numberings @ frames @ masks @ toRestore @ targets
+            frames @ masks @ toRestore @ targets
 
         let supplementaryGroups =
             let count = List.length system.Process.Credentials.SupplementaryGroups
@@ -3274,7 +3290,7 @@ module UnixSystem =
 
         currentDirectory
         @ beyondBound
-        @ closeOnForkUnderLinux
+        @ flagsOfFlavour
         @ parks
         @ kqueueOwners
         @ signals

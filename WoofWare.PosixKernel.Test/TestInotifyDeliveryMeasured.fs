@@ -191,7 +191,7 @@ module TestInotifyDeliveryMeasured =
             let entry = String (char (int 'a' + i % 26), length)
             system <- writeFile $"l/%s{entry}" "x" system
 
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 let first = parse bytes |> List.head
@@ -249,7 +249,7 @@ module TestInotifyDeliveryMeasured =
         system <- chmod "c/f" 0o644 system
 
         let first =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 bytes.Length
@@ -258,7 +258,7 @@ module TestInotifyDeliveryMeasured =
         system <- chmod "c/f" 0o600 system
 
         let second =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1024UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 1024UL system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
                 system <- s
                 bytes.Length
@@ -320,7 +320,7 @@ module TestInotifyDeliveryMeasured =
         fill ()
 
         let available =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (BytesAvailableAnswer.Reported count) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 
@@ -424,7 +424,7 @@ module TestInotifyDeliveryMeasured =
             (system, [ 0 .. limit - 2 ])
             ||> List.fold (fun system i -> chmod (if i % 2 = 1 then a else b) (0o600 + i % 2) system)
 
-        match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+        match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
         | Ok (BytesAvailableAnswer.Reported count) when count = (limit - 1) * 32 -> system
         | other -> failwith $"filled to %A{other}, not %d{(limit - 1) * 32} bytes"
 

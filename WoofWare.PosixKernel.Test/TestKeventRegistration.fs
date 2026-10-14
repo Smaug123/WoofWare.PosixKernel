@@ -625,7 +625,7 @@ module TestKeventRegistration =
     let private refusalOf (kq : int) (changes : Kevent list) (system : UnixSystem<int, string>) : KeventRefusal =
         match
             UnixKqueue.tryKevent
-                1
+                (Callers.thread 1 system)
                 kq
                 (List.length changes)
                 changes
@@ -697,7 +697,7 @@ module TestKeventRegistration =
 
                     match
                         UnixKqueue.tryKevent
-                            1
+                            (Callers.thread 1 system)
                             kq
                             1
                             [ change ]
@@ -722,6 +722,8 @@ module TestKeventRegistration =
         let file, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -769,7 +771,15 @@ module TestKeventRegistration =
         let system, listener, _, kq = ready ()
 
         let call (changes : Kevent list) (eventlist : UserBuffer) =
-            UnixKqueue.tryKevent 1 kq (List.length changes) changes 4 eventlist (KeventTimeout.Readable (0L, 0L)) system
+            UnixKqueue.tryKevent
+                (Callers.thread 1 system)
+                kq
+                (List.length changes)
+                changes
+                4
+                eventlist
+                (KeventTimeout.Readable (0L, 0L))
+                system
 
         let receipt =
             KeventWorld.change
@@ -825,7 +835,7 @@ module TestKeventRegistration =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match UnixKqueue.tryKevent thread kq 0 [] 4 UserBuffer.Mapped timeout system with
+        match UnixKqueue.tryKevent (Callers.thread thread system) kq 0 [] 4 UserBuffer.Mapped timeout system with
         | Ok (KeventOutcome.WouldBlock _, parked) -> parked
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
@@ -874,14 +884,14 @@ module TestKeventRegistration =
                 }
 
             let system =
-                match UnixKqueue.tryFinishKevent 2 system with
+                match UnixKqueue.tryFinishKevent (Callers.thread 2 system) system with
                 | Ok (KeventOutcome.Answered [ event ], finished) ->
                     event |> shouldEqual expected
                     UnixThreadTable.parkedFor 2 (Lone.threads finished) |> shouldEqual None
                     finished
                 | other -> failwith $"expected thread 2 to take the event, got %A{other}"
 
-            match UnixKqueue.tryFinishKevent 1 system with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 system) system with
             | Ok (KeventOutcome.WouldBlock _, reparked) when clear ->
                 // Taken: the other sleeper walks an empty queue and sleeps again.
                 (KeventWorld.stateOf kq reparked).Active |> shouldEqual []
@@ -898,7 +908,9 @@ module TestKeventRegistration =
         let system, listener, kq, _ = world
 
         let system =
-            match UnixKqueue.tryKevent 1 kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system with
+            match
+                UnixKqueue.tryKevent (Callers.thread 1 system) kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+            with
             | Ok (KeventOutcome.WouldBlock _, parked) -> parked
             | other -> failwith $"expected a park, got %A{other}"
 
@@ -912,7 +924,7 @@ module TestKeventRegistration =
 
         let system = KeventWorld.connect socket 5000us system |> snd
 
-        match UnixKqueue.tryFinishKevent 1 system with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 system) system with
         | Ok (KeventOutcome.Answered [ event ], finished) ->
             event.Ident |> shouldEqual (uint64 socket)
 
@@ -933,7 +945,9 @@ module TestKeventRegistration =
         let withEvent = KeventWorld.client 5000us parked |> snd
 
         // Darwin answers whichever reached the sleeper first.
-        UnixKqueue.tryFinishKevent 1 (KeventWorld.close kq withEvent)
+        let drained = KeventWorld.close kq withEvent
+
+        UnixKqueue.tryFinishKevent (Callers.thread 1 drained) drained
         |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
 
         let expired =
@@ -941,7 +955,7 @@ module TestKeventRegistration =
                 Scheduling = UnixSchedulingState.advanceClock 5L withEvent.Scheduling
             }
 
-        UnixKqueue.tryFinishKevent 1 expired
+        UnixKqueue.tryFinishKevent (Callers.thread 1 expired) expired
         |> shouldEqual (Error (KeventRefusal.EventsBesideDeadline kqueueId))
 
         let signalled =
@@ -951,9 +965,11 @@ module TestKeventRegistration =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
+                            (UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
+                            (UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -961,7 +977,7 @@ module TestKeventRegistration =
                 }
             )
 
-        match UnixKqueue.tryFinishKevent 1 signalled with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalled) signalled with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the event to be refused, got %A{other}"
@@ -980,7 +996,7 @@ module TestKeventRegistration =
         let system = parkIn 1 kq KeventTimeout.Null system |> KeventWorld.close kq
 
         let system =
-            match UnixKqueue.tryFinishKevent 1 system with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 system) system with
             | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
             | other -> failwith $"expected EBADF, got %A{other}"
 
@@ -1035,11 +1051,11 @@ module TestKeventRegistration =
         // An event can still reach the held kqueue, and then meets the drain.
         let withEvent = KeventWorld.client 5000us closed |> snd
 
-        UnixKqueue.tryFinishKevent 1 withEvent
+        UnixKqueue.tryFinishKevent (Callers.thread 1 withEvent) withEvent
         |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
 
         let finished =
-            match UnixKqueue.tryFinishKevent 1 closed with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 closed) closed with
             | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
             | other -> failwith $"expected EBADF, got %A{other}"
 

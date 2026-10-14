@@ -589,7 +589,7 @@ module TestConnectedTransferAgainstHost =
         CopyIn.inet platform (Ipv4Endpoint.ofParts Ipv4Address.loopback kernelPort)
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryClose fd system with
+        match UnixDescriptor.tryClose (Callers.leader system) fd system with
         | Ok (SyscallAnswer.Completed 0L, system) -> system
         | other -> failwith $"closing fd %d{fd}: %A{other}"
 
@@ -604,7 +604,12 @@ module TestConnectedTransferAgainstHost =
         system
         |> Lone.mapProc (fun proc ->
             { proc with
-                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                Signals =
+                    SignalState.setDisposition
+                        (UnixSystemState.signalNumbering system)
+                        Signal.SIGPIPE
+                        SignalDisposition.Ignore
+                        proc.Signals
             }
         )
 
@@ -622,7 +627,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen: %A{other}"
 
@@ -635,13 +640,18 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"connect: %A{other}"
 
         let server, system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
         let system = kernelClose listener system
-        let _, system = UnixDescriptor.setNonBlocking client true system
-        let _, system = UnixDescriptor.setNonBlocking server true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) client true system
+
+        let _, system =
+            UnixDescriptor.setNonBlocking (Callers.leader system) server true system
+
         client, server, system
 
     /// A write of `count` bytes of the payload through `fd`: what it answered,
@@ -728,7 +738,7 @@ module TestConnectedTransferAgainstHost =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    (Lone.leader system)
+                    (Callers.leader system)
                     [
                         {
                             Fd = fd
@@ -742,7 +752,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"poll: %A{other}"
 
         let readable =
-            match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped system with
+            match UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system with
             | Ok (BytesAvailableAnswer.Reported count) -> count
             | other -> failwith $"FIONREAD: %A{other}"
 

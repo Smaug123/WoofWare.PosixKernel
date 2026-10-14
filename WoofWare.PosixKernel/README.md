@@ -51,10 +51,11 @@ The whole kernel is one value, a `UnixSystem<'Thread, 'Handler>`, made of three 
 
 * the machine: the filesystem, the open file descriptions (with the state of each epoll instance, kqueue and inotify instance, and how many descriptors and calls in flight reference each), sockets, connections and pipes, the thread IDs live threads hold, the processes on it and the directories they stand in, the clock, the entropy pool, and the platform being simulated;
 * the process: the descriptor table, which says only which open file description each descriptor names, and the process's credentials, umask, current directory, environment and signal state;
-* the threads (`UnixThreadState`): the process's threads, and what each is blocked in, if anything. A client looks a thread up in `UnixSystem.threads` by its own name for it, which has no entry for a thread that was never created or has exited, and reads what it finds with `UnixThreadState`'s readers: `UnixThreadState.parkedIn` (the syscall it sleeps in), `UnixThreadState.cpu` and `UnixThreadState.osThreadId` (what `gettid(2)` answers).
+* the threads (`UnixThreadState`): the process's threads, and what each is blocked in, if anything. A client looks a thread up in `UnixSystem.threads` of its process by its own name for it, which has no entry for a thread that was never created or has exited, and reads what it finds with `UnixThreadState`'s readers: `UnixThreadState.parkedIn` (the syscall it sleeps in), `UnixThreadState.cpu` and `UnixThreadState.osThreadId` (what `gettid(2)` answers).
 
 Those records are opaque outside the library.
-A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.leader`, `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles`, `UnixSystem.delivered` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
+A query about one process, such as `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials` or `UnixSystem.fileDescriptors`, takes the process's ID first, and throws `InvalidOperationException` for a process the system does not hold; one about a thread, such as `UnixWait.satisfied` or `UnixScheduling.runningOn`, takes a `Caller` naming the thread (see "Making a call").
+A client reads a system through `UnixSystem`'s queries, such as `UnixSystem.processIds`, `UnixSystem.leader`, `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials`, `UnixSystem.fileDescriptors`, `UnixSystem.openFiles`, `UnixSystem.delivered` and `UnixSystem.descriptorTarget`, and changes a running one only through the syscalls and the two operations of the outside world described under "When time passes".
 `UnixSystem.descriptorTarget` answers what a descriptor's description refers to, an `OpenFileTarget`, of which `OpenFileTarget.Fifo` (a FIFO's inode and an opaque `FifoAttachment`) is reserved: nothing opens a FIFO yet, `FileDescriptorRegistry.checkInvariants` reports a description naming one as a defect, and the case exists so that a client's matches already handle it when FIFOs arrive.
 `OpenFileTarget.CharacterDevice` carries, besides the device and its node, an opaque `CharacterDeviceState`: the description's own state, which holds nothing in this version, because Linux keeps no position for a device and Darwin's devices, which keep one per description, are refused.
 
@@ -67,13 +68,14 @@ Besides the syscalls, a client calls these between them (the system argument is 
 
 | Operation | Function | Answers |
 | --- | --- | --- |
-| a thread, by the client's name for it | `UnixSystem.threads` | `Map<'Thread, UnixThreadState>` |
+| the processes the system holds | `UnixSystem.processIds` | `Set<ProcessId>` |
+| a process's threads, by the client's name for each | `UnixSystem.threads (pid : ProcessId)` | `Map<'Thread, UnixThreadState>` |
 | which syscall a thread sleeps in | `UnixThreadState.parkedIn (thread : UnixThreadState)` | `ParkedSyscall option` |
 | the platform, and its flavour | `UnixSystem.platform` | `SimulatedUnixPlatform` |
 | the time since boot | `UnixSystem.nanosecondsSinceBoot` | `int64` |
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
 | which sleeping threads wake | `UnixWait.wakes (asleep : Set<'Thread>)` | `('Thread * Set<WakePrimitive>) list` |
-| whether one sleeping thread could go on | `UnixWait.satisfied (thread : 'Thread)` | `Set<WakePrimitive> option` |
+| whether one sleeping thread could go on | `UnixWait.satisfied (caller : Caller)` | `Set<WakePrimitive> option` |
 | when sleeping calls time out | `UnixWait.deadlines (asleep : Set<'Thread>)` | `int64 list` |
 | every way the tables disagree | `UnixSystem.checkInvariants` | `UnixSystemDefect list` |
 
@@ -116,8 +118,11 @@ let system : UnixSystem<int, unit> =
 // mkdir(2) is mkdirat(2) from AT_FDCWD, in the flavour's own numbering.
 let atFdCwd : int = AtDirectory.atFdCwd SimulatedUnixFlavour.Linux
 
+// Thread 0 of the process, its leader, makes each call.
+let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
+
 let mkdir (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
-    match UnixSystem.step 0 (Syscall.MkDirAt (atFdCwd, path "/tmp", 0o755)) system with
+    match UnixSystem.step leader (Syscall.MkDirAt (atFdCwd, path "/tmp", 0o755)) system with
     | SyscallOutcome.Answered (SyscallAnswer.Completed result), system ->
         printfn "mkdir returned %d" result
         system
@@ -183,9 +188,11 @@ let path (text : string) : PathArgumentBytes =
 
 // Thread 0, the process's leader, calls open("/etc/hostname", O_RDONLY), and read(fd, buf, 64).
 // O_RDONLY is 0 on every flavour.
-match UnixNamespace.openPath 0 0 (path "/etc/hostname") 0 system with
+let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
+
+match UnixNamespace.openPath leader 0 (path "/etc/hostname") 0 system with
 | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
-    match UnixReadWrite.read 0 (int fd) UserBuffer.Mapped 64UL system with
+    match UnixReadWrite.read leader (int fd) UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
         printf "%s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
     | outcome, _ -> failwith $"unexpected read: %A{outcome}"
@@ -201,10 +208,17 @@ Each syscall is a function in the module for its family, listed under "The sysca
 It takes its arguments as the kernel does, raw where the kernel validates them (a descriptor, a flag word, a mode, a `whence`, in the flavour's own numbering), and the system last.
 It gives back its answer with the system as the call left it, or the answer alone for a call that cannot change anything.
 
-A function takes the calling thread, as its first argument, when the call can sleep, or when its answer depends on the caller's own signal state: its mask, or the signals pending for it.
-The thread calls (`UnixThreadLifecycle.spawn`, `UnixThreadLifecycle.exitThread`, `UnixThreadLifecycle.exitGroup`) and the scheduling calls take it too.
-`UnixSignal.pthreadKill`'s first argument is the thread the signal is sent to, not the caller.
-Every other call answers the same whichever thread makes it, and takes no thread.
+A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (one of `UnixSystem.processIds`), and `Caller.processId` and `Caller.thread` read it back.
+A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
+Every syscall takes the caller as its first argument, and so do the return to user mode (`UnixSignal.onReturnToUser`), the client's report of a dispatch (`UnixScheduling.dispatch`) and `UnixSystem.step`.
+A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength`, `UnixConnection.connectWithAddress`, `UnixReadWrite.writeWithBytes`, `UnixReadWrite.sendWithBytes` and `UnixReadWrite.pwriteWithBytes`.
+
+Each of those calls checks its caller before it does anything else.
+The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
+`UnixSignal.onReturnToUser` requires a thread parked in no syscall, as a call does, and `UnixScheduling.dispatch` takes any thread of the process, parked or not.
+A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
+
+`UnixSignal.pthreadKill`'s second argument, `target`, is the thread the signal is sent to, which need not be the caller.
 
 A call the process made through its C library and one it made as a raw system call are the same call here, except where the two differ.
 Where they do, the function says which it is, and the tables below mark it: (3) is the C library's function, and (2) the system call beneath it.
@@ -247,9 +261,12 @@ let system : UnixSystem<int, unit> =
 
     UnixSystem.initial SimulatedUnixPlatform.linuxX64 |> UnixBootImage.boot launch
 
+// Thread 0 of the process, its leader, makes each call.
+let caller = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
+
 // socket(AF_INET, SOCK_STREAM, 0), in Linux's numbering.
 let fd, socketSystem =
-    match UnixSocket.socket 2 1 0 system with
+    match UnixSocket.socket caller 2 1 0 system with
     | Ok (fd, system) -> fd, system
     | Error error -> failwith $"socket failed with %O{error}"
 
@@ -260,7 +277,7 @@ let sockaddr (address : byte[]) : byte[] =
 // bind(fd, &sockaddr, 16): the call stops where the kernel copies the sockaddr in, and
 // bindWithAddress takes the bytes copyRange names.
 let bind (address : byte[]) (system : UnixSystem<int, unit>) : BindAnswer * UnixSystem<int, unit> =
-    match UnixSocket.bind fd UserBuffer.Mapped 16u system with
+    match UnixSocket.bind caller fd UserBuffer.Mapped 16u system with
     | CallProgress.Answered answered -> answered
     | CallProgress.NeedsCopyIn paused ->
         let range = PausedBind.copyRange paused
@@ -291,7 +308,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
-A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, a name that is no thread, or `UnixScheduling.getcpu` of a thread that is not running.
+A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, a name that is no thread, a caller in a process other than the system's, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
 
 ### Unions that gain cases
@@ -321,48 +338,48 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `dup(2)` | `UnixDescriptor.dup (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup2(2)` | `UnixDescriptor.dup2 (oldFd : int) (newFd : int)` | `SyscallAnswer * UnixSystem` |
-| `dup3(2)` | `UnixDescriptor.dup3 (oldFd : int) (newFd : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `fcntl(2)`: `F_DUPFD`, `F_DUPFD_CLOEXEC`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL` | `UnixDescriptor.fcntl (fd : int) (command : int) (argument : int)` | `SyscallAnswer * UnixSystem` |
-| `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
-| `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (fd : int)` | `bool option` |
-| `lseek(2)` | `UnixDescriptor.lseek (fd : int) (offset : int64) (whence : int)` | `SyscallAnswer * UnixSystem` |
-| `flock(2)` | `UnixDescriptor.flock (thread : 'Thread) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
-| `ftruncate(2)` | `UnixDescriptor.ftruncate (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
-| `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
-| `close(2)` | `UnixDescriptor.close (fd : int)` | `SyscallAnswer * UnixSystem` |
-| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
-| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (destination : int) (source : int)` | `UnixError` |
-| `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (fd : int)` | `TerminalAttributesAnswer` |
-| `geteuid(2)` | `UnixDescriptor.effectiveUserId` | `UserId` |
-| `getegid(2)` | `UnixDescriptor.effectiveGroupId` | `GroupId` |
-| `getgroups(2)` | `UnixDescriptor.getgroups (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
+| `dup(2)` | `UnixDescriptor.dup (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
+| `dup2(2)` | `UnixDescriptor.dup2 (caller : Caller) (oldFd : int) (newFd : int)` | `SyscallAnswer * UnixSystem` |
+| `dup3(2)` | `UnixDescriptor.dup3 (caller : Caller) (oldFd : int) (newFd : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `fcntl(2)`: `F_DUPFD`, `F_DUPFD_CLOEXEC`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_SETFL` | `UnixDescriptor.fcntl (caller : Caller) (fd : int) (command : int) (argument : int)` | `SyscallAnswer * UnixSystem` |
+| `fcntl(F_SETFL)` of `fcntl(F_GETFL)` with `O_NONBLOCK` changed | `UnixDescriptor.setNonBlocking (caller : Caller) (fd : int) (isNonBlocking : bool)` | `SetNonBlockingAnswer * UnixSystem` |
+| `O_NONBLOCK` in `fcntl(F_GETFL)` | `UnixDescriptor.isNonBlocking (caller : Caller) (fd : int)` | `bool option` |
+| `lseek(2)` | `UnixDescriptor.lseek (caller : Caller) (fd : int) (offset : int64) (whence : int)` | `SyscallAnswer * UnixSystem` |
+| `flock(2)` | `UnixDescriptor.flock (caller : Caller) (fd : int) (operation : int)` | `SyscallOutcome * UnixSystem` |
+| `ftruncate(2)` | `UnixDescriptor.ftruncate (caller : Caller) (fd : int) (length : int64)` | `SyscallAnswer * UnixSystem` |
+| `posix_fadvise(3)` | `UnixDescriptor.posixFadvise (caller : Caller) (fd : int) (offset : int64) (length : int64) (advice : int)` | `FileAdviceAnswer` |
+| `close(2)` | `UnixDescriptor.close (caller : Caller) (fd : int)` | `SyscallAnswer * UnixSystem` |
+| `ioctl(FIONREAD)` | `UnixDescriptor.bytesAvailable (caller : Caller) (fd : int) (destination : UserBuffer)` | `BytesAvailableAnswer` |
+| `ioctl(FICLONE)` | `UnixDescriptor.fileClone (caller : Caller) (destination : int) (source : int)` | `UnixError` |
+| `tcgetattr(3)`, `isatty(3)` | `UnixDescriptor.terminalAttributes (caller : Caller) (fd : int)` | `TerminalAttributesAnswer` |
+| `geteuid(2)` | `UnixDescriptor.effectiveUserId (caller : Caller)` | `UserId` |
+| `getegid(2)` | `UnixDescriptor.effectiveGroupId (caller : Caller)` | `GroupId` |
+| `getgroups(2)` | `UnixDescriptor.getgroups (caller : Caller) (destination : UserBuffer) (size : int)` | `GetGroupsAnswer` |
 
 #### Paths and their files
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (policy : SymlinkPolicy) (path : PathArgumentBytes)` | `FileStatusAnswer` |
-| `fstat(2)` | `UnixPathResolution.fstat (fd : int)` | `FileStatusAnswer` |
-| `fstatat(2)` | `UnixPathResolution.fstatat (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `FileStatusAnswer` |
-| `chmod(2)` | `UnixPathResolution.chmod (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `fchmod(2)` | `UnixPathResolution.fchmod (fd : int) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `fchmodat(2)` | `UnixPathResolution.fchmodat (dirfd : int) (path : PathArgumentBytes) (mode : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `chown(2)` | `UnixPathResolution.chown (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `lchown(2)` | `UnixPathResolution.lchown (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `fchown(2)` | `UnixPathResolution.fchown (fd : int) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `fchownat(2)` | `UnixPathResolution.fchownat (dirfd : int) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `utimensat(2)`, and Linux's `futimens(3)` | `UnixPathResolution.utimensat (dirfd : int) (path : NullablePathArgument) (times : TimesArgument) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `statfs(2)` | `UnixPathResolution.statfs (path : PathArgumentBytes)` | `FileSystemStatisticsAnswer` |
-| `fstatfs(2)` | `UnixPathResolution.fstatfs (fd : int)` | `FileSystemStatisticsAnswer` |
-| `getcwd(3)` | `UnixPathResolution.getcwd (destination : UserBuffer) (capacity : uint64)` | `GetCwdAnswer` |
-| `chdir(2)` | `UnixPathResolution.chdir (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `access(2)` | `UnixPathResolution.access (mode : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
-| `faccessat(2)` | `UnixPathResolution.faccessat (dirfd : int) (mode : int) (flags : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
+| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (caller : Caller) (policy : SymlinkPolicy) (path : PathArgumentBytes)` | `FileStatusAnswer` |
+| `fstat(2)` | `UnixPathResolution.fstat (caller : Caller) (fd : int)` | `FileStatusAnswer` |
+| `fstatat(2)` | `UnixPathResolution.fstatat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `FileStatusAnswer` |
+| `chmod(2)` | `UnixPathResolution.chmod (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `fchmod(2)` | `UnixPathResolution.fchmod (caller : Caller) (fd : int) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `fchmodat(2)` | `UnixPathResolution.fchmodat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `chown(2)` | `UnixPathResolution.chown (caller : Caller) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `lchown(2)` | `UnixPathResolution.lchown (caller : Caller) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `fchown(2)` | `UnixPathResolution.fchown (caller : Caller) (fd : int) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `fchownat(2)` | `UnixPathResolution.fchownat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `utimensat(2)`, and Linux's `futimens(3)` | `UnixPathResolution.utimensat (caller : Caller) (dirfd : int) (path : NullablePathArgument) (times : TimesArgument) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `statfs(2)` | `UnixPathResolution.statfs (caller : Caller) (path : PathArgumentBytes)` | `FileSystemStatisticsAnswer` |
+| `fstatfs(2)` | `UnixPathResolution.fstatfs (caller : Caller) (fd : int)` | `FileSystemStatisticsAnswer` |
+| `getcwd(3)` | `UnixPathResolution.getcwd (caller : Caller) (destination : UserBuffer) (capacity : uint64)` | `GetCwdAnswer` |
+| `chdir(2)` | `UnixPathResolution.chdir (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `access(2)` | `UnixPathResolution.access (caller : Caller) (mode : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
+| `faccessat(2)` | `UnixPathResolution.faccessat (caller : Caller) (dirfd : int) (mode : int) (flags : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
 | `access(2)` or `faccessat(2)`, given the path | `UnixPathResolution.accessWithPath (path : PathArgumentBytes) (paused : PausedAccess)` | `SyscallAnswer` |
 
-`UnixPathResolution.currentDirectoryPath` is the current directory's path, for a client that wants it without a buffer.
+`UnixPathResolution.currentDirectoryPath (pid : ProcessId)` is the process's current directory's path, for a client that wants it without a buffer.
 
 A symbolic link's own mode is `UnixPathResolution.fchmodat` with `AT_SYMLINK_NOFOLLOW`: Linux answers `EOPNOTSUPP`, and Darwin changes it.
 There is no `lchmod` function, since neither kernel has that syscall.
@@ -373,32 +390,32 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (thread : 'Thread) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `openat(2)` | `UnixNamespace.openat (thread : 'Thread) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
-| `readlink(2)` | `UnixNamespace.readlink (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
-| `readlinkat(2)` | `UnixNamespace.readlinkat (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
-| one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
-| `mkdir(2)` | `UnixNamespace.mkdir (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `mkdirat(2)` | `UnixNamespace.mkdirat (dirfd : int) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `mknod(2)`, regular files only | `UnixNamespace.mknod (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
-| `mknodat(2)`, regular files only | `UnixNamespace.mknodat (dirfd : int) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
-| `unlink(2)` | `UnixNamespace.unlink (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `rmdir(2)` | `UnixNamespace.rmdir (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `unlinkat(2)` | `UnixNamespace.unlinkat (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `rename(2)` | `UnixNamespace.rename (source : PathArgumentBytes)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
-| `renameat(2)` | `UnixNamespace.renameat (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
+| `open(2)` | `UnixNamespace.openPath (caller : Caller) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
+| `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
+| one entry of `getdents(2)` or `getdirentries(2)`, without its byte layout | `UnixNamespace.readDirectoryEntry (caller : Caller) (fd : int)` | `ReadDirectoryAnswer * UnixSystem` |
+| `mkdir(2)` | `UnixNamespace.mkdir (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `mkdirat(2)` | `UnixNamespace.mkdirat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `mknod(2)`, regular files only | `UnixNamespace.mknod (caller : Caller) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
+| `mknodat(2)`, regular files only | `UnixNamespace.mknodat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int) (dev : uint32)` | `SyscallAnswer * UnixSystem` |
+| `unlink(2)` | `UnixNamespace.unlink (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `rmdir(2)` | `UnixNamespace.rmdir (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `unlinkat(2)` | `UnixNamespace.unlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `rename(2)` | `UnixNamespace.rename (caller : Caller) (source : PathArgumentBytes)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
+| `renameat(2)` | `UnixNamespace.renameat (caller : Caller) (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int)` | `CallProgress<PausedRename, SyscallAnswer * UnixSystem>` |
 | `rename(2)` or `renameat(2)`, given the destination | `UnixNamespace.renameWithDestination (destination : PathArgumentBytes) (paused : PausedRename)` | `SyscallAnswer * UnixSystem` |
-| Darwin's `clonefile(2)` | `UnixNamespace.cloneFile (flags : int)` | `CallProgress<PausedCloneFileSource, SyscallAnswer * UnixSystem>` |
+| Darwin's `clonefile(2)` | `UnixNamespace.cloneFile (caller : Caller) (flags : int)` | `CallProgress<PausedCloneFileSource, SyscallAnswer * UnixSystem>` |
 | `clonefile(2)`, given the source | `UnixNamespace.cloneFileWithSource (source : PathArgumentBytes) (paused : PausedCloneFileSource)` | `CallProgress<PausedCloneFile, SyscallAnswer * UnixSystem>` |
 | `clonefile(2)`, given the destination | `UnixNamespace.cloneFileWithDestination (destination : PathArgumentBytes) (paused : PausedCloneFile)` | `SyscallAnswer * UnixSystem` |
-| `symlink(2)` | `UnixNamespace.symlink (target : PathArgumentBytes)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
-| `symlinkat(2)` | `UnixNamespace.symlinkat (target : PathArgumentBytes) (dirfd : int)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
+| `symlink(2)` | `UnixNamespace.symlink (caller : Caller) (target : PathArgumentBytes)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
+| `symlinkat(2)` | `UnixNamespace.symlinkat (caller : Caller) (target : PathArgumentBytes) (dirfd : int)` | `CallProgress<PausedSymlink, SyscallAnswer * UnixSystem>` |
 | `symlink(2)` or `symlinkat(2)`, given the link's path | `UnixNamespace.symlinkWithPath (path : PathArgumentBytes) (paused : PausedSymlink)` | `SyscallAnswer * UnixSystem` |
-| `link(2)` | `UnixNamespace.link (oldpath : PathArgumentBytes)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
-| `linkat(2)` | `UnixNamespace.linkat (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int) (flags : int)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
+| `link(2)` | `UnixNamespace.link (caller : Caller) (oldpath : PathArgumentBytes)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
+| `linkat(2)` | `UnixNamespace.linkat (caller : Caller) (olddirfd : int) (oldpath : PathArgumentBytes) (newdirfd : int) (flags : int)` | `CallProgress<PausedLink, SyscallAnswer * UnixSystem>` |
 | `link(2)` or `linkat(2)`, given the new path | `UnixNamespace.linkWithDestination (newpath : PathArgumentBytes) (paused : PausedLink)` | `SyscallAnswer * UnixSystem` |
 
-`UnixNamespace.openPath` and `UnixNamespace.openat` take the thread because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
+`UnixNamespace.openPath` and `UnixNamespace.openat` answer a `SyscallOutcome` because an open can sleep: a blocking open of one end of a FIFO waits until the other end is opened.
 Nothing makes a FIFO yet, so both always answer `SyscallOutcome.Answered`.
 
 A Linux directory compares names byte for byte.
@@ -416,36 +433,36 @@ The cases exist so that a client's matches already handle them when pathname soc
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `read(2)` | `UnixReadWrite.read (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
-| `recv(2)` | `UnixReadWrite.recv (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
-| `pread(2)` | `UnixReadWrite.pread (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
-| `write(2)` | `UnixReadWrite.write (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
-| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (thread : 'Thread)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `read(2)` | `UnixReadWrite.read (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `ReadOutcome * UnixSystem` |
+| `recv(2)` | `UnixReadWrite.recv (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `ReadOutcome * UnixSystem` |
+| `pread(2)` | `UnixReadWrite.pread (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `ReadAnswer * UnixSystem` |
+| `write(2)` | `UnixReadWrite.write (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
+| `write(2)` or `send(2)`, woken | `UnixReadWrite.finishWrite (caller : Caller)` | `CallProgress<PausedWrite, ProcessFate<WriteOutcome>>` |
 | `write(2)`, given the bytes | `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` | `ProcessFate<WriteOutcome>` |
-| `send(2)` | `UnixReadWrite.send (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
+| `send(2)` | `UnixReadWrite.send (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (flags : int)` | `CallProgress<PausedSend, ProcessFate<WriteOutcome>>` |
 | `send(2)`, given the bytes | `UnixReadWrite.sendWithBytes (bytes : ImmutableArray<byte>) (paused : PausedSend)` | `ProcessFate<WriteOutcome>` |
-| `pwrite(2)` | `UnixReadWrite.pwrite (thread : 'Thread) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
+| `pwrite(2)` | `UnixReadWrite.pwrite (caller : Caller) (fd : int) (buffer : UserBuffer) (count : uint64) (offset : int64)` | `CallProgress<PausedPWrite, WriteAnswer * UnixSystem>` |
 | `pwrite(2)`, given the bytes | `UnixReadWrite.pwriteWithBytes (bytes : ImmutableArray<byte>) (paused : PausedPWrite)` | `WriteAnswer * UnixSystem` |
-| `copy_file_range(2)` | `UnixReadWrite.copyFileRange (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
+| `copy_file_range(2)` | `UnixReadWrite.copyFileRange (caller : Caller) (inFd : int) (outFd : int) (length : uint64) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `pipe2(2)`, and `pipe(2)` as `pipe2` with no flags | `UnixPipe.pipe2 (caller : Caller) (flags : int) (destination : UserBuffer)` | `Pipe2Answer * UnixSystem` |
 
 #### Sockets
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `socket(2)` | `UnixSocket.socket (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
-| `bind(2)` | `UnixSocket.bind (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
+| `socket(2)` | `UnixSocket.socket (caller : Caller) (domain : int) (socketType : int) (protocol : int)` | `Result<int * UnixSystem, UnixError>` |
+| `bind(2)` | `UnixSocket.bind (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedBind, BindAnswer * UnixSystem>` |
 | `bind(2)`, given the bytes | `UnixSocket.bindWithAddress (copied : ImmutableArray<byte>) (paused : PausedBind)` | `BindAnswer * UnixSystem` |
-| `connect(2)` | `UnixConnection.connect (thread : 'Thread) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
+| `connect(2)` | `UnixConnection.connect (caller : Caller) (fd : int) (address : UserBuffer) (declaredLength : uint32)` | `CallProgress<PausedConnect, SyscallOutcome * UnixSystem>` |
 | `connect(2)`, given the bytes | `UnixConnection.connectWithAddress (copied : ImmutableArray<byte>) (paused : PausedConnect)` | `SyscallOutcome * UnixSystem` |
-| `listen(2)` | `UnixSocket.listen (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
-| `accept(2)` | `UnixConnection.accept (thread : 'Thread) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
-| `shutdown(2)` | `UnixConnection.shutdown (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
-| `getsockname(2)` | `UnixSocket.getsockname (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
-| `getpeername(2)` | `UnixSocket.getpeername (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
-| `setsockopt(2)` | `UnixSocket.setsockopt (fd : int) (level : int) (optionName : int) (value : UserBuffer) (optionLength : uint32)` | `CallProgress<PausedSetSockOpt, SetSockOptAnswer * UnixSystem>` |
+| `listen(2)` | `UnixSocket.listen (caller : Caller) (fd : int) (backlog : int)` | `ListenAnswer * UnixSystem` |
+| `accept(2)` | `UnixConnection.accept (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `AcceptOutcome * UnixSystem` |
+| `shutdown(2)` | `UnixConnection.shutdown (caller : Caller) (fd : int) (how : int)` | `ShutdownAnswer * UnixSystem` |
+| `getsockname(2)` | `UnixSocket.getsockname (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
+| `getpeername(2)` | `UnixSocket.getpeername (caller : Caller) (fd : int) (destination : UserBuffer) (declaredLength : uint32)` | `GetSockNameAnswer` |
+| `setsockopt(2)` | `UnixSocket.setsockopt (caller : Caller) (fd : int) (level : int) (optionName : int) (value : UserBuffer) (optionLength : uint32)` | `CallProgress<PausedSetSockOpt, SetSockOptAnswer * UnixSystem>` |
 | `setsockopt(2)`, given the bytes | `UnixSocket.setsockoptWithValue (copied : ImmutableArray<byte>) (paused : PausedSetSockOpt)` | `SetSockOptAnswer * UnixSystem` |
-| `getsockopt(2)` | `UnixSocket.getsockopt (fd : int) (level : int) (optionName : int) (value : UserBuffer) (length : UserBuffer)` | `CallProgress<PausedGetSockOpt, GetSockOptAnswer * UnixSystem>` |
+| `getsockopt(2)` | `UnixSocket.getsockopt (caller : Caller) (fd : int) (level : int) (optionName : int) (value : UserBuffer) (length : UserBuffer)` | `CallProgress<PausedGetSockOpt, GetSockOptAnswer * UnixSystem>` |
 | `getsockopt(2)`, given the length | `UnixSocket.getsockoptWithLength (declaredLength : uint32) (paused : PausedGetSockOpt)` | `GetSockOptAnswer * UnixSystem` |
 
 An address crosses the syscall boundary as bytes, laid out as the platform's `struct sockaddr`: `bind` and `connect` take them, and `getsockname`, `getpeername` and `accept` answer them.
@@ -453,7 +470,7 @@ Where the kernel hands out an address already decoded, in an answer or a socket'
 `BindAnswer.Bound` and `ListenAnswer.Listening` carry the address as `getsockname` would report it at once, and so in the socket's own family: a dual-mode IPv6 socket (`IPV6_V6ONLY` off) bound to an IPv4 address answers it v4-mapped, `::ffff:a.b.c.d`.
 This kernel's IPv6 sockets reach only IPv4 peers, through v4-mapped addresses, so a refused `connect` names the IPv4 endpoint it resolved, even from an IPv6 socket.
 A refused TCP `connect` gives the socket's port back (`PortHold.GivenBack`), which `getsockname` goes on reporting: on Linux unless `bind` chose the port, and on Darwin whatever chose it. Another socket may then bind that port. A Linux socket that has given its port back binds, listens and connects as one with no port would, at the address it reports; a refused Darwin socket answers `EINVAL` to `bind` and `listen` and `EISCONN` to `connect`, as any refused Darwin socket does.
-`UnixConnection.connect` takes the thread because a connect can sleep: under Linux, a blocking connect to a listener whose accept queue is full waits for room. The paused call holds the thread, so the connect `UnixConnection.connectWithAddress` finishes is the one that would park it. No connect sleeps in this version (that one is refused), so both always answer `SyscallOutcome.Answered`, with 0 or the errno the call leaves; `EINPROGRESS` is such an errno, and the connection it defers is already settled on the socket.
+A connect can sleep: under Linux, a blocking connect to a listener whose accept queue is full waits for room. The paused call holds the caller's thread, so the connect `UnixConnection.connectWithAddress` finishes is the one that would park it. No connect sleeps in this version (that one is refused), so both always answer `SyscallOutcome.Answered`, with 0 or the errno the call leaves; `EINPROGRESS` is such an errno, and the connection it defers is already settled on the socket.
 A Linux TCP connect left in flight against a full listener, non-blocking or interrupted by a signal without `SA_RESTART`, will put its socket in `SocketPhase.Connecting`, whose `ConnectAttempt` has an internal representation. The phase is reserved: nothing puts a socket in it yet, and `UnixSystem.checkInvariants` reports a socket in it as a defect.
 It binds no Unix-domain socket yet, so nothing it hands out holds a `UnixSocketName`.
 A socket's own state, which `UnixSystem.socket` reads, keeps its local address in its domain's own types: `SocketAddressing.Inet` holds an IPv4 binding, `SocketAddressing.Inet6DualMode` a `DualModeBinding`, `SocketAddressing.Inet6V6Only` an IPv6 binding, and `SocketAddressing.Unix` a `UnixSocketName`, each as an option that is `None` while the socket is unbound. An IP binding is an `InetBinding` over the family's endpoint and address types, so an IPv4 socket cannot hold an IPv6 address.
@@ -470,12 +487,12 @@ A connected TCP socket's `read` and `write` move bytes through its connection, w
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `poll(2)` | `UnixPoll.poll (thread : 'Thread) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
-| `epoll_create1(2)` | `UnixPoll.epollCreate1 (flags : int)` | `Result<int * UnixSystem, UnixError>` |
-| `epoll_ctl(2)` | `UnixPoll.epollCtl (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
-| `epoll_wait(2)` | `UnixPoll.epollWait (thread : 'Thread) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
-| Darwin's `kqueue(2)` | `UnixKqueue.kqueue` | `int * UnixSystem` |
-| Darwin's `kevent(2)` | `UnixKqueue.kevent (thread : 'Thread) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
+| `poll(2)` | `UnixPoll.poll (caller : Caller) (entries : PollEntry list) (milliseconds : int)` | `PollOutcome * UnixSystem` |
+| `epoll_create1(2)` | `UnixPoll.epollCreate1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `epoll_ctl(2)` | `UnixPoll.epollCtl (caller : Caller) (epfd : int) (op : int) (fd : int) (event : EpollEventArgument)` | `EpollCtlAnswer * UnixSystem` |
+| `epoll_wait(2)` | `UnixPoll.epollWait (caller : Caller) (epfd : int) (maxEvents : int) (buffer : UserBuffer) (milliseconds : int)` | `EpollWaitOutcome * UnixSystem` |
+| Darwin's `kqueue(2)` | `UnixKqueue.kqueue (caller : Caller)` | `int * UnixSystem` |
+| Darwin's `kevent(2)` | `UnixKqueue.kevent (caller : Caller) (kq : int) (nchanges : int) (changes : Kevent list) (nevents : int) (eventlist : UserBuffer) (timeout : KeventTimeout)` | `KeventOutcome * UnixSystem` |
 
 #### Watching the filesystem
 
@@ -504,28 +521,28 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (flags : int)` | `Result<int * UnixSystem, UnixError>` |
-| `inotify_add_watch(2)` | `UnixInotify.inotifyAddWatch (fd : int) (mask : uint32)` | `CallProgress<PausedInotifyAddWatch, SyscallAnswer * UnixSystem>` |
+| `inotify_init1(2)` | `UnixInotify.inotifyInit1 (caller : Caller) (flags : int)` | `Result<int * UnixSystem, UnixError>` |
+| `inotify_add_watch(2)` | `UnixInotify.inotifyAddWatch (caller : Caller) (fd : int) (mask : uint32)` | `CallProgress<PausedInotifyAddWatch, SyscallAnswer * UnixSystem>` |
 | `inotify_add_watch(2)`, given the path | `UnixInotify.inotifyAddWatchWithPath (path : PathArgumentBytes) (paused : PausedInotifyAddWatch)` | `SyscallAnswer * UnixSystem` |
-| `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
+| `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (caller : Caller) (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
 
 #### Signals
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `kill(2)` | `UnixSignal.kill (pid : int) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (target : 'Thread) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
-| `sigaction(3)` | `UnixSignal.sigaction (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
-| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (thread : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (thread : 'Thread) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (thread : 'Thread) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
-| `sigpending(2)` | `UnixSignal.sigpending (thread : 'Thread)` | `SignalMask` |
-| `sigsuspend(2)` | `UnixSignal.sigsuspend (thread : 'Thread) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
-| Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (thread : 'Thread) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
-| `pause(2)` | `UnixSignal.pause (thread : 'Thread)` | `SigsuspendOutcome * UnixSystem` |
-| the return to user mode | `UnixSignal.onReturnToUser (thread : 'Thread)` | `ProcessFate<ReturnToUserOutcome>` |
-| `sigreturn(2)` | `UnixSignal.sigreturn (thread : 'Thread) (frame : HandlerFrameId)` | `UnixSystem` |
+| `kill(2)` | `UnixSignal.kill (caller : Caller) (pid : int) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
+| `pthread_kill(3)`, `raise(3)` | `UnixSignal.pthreadKill (caller : Caller) (target : 'Thread) (signo : int)` | `Result<ProcessFate<KillOutcome>, UnixError>` |
+| `sigaction(3)` | `UnixSignal.sigaction (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
+| `sigaction(2)`: Linux's `rt_sigaction` | `UnixSignal.sigactionSyscall (caller : Caller) (signo : int) (newAction : SignalDisposition option)` | `Result<SignalDisposition * UnixSystem, UnixError>` |
+| `pthread_sigmask(3)` | `UnixSignal.pthreadSigmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `sigprocmask(3)` on Linux, `sigprocmask(2)` on Darwin | `UnixSignal.sigprocmask (caller : Caller) (how : int) (set : SignalMask option)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| Linux's `rt_sigprocmask(2)` | `UnixSignal.rtSigprocmask (caller : Caller) (how : int) (set : SignalMask option) (sigsetSize : uint64)` | `Result<SignalMask * UnixSystem, UnixError>` |
+| `sigpending(2)` | `UnixSignal.sigpending (caller : Caller)` | `SignalMask` |
+| `sigsuspend(2)` | `UnixSignal.sigsuspend (caller : Caller) (mask : SignalMask)` | `SigsuspendOutcome * UnixSystem` |
+| Linux's `rt_sigsuspend(2)` | `UnixSignal.rtSigsuspend (caller : Caller) (mask : SignalMask) (sigsetSize : uint64)` | `SigsuspendOutcome * UnixSystem` |
+| `pause(2)` | `UnixSignal.pause (caller : Caller)` | `SigsuspendOutcome * UnixSystem` |
+| the return to user mode | `UnixSignal.onReturnToUser (caller : Caller)` | `ProcessFate<ReturnToUserOutcome>` |
+| `sigreturn(2)` | `UnixSignal.sigreturn (caller : Caller) (frame : HandlerFrameId)` | `UnixSystem` |
 
 A signal mask crosses the API as a `SignalMask`, the bits of a `sigset_t` under one numbering (`SignalMask.ofWord`, `SignalMask.toWord`, `SignalMask.ofSignals`), because Darwin keeps a bit that names no signal.
 A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnder` and `Signal.ofRawSignoUnder` convert, with the numbering from `SimulatedUnixPlatform.signalNumbering`.
@@ -535,26 +552,26 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `clock_gettime(2)` | `UnixClock.clockGettime (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
-| `gettimeofday(2)` | `UnixClock.gettimeofday` | `UnixTimestamp` |
-| Linux's `getrandom(2)` | `UnixEntropy.getRandom (thread : 'Thread) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
-| Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
-| `getpid(2)` | `UnixSystem.processId` | `ProcessId` |
-| `umask(2)` | `UnixSystem.umask (mask : int)` | `PermissionBits * UnixSystem` |
-| `getresuid(2)` | `UnixCredentials.getresuid (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
-| `getresgid(2)` | `UnixCredentials.getresgid (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
-| `setresuid(2)` | `UnixCredentials.setresuid (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
-| `setresgid(2)` | `UnixCredentials.setresgid (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `setgroups(2)` | `UnixCredentials.setgroups (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
-| `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (parent : 'Thread) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
-| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (thread : 'Thread) (status : int)` | `ProcessFate<unit>` |
-| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (thread : 'Thread) (status : int)` | `EndedProcess` |
-| the client's report that a thread runs on a processor | `UnixScheduling.dispatch (thread : 'Thread) (cpu : CpuId)` | `UnixSystem` |
-| where a thread is running | `UnixScheduling.runningOn (thread : 'Thread)` | `CpuId option` |
-| Linux's `getcpu(2)` | `UnixScheduling.getcpu (thread : 'Thread)` | `GetCpuAnswer` |
+| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
+| `gettimeofday(2)` | `UnixClock.gettimeofday (caller : Caller)` | `UnixTimestamp` |
+| Linux's `getrandom(2)` | `UnixEntropy.getRandom (caller : Caller) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
+| Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
+| `getpid(2)` | `UnixSystem.processId (caller : Caller)` | `ProcessId` |
+| `umask(2)` | `UnixSystem.umask (caller : Caller) (mask : int)` | `PermissionBits * UnixSystem` |
+| `getresuid(2)` | `UnixCredentials.getresuid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
+| `getresgid(2)` | `UnixCredentials.getresgid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
+| `setresuid(2)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
+| `setresgid(2)` | `UnixCredentials.setresgid (caller : Caller) (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `setgroups(2)` | `UnixCredentials.setgroups (caller : Caller) (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
+| `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (caller : Caller) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
+| Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (caller : Caller) (status : int)` | `ProcessFate<unit>` |
+| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (caller : Caller) (status : int)` | `EndedProcess` |
+| the client's report that a thread runs on a processor | `UnixScheduling.dispatch (caller : Caller) (cpu : CpuId)` | `UnixSystem` |
+| where a thread is running | `UnixScheduling.runningOn (caller : Caller)` | `CpuId option` |
+| Linux's `getcpu(2)` | `UnixScheduling.getcpu (caller : Caller)` | `GetCpuAnswer` |
 
 `UnixEntropy.getRandomMaxTransfer` is the most one `getrandom` moves.
-`gettid(2)` is `UnixThreadState.osThreadId` of the thread, and `getuid(2)` and `getgid(2)` are fields of `UnixSystem.credentials` (`Credentials.RealUser`, `Credentials.RealGroup`).
+`gettid(2)` is `UnixThreadState.osThreadId` of the thread, and `getuid(2)` and `getgid(2)` are fields of `UnixSystem.credentials` of the process (`Credentials.RealUser`, `Credentials.RealGroup`).
 `uname(2)` reports the platform: `SimulatedUnixPlatform.unixRelease` and `SimulatedUnixPlatform.architecture` of `UnixSystem.platform`.
 
 #### What is not modelled
@@ -577,9 +594,9 @@ A client that holds every argument already, such as a replayer, makes the call t
 
 #### One entry point
 
-`UnixSystem.step (thread : 'Thread) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
+`UnixSystem.step (caller : Caller) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
 Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
-Whatever the call, `getpid` included, `thread` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise.
+Whatever the call, `getpid` included, `caller` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
 Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
 
 ### Checking the tables
@@ -589,7 +606,7 @@ No sequence of syscalls should ever produce one: a defect is a bug in this libra
 Each kind of defect has a `describe`, such as `UnixSystemDefect.describe`, which names the rule that does not hold and the values that break it, for a bug report; a client cannot match a defect's cases (see "Unions that gain cases").
 It is two halves: the rules about the machine, which read facts every process on it contributes to, and `UnixSystem.checkViewInvariants`, the rules about one process's view of it.
 A process alone on its machine is held to both in full. Of a view a `SimulatedMachine` focused, only the machine's rules that one process can check truthfully are run; `SimulatedMachine.checkInvariants` runs the rest, against every process at once.
-Each table's own rules are checked apart from these: `FileDescriptorRegistry.checkInvariants` of `UnixSystem.fileDescriptors` for the descriptor table and the open file descriptions it names, and `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)` for the filesystem.
+Each table's own rules are checked apart from these: `FileDescriptorRegistry.checkInvariants` of `UnixSystem.fileDescriptors` of the process for the descriptor table and the open file descriptions it names, and `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) (UnixSystem.fileSystem system)` for the filesystem.
 A fact a syscall needs about other processes is kept on the machine's object rather than derived from the processes: each open file description counts the descriptors naming it and the holds of calls in flight on it, the thread ID allocator records which IDs live threads hold, a kqueue records the process that owns it, whose descriptor numbers its registrations name, and each kqueue registration records the socket it is attached to.
 
 Every descriptor lies below `SimulatedUnixPlatform.descriptorBound`, the soft `RLIMIT_NOFILE` a process of the flavour starts with (1024 on Linux, 256 on Darwin): the library assumes the process's limit is at least that, and refuses a call that would put a descriptor at or above it, whose answer would depend on the limit.
@@ -637,14 +654,14 @@ A woken thread finishes its call through its family's finishing function, which 
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
-| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (thread : 'Thread)` |
-| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (thread : 'Thread)` |
-| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (thread : 'Thread)` |
-| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (thread : 'Thread)` |
-| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (thread : 'Thread)` |
-| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (thread : 'Thread)` |
-| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (thread : 'Thread)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
-| `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (thread : 'Thread)` |
+| `ParkedSyscall.Flock` | `UnixDescriptor.flockAcquire (caller : Caller)` |
+| `ParkedSyscall.Poll`, and `ParkedSyscall.KqueuePoll` (Darwin's `poll`) | `UnixPoll.finishPoll (caller : Caller)` |
+| `ParkedSyscall.EpollWait` | `UnixPoll.finishEpollWait (caller : Caller)` |
+| `ParkedSyscall.Kevent` | `UnixKqueue.finishKevent (caller : Caller)` |
+| `ParkedSyscall.Accept` | `UnixConnection.finishAccept (caller : Caller)` |
+| `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (caller : Caller)` |
+| `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (caller : Caller)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
+| `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (caller : Caller)` |
 
 Each answers what the call that parked answered, as in the tables above.
 
@@ -675,26 +692,33 @@ let booted : UnixSystem<int, unit> =
 
 // Every call ends with the calling thread's return to user mode, where it takes
 // its signals. This client installs no handler, so it expects none to run.
-let resume (thread : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
-    match UnixSignal.onReturnToUser thread system with
+let resume (caller : Caller<int>) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
+    match UnixSignal.onReturnToUser caller system with
     | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
-// pipe2(fds, 0) by thread 0. UserBuffer.Mapped: the array for the two descriptors is writable.
+// The process's two threads, as callers: thread 0, its leader, and thread 1,
+// which thread 0 starts below. UnixSystem.processIds holds the one process.
+let pid = Seq.exactlyOne (UnixSystem.processIds booted)
+let first = Caller.make pid 0
+let second = Caller.make pid 1
+
+// pipe2(fds, 0) by thread 0. UserBuffer.Mapped: the array for the two
+// descriptors is writable.
 let readFd, writeFd, piped =
-    match UnixPipe.pipe2 0 UserBuffer.Mapped booted with
-    | Pipe2Answer.Created (readFd, writeFd), system -> readFd, writeFd, resume 0 system
+    match UnixPipe.pipe2 first 0 UserBuffer.Mapped booted with
+    | Pipe2Answer.Created (readFd, writeFd), system -> readFd, writeFd, resume first system
     | answer, _ -> failwith $"unexpected from pipe2: %A{answer}"
 
 // Thread 0 starts a thread, which this client names 1, on processor 0.
 let spawned =
-    match UnixThreadLifecycle.spawn 0 1 (CpuId 0) piped with
-    | SpawnAnswer.Spawned _, system -> resume 0 system
+    match UnixThreadLifecycle.spawn first 1 (CpuId 0) piped with
+    | SpawnAnswer.Spawned _, system -> resume first system
     | answer, _ -> failwith $"unexpected from spawn: %A{answer}"
 
 // Thread 1 reads the empty pipe, and sleeps. The client holds it asleep.
 let asleep, parked =
-    match UnixReadWrite.read 1 readFd UserBuffer.Mapped 64UL spawned with
+    match UnixReadWrite.read second readFd UserBuffer.Mapped 64UL spawned with
     | ReadOutcome.WouldBlock _, system -> Set.singleton 1, system
     | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
 
@@ -703,14 +727,14 @@ let asleep, parked =
 let written =
     let payload = "hello"B
 
-    match UnixReadWrite.write 0 writeFd UserBuffer.Mapped (uint64 payload.Length) parked with
+    match UnixReadWrite.write first writeFd UserBuffer.Mapped (uint64 payload.Length) parked with
     | CallProgress.NeedsCopyIn paused ->
         let range = PausedWrite.copyRange paused
 
         match UnixReadWrite.writeWithBytes (ImmutableArray.Create (payload, range.FirstByte, range.ByteCount)) paused with
         | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed n), system) ->
             printfn "thread 0 wrote %d bytes" n
-            resume 0 system
+            resume first system
         | outcome -> failwith $"unexpected write: %A{outcome}"
     | CallProgress.Answered outcome -> failwith $"unexpected before the copy: %A{outcome}"
 
@@ -718,17 +742,17 @@ let written =
 let woken =
     match UnixWait.wakes asleep written with
     | [ 1, _ ] ->
-        match UnixReadWrite.finishRead 1 written with
+        match UnixReadWrite.finishRead second written with
         | ReadOutcome.Answered (ReadAnswer.Completed bytes), system ->
             printfn "thread 1 read %s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
-            resume 1 system
+            resume second system
         | outcome, _ -> failwith $"unexpected read: %A{outcome}"
     | wakes -> failwith $"expected thread 1 to wake: %A{wakes}"
 
 // Thread 1 exits, and then thread 0 calls exit_group(3), which ends the process.
 let ended =
-    match UnixThreadLifecycle.exitThread 1 0 woken with
-    | ProcessFate.Continues ((), system) -> UnixThreadLifecycle.exitGroup 0 3 system
+    match UnixThreadLifecycle.exitThread second 0 woken with
+    | ProcessFate.Continues ((), system) -> UnixThreadLifecycle.exitGroup first 3 system
     | other -> failwith $"thread 0 is still running, so expected the process to continue: %A{other}"
 
 // The client ends the process on its machine, which closes its descriptors.
@@ -756,7 +780,7 @@ Under Linux, `kill` of such a signal that the leader blocks while another thread
 
 ### The return to user mode
 
-A signal is taken as a thread returns to user mode, so after each call a thread makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser thread`.
+A signal is taken as a thread returns to user mode, so after each call a thread makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser caller`, the caller naming the thread.
 It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate.ProcessEnded ended`), because a signal whose default action terminates the process killed it (see below), or it carries on (`ProcessFate.Continues (outcome, system)`) with one of these outcomes:
 
 * `ReturnToUserOutcome.Resumes`: the thread took nothing the client acts on, and runs its own code next.
@@ -786,8 +810,11 @@ let booted : UnixSystem<int, unit> =
 
     UnixSystem.initial platform |> UnixBootImage.boot launch
 
+// Thread 0 of the process, its leader, makes each call.
+let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
+
 let returnToUser (system : UnixSystem<int, unit>) : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit> =
-    UnixSignal.onReturnToUser 0 system
+    UnixSignal.onReturnToUser leader system
 
 let resumed (fate : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit>) : UnixSystem<int, unit> =
     match fate with
@@ -799,7 +826,7 @@ let resumed (fate : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit>) : Un
 let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
 let mask (how : int) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
-    match UnixSignal.pthreadSigmask 0 how (Some sigterm) system with
+    match UnixSignal.pthreadSigmask leader how (Some sigterm) system with
     | Ok (_previous, system) -> system
     | Error errno -> failwith $"pthread_sigmask failed: %O{errno}"
 
@@ -807,10 +834,10 @@ let blocked = booted |> mask 0 |> returnToUser |> resumed
 
 // kill(getpid(), SIGTERM): the signal stays pending, because thread 0 blocks it.
 let pending =
-    let pid = ProcessId.toInt32 (UnixSystem.processId blocked)
+    let pid = ProcessId.toInt32 (UnixSystem.processId leader blocked)
     let signo = Signal.toRawSignoUnder numbering Signal.SIGTERM
 
-    match UnixSignal.kill pid signo blocked with
+    match UnixSignal.kill leader pid signo blocked with
     | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> system |> returnToUser |> resumed
     | Ok outcome -> failwith $"unexpected kill: %A{outcome}"
     | Error errno -> failwith $"kill failed: %O{errno}"
@@ -832,10 +859,10 @@ match pending |> mask 1 |> returnToUser with
 
 ## Threads, and the end of the process
 
-`UnixThreadLifecycle.spawn parent child cpu` starts a thread the client names `child`, on processor `cpu`, with a copy of `parent`'s signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
-`UnixThreadLifecycle.exitThread thread status` ends one thread, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
+`UnixThreadLifecycle.spawn caller child cpu` starts a thread the client names `child`, on processor `cpu`, with a copy of the caller's signal mask, and answers its thread ID, an `OsThreadId` (`SpawnAnswer.Spawned`).
+`UnixThreadLifecycle.exitThread caller status` ends the caller's thread, and answers `ProcessFate.Continues` with the process carrying on, or `ProcessFate.ProcessEnded` if it was the last.
 It throws `InvalidOperationException` for a thread parked in a syscall, and refuses the process's leader while any other thread lives and, on Darwin, the process's last thread: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
-`UnixThreadLifecycle.exitGroup thread status` ends every thread at once, parked ones included.
+`UnixThreadLifecycle.exitGroup caller status` ends every thread at once, parked ones included.
 
 A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last thread, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
@@ -924,10 +951,10 @@ When nothing can run, the client advances the clock to the earlier of its own de
 It answers which threads could run (not parked in the kernel; the client subtracts its own blocked threads), and records what the client says happened.
 Choosing is policy, and a client that explores schedules, or a harness that steers one from outside, must own it; the kernel keeps only the facts a choice is made from.
 
-**Where they meet.** `UnixSystem.threads` lists the process's threads, and `UnixThreadState.parkedIn` says which are parked in a syscall.
+**Where they meet.** `UnixSystem.threads` lists a process's threads, and `UnixThreadState.parkedIn` says which are parked in a syscall.
 The client keeps the set of threads it holds asleep and passes it to `UnixWait.wakes`, which says which may wake now; it decides when a woken thread finishes its call.
 Which processor a thread belongs on is the client's policy too.
-The client reports each thread it runs with `UnixScheduling.dispatch thread cpu`: "thread T is now running on processor c".
+The client reports each thread it runs with `UnixScheduling.dispatch caller cpu`: "the thread `caller` names is now running on processor c".
 The kernel keeps what Linux keeps.
 Each thread has a processor, the one it last ran on, or before it first runs, the one its creator named (`ProcessLaunch.create`, `UnixThreadLifecycle.spawn`); `UnixThreadState.cpu` reports it, for a thread found in `UnixSystem.threads`.
 Each processor runs at most one thread, so a dispatch displaces whichever thread the processor ran before, whatever process it belongs to; that thread keeps the processor as its own, as a preempted thread does.

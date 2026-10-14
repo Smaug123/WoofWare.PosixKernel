@@ -27,20 +27,20 @@ module TestCrossProcess =
             let machine =
                 match SimulatedUnixPlatform.flavour platform with
                 | SimulatedUnixFlavour.Linux ->
-                    machine |> Machines.doIn b (fun view -> KeventWorld.stream true view |> snd)
+                    machine |> Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd)
                 | SimulatedUnixFlavour.Darwin ->
                     machine
                     |> Machines.doIn
                         b
                         (fun view ->
-                            let socket, view = KeventWorld.stream true view
-                            let kq, view = KeventWorld.kqueue view
-                            KeventWorld.register kq socket -1s 0x1us 0UL view
+                            let socket, view = KeventWorld.streamIn b true view
+                            let kq, view = KeventWorld.kqueueIn b view
+                            KeventWorld.registerIn b kq socket -1s 0x1us 0UL view
                         )
 
             Machines.assertClean machine
 
-            let registry = UnixSystem.fileDescriptors (Machines.viewOf a machine)
+            let registry = UnixSystem.fileDescriptors a (Machines.viewOf a machine)
             FileDescriptorRegistry.checkInvariants registry |> shouldEqual []
 
             // A description this table alone names more often than its count
@@ -61,7 +61,10 @@ module TestCrossProcess =
     let ``a descriptor table on a machine holding its process alone checks every count exactly`` () : unit =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
-            let registry = UnixSystem.fileDescriptors (Machines.viewOf pids.[0] machine)
+
+            let registry =
+                UnixSystem.fileDescriptors pids.[0] (Machines.viewOf pids.[0] machine)
+
             let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
 
             FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
@@ -86,7 +89,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match KeventWorld.apply kq [] room view with
+                match KeventWorld.applyIn pid kq [] room view with
                 | KeventOutcome.Answered events, view -> events, view
                 | other, _ -> failwith $"kevent on fd %d{kq}: %A{other}"
             )
@@ -105,9 +108,9 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
@@ -131,7 +134,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
@@ -139,15 +143,15 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
-                    let kq, view = KeventWorld.kqueue view
-                    (accepted, kq), KeventWorld.register kq accepted KeventFilter.Read addClear 9UL view
+                    let accepted, view = KeventWorld.acceptIn b listener view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (accepted, kq), KeventWorld.registerIn b kq accepted KeventFilter.Read addClear 9UL view
                 )
                 machine
 
         reported b kq 4 machine |> fst |> shouldEqual []
 
-        let machine = Machines.doIn a (KeventWorld.close client) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
         let events, machine = reported b kq 4 machine
@@ -167,16 +171,16 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
         // The other process opens and closes the same number.
-        let own, machine = Machines.inProcess a (KeventWorld.stream true) machine
+        let own, machine = Machines.inProcess a (KeventWorld.streamIn a true) machine
         own |> shouldEqual listener
-        let machine = Machines.doIn a (KeventWorld.close own) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a own) machine
         Machines.assertClean machine
 
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
@@ -208,7 +212,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixPoll.tryPoll thread entries -1 view with
+                match UnixPoll.tryPoll (Caller.make pid thread) entries -1 view with
                 | Ok (PollOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"poll: expected to sleep, got %A{other}"
             )
@@ -224,7 +228,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixPoll.tryFinishPoll thread view with
+                match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishPoll: %A{refusal}"
             )
@@ -235,7 +239,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         Machines.assertClean machine
@@ -258,13 +263,17 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
-        let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
+
+        let accepted, machine =
+            Machines.inProcess b (KeventWorld.acceptIn b listener) machine
+
         let machine = sleepInPoll b 1 [ entry accepted pollIn ] machine
 
-        let machine = Machines.doIn a (KeventWorld.close client) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
         UnixWait.wakes (Set.singleton 1) (Machines.viewOf b machine)
@@ -279,12 +288,13 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount darwin 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
-        let own, machine = Machines.inProcess a (KeventWorld.stream true) machine
+        let own, machine = Machines.inProcess a (KeventWorld.streamIn a true) machine
         own |> shouldEqual listener
-        let machine = Machines.doIn a (KeventWorld.close own) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a own) machine
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
@@ -319,7 +329,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixConnection.tryAccept thread listener UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept (Caller.make pid thread) listener UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.WouldBlock _, view) -> view
                 | other -> failwith $"accept: expected to sleep, got %A{other}"
             )
@@ -334,7 +344,7 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
-                match UnixConnection.tryFinishAccept thread view with
+                match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
             )
@@ -346,7 +356,8 @@ module TestCrossProcess =
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
 
-            let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+            let listener, machine =
+                Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
             let machine = sleepInAccept b 1 listener machine
             Machines.assertClean machine
@@ -373,16 +384,17 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
 
                     let epoll, view =
-                        match UnixPoll.tryEpollCreate1 0 view with
+                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
                         match
                             UnixPoll.tryEpollCtl
+                                (Caller.make b (Proc.leader b view))
                                 epoll
                                 1
                                 listener
@@ -400,7 +412,7 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixPoll.tryEpollWait 1 epoll 4 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait (Caller.make b 1) epoll 4 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 )
@@ -420,7 +432,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixPoll.tryFinishEpollWait 1 view with
+                    match UnixPoll.tryFinishEpollWait (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishEpollWait: %A{refusal}"
                 )
@@ -435,7 +447,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
@@ -443,16 +456,17 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let accepted, view = KeventWorld.accept listener view
+                    let accepted, view = KeventWorld.acceptIn b listener view
 
                     let epoll, view =
-                        match UnixPoll.tryEpollCreate1 0 view with
+                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                         | Ok (Ok created) -> created
                         | other -> failwith $"epoll_create1: %A{other}"
 
                     let view =
                         match
                             UnixPoll.tryEpollCtl
+                                (Caller.make b (Proc.leader b view))
                                 epoll
                                 1
                                 accepted
@@ -470,7 +484,7 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixPoll.tryEpollWait 1 epoll 4 UserBuffer.Mapped -1 view with
+                    match UnixPoll.tryEpollWait (Caller.make b 1) epoll 4 UserBuffer.Mapped -1 view with
                     | Ok (EpollWaitOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"epoll_wait: expected to sleep, got %A{other}"
                 )
@@ -478,7 +492,7 @@ module TestCrossProcess =
 
         woken [ b, 1 ] machine |> shouldEqual []
 
-        let machine = Machines.doIn a (KeventWorld.close client) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
         woken [ b, 1 ] machine |> List.map fst |> shouldEqual [ b, 1 ]
@@ -487,7 +501,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixPoll.tryFinishEpollWait 1 view with
+                    match UnixPoll.tryFinishEpollWait (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishEpollWait: %A{refusal}"
                 )
@@ -505,9 +519,9 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    let listener, view = KeventWorld.listenerAt 8080us view
-                    let kq, view = KeventWorld.kqueue view
-                    (listener, kq), KeventWorld.register kq listener KeventFilter.Read addClear 7UL view
+                    let listener, view = KeventWorld.listenerAtIn b 8080us view
+                    let kq, view = KeventWorld.kqueueIn b view
+                    (listener, kq), KeventWorld.registerIn b kq listener KeventFilter.Read addClear 7UL view
                 )
                 machine
 
@@ -515,7 +529,9 @@ module TestCrossProcess =
             Machines.doIn
                 b
                 (fun view ->
-                    match UnixKqueue.tryKevent 1 kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view with
+                    match
+                        UnixKqueue.tryKevent (Caller.make b 1) kq 0 [] 4 UserBuffer.Mapped KeventTimeout.Null view
+                    with
                     | Ok (KeventOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"kevent: expected to sleep, got %A{other}"
                 )
@@ -535,7 +551,7 @@ module TestCrossProcess =
             Machines.inProcess
                 b
                 (fun view ->
-                    match UnixKqueue.tryFinishKevent 1 view with
+                    match UnixKqueue.tryFinishKevent (Caller.make b 1) view with
                     | Ok finished -> finished
                     | Error refusal -> failwith $"finishKevent: %A{refusal}"
                 )
@@ -578,18 +594,18 @@ module TestCrossProcess =
                 | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
                 | other -> failwith $"open: %A{other}"
 
-            let flock (thread : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
-                match UnixDescriptor.tryFlock thread fd operation view with
+            let flock (pid : ProcessId) (thread : int) (fd : int) (operation : int) (view : UnixSystem<int, string>) =
+                match UnixDescriptor.tryFlock (Caller.make pid thread) fd operation view with
                 | Ok answered -> answered
                 | Error refusal -> failwith $"flock: %A{refusal}"
 
             let held, machine = Machines.inProcess a (openShared a) machine
             let waiting, machine = Machines.inProcess b (openShared b) machine
 
-            let outcome, machine = Machines.inProcess a (flock 1 held lockEx) machine
+            let outcome, machine = Machines.inProcess a (flock a 1 held lockEx) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
 
-            let outcome, machine = Machines.inProcess b (flock 1 waiting lockEx) machine
+            let outcome, machine = Machines.inProcess b (flock b 1 waiting lockEx) machine
 
             match outcome with
             | SyscallOutcome.WouldBlock _ -> ()
@@ -598,7 +614,7 @@ module TestCrossProcess =
             Machines.assertClean machine
             woken [ b, 1 ] machine |> shouldEqual []
 
-            let outcome, machine = Machines.inProcess a (flock 1 held lockUn) machine
+            let outcome, machine = Machines.inProcess a (flock a 1 held lockUn) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
 
             let waitingId = KeventWorld.idOfIn b waiting (Machines.viewOf b machine)
@@ -613,7 +629,7 @@ module TestCrossProcess =
                 Machines.inProcess
                     b
                     (fun view ->
-                        match UnixDescriptor.tryFlockAcquire 1 view with
+                        match UnixDescriptor.tryFlockAcquire (Caller.make b 1) view with
                         | Ok finished -> finished
                         | Error refusal -> failwith $"flockAcquire: %A{refusal}"
                     )
@@ -629,10 +645,10 @@ module TestCrossProcess =
             let a, b = pids.[0], pids.[1]
 
             let listenerA, machine =
-                Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+                Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
             let listenerB, machine =
-                Machines.inProcess b (KeventWorld.listenerAt 8081us) machine
+                Machines.inProcess b (KeventWorld.listenerAtIn b 8081us) machine
 
             // Parked in this order: b's 1, a's 1, b's 2, the last two on the
             // listeners the first two are not.
@@ -677,7 +693,9 @@ module TestCrossProcess =
         (machine : SimulatedMachine<int, string>)
         : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
         =
-        let ended = UnixThreadLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
+        let ended =
+            UnixThreadLifecycle.exitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
+
         Machines.tryEndProcess ended machine
 
     let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
@@ -686,9 +704,17 @@ module TestCrossProcess =
         | Ok (other, _) -> failwith $"endProcess: the process ended by %O{other}, not by its exit"
         | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
 
-    let private dup2 (oldFd : int) (newFd : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.tryDup2 oldFd newFd view with
-        | Ok (SyscallAnswer.Completed fd, view) when int fd = newFd -> KeventWorld.close oldFd view
+    /// A `dup2` of `oldFd` onto `newFd`, and the close of `oldFd`, by the
+    /// leader of the process `pid`.
+    let private dup2
+        (pid : ProcessId)
+        (oldFd : int)
+        (newFd : int)
+        (view : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match UnixDescriptor.tryDup2 (Caller.make pid (Proc.leader pid view)) oldFd newFd view with
+        | Ok (SyscallAnswer.Completed fd, view) when int fd = newFd -> KeventWorld.closeIn pid oldFd view
         | other -> failwith $"dup2 %d{oldFd} %d{newFd}: %A{other}"
 
     [<Test>]
@@ -714,9 +740,9 @@ module TestCrossProcess =
         let stale = Machines.viewOf a machine
 
         let machine =
-            Machines.doIn b (fun view -> KeventWorld.stream true view |> snd) machine
+            Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd) machine
 
-        let ended = UnixThreadLifecycle.exitGroup 0 0 stale
+        let ended = UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 stale
 
         let error =
             Assert.Throws<exn> (fun () -> Machines.tryEndProcess ended machine |> ignore)
@@ -729,7 +755,7 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
             let view = Machines.viewOf pids.[0] machine
-            let ended = UnixThreadLifecycle.exitGroup 0 3 view
+            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 0 view) 3 view
 
             match Machines.tryEndLoneProcess ended with
             | Ok (termination, after) ->
@@ -746,7 +772,9 @@ module TestCrossProcess =
     [<Test>]
     let ``a process that ended beside others is not ended as a lone one`` () : unit =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
-        let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf pids.[0] machine)
+
+        let ended =
+            UnixThreadLifecycle.exitGroup (Caller.make pids.[0] 0) 0 (Machines.viewOf pids.[0] machine)
 
         let error =
             Assert.Throws<exn> (fun () -> Machines.tryEndLoneProcess ended |> ignore)
@@ -772,7 +800,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match WriteOutcomes.writeBytes 0 fd bytes view with
+                match WriteOutcomes.writeBytesAs (Caller.make pid 0) fd bytes view with
                 | Ok (WriteStep.Returns (WriteAnswer.Completed written, view)) when int written = bytes.Length -> view
                 | other -> failwith $"write %d{fd} %s{text}: %A{other}"
             )
@@ -823,12 +851,16 @@ module TestCrossProcess =
                 let pids, machine = Machines.ofCount platform 2
                 let a, b = pids.[0], pids.[1]
 
-                let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+                let listener, machine =
+                    Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
                 let connect (target : int) (machine : SimulatedMachine<int, string>) =
                     let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
-                    let machine = Machines.doIn a (dup2 client target) machine
-                    let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
+                    let machine = Machines.doIn a (dup2 a client target) machine
+
+                    let accepted, machine =
+                        Machines.inProcess b (KeventWorld.acceptIn b listener) machine
+
                     accepted, machine
 
                 let s1, machine = connect layout.[0] machine
@@ -842,7 +874,9 @@ module TestCrossProcess =
                         Machines.doIn
                             a
                             (fun view ->
-                                match UnixDescriptor.tryDup2 layout.[0] alias view with
+                                match
+                                    UnixDescriptor.tryDup2 (Caller.make a (Proc.leader a view)) layout.[0] alias view
+                                with
                                 | Ok (SyscallAnswer.Completed _, view) -> view
                                 | other -> failwith $"dup2: %A{other}"
                             )
@@ -858,7 +892,7 @@ module TestCrossProcess =
                                 b
                                 (fun view ->
                                     let epoll, view =
-                                        match UnixPoll.tryEpollCreate1 0 view with
+                                        match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                                         | Ok (Ok created) -> created
                                         | other -> failwith $"epoll_create1: %A{other}"
 
@@ -867,6 +901,7 @@ module TestCrossProcess =
                                         ||> List.fold (fun view (fd, data) ->
                                             match
                                                 UnixPoll.tryEpollCtl
+                                                    (Caller.make b (Proc.leader b view))
                                                     epoll
                                                     1
                                                     fd
@@ -890,7 +925,7 @@ module TestCrossProcess =
                             Machines.inProcess
                                 b
                                 (fun view ->
-                                    match UnixPoll.tryEpollWait 4 epoll 8 UserBuffer.Mapped 0 view with
+                                    match UnixPoll.tryEpollWait (Caller.make b 4) epoll 8 UserBuffer.Mapped 0 view with
                                     | Ok (EpollWaitOutcome.Answered events, view) -> List.map fst events, view
                                     | other -> failwith $"epoll_wait: %A{other}"
                                 )
@@ -902,12 +937,12 @@ module TestCrossProcess =
                             Machines.inProcess
                                 b
                                 (fun view ->
-                                    let kq, view = KeventWorld.kqueue view
+                                    let kq, view = KeventWorld.kqueueIn b view
 
                                     kq,
                                     (view, registered)
                                     ||> List.fold (fun view (fd, data) ->
-                                        KeventWorld.register kq fd KeventFilter.Read addClear data view
+                                        KeventWorld.registerIn b kq fd KeventFilter.Read addClear data view
                                     )
                                 )
                                 machine
@@ -965,7 +1000,7 @@ module TestCrossProcess =
                 Machines.doIn
                     a
                     (fun view ->
-                        match UnixDescriptor.tryFlock 1 held lockEx view with
+                        match UnixDescriptor.tryFlock (Caller.make a 1) held lockEx view with
                         | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), view) -> view
                         | other -> failwith $"flock: %A{other}"
                     )
@@ -977,16 +1012,16 @@ module TestCrossProcess =
                     a
                     (fun view ->
                         let view =
-                            match UnixPipe.tryPipe2 0 UserBuffer.Mapped view with
+                            match UnixPipe.tryPipe2 (Caller.make a (Proc.leader a view)) 0 UserBuffer.Mapped view with
                             | Ok (_, view) -> view
                             | Error refusal -> failwith $"pipe2: %A{refusal}"
 
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
-                            match UnixPoll.tryEpollCreate1 0 view with
+                            match UnixPoll.tryEpollCreate1 (Caller.make a (Proc.leader a view)) 0 view with
                             | Ok (Ok (_, view)) -> view
                             | other -> failwith $"epoll_create1: %A{other}"
-                        | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueue view |> snd
+                        | SimulatedUnixFlavour.Darwin -> KeventWorld.kqueueIn a view |> snd
                     )
                     machine
 
@@ -996,18 +1031,18 @@ module TestCrossProcess =
                 Machines.doIn
                     b
                     (fun view ->
-                        match UnixDescriptor.tryFlock 1 waiting lockEx view with
+                        match UnixDescriptor.tryFlock (Caller.make b 1) waiting lockEx view with
                         | Ok (SyscallOutcome.WouldBlock _, view) -> view
                         | other -> failwith $"flock: expected to sleep, got %A{other}"
                     )
                     machine
 
-            let named (view : UnixSystem<int, string>) : Set<OpenFileDescriptionId> =
-                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors view)
+            let named (pid : ProcessId) (view : UnixSystem<int, string>) : Set<OpenFileDescriptionId> =
+                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid view)
                 |> Map.values
                 |> Set.ofSeq
 
-            let survivors = named (Machines.viewOf b machine)
+            let survivors = named b (Machines.viewOf b machine)
             let machine = exitedOk a machine
             Machines.assertClean machine
 
@@ -1031,14 +1066,14 @@ module TestCrossProcess =
             let flavour = SimulatedUnixPlatform.flavour platform
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
-            let _, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+            let _, machine = Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
             // A blocking client, whose read sleeps.
             let reader, machine =
                 Machines.inProcess
                     b
                     (fun view ->
-                        let fd, view = KeventWorld.stream false view
+                        let fd, view = KeventWorld.streamIn b false view
 
                         match KeventWorld.connectIn b fd 8080us view with
                         | SyscallAnswer.Completed 0L, view -> fd, view
@@ -1050,7 +1085,7 @@ module TestCrossProcess =
                 Machines.doIn
                     b
                     (fun view ->
-                        match UnixReadWrite.tryRead 1 reader UserBuffer.Mapped 4096UL view with
+                        match UnixReadWrite.tryRead (Caller.make b 1) reader UserBuffer.Mapped 4096UL view with
                         | Ok (ReadOutcome.WouldBlock _, view) -> view
                         | other -> failwith $"read: expected to sleep, got %A{other}"
                     )
@@ -1066,7 +1101,7 @@ module TestCrossProcess =
                         match flavour with
                         | SimulatedUnixFlavour.Linux ->
                             let epoll, view =
-                                match UnixPoll.tryEpollCreate1 0 view with
+                                match UnixPoll.tryEpollCreate1 (Caller.make b (Proc.leader b view)) 0 view with
                                 | Ok (Ok created) -> created
                                 | other -> failwith $"epoll_create1: %A{other}"
 
@@ -1077,13 +1112,19 @@ module TestCrossProcess =
                                 ||| EpollEvents.EdgeTriggered
 
                             match
-                                UnixPoll.tryEpollCtl epoll 1 watched (EpollEventArgument.Readable (interest, 7UL)) view
+                                UnixPoll.tryEpollCtl
+                                    (Caller.make b (Proc.leader b view))
+                                    epoll
+                                    1
+                                    watched
+                                    (EpollEventArgument.Readable (interest, 7UL))
+                                    view
                             with
                             | Ok (EpollCtlAnswer.Changed, view) -> epoll, view
                             | other -> failwith $"epoll_ctl: %A{other}"
                         | SimulatedUnixFlavour.Darwin ->
-                            let kq, view = KeventWorld.kqueue view
-                            kq, KeventWorld.register kq watched KeventFilter.Read addClear 7UL view
+                            let kq, view = KeventWorld.kqueueIn b view
+                            kq, KeventWorld.registerIn b kq watched KeventFilter.Read addClear 7UL view
                     )
                     machine
 
@@ -1094,12 +1135,12 @@ module TestCrossProcess =
                     (fun view ->
                         match flavour with
                         | SimulatedUnixFlavour.Linux ->
-                            match UnixPoll.tryEpollWait 3 queue 8 UserBuffer.Mapped 0 view with
+                            match UnixPoll.tryEpollWait (Caller.make b 3) queue 8 UserBuffer.Mapped 0 view with
                             | Ok (EpollWaitOutcome.Answered events, view) ->
                                 events |> List.map (fun (data, events) -> $"%d{data} 0x%x{events}"), view
                             | other -> failwith $"epoll_wait: %A{other}"
                         | SimulatedUnixFlavour.Darwin ->
-                            match KeventWorld.apply queue [] 8 view with
+                            match KeventWorld.applyIn b queue [] 8 view with
                             | KeventOutcome.Answered events, view ->
                                 events
                                 |> List.map (fun event ->
@@ -1139,7 +1180,7 @@ module TestCrossProcess =
                 Machines.inProcess
                     b
                     (fun view ->
-                        match UnixReadWrite.tryFinishRead 1 view with
+                        match UnixReadWrite.tryFinishRead (Caller.make b 1) view with
                         | Ok (ReadOutcome.Answered answer, view) -> answer, view
                         | other -> failwith $"finishRead: %A{other}"
                     )
@@ -1166,7 +1207,7 @@ module TestCrossProcess =
             )
 
             // The listener's port is free again.
-            let _, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+            let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
             Machines.assertClean machine
 
     /// The measured lines of `listener-exit-order.c`
@@ -1209,14 +1250,14 @@ module TestCrossProcess =
                 let child, parent = pids.[0], pids.[1]
 
                 let parentListener, machine =
-                    Machines.inProcess parent (KeventWorld.listenerAt 8081us) machine
+                    Machines.inProcess parent (KeventWorld.listenerAtIn parent 8081us) machine
 
                 let machine =
                     Machines.doIn
                         child
                         (fun view ->
-                            let listener, view = KeventWorld.listenerAt 8080us view
-                            let connected, view = KeventWorld.stream false view
+                            let listener, view = KeventWorld.listenerAtIn child 8080us view
+                            let connected, view = KeventWorld.streamIn child false view
 
                             let view =
                                 match KeventWorld.connectIn child connected 8081us view with
@@ -1224,12 +1265,12 @@ module TestCrossProcess =
                                 | other, _ -> failwith $"connect: %A{other}"
 
                             let listenerAt, connectedAt = if listenerFirst then 10, 11 else 11, 10
-                            view |> dup2 listener listenerAt |> dup2 connected connectedAt
+                            view |> dup2 child listener listenerAt |> dup2 child connected connectedAt
                         )
                         machine
 
                 let c, machine =
-                    Machines.inProcess parent (KeventWorld.accept parentListener) machine
+                    Machines.inProcess parent (KeventWorld.acceptIn parent parentListener) machine
 
                 let q, machine =
                     Machines.inProcess parent (KeventWorld.clientIn parent 8080us) machine
@@ -1241,7 +1282,9 @@ module TestCrossProcess =
                             match flavour with
                             | SimulatedUnixFlavour.Linux ->
                                 let epoll, view =
-                                    match UnixPoll.tryEpollCreate1 0 view with
+                                    match
+                                        UnixPoll.tryEpollCreate1 (Caller.make parent (Proc.leader parent view)) 0 view
+                                    with
                                     | Ok (Ok created) -> created
                                     | other -> failwith $"epoll_create1: %A{other}"
 
@@ -1254,6 +1297,7 @@ module TestCrossProcess =
                                 let add (fd : int) (data : char) (view : UnixSystem<int, string>) =
                                     match
                                         UnixPoll.tryEpollCtl
+                                            (Caller.make parent (Proc.leader parent view))
                                             epoll
                                             1
                                             fd
@@ -1265,12 +1309,12 @@ module TestCrossProcess =
 
                                 epoll, view |> add c 'c' |> add q 'q'
                             | SimulatedUnixFlavour.Darwin ->
-                                let kq, view = KeventWorld.kqueue view
+                                let kq, view = KeventWorld.kqueueIn parent view
 
                                 kq,
                                 view
-                                |> KeventWorld.register kq c KeventFilter.Read addClear (uint64 'c')
-                                |> KeventWorld.register kq q KeventFilter.Read addClear (uint64 'q')
+                                |> KeventWorld.registerIn parent kq c KeventFilter.Read addClear (uint64 'c')
+                                |> KeventWorld.registerIn parent kq q KeventFilter.Read addClear (uint64 'q')
                         )
                         machine
 
@@ -1280,12 +1324,14 @@ module TestCrossProcess =
                         (fun view ->
                             match flavour with
                             | SimulatedUnixFlavour.Linux ->
-                                match UnixPoll.tryEpollWait 3 queue 4 UserBuffer.Mapped 0 view with
+                                match
+                                    UnixPoll.tryEpollWait (Caller.make parent 3) queue 4 UserBuffer.Mapped 0 view
+                                with
                                 | Ok (EpollWaitOutcome.Answered events, view) ->
                                     events |> List.map (fun (data, events) -> $"%c{char data}(0x%x{events})"), view
                                 | other -> failwith $"epoll_wait: %A{other}"
                             | SimulatedUnixFlavour.Darwin ->
-                                match KeventWorld.apply queue [] 4 view with
+                                match KeventWorld.applyIn parent queue [] 4 view with
                                 | KeventOutcome.Answered events, view ->
                                     events
                                     |> List.map (fun event ->
@@ -1332,13 +1378,13 @@ module TestCrossProcess =
                     Machines.doIn
                         a
                         (fun view ->
-                            let listener, view = KeventWorld.listenerAt 8080us view
+                            let listener, view = KeventWorld.listenerAtIn a 8080us view
                             let client, view = KeventWorld.clientIn a 8080us view
 
                             if listenerHigher then
-                                dup2 listener 9 view
+                                dup2 a listener 9 view
                             else
-                                dup2 client 9 view
+                                dup2 a client 9 view
                         )
                         machine
 
@@ -1352,22 +1398,41 @@ module TestCrossProcess =
 
         // Under Linux a sleeping accept holds its listener past the close of
         // its last descriptor.
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let machine = sleepInAccept a 1 listener machine
-        let machine = Machines.doIn a (KeventWorld.close listener) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a listener) machine
 
         // ...and a stands in a directory b has removed.
         let machine =
-            Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+                machine
 
         let machine =
-            Machines.doIn a (fun view -> Answered.chdir (PathArg.ofText "/d") view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.chdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") view
+                    |> snd
+                )
+                machine
 
         let standing = (Proc.state a (Machines.viewOf a machine)).CurrentDirectoryInode
 
         let machine =
-            Machines.doIn b (fun view -> Answered.rmdir (UnixPath.parseOrFail "test" "/d") view |> snd) machine
+            Machines.doIn
+                b
+                (fun view ->
+                    Answered.rmdir (Caller.make b (Proc.leader b view)) (UnixPath.parseOrFail "test" "/d") view
+                    |> snd
+                )
+                machine
 
         Machines.assertClean machine
 
@@ -1378,7 +1443,7 @@ module TestCrossProcess =
         VirtualFileSystem.tryGet standing view.Machine.FileSystem |> shouldEqual None
 
         // The listener's port is free again.
-        let _, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
+        let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
         Machines.assertClean machine
 
     [<Test>]
@@ -1417,7 +1482,8 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a, b = pids.[0], pids.[1]
 
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let shared = 9
 
@@ -1425,7 +1491,7 @@ module TestCrossProcess =
             let listenerId = KeventWorld.idOfIn a listener (Machines.viewOf a machine)
 
             let named (pid : ProcessId) =
-                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors (Machines.viewOf pid machine))
+                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid (Machines.viewOf pid machine))
 
             Machines.doIn
                 b
@@ -1435,6 +1501,7 @@ module TestCrossProcess =
 
                     let forged =
                         FileDescriptorRegistry.Unchecked.ofParts
+                            SimulatedUnixFlavour.Linux
                             fds
                             (OpenFileTable.descriptions openFiles)
                             (OpenFileDescriptionId 1000L)
@@ -1501,12 +1568,20 @@ module TestCrossProcess =
                     machine
 
             let inode =
-                match UnixSystem.descriptorTarget opened (Machines.viewOf b machine) with
+                match UnixSystem.descriptorTarget b opened (Machines.viewOf b machine) with
                 | Some (OpenFileTarget.File (inode, _)) -> inode
                 | other -> failwith $"the descriptor names %A{other}"
 
             let answer, machine =
-                Machines.inProcess a (Answered.unlink (UnixPath.parseOrFail "test" "/shared")) machine
+                Machines.inProcess
+                    a
+                    (fun view ->
+                        Answered.unlink
+                            (Caller.make a (Proc.leader a view))
+                            (UnixPath.parseOrFail "test" "/shared")
+                            view
+                    )
+                    machine
 
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
             Machines.assertClean machine
@@ -1515,7 +1590,7 @@ module TestCrossProcess =
             |> Option.isSome
             |> shouldEqual true
 
-            let machine = Machines.doIn b (KeventWorld.close opened) machine
+            let machine = Machines.doIn b (KeventWorld.closeIn b opened) machine
             Machines.assertClean machine
 
             VirtualFileSystem.tryGet inode (UnixSystem.fileSystem (Machines.viewOf a machine))
@@ -1531,8 +1606,8 @@ module TestCrossProcess =
         let a = pids.[0]
 
         let write (thread : int) (fd : int) (count : int) (view : UnixSystem<int, string>) =
-            WriteOutcomes.admitThenWrite
-                thread
+            WriteOutcomes.admitThenWriteAs
+                (Caller.make a thread)
                 fd
                 UserBuffer.Mapped
                 (ImmutableArray.Create<byte> (Array.zeroCreate<byte> count))
@@ -1542,14 +1617,14 @@ module TestCrossProcess =
             Machines.inProcess
                 a
                 (fun view ->
-                    match UnixPipe.tryPipe2 0 UserBuffer.Mapped view with
+                    match UnixPipe.tryPipe2 (Caller.make a (Proc.leader a view)) 0 UserBuffer.Mapped view with
                     | Ok (Pipe2Answer.Created (reader, writer), view) -> (reader, writer), view
                     | other -> failwith $"pipe2: %A{other}"
                 )
                 machine
 
         let pipe =
-            match UnixSystem.descriptorTarget reader (Machines.viewOf a machine) with
+            match UnixSystem.descriptorTarget a reader (Machines.viewOf a machine) with
             | Some (OpenFileTarget.Pipe (pipe, _)) -> pipe
             | other -> failwith $"the read end names %A{other}"
 
@@ -1570,8 +1645,8 @@ module TestCrossProcess =
 
         let machine =
             machine
-            |> Machines.doIn a (KeventWorld.close writer)
-            |> Machines.doIn a (KeventWorld.close reader)
+            |> Machines.doIn a (KeventWorld.closeIn a writer)
+            |> Machines.doIn a (KeventWorld.closeIn a reader)
 
         Machines.assertClean machine
 
@@ -1591,10 +1666,11 @@ module TestCrossProcess =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
         let a = pids.[0]
 
-        let listener, machine = Machines.inProcess a (KeventWorld.listenerAt 8080us) machine
+        let listener, machine =
+            Machines.inProcess a (KeventWorld.listenerAtIn a 8080us) machine
 
         let machine = sleepInAccept a 1 listener machine
-        let machine = Machines.doIn a (KeventWorld.close listener) machine
+        let machine = Machines.doIn a (KeventWorld.closeIn a listener) machine
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
@@ -1603,9 +1679,10 @@ module TestCrossProcess =
 
     // ------------------------------------------------------- inotify
 
-    /// `inotify_init1(flags)` and a watch of `path` for `mask`, in `view`: the
-    /// instance's descriptor.
+    /// `inotify_init1(flags)` and a watch of `path` for `mask`, by the leader
+    /// of the process `pid` in `view`: the instance's descriptor.
     let private watching
+        (pid : ProcessId)
         (flags : int)
         (path : string)
         (mask : uint32)
@@ -1613,17 +1690,21 @@ module TestCrossProcess =
         : int * UnixSystem<int, string>
         =
         let fd, view =
-            match UnixInotify.tryInotifyInit1 flags view with
+            match UnixInotify.tryInotifyInit1 (Caller.make pid (Proc.leader pid view)) flags view with
             | Ok (Ok created) -> created
             | other -> failwith $"inotify_init1: %A{other}"
 
-        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask view with
+        match
+            Eager.tryInotifyAddWatchAs (Caller.make pid (Proc.leader pid view)) fd (PathArg.ofText path) mask view
+        with
         | Ok (SyscallAnswer.Completed _, view) -> fd, view
         | other -> failwith $"inotify_add_watch(%s{path}): %A{other}"
 
     /// The bytes the instance `fd` of `pid` holds, as `FIONREAD` reports them.
     let private queuedBytes (pid : ProcessId) (fd : int) (machine : SimulatedMachine<int, string>) : int =
-        match UnixDescriptor.tryBytesAvailable fd UserBuffer.Mapped (Machines.viewOf pid machine) with
+        let view = Machines.viewOf pid machine
+
+        match UnixDescriptor.tryBytesAvailable (Caller.make pid (Proc.leader pid view)) fd UserBuffer.Mapped view with
         | Ok (BytesAvailableAnswer.Reported count) -> count
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
@@ -1648,7 +1729,7 @@ module TestCrossProcess =
                 0o644
                 view
         with
-        | Ok (SyscallAnswer.Completed fd, view) -> KeventWorld.close (int fd) view
+        | Ok (SyscallAnswer.Completed fd, view) -> KeventWorld.closeIn pid (int fd) view
         | other -> failwith $"open(%s{path}): %A{other}"
 
     let private inCreate : uint32 = 0x100u
@@ -1659,16 +1740,22 @@ module TestCrossProcess =
         let a, b = pids.[0], pids.[1]
 
         let machine =
-            Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+                machine
 
         // Blocking, so that the read sleeps.
-        let fd, machine = Machines.inProcess a (watching 0 "/d" inCreate) machine
+        let fd, machine = Machines.inProcess a (watching a 0 "/d" inCreate) machine
 
         let machine =
             Machines.doIn
                 a
                 (fun view ->
-                    match UnixReadWrite.tryRead 1 fd UserBuffer.Mapped 4096UL view with
+                    match UnixReadWrite.tryRead (Caller.make a 1) fd UserBuffer.Mapped 4096UL view with
                     | Ok (ReadOutcome.WouldBlock _, view) -> view
                     | other -> failwith $"read: expected to sleep, got %A{other}"
                 )
@@ -1689,7 +1776,7 @@ module TestCrossProcess =
             Machines.inProcess
                 a
                 (fun view ->
-                    match UnixReadWrite.tryFinishRead 1 view with
+                    match UnixReadWrite.tryFinishRead (Caller.make a 1) view with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), view) ->
                         InotifyReplay.parse bytes |> List.map InotifyReplay.render, view
                     | other -> failwith $"finishRead: %A{other}"
@@ -1706,11 +1793,21 @@ module TestCrossProcess =
 
         let machine =
             machine
-            |> Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd)
-            |> Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/e") 0o755 view |> snd)
+            |> Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") 0o755 view
+                    |> snd
+                )
+            |> Machines.doIn
+                a
+                (fun view ->
+                    Answered.mkdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/e") 0o755 view
+                    |> snd
+                )
 
-        let inA, machine = Machines.inProcess a (watching 0x800 "/d" inCreate) machine
-        let inB, machine = Machines.inProcess b (watching 0x800 "/e" inCreate) machine
+        let inA, machine = Machines.inProcess a (watching a 0x800 "/d" inCreate) machine
+        let inB, machine = Machines.inProcess b (watching b 0x800 "/e" inCreate) machine
 
         // A change in a process's own view, to what its own instance watches,
         // and to what the other process's instance watches.

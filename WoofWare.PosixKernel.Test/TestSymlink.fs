@@ -197,7 +197,7 @@ module TestSymlink =
 
     /// What `lstat` makes of `p` in `system`: absent, or the kind it names.
     let private kindAt (p : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text p) system with
+        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
         | Ok (FileStatusAnswer.Reported status) ->
             match status.Mode &&& 0o170000 with
             | 0o120000 -> "symlink"
@@ -266,7 +266,9 @@ module TestSymlink =
             match answer with
             | SyscallAnswer.Failed error -> $"%A{error}%s{kinds}"
             | SyscallAnswer.Completed _ ->
-                match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text created) after with
+                match
+                    UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.NoFollowFinal (text created) after
+                with
                 | Ok (FileStatusAnswer.Reported status) -> $"ok%s{kinds}(size=%d{status.Size})"
                 | other -> failwith $"%s{context}: the new link at %s{created} does not stat: %A{other}"
 
@@ -352,12 +354,15 @@ module TestSymlink =
                         else
                             probe
 
+                    let system = probeCell envelope
+
                     let actual =
                         UnixNamespace.trySymlinkatEager
+                            (Callers.leader system)
                             (orderTarget envelope targetLabel)
                             dirfd
                             (orderName envelope nameLabel)
-                            (probeCell envelope)
+                            system
                         |> rendered
 
                     if actual <> expected then
@@ -422,7 +427,7 @@ module TestSymlink =
     // ------------------------------------------------------------ SYMMODE and SYMGROUP
 
     let private modeOf (p : string) (system : UnixSystem<int, string>) : int =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text p) system with
+        match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text p) system with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode &&& 0o7777
         | other -> failwith $"%s{context}: lstat(%s{p}) did not report: %A{other}"
 
@@ -477,7 +482,13 @@ module TestSymlink =
                     Eager.trySymlink (text "t") (text "e/n") (boot envelope 0o022 seed) |> created
 
                 let group =
-                    match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text "e/n") system with
+                    match
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.NoFollowFinal
+                            (text "e/n")
+                            system
+                    with
                     | Ok (FileStatusAnswer.Reported status) -> GroupId.toUInt32 status.GroupId
                     | other -> failwith $"%s{context}: lstat(e/n) did not report: %A{other}"
 
@@ -502,11 +513,11 @@ module TestSymlink =
             let system =
                 Eager.trySymlink (ofBytes target) (text "n") (probeCell envelope) |> created
 
-            match UnixNamespace.tryReadlink (text "n") UserBuffer.Mapped 4096 system with
+            match UnixNamespace.tryReadlink (Callers.leader system) (text "n") UserBuffer.Mapped 4096 system with
             | Ok (ReadLinkAnswer.Reported written) -> written |> List.ofSeq |> shouldEqual target
             | other -> failwith $"%s{context}: readlink did not report: %A{other}"
 
-            match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text "n") system with
+            match UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (text "n") system with
             | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual (int64 target.Length)
             | other -> failwith $"%s{context}: lstat(n) did not report: %A{other}"
 
@@ -526,9 +537,14 @@ module TestSymlink =
                 let system = probeCell envelope
 
                 let direct =
-                    match UnixNamespace.trySymlinkatEager (text target) atFdCwd (text path) system with
+                    match
+                        UnixNamespace.trySymlinkatEager (Callers.leader system) (text target) atFdCwd (text path) system
+                    with
                     | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
                     | Error refusal -> Error (SyscallRefusal.Symlink refusal)
 
-                UnixSystem.tryStep 0 (Syscall.SymlinkAt (text target, atFdCwd, text path)) system
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.SymlinkAt (text target, atFdCwd, text path))
+                    system
                 |> shouldEqual direct

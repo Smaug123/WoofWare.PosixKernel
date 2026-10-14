@@ -84,7 +84,10 @@ module TestPollTimeout =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -147,17 +150,17 @@ module TestPollTimeout =
         (system : UnixSystem<int, string>)
         : WakeCondition * UnixSystem<int, string>
         =
-        match UnixPoll.tryPoll thread entries milliseconds system with
+        match UnixPoll.tryPoll (Callers.thread thread system) entries milliseconds system with
         | Ok (PollOutcome.WouldBlock condition, parked) -> condition, parked
         | other -> failwith $"expected a park, got %A{other}"
 
     let private finishes (system : UnixSystem<int, string>) : int16 list * int * UnixSystem<int, string> =
-        match UnixPoll.tryFinishPoll thread system with
+        match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
         | Ok (PollOutcome.Answered (reported, count), finished) -> reported, count, finished
         | other -> failwith $"expected the poll to finish, got %A{other}"
 
     let private reparks (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixPoll.tryFinishPoll thread system with
+        match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
         | Ok (PollOutcome.WouldBlock _, parked) -> parked
         | other -> failwith $"expected the poll to park again, got %A{other}"
 
@@ -306,7 +309,7 @@ module TestPollTimeout =
 
     [<Test>]
     let ``a timeout of zero never parks`` () : unit =
-        match UnixPoll.tryPoll thread [ entry listener pollIn ] 0 idle with
+        match UnixPoll.tryPoll (Callers.thread thread idle) [ entry listener pollIn ] 0 idle with
         | Ok (PollOutcome.Answered (reported, count), after) ->
             reported |> shouldEqual [ 0s ]
             count |> shouldEqual 0
@@ -318,7 +321,7 @@ module TestPollTimeout =
         // `poll(NULL, 0, -1)` sleeps until a signal interrupts it.
         for entries in [ [] ; [ entry -1 pollIn ] ; [ entry -5 pollIn ; entry -1 0s ] ] do
             for milliseconds in [ -1 ; System.Int32.MinValue ] do
-                match UnixPoll.tryPoll thread entries milliseconds idle with
+                match UnixPoll.tryPoll (Callers.thread thread idle) entries milliseconds idle with
                 | Ok (PollOutcome.WouldBlock condition, parked) ->
                     condition
                     |> shouldEqual (WakeCondition.Primitive WakePrimitive.SignalDeliverable)
@@ -336,7 +339,9 @@ module TestPollTimeout =
                 Scheduling = UnixSchedulingState.advanceClock uptime idle.Scheduling
             }
 
-        UnixPoll.tryPoll thread [ entry listener pollIn ] 1 (nearTheEnd (System.Int64.MaxValue - timeout + 1L))
+        let late = nearTheEnd (System.Int64.MaxValue - timeout + 1L)
+
+        UnixPoll.tryPoll (Callers.thread thread late) [ entry listener pollIn ] 1 late
         |> shouldEqual (Error (PollRefusal.DeadlineBeyondClock (System.Int64.MaxValue - timeout + 1L, 1)))
 
         let _, parked =
@@ -400,20 +405,25 @@ module TestPollTimeout =
     [<Test>]
     let ``closing a descriptor a parked poll watches is refused, and closing a dup of it is not`` () : unit =
         let dupFd, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok (fd, registry) -> fd, registry
             | Error error -> failwith $"dup failed: %O{error}"
 
         let withDup = withRegistry registry idle
         let _, parked = parks [ entry listener pollIn ] 10 withDup
 
-        match UnixDescriptor.tryClose listener parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) listener parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual listener
             waiter |> shouldEqual thread
         | other -> failwith $"expected the close to be refused, got %A{other}"
 
-        match UnixDescriptor.tryClose dupFd parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) dupFd parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
             UnixSystem.checkInvariants closed |> shouldEqual []
             let reported, count, _ = closed |> ready |> finishes
@@ -427,6 +437,8 @@ module TestPollTimeout =
         // them, such as PRI alone, leaves it waiting.
         let directory, registry =
             FileDescriptorRegistry.openDirectory
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -434,7 +446,7 @@ module TestPollTimeout =
         let _, parked = parks [ entry directory 0x0002s ] 10 (withRegistry registry idle)
         UnixSystem.checkInvariants parked |> shouldEqual []
 
-        match UnixDescriptor.tryClose directory parked with
+        match UnixDescriptor.tryClose (Callers.leader parked) directory parked with
         | Error (CloseRefusal.PolledDescriptor (fd, waiter)) ->
             fd |> shouldEqual directory
             waiter |> shouldEqual thread
@@ -469,6 +481,8 @@ module TestPollTimeout =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -495,7 +509,12 @@ module TestPollTimeout =
 
         // With a dup keeping the description alive, the number is rebound.
         let _, registry =
-            match FileDescriptorRegistry.dup listener (Lone.fileDescriptors idle) with
+            match
+                FileDescriptorRegistry.dup
+                    (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform)
+                    listener
+                    (Lone.fileDescriptors idle)
+            with
             | Ok dup -> dup
             | Error error -> failwith $"dup failed: %O{error}"
 
@@ -509,7 +528,7 @@ module TestPollTimeout =
             ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread rebound |> ignore)
+            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll (Callers.thread thread rebound) rebound |> ignore)
 
         exn.Message |> shouldContainText "now names"
 
@@ -521,7 +540,7 @@ module TestPollTimeout =
         |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, watched) ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll thread destroyed |> ignore)
+            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll (Callers.thread thread destroyed) destroyed |> ignore)
 
         exn.Message |> shouldContainText "a park holds its descriptions"
 
@@ -531,13 +550,16 @@ module TestPollTimeout =
 
         let exn =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixPoll.tryPoll thread [ entry listener pollIn ] 0 parked |> ignore
+                UnixPoll.tryPoll (Callers.thread thread parked) [ entry listener pollIn ] 0 parked
+                |> ignore
             )
 
         exn.Message |> shouldContainText "is parked in"
 
         let exn =
-            Assert.Throws<System.InvalidOperationException> (fun () -> UnixPoll.tryFinishPoll thread idle |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread idle) idle |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 
