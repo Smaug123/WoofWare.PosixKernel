@@ -1,0 +1,77 @@
+Darwin 27.0.0 arm64
+listener at 127.0.0.1:45200 -> OK
+Ib1 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59722 | fresh bind 127.0.0.1:59722=OK, 0.0.0.0:59722=OK, reuse 127.0.0.1:59722=OK | getsockname=127.0.0.1:59722
+Ib2 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59723 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59723
+Ib3 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59724 | listen=EINVAL | getsockname=127.0.0.1:59724
+Ib4 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59725 | connect listener=EISCONN (getsockname=127.0.0.1:59725), again=EISCONN | getsockname=127.0.0.1:59725
+Ib5 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59726 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59726
+In1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59727 | fresh bind 127.0.0.1:59727=OK, 0.0.0.0:59727=OK, reuse 127.0.0.1:59727=OK | getsockname=127.0.0.1:59727
+In2 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59728 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59728
+In3 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59729 | listen=EINVAL | getsockname=127.0.0.1:59729
+In4 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59730 | connect listener=EISCONN (getsockname=127.0.0.1:59730), again=EISCONN | getsockname=127.0.0.1:59730
+In5 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59731 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59731
+Is1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59732 | fresh bind 127.0.0.1:59732=OK, 0.0.0.0:59732=OK, reuse 127.0.0.1:59732=OK | getsockname=127.0.0.1:59732
+Is2 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59733 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59733
+Is3 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59734 | listen=EINVAL | getsockname=127.0.0.1:59734
+Is4 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59735 | connect listener=EISCONN (getsockname=127.0.0.1:59735), again=EISCONN | getsockname=127.0.0.1:59735
+Is5 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59736 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59736
+Zb1 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59737 | fresh bind 127.0.0.1:59737=OK, 0.0.0.0:59737=OK, reuse 127.0.0.1:59737=OK | getsockname=127.0.0.1:59737
+Zb2 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59738 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59738
+Zb3 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59739 | listen=EINVAL | getsockname=127.0.0.1:59739
+Zb4 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59740 | connect listener=EISCONN (getsockname=127.0.0.1:59740), again=EISCONN | getsockname=127.0.0.1:59740
+Zb5 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59741 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59741
+Zn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59742 | fresh bind 127.0.0.1:59742=OK, 0.0.0.0:59742=OK, reuse 127.0.0.1:59742=OK | getsockname=127.0.0.1:59742
+Zn2 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59743 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59743
+Zn3 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59744 | listen=EINVAL | getsockname=127.0.0.1:59744
+Zn4 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59745 | connect listener=EISCONN (getsockname=127.0.0.1:59745), again=EISCONN | getsockname=127.0.0.1:59745
+Zn5 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59746 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59746
+Zs1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59747 | fresh bind 127.0.0.1:59747=OK, 0.0.0.0:59747=OK, reuse 127.0.0.1:59747=OK | getsockname=127.0.0.1:59747
+Zs2 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59748 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59748
+Zs3 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59749 | listen=EINVAL | getsockname=127.0.0.1:59749
+Zs4 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59750 | connect listener=EISCONN (getsockname=127.0.0.1:59750), again=EISCONN | getsockname=127.0.0.1:59750
+Zs5 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59751 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59751
+Wb1 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59752 | fresh bind 127.0.0.1:59752=OK, 0.0.0.0:59752=OK, reuse 127.0.0.1:59752=OK | getsockname=127.0.0.1:59752
+Wb2 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59753 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59753
+Wb3 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59754 | listen=EINVAL | getsockname=127.0.0.1:59754
+Wb4 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59755 | connect listener=EISCONN (getsockname=127.0.0.1:59755), again=EISCONN | getsockname=127.0.0.1:59755
+Wb5 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:59756 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59756
+Wn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59757 | fresh bind 127.0.0.1:59757=OK, 0.0.0.0:59757=OK, reuse 127.0.0.1:59757=OK | getsockname=127.0.0.1:59757
+Wn2 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59758 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59758
+Wn3 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59759 | listen=EINVAL | getsockname=127.0.0.1:59759
+Wn4 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59760 | connect listener=EISCONN (getsockname=127.0.0.1:59760), again=EISCONN | getsockname=127.0.0.1:59760
+Wn5 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:59761 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59761
+Ws1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59762 | fresh bind 127.0.0.1:59762=OK, 0.0.0.0:59762=OK, reuse 127.0.0.1:59762=OK | getsockname=127.0.0.1:59762
+Ws2 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59763 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:59763
+Ws3 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59764 | listen=EINVAL | getsockname=127.0.0.1:59764
+Ws4 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59765 | connect listener=EISCONN (getsockname=127.0.0.1:59765), again=EISCONN | getsockname=127.0.0.1:59765
+Ws5 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:59766 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:59766
+Xb1 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47146 | fresh bind 127.0.0.1:47146=OK, 0.0.0.0:47146=OK, reuse 127.0.0.1:47146=OK | getsockname=127.0.0.1:47146
+Xb2 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47147 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47147
+Xb3 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47148 | listen=EINVAL | getsockname=127.0.0.1:47148
+Xb4 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47149 | connect listener=EISCONN (getsockname=127.0.0.1:47149), again=EISCONN | getsockname=127.0.0.1:47149
+Xb5 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47150 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47150
+Xn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47151 | fresh bind 127.0.0.1:47151=OK, 0.0.0.0:47151=OK, reuse 127.0.0.1:47151=OK | getsockname=127.0.0.1:47151
+Xn2 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47152 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47152
+Xn3 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47153 | listen=EINVAL | getsockname=127.0.0.1:47153
+Xn4 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47154 | connect listener=EISCONN (getsockname=127.0.0.1:47154), again=EISCONN | getsockname=127.0.0.1:47154
+Xn5 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47155 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47155
+Xs1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47156 | fresh bind 127.0.0.1:47156=OK, 0.0.0.0:47156=OK, reuse 127.0.0.1:47156=OK | getsockname=127.0.0.1:47156
+Xs2 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47157 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47157
+Xs3 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47158 | listen=EINVAL | getsockname=127.0.0.1:47158
+Xs4 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47159 | connect listener=EISCONN (getsockname=127.0.0.1:47159), again=EISCONN | getsockname=127.0.0.1:47159
+Xs5 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47160 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47160
+Yb1 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47161 | fresh bind 127.0.0.1:47161=OK, 0.0.0.0:47161=OK, reuse 127.0.0.1:47161=OK | getsockname=127.0.0.1:47161
+Yb2 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47162 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47162
+Yb3 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47163 | listen=EINVAL | getsockname=127.0.0.1:47163
+Yb4 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47164 | connect listener=EISCONN (getsockname=127.0.0.1:47164), again=EISCONN | getsockname=127.0.0.1:47164
+Yb5 bind=OK connect=ECONNREFUSED getsockname=127.0.0.1:47165 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47165
+Yn1 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47166 | fresh bind 127.0.0.1:47166=OK, 0.0.0.0:47166=OK, reuse 127.0.0.1:47166=OK | getsockname=127.0.0.1:47166
+Yn2 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47167 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47167
+Yn3 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47168 | listen=EINVAL | getsockname=127.0.0.1:47168
+Yn4 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47169 | connect listener=EISCONN (getsockname=127.0.0.1:47169), again=EISCONN | getsockname=127.0.0.1:47169
+Yn5 bind=OK connect=EINPROGRESS poll=1/0x10 getsockname=127.0.0.1:47170 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47170
+Ys1 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47171 | fresh bind 127.0.0.1:47171=OK, 0.0.0.0:47171=OK, reuse 127.0.0.1:47171=OK | getsockname=127.0.0.1:47171
+Ys2 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47172 | bind 127.0.0.1:0=EINVAL | getsockname=127.0.0.1:47172
+Ys3 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47173 | listen=EINVAL | getsockname=127.0.0.1:47173
+Ys4 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47174 | connect listener=EISCONN (getsockname=127.0.0.1:47174), again=EISCONN | getsockname=127.0.0.1:47174
+Ys5 bind=OK connect=EINPROGRESS poll=1/0x10 SO_ERROR=ECONNREFUSED getsockname=127.0.0.1:47175 | connect 127.0.0.1:1 again=EISCONN | getsockname=127.0.0.1:47175

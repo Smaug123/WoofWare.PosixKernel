@@ -217,6 +217,7 @@
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
     <Compile Include="TestImplicitSelfConnectMeasured.fs" />
+    <Compile Include="TestRefusedConnectPortMeasured.fs" />
     <Compile Include="TestSocketAddressLength.fs" />
     <Compile Include="TestSockaddrDecoding.fs" />
     <Compile Include="SocketLadder.fs" />
@@ -351,6 +352,12 @@
          `TestImplicitSelfConnectMeasured` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.darwin.txt" />
+    <!-- What a refused TCP connect left its socket holding, and what the socket's
+         next bind(2), listen(2) and connect(2) answered, measured per flavour by
+         docs/probes/refused-connect-port. `TestRefusedConnectPortMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound

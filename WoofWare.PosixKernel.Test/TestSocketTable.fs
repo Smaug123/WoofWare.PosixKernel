@@ -751,6 +751,7 @@ module TestSocketTable =
                                         Endpoint = loopback port
                                         LockedAddress = None
                                         LockedPort = false
+                                        HoldsPort = true
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -995,6 +996,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = None
                                                     LockedPort = false
+                                                    HoldsPort = true
                                                 })
                                             someSocket.Addressing
                                 }
@@ -1092,6 +1094,7 @@ module TestSocketTable =
                                         Endpoint = loopback 5000us
                                         LockedAddress = None
                                         LockedPort = false
+                                        HoldsPort = true
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1181,6 +1184,7 @@ module TestSocketTable =
                     Endpoint = loopback 5000us
                     LockedAddress = None
                     LockedPort = false
+                    HoldsPort = true
                 }
         )
 
@@ -1383,6 +1387,7 @@ module TestSocketTable =
                                         Endpoint = loopback 2us
                                         LockedAddress = None
                                         LockedPort = false
+                                        HoldsPort = true
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1468,6 +1473,7 @@ module TestSocketTable =
                                         Endpoint = loopback 2us
                                         LockedAddress = None
                                         LockedPort = false
+                                        HoldsPort = true
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1542,6 +1548,7 @@ module TestSocketTable =
                                          Endpoint = loopback (uint16 (100 + i))
                                          LockedAddress = None
                                          LockedPort = false
+                                         HoldsPort = true
                                      })
                                  someSocket.Addressing
                          Phase = phase
@@ -1675,6 +1682,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                                                     LockedAddress = None
                                                     LockedPort = false
+                                                    HoldsPort = true
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
                                 }
@@ -1780,6 +1788,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 4444us
                                                     LockedAddress = None
                                                     LockedPort = false
+                                                    HoldsPort = true
                                                 })
                                             someSocket.Addressing
                                 }
@@ -1799,6 +1808,7 @@ module TestSocketTable =
                     Endpoint = loopback 4444us
                     LockedAddress = None
                     LockedPort = false
+                    HoldsPort = true
                 }
         )
 
@@ -1845,6 +1855,7 @@ module TestSocketTable =
                         Endpoint = loopback 4444us
                         LockedAddress = Some Ipv4Address.loopback
                         LockedPort = true
+                        HoldsPort = true
                     },
                 Ipv4Address.loopback
                 Some
@@ -1852,6 +1863,7 @@ module TestSocketTable =
                         Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 4444us
                         LockedAddress = Some Ipv4Address.any
                         LockedPort = true
+                        HoldsPort = true
                     },
                 Ipv4Address.any
             ]
@@ -1944,6 +1956,7 @@ module TestSocketTable =
                                             Endpoint = loopback 5000us
                                             LockedAddress = Some Ipv4Address.loopback
                                             LockedPort = true
+                                            HoldsPort = true
                                         })
                                     someSocket.Addressing
                             Phase = phase
@@ -2029,6 +2042,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                                                     LockedAddress = Some Ipv4Address.any
                                                     LockedPort = true
+                                                    HoldsPort = true
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
                                 }
@@ -2042,6 +2056,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 5000us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
+                                                    HoldsPort = true
                                                 })
                                             someSocket.Addressing
                                 }
@@ -2072,6 +2087,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
+                                                    HoldsPort = true
                                                 })
                                             someSocket.Addressing
                                 }
@@ -2159,6 +2175,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
+                                                    HoldsPort = true
                                                 })
                                             someSocket.Addressing
                                 }

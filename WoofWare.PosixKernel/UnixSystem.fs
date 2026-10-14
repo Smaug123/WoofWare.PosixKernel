@@ -745,6 +745,12 @@ type UnixSystemDefect<'Thread> =
     /// such as `SocketPhase.Connecting`: a case reserved for behaviour not yet
     /// modelled.
     | ReservedSocketPhase of socket : SocketId * phase : SocketPhase
+    /// A socket's binding no longer holds its port (`InetBinding.HoldsPort`),
+    /// and the socket is not one a refused TCP connect, the only thing that
+    /// gives a port back, leaves so: a stream socket in `SocketPhase.Refused`,
+    /// or under Linux an idle one, whose port, under Linux, `bind(2)` did not
+    /// choose.
+    | PortGivenBackOutsideRefusal of socket : SocketId * phase : SocketPhase
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -2133,12 +2139,32 @@ module UnixSystem =
                             [ UnixSystemDefect.BoundToPortZero socketId ]
                     | _ -> []
 
+                let portGivenBack =
+                    match socket.Ipv4Binding with
+                    | Some binding when not binding.HoldsPort ->
+                        let refusalLeftIt =
+                            socket.Kind = SocketKind.Stream
+                            && SimulatedUnixPlatform.refusalReleasesPort machine.UnixPlatform binding.LockedPort
+                            && (
+                                match socket.Phase, SimulatedUnixPlatform.flavour machine.UnixPlatform with
+                                | SocketPhase.Refused _, _ -> true
+                                | SocketPhase.Idle, SimulatedUnixFlavour.Linux -> true
+                                | _ -> false
+                            )
+
+                        if refusalLeftIt then
+                            []
+                        else
+                            [ UnixSystemDefect.PortGivenBackOutsideRefusal (socketId, socket.Phase) ]
+                    | _ -> []
+
                 unboundListener
                 @ unaddressable
                 @ unmodelledBinding
                 @ peerFamily
                 @ reservedPhase
                 @ portZero
+                @ portGivenBack
             )
 
         let fileSystemType =

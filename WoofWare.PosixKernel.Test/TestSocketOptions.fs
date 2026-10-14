@@ -622,6 +622,7 @@ module TestSocketOptions =
                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us
                     LockedAddress = None
                     LockedPort = true
+                    HoldsPort = true
                 }
 
         let states =

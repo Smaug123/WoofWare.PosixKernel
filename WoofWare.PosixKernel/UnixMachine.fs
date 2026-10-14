@@ -876,7 +876,8 @@ module UnixMachineState =
 
     /// Whether another socket's binding conflicts with `candidate`, taken on
     /// behalf of `socket`, by `SimulatedUnixPlatform.bindConflict`. A binding
-    /// its connection released (`releasedPort`) conflicts with nothing.
+    /// its connection released (`releasedPort`), or whose refused connect gave
+    /// its port back (`InetBinding.HoldsPort`), conflicts with nothing.
     let private socketBindingConflicts
         (socketId : SocketId)
         (socket : SocketDescription)
@@ -892,6 +893,7 @@ module UnixMachineState =
 
             match other.Ipv4Binding with
             | None -> false
+            | Some existing when not existing.HoldsPort -> false
             | Some existing ->
                 // Separate port namespaces per transport, measured: a UDP
                 // socket takes a port a listening TCP socket holds.
@@ -950,7 +952,8 @@ module UnixMachineState =
 
     /// Whether anything other than `socketId` holds `port`, at any address and
     /// whatever anyone's `SO_REUSEADDR`: a socket of `socket`'s kind bound at
-    /// it, unless its connection released it (`releasedPort`), or, for a
+    /// it, unless its connection released it (`releasedPort`) or its refused
+    /// connect gave it back (`InetBinding.HoldsPort`), or, for a
     /// stream socket, a connection end whose socket has closed and which still
     /// holds it (`orphanedEndpoints`). Darwin's implicit connect bind, which
     /// binds the wildcard, passes over every port another socket is bound at,
@@ -971,7 +974,7 @@ module UnixMachineState =
                 && not (releasedPort other machine)
                 && (
                     match other.Ipv4Binding with
-                    | Some binding -> binding.Endpoint.Port = port
+                    | Some binding -> binding.HoldsPort && binding.Endpoint.Port = port
                     | None -> false
                 )
             )

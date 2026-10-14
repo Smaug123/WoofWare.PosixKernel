@@ -67,6 +67,7 @@ module TestPollTimeout =
                                     }
                                 LockedAddress = Some (Ipv4Address 0x7F000001u)
                                 LockedPort = true
+                                HoldsPort = true
                             }
                     )
                 Kind = SocketKind.Stream

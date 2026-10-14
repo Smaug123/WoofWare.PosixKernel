@@ -209,6 +209,7 @@ module TestUnixSystemInitial =
                 Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any port
                 LockedAddress = None
                 LockedPort = false
+                HoldsPort = true
             }
 
         match

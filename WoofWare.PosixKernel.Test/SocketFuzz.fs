@@ -349,6 +349,7 @@ module SocketFuzz =
                                                         Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback port
                                                         LockedAddress = None
                                                         LockedPort = false
+                                                        HoldsPort = true
                                                     })
                                                 sock.Addressing
                                         Phase =

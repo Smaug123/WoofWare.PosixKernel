@@ -152,6 +152,14 @@ type InetBinding<'Endpoint, 'Address> =
         /// `0.0.0.0:5555` dissolves to `0.0.0.0:5555` where one bound to
         /// `0.0.0.0:0` dissolves to nothing.
         LockedPort : bool
+        /// Whether the socket still holds `Endpoint`'s port against other
+        /// sockets' binds and against a search for a free port. A refused TCP
+        /// connect gives the port back, which `getsockname` goes on reporting:
+        /// on Linux unless `bind(2)` chose it (`LockedPort`), and on Darwin
+        /// whoever chose it. A Linux socket that has given its port back binds,
+        /// listens and connects as one with no port, choosing a new one at its
+        /// `Endpoint`'s address.
+        HoldsPort : bool
     }
 
 /// An IPv4 socket's local address: the binding of an `AF_INET` socket, and the

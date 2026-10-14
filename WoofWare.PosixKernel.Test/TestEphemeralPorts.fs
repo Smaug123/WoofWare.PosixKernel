@@ -360,6 +360,9 @@ module TestEphemeralPorts =
         | Listen of slot : int
         /// `connect` from a slot towards one of the two fixed listeners.
         | Connect of slot : int * listener : int
+        /// `connect` from a slot towards a port nothing is bound at, which
+        /// the kernel refuses.
+        | ConnectClosed of slot : int
         /// `accept` on a fixed listener, when its queue is non-empty.
         | Accept of listener : int
         /// `close` a slot.
@@ -377,14 +380,20 @@ module TestEphemeralPorts =
 
     let private listenerPort (listener : int) : uint16 = 5000us + uint16 listener
 
+    /// Where nothing is ever bound in a walk.
+    let private closedPort : uint16 = 6000us
+
     /// Whether `slot`'s socket is in a state the op can lawfully be asked of:
     /// the generator is constructive, so an op that the model refuses
     /// outright (rather than answering an errno) is never generated.
+    /// The slot's phase, and whether it holds a port: a refused connect may
+    /// have given back the port it still reports.
     let private phaseOf (fd : int) (run : Run) : SocketPhase * bool =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             let socket = UnixMachineState.socket socketId run.System.Machine
-            socket.Phase, socket.Ipv4Binding.IsSome
+
+            socket.Phase, socket.Ipv4Binding |> Option.exists (fun binding -> binding.HoldsPort)
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     /// Whether `connect` from the unbound socket behind `fd` towards
@@ -399,6 +408,7 @@ module TestEphemeralPorts =
                     Endpoint = loopback port
                     LockedAddress = None
                     LockedPort = false
+                    HoldsPort = true
                 }
 
             UnixMachineState.allocateEphemeralPort
@@ -456,6 +466,15 @@ module TestEphemeralPorts =
             { run with
                 System = system
             }
+        | Op.ConnectClosed slot ->
+            let fd = run.Slots.[slot]
+
+            match connectTo fd (loopback closedPort) run.System with
+            | SyscallAnswer.Failed UnixError.ECONNREFUSED, system ->
+                { run with
+                    System = system
+                }
+            | answer, _ -> failwith $"connect to a closed port answered %A{answer}"
         | Op.Accept listener ->
             let _, system = acceptFrom run.Listeners.[listener] run.System
 
@@ -485,10 +504,15 @@ module TestEphemeralPorts =
                         yield Op.BindEphemeral slot
                         yield Op.Listen slot
                     | SocketPhase.Idle, true -> yield Op.Listen slot
+                    // EINVAL, on both flavours.
+                    | SocketPhase.Refused _, _ -> yield Op.Listen slot
                     | _ -> ()
 
                     match phaseOf fd run with
                     | SocketPhase.Idle, bound ->
+                        if bound || implicitBindHasAPort fd (loopback closedPort) run then
+                            yield Op.ConnectClosed slot
+
                         for listener in 0..1 do
                             // A listener whose queue is full has no measured
                             // answer, so keep every queue short of it; and an
@@ -515,6 +539,70 @@ module TestEphemeralPorts =
 
         candidates.[rng.Next candidates.Length]
 
+    /// Whether the socket behind `fd` reports a port its refused connect gave
+    /// back.
+    let private givenBack (fd : int) (run : Run) : bool =
+        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
+        | Some (OpenFileTarget.Socket socketId) ->
+            (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
+            |> Option.exists (fun binding -> not binding.HoldsPort)
+        | other -> failwith $"slot fd %d{fd} is %A{other}"
+
+    /// Whether `machine` and `without`, which lacks one of its sockets, agree
+    /// about every port of the range: what a new stream socket's bind of it
+    /// at loopback and at the wildcard conflicts with, and which port an
+    /// allocation for it chooses, for a bind and for a connect to either
+    /// fixed listener.
+    let private invisibleTo (machine : UnixMachineState) (without : UnixMachineState) : bool =
+        let probeId = SocketId 999999L
+
+        let probe : SocketDescription =
+            {
+                Addressing = SocketAddressing.Inet None
+                Kind = SocketKind.Stream
+                Protocol = SocketProtocol.Tcp
+                ReuseAddress = false
+                Options = SocketOptions.initial
+                Phase = SocketPhase.Idle
+            }
+
+        let low, high = machine.EphemeralPortRange
+
+        let binding (address : Ipv4Address) (port : uint16) : Ipv4Binding =
+            {
+                Endpoint = Ipv4Endpoint.ofParts address port
+                LockedAddress = None
+                LockedPort = false
+                HoldsPort = true
+            }
+
+        let conflictsAgree =
+            [ low..high ]
+            |> List.forall (fun port ->
+                [ Ipv4Address.loopback ; Ipv4Address.any ]
+                |> List.forall (fun address ->
+                    UnixMachineState.bindingConflicts probeId probe (binding address port) machine = UnixMachineState.bindingConflicts
+                        probeId
+                        probe
+                        (binding address port)
+                        without
+                )
+            )
+
+        let chosen (use' : EphemeralPortUse) (machine : UnixMachineState) : uint16 option =
+            UnixMachineState.allocateEphemeralPort use' probeId probe (binding Ipv4Address.loopback) machine
+            |> Option.map (fun (binding, _) -> binding.Endpoint.Port)
+
+        let uses =
+            [
+                EphemeralPortUse.Reserve
+                EphemeralPortUse.ConnectTo (loopback (listenerPort 0))
+                EphemeralPortUse.ConnectTo (loopback (listenerPort 1))
+            ]
+
+        conflictsAgree
+        && uses |> List.forall (fun use' -> chosen use' machine = chosen use' without)
+
     /// Every port `bind(0)` or an unbound `listen` handed out in this run,
     /// checked against the endpoints of every surviving connection whose
     /// socket has gone.
@@ -522,7 +610,11 @@ module TestEphemeralPorts =
         let boundEndpoints =
             system.Machine.Sockets
             |> Map.toSeq
-            |> Seq.choose (fun (_, socket) -> socket.Ipv4Binding |> Option.map (fun binding -> binding.Endpoint))
+            |> Seq.choose (fun (_, socket) ->
+                socket.Ipv4Binding
+                |> Option.filter (fun binding -> binding.HoldsPort)
+                |> Option.map (fun binding -> binding.Endpoint)
+            )
             |> Set.ofSeq
 
         system.Machine.Connections
@@ -537,7 +629,7 @@ module TestEphemeralPorts =
         (platform : SimulatedUnixPlatform)
         : unit
         =
-        let property (seed : int) : bool =
+        let property (cover : string -> unit) (seed : int) : bool =
             let rng = System.Random seed
             let system = systemOn platform (40000us, 40000us + uint16 (rng.Next 4))
             let listener0, system = listener (listenerPort 0) system
@@ -556,6 +648,16 @@ module TestEphemeralPorts =
             (initial, [ 1..steps ])
             ||> List.fold (fun run _ ->
                 let op = nextOp rng run
+
+                match op with
+                | Op.ConnectClosed _ -> cover "a refused connect"
+                | Op.BindEphemeral slot
+                | Op.Listen slot
+                | Op.Connect (slot, _)
+                | Op.ConnectClosed slot when givenBack run.Slots.[slot] run ->
+                    cover "a call on a socket whose refused connect gave its port back"
+                | _ -> ()
+
                 let run' = execute op run
 
                 match UnixSystem.checkInvariants run'.System with
@@ -574,7 +676,8 @@ module TestEphemeralPorts =
                     |> List.choose (fun (socketId, socket) ->
                         match socket.Ipv4Binding, socket.Phase with
                         | Some binding, (SocketPhase.Idle | SocketPhase.Listening _) when
-                            binding.Endpoint.Port <> listenerPort 0
+                            binding.HoldsPort
+                            && binding.Endpoint.Port <> listenerPort 0
                             && binding.Endpoint.Port <> listenerPort 1
                             && Set.contains binding.Endpoint.Port orphaned
                             ->
@@ -586,10 +689,33 @@ module TestEphemeralPorts =
                 | [] -> ()
                 | overlap -> failwith $"after %A{op}: reserved ports on orphaned endpoints: %A{overlap}"
 
+                // A port a refused connect gave back holds nothing: taking the
+                // socket away changes no conflict a new socket's bind meets
+                // and no port an allocation chooses.
+                for KeyValue (socketId, socket) in run'.System.Machine.Sockets do
+                    match socket.Ipv4Binding with
+                    | Some binding when not binding.HoldsPort ->
+                        let machine = run'.System.Machine
+
+                        let without =
+                            { machine with
+                                Sockets = Map.remove socketId machine.Sockets
+                            }
+
+                        if invisibleTo machine without |> not then
+                            failwith
+                                $"after %A{op}: socket %O{socketId}, whose port was given back, still holds something"
+                    | _ -> ()
+
                 run'
             )
             |> ignore<Run>
 
             true
 
-        Check.One (propertyConfig, Prop.forAll walkSeed property)
+        let coverage = CoverageSample.check propertyConfig walkSeed property
+
+        coverage.Count "a refused connect" |> shouldBeGreaterThan 50
+
+        coverage.Count "a call on a socket whose refused connect gave its port back"
+        |> shouldBeGreaterThan 10

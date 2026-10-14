@@ -590,6 +590,7 @@ module TestUnixSystemInvariants =
                 Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback port
                 LockedAddress = None
                 LockedPort = false
+                HoldsPort = true
             }
 
     let private listening : SocketPhase =
@@ -647,6 +648,7 @@ module TestUnixSystemInvariants =
                 }
             LockedAddress = Some Ipv6Address.loopback
             LockedPort = true
+            HoldsPort = true
         }
 
     let private socketName : UnixSocketName =
@@ -749,6 +751,44 @@ module TestUnixSystemInvariants =
 
         UnixSystem.checkInvariants faulty
         |> shouldEqual [ UnixSystemDefect.ReservedSocketPhase (socketId, phase) ]
+
+    /// Only a refused TCP connect gives a port back, and under Linux only a
+    /// port `bind(2)` did not choose: a socket that gave its port back is a
+    /// refused stream socket, or one Linux's refusal left idle. (This system
+    /// is Linux's.)
+    [<Test>]
+    let ``a port given back outside a refusal is a defect`` () : unit =
+        let givenBack (lockedPort : bool) : Ipv4Binding option =
+            Some
+                {
+                    Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
+                    LockedAddress = Some Ipv4Address.any
+                    LockedPort = lockedPort
+                    HoldsPort = false
+                }
+
+        let faulty =
+            [
+                streamSocket (givenBack false) listening
+                // Linux keeps a port bind(2) chose.
+                streamSocket (givenBack true) SocketPhase.Idle
+                streamSocket (givenBack true) (SocketPhase.Refused RefusalError.Reported)
+                { streamSocket (givenBack false) SocketPhase.Idle with
+                    Kind = SocketKind.Datagram
+                    Protocol = SocketProtocol.Udp
+                }
+            ]
+
+        for socket in faulty do
+            let socketId, faulty = withSocket socket
+
+            UnixSystem.checkInvariants faulty
+            |> shouldEqual [ UnixSystemDefect.PortGivenBackOutsideRefusal (socketId, socket.Phase) ]
+
+        // The controls: what a Linux refusal leaves, delivered or latched.
+        for phase in [ SocketPhase.Idle ; SocketPhase.Refused RefusalError.Pending ] do
+            let _, sound = withSocket (streamSocket (givenBack false) phase)
+            UnixSystem.checkInvariants sound |> shouldEqual []
 
     [<Test>]
     let ``a socket bound to port 0 is a defect`` () : unit =
