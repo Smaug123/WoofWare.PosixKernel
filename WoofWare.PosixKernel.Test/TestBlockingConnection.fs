@@ -3255,6 +3255,66 @@ module TestBlockingConnection =
 
         drain 0 system |> shouldEqual [ EpollEvents.Out ]
 
+    /// A woken Linux write that takes only part of what is left marks the
+    /// socket out of space again, as one that sleeps first does, so that the
+    /// buffer draining to two thirds full gives an edge-triggered `EPOLLOUT`
+    /// waiter another edge.
+    [<Test>]
+    let ``a woken Linux write that takes part of what is left arms the send-space edge again`` () : unit =
+        let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
+
+        let epoll, system =
+            match UnixPoll.tryEpollCreate1 0 system with
+            | Ok (Ok created) -> created
+            | other -> failwith $"epoll_create1: %A{other}"
+
+        let system =
+            match
+                UnixPoll.tryEpollCtl
+                    epoll
+                    1
+                    client
+                    (EpollEventArgument.Readable (EpollEvents.Out ||| EpollEvents.EdgeTriggered, 0UL))
+                    system
+            with
+            | Ok (EpollCtlAnswer.Changed, system) -> system
+            | other -> failwith $"epoll_ctl: %A{other}"
+
+        let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
+            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
+            | other -> failwith $"epoll_wait: %A{other}"
+
+        let added, system = edges system
+        added |> shouldEqual [ EpollEvents.Out ]
+
+        let bytes = payload 13 600000
+        let system = asleepWriting 1 client bytes system
+
+        // Read until the edge the sleeping write's mark gives, which wakes it.
+        let rec drain (reads : int) (system : UnixSystem<int, string>) =
+            if reads > 100 then
+                failwith "no edge came"
+
+            let system = readNow server 1000 system |> snd
+
+            match edges system with
+            | [], system -> drain (reads + 1) system
+            | events, system -> events, system
+
+        let events, system = drain 0 system
+        events |> shouldEqual [ EpollEvents.Out ]
+        wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
+
+        // The woken write fills the room and sleeps for the rest.
+        let system =
+            match finishedWrite 1 bytes system with
+            | Ok (WriteStep.WouldBlock (_, system)) -> system
+            | other -> failwith $"%A{other}"
+
+        let events, _ = drain 0 system
+        events |> shouldEqual [ EpollEvents.Out ]
+
     /// Darwin's sleeping writer with less than the low-water mark left wakes
     /// once there is room for all of what is left, though not for the mark.
     [<Test>]
@@ -3724,6 +3784,55 @@ module TestBlockingConnection =
             match FileDescriptorRegistry.tryFindWithId copy (Lone.fileDescriptors system) with
             | Some (_, description) -> description.Status.Written |> shouldEqual (call = TcpSendCall.Write)
             | None -> failwith "the copy names no description"
+
+    /// A Darwin `write` that slept, woken and finished, marks its description
+    /// written as it returns having moved bytes; a `send` marks nothing
+    /// (`fcntl-dup.c`, WRITTEN rows, as `only a Darwin write marks its
+    /// description written` holds for a call that never slept).
+    [<Test>]
+    let ``Darwin: a woken write marks its description as it returns, and a woken send does not`` () : unit =
+        for call in [ TcpSendCall.Write ; TcpSendCall.Send false ] do
+            let client, server, system = pair (systemOn SimulatedUnixPlatform.macOsArm64 false)
+            let connection = connectionOf client system
+
+            let toServer =
+                (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+
+            let bytes = payload 6 (toServer.SendCapacity + toServer.ReceiveCapacity + 5000)
+
+            let system =
+                match call with
+                | TcpSendCall.Write -> asleepWriting 1 client bytes system
+                | TcpSendCall.Send _ ->
+                    match sent 1 client bytes [] system with
+                    | WriteStep.WouldBlock (_, system) -> system
+                    | other -> failwith $"%A{other}"
+
+            let marked (system : UnixSystem<int, string>) : bool =
+                match FileDescriptorRegistry.tryFindWithId client (UnixSystemState.fileDescriptors system) with
+                | Some (_, description) -> description.Status.Written
+                | None -> failwith "the client names no description"
+
+            // Asleep part way, it has marked nothing yet.
+            marked system |> shouldEqual false
+
+            let rec toTheEnd (rounds : int) (system : UnixSystem<int, string>) =
+                if rounds > 1000 then
+                    failwith $"%A{call}: the call never returned"
+
+                let system = readNow server 65536 system |> snd
+
+                match wokenAmong [ 1 ] system with
+                | [] -> toTheEnd (rounds + 1) system
+                | _ ->
+                    match finishedWrite 1 bytes system with
+                    | Ok (WriteStep.WouldBlock (_, system)) -> toTheEnd (rounds + 1) system
+                    | Ok (WriteStep.Returns (WriteAnswer.Completed n, system)) ->
+                        n |> shouldEqual (int64 bytes.Length)
+                        system
+                    | other -> failwith $"%A{call}: %A{other}"
+
+            toTheEnd 0 system |> marked |> shouldEqual (call = TcpSendCall.Write)
 
     /// Every flag but those modelled is refused, naming it: `MSG_PEEK`,
     /// `MSG_DONTWAIT` and `MSG_NOSIGNAL` for recv, `MSG_DONTWAIT` and
