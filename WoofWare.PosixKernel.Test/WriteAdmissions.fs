@@ -291,7 +291,8 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system |> returned
+        admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system
+        |> returned
 
     /// A whole `pwrite(2)` by `thread` of `bytes` from a mapped buffer at
     /// `offset`, through the library's public protocol (`UnixReadWrite.pwrite`,
