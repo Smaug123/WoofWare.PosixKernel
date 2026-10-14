@@ -251,8 +251,10 @@ module TestUnmodelledException =
 
         // And through a call that refuses one: getrandom into memory whose bytes
         // the client cannot produce.
+        let system = booted SimulatedUnixPlatform.linuxX64
+
         Assert.Throws<UnmodelledException> (fun () ->
-            UnixEntropy.getRandom 0 UserBuffer.Opaque 8UL 0u (booted SimulatedUnixPlatform.linuxX64)
+            UnixEntropy.getRandom (Callers.thread 0 system) UserBuffer.Opaque 8UL 0u system
             |> ignore<GetRandomAnswer * UnixSystem<int, string>>
         )
         |> ignore
@@ -295,8 +297,8 @@ module TestUnmodelledException =
                 agrees
                     ClockGettimeRefusal.kind
                     ClockGettimeRefusal.describe
-                    (fun () -> UnixClock.tryClockGettime clockId system)
-                    (fun () -> UnixClock.clockGettime clockId system)
+                    (fun () -> UnixClock.tryClockGettime (Callers.leader system) clockId system)
+                    (fun () -> UnixClock.clockGettime (Callers.leader system) clockId system)
             )
             [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]
 
@@ -375,8 +377,8 @@ module TestUnmodelledException =
                 agrees
                     GetIdsRefusal.kind
                     GetIdsRefusal.describe
-                    (fun () -> UnixCredentials.tryGetresuid real effective saved system)
-                    (fun () -> UnixCredentials.getresuid real effective saved system)
+                    (fun () -> UnixCredentials.tryGetresuid (Callers.leader system) real effective saved system)
+                    (fun () -> UnixCredentials.getresuid (Callers.leader system) real effective saved system)
             )
             [
                 Observed.Answered

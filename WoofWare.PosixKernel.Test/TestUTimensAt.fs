@@ -182,7 +182,12 @@ module TestUTimensAt =
         )
 
     let private nofollowStat (caller : Caller) (path : string) (system : UnixSystem<int, string>) =
-        UnixPathResolution.tryFstatat (atFdCwd caller) (PathArg.ofText path) (noFollow caller) system
+        UnixPathResolution.tryFstatat
+            (Callers.leader system)
+            (atFdCwd caller)
+            (PathArg.ofText path)
+            (noFollow caller)
+            system
 
     let private inodeAt (caller : Caller) (path : string) (system : UnixSystem<int, string>) : InodeNumber =
         match nofollowStat caller path system with
@@ -475,7 +480,7 @@ module TestUTimensAt =
         | "locked" ->
             let fd, system = opened readOnly "d" system
 
-            match UnixPathResolution.tryChmod (PathArg.ofText "d") 0 system with
+            match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText "d") 0 system with
             | Ok answer -> fd, None, completed "chmod(d, 0)" answer
             | Error refusal -> failwith $"%s{context}: chmod was refused: %A{refusal}"
         | other -> failwith $"%s{context}: the probe has no dirfd kind called %s{other}"
@@ -602,7 +607,7 @@ module TestUTimensAt =
     /// where this library will not say, as for an event queue, whose times
     /// the probe never saw move.
     let private descriptorSnapshot (system : UnixSystem<int, string>) (fd : int) : Snapshot option =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok answer -> snapshotOf answer
         | Error _ -> None
 
@@ -802,11 +807,15 @@ module TestUTimensAt =
                 row.Caller
                 (heldOf row.Held row.Directory dirfd otherEnd)
                 true
-                (UnixPathResolution.tryUtimensat
-                    dirfd
-                    (pathOf row.Caller row.Path)
-                    (timesOf row.Caller row.Times)
-                    row.Flags)
+                (fun system ->
+                    UnixPathResolution.tryUtimensat
+                        (Callers.leader system)
+                        dirfd
+                        (pathOf row.Caller row.Path)
+                        (timesOf row.Caller row.Times)
+                        row.Flags
+                        system
+                )
                 system
 
         match result, refusalExpected row with
@@ -1155,7 +1164,15 @@ module TestUTimensAt =
                         caller
                         Held.Nothing
                         true
-                        (UnixPathResolution.tryUtimensat dirfd (pathOf caller "f") times 0)
+                        (fun system ->
+                            UnixPathResolution.tryUtimensat
+                                (Callers.leader system)
+                                dirfd
+                                (pathOf caller "f")
+                                times
+                                0
+                                system
+                        )
                         system
                 with
                 | Error refusal -> yield $"%A{fields}: this library refused (%s{UTimensAtRefusal.describe refusal})"
@@ -1198,7 +1215,15 @@ module TestUTimensAt =
                             caller
                             (Held.Descriptor dirfd)
                             false
-                            (UnixPathResolution.tryUtimensat dirfd NullablePathArgument.Null times 0)
+                            (fun system ->
+                                UnixPathResolution.tryUtimensat
+                                    (Callers.leader system)
+                                    dirfd
+                                    NullablePathArgument.Null
+                                    times
+                                    0
+                                    system
+                            )
                             system
                     with
                     | Error refusal -> yield $"%A{fields}: this library refused (%s{UTimensAtRefusal.describe refusal})"
@@ -1298,15 +1323,35 @@ module TestUTimensAt =
                     Nanoseconds = TimestampChangeRules.utimeOmit flavour
                 }
 
-            match UnixPathResolution.tryUtimensat atFdCwd (pathOf caller "f") TimesArgument.Null 0 system with
+            match
+                UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
+                    atFdCwd
+                    (pathOf caller "f")
+                    TimesArgument.Null
+                    0
+                    system
+            with
             | Error (UTimensAtRefusal.UnmeasuredFileSystem EmulatedFileSystemType.Nfs) -> ()
             | other -> failwith $"%s{context}: %A{flavour}: expected an NFS refusal, got %A{other}"
 
-            UnixPathResolution.tryUtimensat atFdCwd (pathOf caller "nx") TimesArgument.Null 0 system
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                atFdCwd
+                (pathOf caller "nx")
+                TimesArgument.Null
+                0
+                system
             |> Result.map fst
             |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.ENOENT))
 
-            UnixPathResolution.tryUtimensat atFdCwd (pathOf caller "f") (TimesArgument.Fields (omit, omit)) 0 system
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                atFdCwd
+                (pathOf caller "f")
+                (TimesArgument.Fields (omit, omit))
+                0
+                system
             |> shouldEqual (Ok (SyscallAnswer.Completed 0L, system))
 
     [<Test>]
@@ -1324,7 +1369,13 @@ module TestUTimensAt =
         let system = boot user |> dropped rootCaller
 
         match
-            UnixPathResolution.tryUtimensat (atFdCwd rootCaller) (pathOf rootCaller "f") TimesArgument.Null 0 system
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                (atFdCwd rootCaller)
+                (pathOf rootCaller "f")
+                TimesArgument.Null
+                0
+                system
         with
         | Error (UTimensAtRefusal.UnmeasuredPrivilegedCaller _) -> ()
         | other -> failwith $"%s{context}: Darwin's root: %A{other}"
@@ -1346,13 +1397,25 @@ module TestUTimensAt =
             | other -> failwith $"%s{context}: symlink: %A{other}"
 
         match
-            UnixPathResolution.tryUtimensat (atFdCwd user) (pathOf user "wl") TimesArgument.Null (noFollow user) system
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                (atFdCwd user)
+                (pathOf user "wl")
+                TimesArgument.Null
+                (noFollow user)
+                system
         with
         | Error (UTimensAtRefusal.UnmeasuredSymlinkWrite _) -> ()
         | other -> failwith $"%s{context}: a writable link of root's: %A{other}"
 
         // Not both times now: EPERM, as for root's own link /tmp.
-        UnixPathResolution.tryUtimensat (atFdCwd user) (pathOf user "wl") (timesOf user "X/X") (noFollow user) system
+        UnixPathResolution.tryUtimensat
+            (Callers.leader system)
+            (atFdCwd user)
+            (pathOf user "wl")
+            (timesOf user "X/X")
+            (noFollow user)
+            system
         |> Result.map fst
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EPERM))
 
@@ -1360,6 +1423,14 @@ module TestUTimensAt =
         let linux = callerOf SimulatedUnixPlatform.linuxX64 "1000"
         let system = boot linux |> dropped linux
 
-        match UnixPathResolution.tryUtimensat 0 NullablePathArgument.Null TimesArgument.Null 0 system with
+        match
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                0
+                NullablePathArgument.Null
+                TimesArgument.Null
+                0
+                system
+        with
         | Error (UTimensAtRefusal.LaunchedPipe _) -> ()
         | other -> failwith $"%s{context}: a launched pipe: %A{other}"

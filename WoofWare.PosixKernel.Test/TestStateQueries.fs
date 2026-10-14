@@ -76,7 +76,7 @@ module TestStateQueries =
             uptime |> shouldEqual (List.sum advances)
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual uptime
 
-            match UnixClock.tryClockGettime (fullPrecisionSinceBoot platform) system with
+            match UnixClock.tryClockGettime (Callers.leader system) (fullPrecisionSinceBoot platform) system with
             | Ok (Ok reading) ->
                 UnixTimestamp.seconds reading * 1_000_000_000L
                 + int64 (UnixTimestamp.nanoseconds reading)

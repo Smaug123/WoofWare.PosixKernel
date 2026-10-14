@@ -1078,7 +1078,8 @@ module TestTransferCounts =
                 | Ok (GetCwdAnswer.Failed error) -> Ok (Error error)
                 | Error refusal -> Error refusal
 
-            let actual = UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity system
+            let actual =
+                UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped capacity system
 
             if normalise expected <> normalise actual then
                 failwith $"%A{machine} at capacity %d{capacity}: expected %A{expected}, got %A{actual}"

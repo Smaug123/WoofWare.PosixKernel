@@ -203,7 +203,8 @@ It gives back its answer with the system as the call left it, or the answer alon
 
 A `Caller` names the thread making a call: `Caller.make (pid : ProcessId) (thread : 'Thread)` is the thread the client calls `thread` in the process whose ID is `pid` (`UnixSystem.processId`), and `Caller.processId` and `Caller.thread` read it back.
 A thread's name is its process's own, so two processes may each have a thread the client calls `0`, and their callers differ.
-The descriptor calls (`UnixDescriptor`) and `UnixPipe.pipe2` take the caller as their first argument.
+The descriptor calls (`UnixDescriptor`), `UnixPipe.pipe2`, the path calls (`UnixPathResolution`), the credential calls (`UnixCredentials`), the clocks (`UnixClock`) and the entropy calls (`UnixEntropy`) take the caller as their first argument.
+`UnixPathResolution.accessWithPath`, which finishes a call its caller has already begun, takes none, and nor does `UnixPathResolution.currentDirectoryPath`, which reads the process's state without making a call.
 
 Each of those calls checks its caller before it does anything else.
 The caller's process must be the system's, and its thread one of that process's threads, parked in no syscall; the finishing function `UnixDescriptor.flockAcquire` requires the thread to be parked instead, in the call it finishes (see "Sleeping and waking").
@@ -352,23 +353,23 @@ A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (policy : SymlinkPolicy) (path : PathArgumentBytes)` | `FileStatusAnswer` |
-| `fstat(2)` | `UnixPathResolution.fstat (fd : int)` | `FileStatusAnswer` |
-| `fstatat(2)` | `UnixPathResolution.fstatat (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `FileStatusAnswer` |
-| `chmod(2)` | `UnixPathResolution.chmod (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `fchmod(2)` | `UnixPathResolution.fchmod (fd : int) (mode : int)` | `SyscallAnswer * UnixSystem` |
-| `fchmodat(2)` | `UnixPathResolution.fchmodat (dirfd : int) (path : PathArgumentBytes) (mode : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `chown(2)` | `UnixPathResolution.chown (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `lchown(2)` | `UnixPathResolution.lchown (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `fchown(2)` | `UnixPathResolution.fchown (fd : int) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `fchownat(2)` | `UnixPathResolution.fchownat (dirfd : int) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `utimensat(2)`, and Linux's `futimens(3)` | `UnixPathResolution.utimensat (dirfd : int) (path : NullablePathArgument) (times : TimesArgument) (flags : int)` | `SyscallAnswer * UnixSystem` |
-| `statfs(2)` | `UnixPathResolution.statfs (path : PathArgumentBytes)` | `FileSystemStatisticsAnswer` |
-| `fstatfs(2)` | `UnixPathResolution.fstatfs (fd : int)` | `FileSystemStatisticsAnswer` |
-| `getcwd(3)` | `UnixPathResolution.getcwd (destination : UserBuffer) (capacity : uint64)` | `GetCwdAnswer` |
-| `chdir(2)` | `UnixPathResolution.chdir (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
-| `access(2)` | `UnixPathResolution.access (mode : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
-| `faccessat(2)` | `UnixPathResolution.faccessat (dirfd : int) (mode : int) (flags : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
+| `stat(2)` (`SymlinkPolicy.Follow`), `lstat(2)` (`SymlinkPolicy.NoFollowFinal`) | `UnixPathResolution.stat (caller : Caller) (policy : SymlinkPolicy) (path : PathArgumentBytes)` | `FileStatusAnswer` |
+| `fstat(2)` | `UnixPathResolution.fstat (caller : Caller) (fd : int)` | `FileStatusAnswer` |
+| `fstatat(2)` | `UnixPathResolution.fstatat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int)` | `FileStatusAnswer` |
+| `chmod(2)` | `UnixPathResolution.chmod (caller : Caller) (path : PathArgumentBytes) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `fchmod(2)` | `UnixPathResolution.fchmod (caller : Caller) (fd : int) (mode : int)` | `SyscallAnswer * UnixSystem` |
+| `fchmodat(2)` | `UnixPathResolution.fchmodat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (mode : int) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `chown(2)` | `UnixPathResolution.chown (caller : Caller) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `lchown(2)` | `UnixPathResolution.lchown (caller : Caller) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `fchown(2)` | `UnixPathResolution.fchown (caller : Caller) (fd : int) (user : UserId option) (group : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `fchownat(2)` | `UnixPathResolution.fchownat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (user : UserId option) (group : GroupId option) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `utimensat(2)`, and Linux's `futimens(3)` | `UnixPathResolution.utimensat (caller : Caller) (dirfd : int) (path : NullablePathArgument) (times : TimesArgument) (flags : int)` | `SyscallAnswer * UnixSystem` |
+| `statfs(2)` | `UnixPathResolution.statfs (caller : Caller) (path : PathArgumentBytes)` | `FileSystemStatisticsAnswer` |
+| `fstatfs(2)` | `UnixPathResolution.fstatfs (caller : Caller) (fd : int)` | `FileSystemStatisticsAnswer` |
+| `getcwd(3)` | `UnixPathResolution.getcwd (caller : Caller) (destination : UserBuffer) (capacity : uint64)` | `GetCwdAnswer` |
+| `chdir(2)` | `UnixPathResolution.chdir (caller : Caller) (path : PathArgumentBytes)` | `SyscallAnswer * UnixSystem` |
+| `access(2)` | `UnixPathResolution.access (caller : Caller) (mode : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
+| `faccessat(2)` | `UnixPathResolution.faccessat (caller : Caller) (dirfd : int) (mode : int) (flags : int)` | `CallProgress<PausedAccess, SyscallAnswer>` |
 | `access(2)` or `faccessat(2)`, given the path | `UnixPathResolution.accessWithPath (path : PathArgumentBytes) (paused : PausedAccess)` | `SyscallAnswer` |
 
 `UnixPathResolution.currentDirectoryPath` is the current directory's path, for a client that wants it without a buffer.
@@ -544,17 +545,17 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `clock_gettime(2)` | `UnixClock.clockGettime (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
-| `gettimeofday(2)` | `UnixClock.gettimeofday` | `UnixTimestamp` |
-| Linux's `getrandom(2)` | `UnixEntropy.getRandom (thread : 'Thread) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
-| Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
+| `clock_gettime(2)` | `UnixClock.clockGettime (caller : Caller) (clockId : int)` | `Result<UnixTimestamp, UnixError>` |
+| `gettimeofday(2)` | `UnixClock.gettimeofday (caller : Caller)` | `UnixTimestamp` |
+| Linux's `getrandom(2)` | `UnixEntropy.getRandom (caller : Caller) (buffer : UserBuffer) (count : uint64) (flags : uint32)` | `GetRandomAnswer * UnixSystem` |
+| Darwin's `getentropy(2)` | `UnixEntropy.getEntropy (caller : Caller) (buffer : UserBuffer) (length : uint64)` | `GetEntropyAnswer * UnixSystem` |
 | `getpid(2)` | `UnixSystem.processId` | `ProcessId` |
 | `umask(2)` | `UnixSystem.umask (mask : int)` | `PermissionBits * UnixSystem` |
-| `getresuid(2)` | `UnixCredentials.getresuid (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
-| `getresgid(2)` | `UnixCredentials.getresgid (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
-| `setresuid(2)` | `UnixCredentials.setresuid (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
-| `setresgid(2)` | `UnixCredentials.setresgid (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
-| `setgroups(2)` | `UnixCredentials.setgroups (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
+| `getresuid(2)` | `UnixCredentials.getresuid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<UserId>` |
+| `getresgid(2)` | `UnixCredentials.getresgid (caller : Caller) (real : UserBuffer) (effective : UserBuffer) (saved : UserBuffer)` | `GetIdsAnswer<GroupId>` |
+| `setresuid(2)` | `UnixCredentials.setresuid (caller : Caller) (real : UserId option) (effective : UserId option) (saved : UserId option)` | `SyscallAnswer * UnixSystem` |
+| `setresgid(2)` | `UnixCredentials.setresgid (caller : Caller) (real : GroupId option) (effective : GroupId option) (saved : GroupId option)` | `SyscallAnswer * UnixSystem` |
+| `setgroups(2)` | `UnixCredentials.setgroups (caller : Caller) (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
 | `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (parent : 'Thread) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
 | Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (thread : 'Thread) (status : int)` | `ProcessFate<unit>` |
 | `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (thread : 'Thread) (status : int)` | `EndedProcess` |

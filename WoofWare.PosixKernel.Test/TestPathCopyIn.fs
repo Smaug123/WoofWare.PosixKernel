@@ -165,7 +165,7 @@ module TestPathCopyIn =
 
         let stat (policy : SymlinkPolicy) (nullBuffer : bool) =
             Some (fun path system ->
-                match UnixPathResolution.tryStat policy path system with
+                match UnixPathResolution.tryStat (Callers.leader system) policy path system with
                 | Ok (FileStatusAnswer.Failed error) -> Some error
                 // The buffer is the caller's to write: the walk has answered by
                 // now, so an unwritable one is EFAULT exactly where it succeeded.
@@ -183,7 +183,7 @@ module TestPathCopyIn =
 
         let statfs (nullBuffer : bool) =
             Some (fun path system ->
-                match Answered.statfs path system with
+                match Answered.statfs (Callers.leader system) path system with
                 | FileSystemStatisticsAnswer.Failed error -> Some error
                 | FileSystemStatisticsAnswer.Reported _ -> if nullBuffer then Some UnixError.EFAULT else None
             )
@@ -223,21 +223,36 @@ module TestPathCopyIn =
         | "mkdir", "mode all bits" -> Some (fun path system -> ofAnswer (fst (Answered.mkdir path 0xffff system)))
         | "unlink", "-" -> answered UnixNamespace.tryUnlink
         | "rmdir", "-" -> answered UnixNamespace.tryRmdir
-        | "chdir", "-" -> Some (fun path system -> ofAnswer (fst (Answered.chdir path system)))
-        | "chmod", "mode 0644" -> answered (fun path -> UnixPathResolution.tryChmod path 0o644)
-        | "chmod", "mode all bits" -> answered (fun path -> UnixPathResolution.tryChmod path 0xffff)
-        | "chown", "uid -1" -> answered (fun path -> UnixPathResolution.tryChown path None None)
+        | "chdir", "-" -> Some (fun path system -> ofAnswer (fst (Answered.chdir (Callers.leader system) path system)))
+        | "chmod", "mode 0644" ->
+            answered (fun path system -> UnixPathResolution.tryChmod (Callers.leader system) path 0o644 system)
+        | "chmod", "mode all bits" ->
+            answered (fun path system -> UnixPathResolution.tryChmod (Callers.leader system) path 0xffff system)
+        | "chown", "uid -1" ->
+            answered (fun path system -> UnixPathResolution.tryChown (Callers.leader system) path None None system)
         | "chown", "uid own" ->
             Some (fun path system ->
                 match
-                    UnixPathResolution.tryChown path (Some (Lone.proc system).Credentials.EffectiveUser) None system
+                    UnixPathResolution.tryChown
+                        (Callers.leader system)
+                        path
+                        (Some (Lone.proc system).Credentials.EffectiveUser)
+                        None
+                        system
                 with
                 | Ok (answer, _) -> ofAnswer answer
                 | Error refusal -> failwith $"chown refused: %A{refusal}"
             )
-        | "chown", "uid 4242" -> answered (fun path -> UnixPathResolution.tryChown path (Some (uid 4242u)) None)
-        | "lchown", "uid -1" -> answered (fun path -> UnixPathResolution.tryLchown path None None)
-        | "lchown", "uid 4242" -> answered (fun path -> UnixPathResolution.tryLchown path (Some (uid 4242u)) None)
+        | "chown", "uid 4242" ->
+            answered (fun path system ->
+                UnixPathResolution.tryChown (Callers.leader system) path (Some (uid 4242u)) None system
+            )
+        | "lchown", "uid -1" ->
+            answered (fun path system -> UnixPathResolution.tryLchown (Callers.leader system) path None None system)
+        | "lchown", "uid 4242" ->
+            answered (fun path system ->
+                UnixPathResolution.tryLchown (Callers.leader system) path (Some (uid 4242u)) None system
+            )
         | "stat", "buffer" -> stat SymlinkPolicy.Follow false
         | "stat", "NULL buffer" -> stat SymlinkPolicy.Follow true
         | "lstat", "buffer" -> stat SymlinkPolicy.NoFollowFinal false
@@ -527,7 +542,7 @@ module TestPathCopyIn =
             holds (
                 changing
                     $"chmod 0o%o{mode}"
-                    (fun path -> UnixPathResolution.tryChmod path mode)
+                    (fun path system -> UnixPathResolution.tryChmod (Callers.leader system) path mode system)
                     (fun path ->
                         UnixPathResolution.chmodParsed AtDirectory.CurrentDirectory SymlinkPolicy.Follow path mode
                     )
@@ -537,7 +552,7 @@ module TestPathCopyIn =
             holds (
                 changing
                     $"chown %A{user}"
-                    (fun path -> UnixPathResolution.tryChown path user group)
+                    (fun path system -> UnixPathResolution.tryChown (Callers.leader system) path user group system)
                     (fun path ->
                         UnixPathResolution.chownParsed
                             AtDirectory.CurrentDirectory
@@ -551,7 +566,7 @@ module TestPathCopyIn =
             holds (
                 changing
                     $"lchown %A{user}"
-                    (fun path -> UnixPathResolution.tryLchown path user group)
+                    (fun path system -> UnixPathResolution.tryLchown (Callers.leader system) path user group system)
                     (fun path ->
                         UnixPathResolution.chownParsed
                             AtDirectory.CurrentDirectory
@@ -562,7 +577,12 @@ module TestPathCopyIn =
                     )
             )
 
-        holds (changing "chdir" UnixPathResolution.tryChdir UnixPathResolution.chdirParsed)
+        holds (
+            changing
+                "chdir"
+                (fun path system -> UnixPathResolution.tryChdir (Callers.leader system) path system)
+                UnixPathResolution.chdirParsed
+        )
 
     [<Test>]
     let ``querying calls copy their path in and then answer as before`` () : unit =
@@ -570,7 +590,7 @@ module TestPathCopyIn =
             holds
                 {
                     Name = $"stat %A{policy}"
-                    Bytes = UnixPathResolution.tryStat policy
+                    Bytes = fun path system -> UnixPathResolution.tryStat (Callers.leader system) policy path system
                     Parsed = UnixPathResolution.statParsed AtDirectory.CurrentDirectory policy
                     FailedWithoutChange = fun error _ answer -> answer = Ok (FileStatusAnswer.Failed error)
                 }
@@ -578,7 +598,7 @@ module TestPathCopyIn =
         holds
             {
                 Name = "statfs"
-                Bytes = UnixPathResolution.tryStatfs
+                Bytes = fun path system -> UnixPathResolution.tryStatfs (Callers.leader system) path system
                 Parsed = UnixPathResolution.statfsParsed
                 FailedWithoutChange = fun error _ answer -> answer = Ok (FileSystemStatisticsAnswer.Failed error)
             }

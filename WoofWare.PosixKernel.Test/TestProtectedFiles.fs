@@ -477,7 +477,10 @@ module TestProtectedFiles =
         | SyscallAnswer.Failed error -> $"%A{error}"
 
     let private statText (policy : SymlinkPolicy) (p : string) (system : UnixSystem<int, string>) : string =
-        match UnixPathResolution.tryStat policy (PathArg.ofPath (path p)) system |> ok with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) policy (PathArg.ofPath (path p)) system
+            |> ok
+        with
         | FileStatusAnswer.Reported _ -> "ok"
         | FileStatusAnswer.Failed error -> $"%A{error}"
 
@@ -598,21 +601,27 @@ module TestProtectedFiles =
             )
             "readlink", readlinkText
             "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
-            "access-nofollow", accessText (UnixPathResolution.tryFaccessatEager -100 (bytes "/s/lf") 0 0x100 system)
+            "access-nofollow",
+            accessText (
+                UnixPathResolution.tryFaccessatEager (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system
+            )
             "chown",
-            UnixPathResolution.tryChown (PathArg.ofPath (path "/s/lf")) None None system
+            UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
             |> fst
             |> answerText
             "lchown",
-            UnixPathResolution.tryLchown (PathArg.ofPath (path "/s/lf")) None None system
+            UnixPathResolution.tryLchown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
             |> fst
             |> answerText
             "dir-slash", stat "/s/ld/"
             "dir-dot", stat "/s/ld/."
             "dir-child", stat "/s/ld/x"
-            "chdir", Answered.chdir (PathArg.ofPath (path "/s/ld")) system |> fst |> answerText
+            "chdir",
+            Answered.chdir (Callers.leader system) (PathArg.ofPath (path "/s/ld")) system
+            |> fst
+            |> answerText
             "opendir",
             fst (
                 openText
@@ -696,7 +705,13 @@ module TestProtectedFiles =
                         [
                             "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
-                            UnixPathResolution.tryFaccessatEager -100 (bytes "/ids/lf") 4 0x200 system
+                            UnixPathResolution.tryFaccessatEager
+                                (Callers.leader system)
+                                -100
+                                (bytes "/ids/lf")
+                                4
+                                0x200
+                                system
                             |> ok
                             |> answerText
                             "stat", statText SymlinkPolicy.Follow "/ids/lf" system
@@ -751,7 +766,13 @@ module TestProtectedFiles =
                     // The kernel's answer here is EACCES or ELOOP by its cache.
                     [ "EACCES" ; "ELOOP" ] |> shouldContain row.["stat"]
 
-                    match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (path start)) system with
+                    match
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.Follow
+                            (PathArg.ofPath (path start))
+                            system
+                    with
                     | Error (StatRefusal.Path (PathRefusal.ProtectedSymlinkCacheDependent (_, _, refusedAt, limit))) ->
                         (n, refusedAt, limit) |> shouldEqual (n, traversal, linuxLimit)
                     | other -> failwith $"chain %d{n}: expected the cache-dependent refusal, got %A{other}"
@@ -855,16 +876,24 @@ module TestProtectedFiles =
 
         let calls : (string * (string -> WalkOutcome)) list =
             [
-                "stat", (fun p -> UnixPathResolution.tryStat SymlinkPolicy.Follow (bytes p) system |> ofStatus)
+                "stat",
+                (fun p ->
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (bytes p) system
+                    |> ofStatus
+                )
                 // A trailing separator follows the final link even for lstat.
                 "lstat of p/",
                 (fun p ->
-                    UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (bytes (p + "/")) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.NoFollowFinal
+                        (bytes (p + "/"))
+                        system
                     |> ofStatus
                 )
                 "fstatat",
                 (fun p ->
-                    match UnixPathResolution.tryFstatat atFdCwd (bytes p) 0 system with
+                    match UnixPathResolution.tryFstatat (Callers.leader system) atFdCwd (bytes p) 0 system with
                     | Ok (FileStatusAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileStatusAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error (FStatAtRefusal.Stat (StatRefusal.Path refusal)) -> WalkOutcome.Refused refusal
@@ -872,7 +901,7 @@ module TestProtectedFiles =
                 )
                 "statfs",
                 (fun p ->
-                    match UnixPathResolution.tryStatfs (bytes p) system with
+                    match UnixPathResolution.tryStatfs (Callers.leader system) (bytes p) system with
                     | Ok (FileSystemStatisticsAnswer.Reported _) -> WalkOutcome.Answered None
                     | Ok (FileSystemStatisticsAnswer.Failed error) -> WalkOutcome.Answered (Some error)
                     | Error refusal -> WalkOutcome.Refused refusal

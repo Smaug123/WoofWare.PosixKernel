@@ -181,7 +181,14 @@ module TestEntropyAgainstHost =
                                 hostAnswer (int64 (getrandom (address storage where, unativeint count, flags)))
 
                             let modelled =
-                                match UnixEntropy.tryGetRandom 0 (classify where) count flags system with
+                                match
+                                    UnixEntropy.tryGetRandom
+                                        (Callers.thread 0 system)
+                                        (classify where)
+                                        count
+                                        flags
+                                        system
+                                with
                                 | Ok (GetRandomAnswer.Completed draw, _) -> Ok (int64 (EntropyDraw.count draw))
                                 | Ok (GetRandomAnswer.Failed error, _) ->
                                     Error (
@@ -281,7 +288,7 @@ module TestEntropyAgainstHost =
                         hostAnswer (int64 (getentropy (address storage where, unativeint length)))
 
                     let modelled =
-                        match UnixEntropy.tryGetEntropy (classify where) length system with
+                        match UnixEntropy.tryGetEntropy (Callers.leader system) (classify where) length system with
                         | Ok (GetEntropyAnswer.Completed _, _) -> Ok 0L
                         | Ok (GetEntropyAnswer.Failed error, _) ->
                             Error (

@@ -406,7 +406,7 @@ module TestClock =
 
     /// Classify an answer by which of the two clocks it read.
     let private classify (system : UnixSystem<int, string>) (clockId : int) : Outcome =
-        match UnixClock.tryClockGettime clockId system with
+        match UnixClock.tryClockGettime (Callers.leader system) clockId system with
         | Error _ -> Outcome.Refused
         | Ok (Error UnixError.EINVAL) -> Outcome.Invalid
         | Ok (Error other) -> failwith $"clock id %d{clockId} failed with %O{other}, which no measured kernel does"
@@ -453,7 +453,9 @@ module TestClock =
     let ``each refusal names the id it was asked about`` () : unit =
         for flavour in flavours do
             for clockId in sweptIds do
-                match UnixClock.tryClockGettime clockId (telling flavour) with
+                let system = telling flavour
+
+                match UnixClock.tryClockGettime (Callers.leader system) clockId system with
                 | Error refusal ->
                     let named =
                         match refusal with
@@ -501,7 +503,7 @@ module TestClock =
                 | Outcome.Refused -> false
             )
             |> List.forall (fun clockId ->
-                match UnixClock.tryClockGettime clockId system with
+                match UnixClock.tryClockGettime (Callers.leader system) clockId system with
                 | Ok (Ok reading) -> exactNanoseconds reading = expectedReading flavour clockId bootTime up
                 | other -> failwith $"%O{flavour} clock id %d{clockId} should have answered, got %A{other}"
             )
@@ -516,7 +518,9 @@ module TestClock =
             systemWith SimulatedUnixFlavour.Darwin (UnixTimestamp.ofSeconds 10L) 1_000_999L
 
         match
-            UnixClock.tryClockGettime 0 system, UnixClock.tryClockGettime 6 system, UnixClock.tryClockGettime 8 system
+            UnixClock.tryClockGettime (Callers.leader system) 0 system,
+            UnixClock.tryClockGettime (Callers.leader system) 6 system,
+            UnixClock.tryClockGettime (Callers.leader system) 8 system
         with
         | Ok (Ok realtime), Ok (Ok monotonic), Ok (Ok uptime) ->
             realtime |> shouldEqual (UnixTimestamp.createOrFail "TestClock" 10L 1_000_000)
@@ -529,6 +533,8 @@ module TestClock =
         let property (flavour : SimulatedUnixFlavour, bootTime : UnixTimestamp, up : int64) : bool =
             let realtime = exactNanoseconds bootTime + bigint up
 
-            exactNanoseconds (UnixClock.gettimeofday (systemWith flavour bootTime up)) = realtime - realtime % 1000I
+            let system = systemWith flavour bootTime up
+
+            exactNanoseconds (UnixClock.gettimeofday (Callers.leader system) system) = realtime - realtime % 1000I
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen reachableGen) property)

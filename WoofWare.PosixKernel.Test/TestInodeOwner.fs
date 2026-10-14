@@ -176,6 +176,7 @@ module TestInodeOwner =
     let private ownerAt (path : string) (system : UnixSystem<int, string>) : InodeOwner =
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context path))
                 system

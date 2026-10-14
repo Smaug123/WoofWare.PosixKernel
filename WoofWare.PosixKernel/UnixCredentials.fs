@@ -149,8 +149,8 @@ module UnixCredentials =
 
         write [] [ real, realId ; effective, effectiveId ; saved, savedId ]
 
-    /// `getresuid`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetresuid` once `Entry` has admitted its caller.
+    let private tryGetresuidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
@@ -161,6 +161,23 @@ module UnixCredentials =
 
         getIds real effective saved (credentials.RealUser, credentials.EffectiveUser, credentials.SavedUser) system
 
+    /// `getresuid`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (real : UserBuffer)
+        (effective : UserBuffer)
+        (saved : UserBuffer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetIdsAnswer<UserId>, GetIdsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.getresuid"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetresuidIn real effective saved)
+            system
+
     /// <summary>
     /// `getresuid(2)`: the process's real, effective and saved user IDs, into
     /// three buffers.
@@ -170,17 +187,18 @@ module UnixCredentials =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
     let getresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetIdsAnswer<UserId>
         =
-        tryGetresuid real effective saved system
+        tryGetresuid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.getresuid" GetIdsRefusal.kind GetIdsRefusal.describe
 
-    /// `getresgid`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryGetresgid` once `Entry` has admitted its caller.
+    let private tryGetresgidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
@@ -191,6 +209,23 @@ module UnixCredentials =
 
         getIds real effective saved (credentials.RealGroup, credentials.EffectiveGroup, credentials.SavedGroup) system
 
+    /// `getresgid`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (real : UserBuffer)
+        (effective : UserBuffer)
+        (saved : UserBuffer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetIdsAnswer<GroupId>, GetIdsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.getresgid"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetresgidIn real effective saved)
+            system
+
     /// <summary>
     /// `getresgid(2)`: the process's real, effective and saved group IDs, into
     /// three buffers.
@@ -200,13 +235,14 @@ module UnixCredentials =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `getresuid` nor `getresgid`.</exception>
     let getresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetIdsAnswer<GroupId>
         =
-        tryGetresgid real effective saved system
+        tryGetresgid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.getresgid" GetIdsRefusal.kind GetIdsRefusal.describe
 
     // Linux's rule for `setresuid` and `setresgid`, which differ only in which
@@ -268,8 +304,8 @@ module UnixCredentials =
         | CoreDumps.Written
         | CoreDumps.Suppressed -> Ok ()
 
-    /// `setresuid`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySetresuid` once `Entry` has admitted its caller.
+    let private trySetresuidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
@@ -307,6 +343,23 @@ module UnixCredentials =
             }
         )
 
+    /// `setresuid`, with a refusal answered as the `Error` rather than raised.
+    let internal trySetresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (real : UserId option)
+        (effective : UserId option)
+        (saved : UserId option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.setresuid"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (trySetresuidIn real effective saved)
+            system
+
     /// <summary>
     /// `setresuid(2)`: set the process's real, effective and saved user IDs.
     /// `None` leaves an ID as it is.
@@ -321,17 +374,18 @@ module UnixCredentials =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresuid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        trySetresuid real effective saved system
+        trySetresuid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.setresuid" SetIdsRefusal.kind SetIdsRefusal.describe
 
-    /// `setresgid`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySetresgid` once `Entry` has admitted its caller.
+    let private trySetresgidIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
@@ -369,6 +423,23 @@ module UnixCredentials =
             }
         )
 
+    /// `setresgid`, with a refusal answered as the `Error` rather than raised.
+    let internal trySetresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (real : GroupId option)
+        (effective : GroupId option)
+        (saved : GroupId option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.setresgid"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (trySetresgidIn real effective saved)
+            system
+
     /// <summary>
     /// `setresgid(2)`: set the process's real, effective and saved group IDs.
     /// `None` leaves an ID as it is.
@@ -384,13 +455,14 @@ module UnixCredentials =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`.</exception>
     let setresgid<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        trySetresgid real effective saved system
+        trySetresgid caller real effective saved system
         |> Refusal.orRaise "UnixCredentials.setresgid" SetIdsRefusal.kind SetIdsRefusal.describe
 
     // Asserted wherever a kernel copies the list: a caller that read the
@@ -430,8 +502,8 @@ module UnixCredentials =
         | GroupListWords.Readable words -> parse [] words
         | GroupListWords.FaultsAfter readable -> parse [] readable |> Result.bind (fun _ -> Error UnixError.EFAULT)
 
-    /// `setgroups`, with a refusal answered as the `Error` rather than raised.
-    let internal trySetgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySetgroups` once `Entry` has admitted its caller.
+    let private trySetgroupsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (size : int)
         (words : GroupListWords)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -494,6 +566,22 @@ module UnixCredentials =
             | GroupListWords.FaultsAfter _ -> Ok (SyscallAnswer.Failed UnixError.EFAULT, system)
             | GroupListWords.Readable _ -> Ok (SyscallAnswer.Failed UnixError.EPERM, system)
 
+    /// `setgroups`, with a refusal answered as the `Error` rather than raised.
+    let internal trySetgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (size : int)
+        (words : GroupListWords)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetGroupsRefusal>
+        =
+        Entry.call
+            "UnixCredentials.setgroups"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (trySetgroupsIn size words)
+            system
+
     /// `setgroups(2)`: replace the process's supplementary groups with the
     /// `size` groups `words` holds, kept in the order given.
     ///
@@ -506,10 +594,11 @@ module UnixCredentials =
     /// Refused for a privileged Darwin process, whose answer has not been
     /// measured.
     let setgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (size : int)
         (words : GroupListWords)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        trySetgroups size words system
+        trySetgroups caller size words system
         |> Refusal.orRaise "UnixCredentials.setgroups" SetGroupsRefusal.kind SetGroupsRefusal.describe

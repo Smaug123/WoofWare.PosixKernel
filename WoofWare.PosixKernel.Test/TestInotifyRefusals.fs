@@ -66,6 +66,7 @@ module TestInotifyRefusals =
         chmodRefusal "." 0o700 system |> throughRemovedDirectory
 
         UnixPathResolution.tryUtimensat
+            (Callers.leader system)
             -100
             (NullablePathArgument.NotNull (PathArg.ofText "."))
             TimesArgument.Null
@@ -81,7 +82,7 @@ module TestInotifyRefusals =
         |> throughRemovedDirectory
 
         // `fchmodat`'s empty path from `AT_FDCWD` under `AT_EMPTY_PATH` is ".".
-        UnixPathResolution.tryFchmodat -100 (PathArg.ofText "") 0o700 0x1000 system
+        UnixPathResolution.tryFchmodat (Callers.leader system) -100 (PathArg.ofText "") 0o700 0x1000 system
         |> unplaced
             "fchmodat(AT_FDCWD, \"\", AT_EMPTY_PATH)"
             (fun refusal ->
@@ -100,7 +101,7 @@ module TestInotifyRefusals =
 
         let error =
             Assert.Throws<UnmodelledException> (fun () ->
-                UnixPathResolution.chmod (PathArg.ofText ".") 0o700 system
+                UnixPathResolution.chmod (Callers.leader system) (PathArg.ofText ".") 0o700 system
                 |> ignore<SyscallAnswer * UnixSystem<int, string>>
             )
 
@@ -141,7 +142,7 @@ module TestInotifyRefusals =
         =
         let _, fd, system = openedInRemoved attrib
 
-        UnixPathResolution.tryFchmod fd 0o700 system
+        UnixPathResolution.tryFchmod (Callers.leader system) fd 0o700 system
         |> unplaced
             "fchmod"
             (fun refusal ->
@@ -151,7 +152,7 @@ module TestInotifyRefusals =
             )
         |> throughRemovedDirectory
 
-        UnixPathResolution.tryFchown fd (Some UserId.root) None system
+        UnixPathResolution.tryFchown (Callers.leader system) fd (Some UserId.root) None system
         |> unplaced
             "fchown"
             (fun refusal ->
@@ -161,7 +162,7 @@ module TestInotifyRefusals =
             )
         |> throughRemovedDirectory
 
-        UnixPathResolution.tryUtimensat fd NullablePathArgument.Null TimesArgument.Null 0 system
+        UnixPathResolution.tryUtimensat (Callers.leader system) fd NullablePathArgument.Null TimesArgument.Null 0 system
         |> unplaced
             "futimens"
             (fun refusal ->
@@ -172,7 +173,7 @@ module TestInotifyRefusals =
         |> throughRemovedDirectory
 
         // `fchmodat`'s empty path under Linux's `AT_EMPTY_PATH` is the descriptor.
-        UnixPathResolution.tryFchmodat fd (PathArg.ofText "") 0o700 atEmptyPath system
+        UnixPathResolution.tryFchmodat (Callers.leader system) fd (PathArg.ofText "") 0o700 atEmptyPath system
         |> unplaced
             "fchmodat(fd, \"\", AT_EMPTY_PATH)"
             (fun refusal ->
@@ -191,7 +192,7 @@ module TestInotifyRefusals =
 
         let error =
             Assert.Throws<UnmodelledException> (fun () ->
-                UnixPathResolution.fchmod fd 0o700 system
+                UnixPathResolution.fchmod (Callers.leader system) fd 0o700 system
                 |> ignore<SyscallAnswer * UnixSystem<int, string>>
             )
 

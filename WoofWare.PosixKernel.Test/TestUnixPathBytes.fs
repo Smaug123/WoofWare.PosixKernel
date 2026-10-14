@@ -62,10 +62,10 @@ module TestUnixPathBytes =
             linux
             |> Answered.mkdir (PathArg.ofPath (pathOf directory)) 0o777
             |> completed
-            |> Answered.chdir (PathArg.ofPath (pathOf directory))
+            |> (fun system -> Answered.chdir (Callers.leader system) (PathArg.ofPath (pathOf directory)) system)
             |> completed
 
-        match UnixPathResolution.tryGetcwd UserBuffer.Mapped 4096UL system with
+        match UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 4096UL system with
         | Ok (GetCwdAnswer.Reported bytes) -> List.ofSeq bytes |> shouldEqual (directory @ [ 0uy ])
         | other -> failwith $"expected a path, got %A{other}"
 
@@ -211,7 +211,7 @@ module TestUnixPathBytes =
             seeded (Map.toList BindingProbes.tree) darwinImage
             |> Answered.mkdir (PathArg.ofPath (pathOf (text "/gone"))) 0o777
             |> completed
-            |> Answered.chdir (PathArg.ofPath (pathOf (text "/gone")))
+            |> (fun system -> Answered.chdir (Callers.leader system) (PathArg.ofPath (pathOf (text "/gone"))) system)
             |> completed
             |> Answered.rmdir (pathOf (text "../gone"))
             |> completed
@@ -365,6 +365,7 @@ module TestUnixPathBytes =
 
                 match
                     UnixPathResolution.tryStat
+                        (Callers.leader system)
                         SymlinkPolicy.NoFollowFinal
                         (PathArg.ofPath (pathOf [ slash ; byte 'l' ]))
                         system
@@ -388,6 +389,7 @@ module TestUnixPathBytes =
 
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte '.' ]))
                 system
@@ -411,6 +413,7 @@ module TestUnixPathBytes =
                 seeded [ nameOf [ byte 'l' ], SeedEntry.Symlink (targetOf (target length), None) ] darwinImage
 
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.Follow
                 (PathArg.ofPath (pathOf [ slash ; byte 'l' ; slash ; byte 'a' ]))
                 system

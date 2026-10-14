@@ -243,7 +243,13 @@ module TestDirectoryReadAgainstHost =
         | SyscallAnswer.Failed error -> failwith $"model %s{what} failed with %O{error}"
 
     let private modelInode (path : string) (system : UnixSystem<int, string>) : InodeNumber =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (rooted path)) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (rooted path))
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Inode
         | other -> failwith $"model stat %s{path}: %A{other}"
 

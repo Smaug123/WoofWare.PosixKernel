@@ -503,7 +503,11 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostChmod (onHost relative, mode)))
-                                (UnixPathResolution.tryChmod (PathArg.ofText relative) mode system.Value)
+                                (UnixPathResolution.tryChmod
+                                    (Callers.leader system.Value)
+                                    (PathArg.ofText relative)
+                                    mode
+                                    system.Value)
                         | Op.Chown (path, neither) ->
                             let user, group =
                                 if neither then
@@ -515,6 +519,7 @@ module TestInotifyDeliveryAgainstHost =
                                 op
                                 (hostAnswer (hostChown (onHost paths.[path], user, group)))
                                 (UnixPathResolution.tryChown
+                                    (Callers.leader system.Value)
                                     (PathArg.ofText paths.[path])
                                     (if neither then None else Some owner.User)
                                     (if neither then None else Some owner.Group)
@@ -537,6 +542,7 @@ module TestInotifyDeliveryAgainstHost =
                                     )
                                 ))
                                 (UnixPathResolution.tryUtimensat
+                                    (Callers.leader system.Value)
                                     -100
                                     (NullablePathArgument.NotNull (PathArg.ofText paths.[path]))
                                     (TimesArgument.Fields (
@@ -620,7 +626,7 @@ module TestInotifyDeliveryAgainstHost =
                             answered
                                 op
                                 (hostAnswer (hostFchmod (hostFd, mode)))
-                                (UnixPathResolution.tryFchmod modelFd mode system.Value)
+                                (UnixPathResolution.tryFchmod (Callers.leader system.Value) modelFd mode system.Value)
                         | Op.Close slot ->
                             let index = slot % kept.Count
                             let hostFd, modelFd = kept.[index]

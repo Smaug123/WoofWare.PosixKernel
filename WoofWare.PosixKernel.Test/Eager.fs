@@ -61,7 +61,7 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
-        UnixPathResolution.tryAccess mode system
+        UnixPathResolution.tryAccess (Callers.leader system) mode system
         |> CallProgress.resumeWith (UnixPathResolution.tryAccessWithPath path)
 
     /// `inotify_add_watch(2)`: `UnixInotify.tryInotifyAddWatch`, then
