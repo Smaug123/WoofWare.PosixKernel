@@ -137,6 +137,12 @@ type internal SyscallRefusal<'Thread> =
     | SetGroups of SetGroupsRefusal
     /// `inotify_init1(2)` and `inotify_rm_watch(2)` alike.
     | Inotify of InotifyRefusal
+    /// The calling thread is not one of the process's threads, so it cannot be
+    /// making a call.
+    | NotAThread of thread : 'Thread * call : Syscall
+    /// The calling thread is asleep in another syscall: a thread makes one call
+    /// at a time, and a sleeping call is finished, not issued again.
+    | CallerAsleep of thread : 'Thread * park : ThreadPark * call : Syscall
 
 [<RequireQualifiedAccess>]
 module internal SyscallRefusal =
@@ -170,6 +176,10 @@ module internal SyscallRefusal =
         | SyscallRefusal.SetIds refusal -> $"setresuid or setresgid: %s{SetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetGroups refusal -> $"setgroups: %s{SetGroupsRefusal.describe refusal}"
         | SyscallRefusal.Inotify refusal -> $"inotify_init1 or inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
+        | SyscallRefusal.NotAThread (thread, call) ->
+            $"%A{call}: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
+        | SyscallRefusal.CallerAsleep (thread, park, call) ->
+            $"%A{call}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making another call. A thread makes one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallRefusal<'Thread>) : RefusalKind =
@@ -199,6 +209,8 @@ module internal SyscallRefusal =
         | SyscallRefusal.SetIds inner -> SetIdsRefusal.kind inner
         | SyscallRefusal.SetGroups inner -> SetGroupsRefusal.kind inner
         | SyscallRefusal.Inotify inner -> InotifyRefusal.kind inner
+        | SyscallRefusal.NotAThread _ -> RefusalKind.Misuse
+        | SyscallRefusal.CallerAsleep _ -> RefusalKind.Misuse
 
 /// A way this system's tables disagree with each other — a state no kernel
 /// could be in, and which the operations here exist to keep unreachable.
@@ -1189,6 +1201,13 @@ module UnixSystem =
             result
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
 
+        match Map.tryFind thread system.Threads with
+        | None -> Error (SyscallRefusal.NotAThread (thread, call))
+        | Some {
+                   Parked = Some park
+               } -> Error (SyscallRefusal.CallerAsleep (thread, park, call))
+        | Some _ ->
+
         match call with
         | Syscall.GetEffectiveUserId ->
             Ok (
@@ -1326,13 +1345,14 @@ module UnixSystem =
     /// Answer one syscall, made by `thread`.
     ///
     /// The thread is what a blocking answer is recorded against: `FLock` that
-    /// would block parks it, and the returned system carries that park.
+    /// would block parks it, and the returned system carries that park. It must
+    /// be one of the process's threads, and not asleep in another syscall.
     ///
     /// Sugar over the per-syscall functions above, for a client that wants one
     /// surface — to log every syscall, to replay a recorded sequence, or to
     /// generate them. Where a syscall's own function has a narrower type (the
-    /// answer to `GetEffectiveUserId` cannot be a failure, `Dup` cannot be
-    /// refused, and only `FLock` can block), that type is the one to prefer.
+    /// answer to `GetEffectiveUserId` cannot be a failure, and only `FLock` can
+    /// block), that type is the one to prefer.
     ///
     /// **Not every syscall this module answers is reachable through here.** A
     /// syscall whose answer carries more than an integer — `read`, whose answer
@@ -1343,6 +1363,7 @@ module UnixSystem =
     /// a buffer-carrying syscall gets to choose it. Until then those syscalls
     /// are reached through their own functions, which lose nothing.
     /// </summary>
+    /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)

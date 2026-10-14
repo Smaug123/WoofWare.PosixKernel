@@ -724,6 +724,36 @@ module TestCrossProcess =
         error.Message
         |> shouldContainText "was not focused from the machine as it stands"
 
+    [<Test>]
+    let ``a process alone on its machine ends on the machine it ran on, leaving no process`` () : unit =
+        for platform in Machines.platforms do
+            let pids, machine = Machines.ofCount platform 1
+            let view = Machines.viewOf pids.[0] machine
+            let ended = UnixThreadLifecycle.exitGroup 0 3 view
+
+            match SimulatedMachine.tryEndLoneProcess ended with
+            | Ok (termination, after) ->
+                termination |> shouldEqual (EndedProcess.termination ended)
+                SimulatedMachine.processIds after |> shouldBeEmpty
+                Machines.assertClean after
+
+                // What `endProcess` answers on the machine the view was of.
+                match SimulatedMachine.tryEndProcess ended machine with
+                | Ok expected -> (termination, after) |> shouldEqual expected
+                | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"endLoneProcess: %s{ProcessEndRefusal.describe refusal}"
+
+    [<Test>]
+    let ``a process that ended beside others is not ended as a lone one`` () : unit =
+        let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
+        let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf pids.[0] machine)
+
+        let error =
+            Assert.Throws<exn> (fun () -> SimulatedMachine.tryEndLoneProcess ended |> ignore)
+
+        error.Message |> shouldContainText "SimulatedMachine.endLoneProcess"
+        error.Message |> shouldContainText "is not alone on its machine"
+
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
     let private deliveries (machine : SimulatedMachine<int, string>) : (ExternalEndpoint * byte list) list =
         DeliveryLog.toList machine.Machine.Delivered
