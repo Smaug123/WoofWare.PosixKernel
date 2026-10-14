@@ -211,6 +211,7 @@
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
+    <Compile Include="TestImplicitSelfConnectMeasured.fs" />
     <Compile Include="TestSocketAddressLength.fs" />
     <Compile Include="TestSockaddrDecoding.fs" />
     <Compile Include="SocketLadder.fs" />
@@ -339,6 +340,11 @@
          sockaddr-dgram-connect.c, embedded from beside them.
          `TestConnectLadderMeasured`, `TestBindLadderMeasured` and
          `TestConnectDestinationMeasured` replay every row. -->
+    <!-- What connect(2) answered when its source was its own destination, measured
+         per flavour by docs/probes/implicit-self-connect.
+         `TestImplicitSelfConnectMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
