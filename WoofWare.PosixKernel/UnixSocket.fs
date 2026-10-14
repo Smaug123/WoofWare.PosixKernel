@@ -96,7 +96,7 @@ module internal SockaddrCopyRefusal =
         | SockaddrCopyRefusal.UnmodelledDomain _ -> RefusalKind.Unmodelled
         | SockaddrCopyRefusal.UnmodelledInet6Kind _ -> RefusalKind.Unmodelled
         | SockaddrCopyRefusal.DarwinShortInet6Sockaddr _ -> RefusalKind.Unmodelled
-        | SockaddrCopyRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | SockaddrCopyRefusal.Buffer refusal -> BufferRefusal.kind refusal
 
 /// What a `bind(2)` answered.
 [<RequireQualifiedAccess>]
@@ -275,7 +275,7 @@ module internal GetSockNameRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetSockNameRefusal) : RefusalKind =
         match refusal with
-        | GetSockNameRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetSockNameRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetSockNameRefusal.UnmodelledDomain _ -> RefusalKind.Unmodelled
         | GetSockNameRefusal.UnmodelledInet6Kind _ -> RefusalKind.Unmodelled
 
@@ -332,7 +332,7 @@ module internal SocketOptionRefusal =
     let kind (refusal : SocketOptionRefusal) : RefusalKind =
         match refusal with
         | SocketOptionRefusal.UnmodelledOption _ -> RefusalKind.Unmodelled
-        | SocketOptionRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | SocketOptionRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SocketOptionRefusal.NegativeLingerTime _ -> RefusalKind.Unmodelled
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait _ -> RefusalKind.Unmodelled
 
@@ -720,18 +720,6 @@ module UnixSocket =
         | SockaddrCopyStep.Refused refusal ->
             failwith
                 $"UnixSocket.mappedCopyLength: a copy from real storage was refused (%O{refusal}), which only a buffer naming no storage can be (this is a bug in this library)."
-
-    /// Refuse a caller that passed a different number of bytes from the `length`
-    /// the kernel copies. `operation` is the caller's own name for itself, since
-    /// the mistake is the caller's.
-    let internal requireCopied (operation : string) (length : int) (copied : ImmutableArray<byte>) : unit =
-        if copied.IsDefault then
-            failwith
-                $"%s{operation}: copied is the default ImmutableArray, whose underlying array is null. That is not an empty copy; pass ImmutableArray<byte>.Empty."
-
-        if copied.Length <> length then
-            failwith
-                $"%s{operation}: the kernel copies %d{length} bytes of this sockaddr, but the caller passed %d{copied.Length}. Pass exactly the bytes the copy takes: a field the kernel could not read and a field holding zero have different answers, so neither too few nor too many can be answered for (this is a bug in the caller)."
 
     // `<sys/socket.h>` and `<netinet/in.h>`: these numbers are the same on both
     // flavours. `AF_INET6` is not, and is `SimulatedUnixPlatform`'s.
@@ -1651,10 +1639,10 @@ module UnixSocket =
         match tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination declaredLength system with
         | Error refusal -> Error (BindRefusal.Copy refusal)
         | Ok (SockaddrCopyAdmission.Answered error) ->
-            requireCopied "UnixSocket.bind" 0 copied
+            CopyRange.require "UnixSocket.bind" (CopyRange.fromStart 0) copied
             Ok (BindAnswer.Failed error, system)
         | Ok (SockaddrCopyAdmission.Transfer length) ->
-            requireCopied "UnixSocket.bind" length copied
+            CopyRange.require "UnixSocket.bind" (CopyRange.fromStart length) copied
 
             // The admission has classified the descriptor as a socket it reads
             // a sockaddr for, or it would not have reached the copy.
@@ -2870,11 +2858,7 @@ module UnixSocket =
                 Fd = fd
                 Address = address
                 DeclaredLength = declaredLength
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = length
-                    }
+                Range = CopyRange.fromStart length
                 System = system
             }
             |> CallProgress.NeedsCopyIn
@@ -2935,6 +2919,7 @@ module UnixSocket =
         (paused : PausedBind<'Thread, 'Handler>)
         : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
+        CallProgress.requirePaused "UnixSocket.bindWithAddress" "UnixSocket.bind" paused
         CopyRange.require "UnixSocket.bindWithAddress" paused.Range copied
         tryBindBytes paused.Fd paused.Address paused.DeclaredLength copied paused.System
 
@@ -2978,11 +2963,7 @@ module UnixSocket =
                 OptionName = optionName
                 Value = value
                 OptionLength = optionLength
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = length
-                    }
+                Range = CopyRange.fromStart length
                 System = system
             }
             |> CallProgress.NeedsCopyIn
@@ -3063,6 +3044,7 @@ module UnixSocket =
         (paused : PausedSetSockOpt<'Thread, 'Handler>)
         : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
+        CallProgress.requirePaused "UnixSocket.setsockoptWithValue" "UnixSocket.setsockopt" paused
         CopyRange.require "UnixSocket.setsockoptWithValue" paused.Range copied
 
         trySetsockoptBytes
@@ -3176,6 +3158,8 @@ module UnixSocket =
         (paused : PausedGetSockOpt<'Thread, 'Handler>)
         : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
+        CallProgress.requirePaused "UnixSocket.getsockoptWithLength" "UnixSocket.getsockopt" paused
+
         tryGetsockoptLength
             paused.Fd
             paused.Level

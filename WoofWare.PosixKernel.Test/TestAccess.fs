@@ -593,7 +593,7 @@ module TestAccess =
                                 if effective || kind = Kind.Link then
                                     UnixPathResolution.tryFaccessatEager linuxAtFdCwd (bytes target) amode flags system
                                 else
-                                    UnixPathResolution.tryAccessEager (bytes target) amode system
+                                    Eager.tryAccess (bytes target) amode system
 
                             // Compared as values rather than through `answered`,
                             // whose rendering of an errno costs more than the
@@ -633,7 +633,7 @@ module TestAccess =
             let target = bytes "walk_owner_0700/f"
 
             (label,
-             UnixPathResolution.tryAccessEager target 0 system |> answered,
+             Eager.tryAccess target 0 system |> answered,
              UnixPathResolution.tryFaccessatEager linuxAtFdCwd target 0 0x200 system
              |> answered)
             |> shouldEqual (label, viaAccess, viaEAccess)
@@ -674,7 +674,7 @@ module TestAccess =
                         else
                             grantedAnswer
 
-                    let viaAccess = UnixPathResolution.tryAccessEager (bytes target) amode system
+                    let viaAccess = Eager.tryAccess (bytes target) amode system
 
                     let viaEAccess =
                         UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes target) amode 0x10 system
@@ -695,7 +695,7 @@ module TestAccess =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root "/t" vfs
         let rootStanding = Standing.toward Owners.root (owner 501u 20u)
 
-        UnixPathResolution.tryAccessEager (bytes "f") 1 system
+        Eager.tryAccess (bytes "f") 1 system
         |> shouldEqual (
             Error (
                 AccessRefusal.UnmeasuredExecution (
@@ -707,7 +707,7 @@ module TestAccess =
 
         // Through a link it is the target that is asked about; of the link
         // itself, it is the link.
-        UnixPathResolution.tryAccessEager (bytes "l") 5 system
+        Eager.tryAccess (bytes "l") 5 system
         |> shouldEqual (
             Error (
                 AccessRefusal.UnmeasuredExecution (
@@ -729,13 +729,9 @@ module TestAccess =
 
         // Search is not execution: root searching a directory is the same
         // question every path walk asks.
-        UnixPathResolution.tryAccessEager (bytes "d") 1 system
-        |> answered
-        |> shouldEqual "ok"
+        Eager.tryAccess (bytes "d") 1 system |> answered |> shouldEqual "ok"
         // The path is resolved before the question is refused.
-        UnixPathResolution.tryAccessEager (bytes "nx") 1 system
-        |> answered
-        |> shouldEqual "ENOENT"
+        Eager.tryAccess (bytes "nx") 1 system |> answered |> shouldEqual "ENOENT"
 
     [<Test>]
     let ``Darwin's extended rights are refused once the path resolves, and its other high bits ignored`` () : unit =
@@ -747,29 +743,27 @@ module TestAccess =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 "/" vfs
 
         // ORDER: bit 9 and bit 21 against a path that does not resolve.
-        UnixPathResolution.tryAccessEager (bytes "/nx") (1 <<< 9) system
+        Eager.tryAccess (bytes "/nx") (1 <<< 9) system
         |> answered
         |> shouldEqual "ENOENT"
 
-        UnixPathResolution.tryAccessEager (bytes "/nx") (1 <<< 21) system
+        Eager.tryAccess (bytes "/nx") (1 <<< 21) system
         |> answered
         |> shouldEqual "ENOENT"
 
-        UnixPathResolution.tryAccessEager (bytes "f/x") (1 <<< 21) system
+        Eager.tryAccess (bytes "f/x") (1 <<< 21) system
         |> answered
         |> shouldEqual "ENOTDIR"
 
         for bit in 9..21 do
-            UnixPathResolution.tryAccessEager (bytes "f") ((1 <<< bit) ||| 4) system
+            Eager.tryAccess (bytes "f") ((1 <<< bit) ||| 4) system
             |> shouldEqual (Error (AccessRefusal.ExtendedRights (inodeAt vfs "/f", 1 <<< bit)))
 
         // MODE-BIT and IGNORED-SWEEP: the rest change nothing.
         for bit in List.append [ 3..8 ] [ 22..31 ] do
-            UnixPathResolution.tryAccessEager (bytes "z") (1 <<< bit) system
-            |> answered
-            |> shouldEqual "ok"
+            Eager.tryAccess (bytes "z") (1 <<< bit) system |> answered |> shouldEqual "ok"
 
-            UnixPathResolution.tryAccessEager (bytes "z") ((1 <<< bit) ||| 4) system
+            Eager.tryAccess (bytes "z") ((1 <<< bit) ||| 4) system
             |> answered
             |> shouldEqual "EACCES"
 
@@ -848,8 +842,8 @@ module TestAccess =
                 let label = if p = longName then "<299 a>" else p
 
                 (label,
-                 UnixPathResolution.tryAccessEager (bytes p) 0 system |> answered,
-                 UnixPathResolution.tryAccessEager (bytes p) 2 system |> answered,
+                 Eager.tryAccess (bytes p) 0 system |> answered,
+                 Eager.tryAccess (bytes p) 2 system |> answered,
                  UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 0 noFollow system
                  |> answered,
                  UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 2 noFollow system
@@ -995,16 +989,16 @@ module TestAccess =
         let null' = PathArgumentBytes.Unreadable
 
         [
-            UnixPathResolution.tryAccessEager nx 8 linux |> answered
+            Eager.tryAccess nx 8 linux |> answered
             row linux -100 nx 8 0
             row linux -100 nx 0 0x40000000
             row linux -100 f 8 0x40000000
             row linux 12345 (bytes "screen_f") 8 0
             row linux 12345 (bytes "screen_f") 0 0x40000000
             row linux 12345 (bytes "nx") 0 0
-            UnixPathResolution.tryAccessEager (bytes "") 8 linux |> answered
-            UnixPathResolution.tryAccessEager null' 8 linux |> answered
-            UnixPathResolution.tryAccessEager null' 0 linux |> answered
+            Eager.tryAccess (bytes "") 8 linux |> answered
+            Eager.tryAccess null' 8 linux |> answered
+            Eager.tryAccess null' 0 linux |> answered
             row linux -100 null' 0 0
             row linux -100 null' 8 0
             row linux -100 null' 0 0x40000000
@@ -1058,16 +1052,16 @@ module TestAccess =
         let darwinTooLong = tooLong SimulatedUnixPlatform.macOsArm64
 
         [
-            UnixPathResolution.tryAccessEager nx 8 darwin |> answered
+            Eager.tryAccess nx 8 darwin |> answered
             row darwin -2 nx 8 0
             row darwin -2 nx 0 0x40000000
             row darwin -2 f 8 0x40000000
             row darwin 12345 (bytes "screen_f") 8 0
             row darwin 12345 (bytes "screen_f") 0 0x40000000
             row darwin 12345 (bytes "nx") 0 0
-            UnixPathResolution.tryAccessEager (bytes "") 8 darwin |> answered
-            UnixPathResolution.tryAccessEager null' 8 darwin |> answered
-            UnixPathResolution.tryAccessEager null' 0 darwin |> answered
+            Eager.tryAccess (bytes "") 8 darwin |> answered
+            Eager.tryAccess null' 8 darwin |> answered
+            Eager.tryAccess null' 0 darwin |> answered
             row darwin -2 null' 0 0
             row darwin -2 null' 8 0
             row darwin -2 null' 0 0x40000000
@@ -1177,7 +1171,7 @@ module TestAccess =
             let system =
                 systemOn platform credentials "/pd" (pathTree (InodeOwner.ofProcess credentials))
 
-            UnixPathResolution.tryAccessEager (bytes p) amode system
+            Eager.tryAccess (bytes p) amode system
             |> shouldEqual (UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) amode 0 system)
 
         let paths =

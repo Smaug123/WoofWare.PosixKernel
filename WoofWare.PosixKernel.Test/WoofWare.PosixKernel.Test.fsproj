@@ -32,6 +32,7 @@
     <Compile Include="PathText.fs" />
     <Compile Include="OpenFlagWords.fs" />
     <Compile Include="Answered.fs" />
+    <Compile Include="Eager.fs" />
     <Compile Include="PReadUnchanged.fs" />
     <Compile Include="DirectoryReading.fs" />
     <Compile Include="Owners.fs" />

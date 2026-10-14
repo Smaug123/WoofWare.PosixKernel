@@ -462,7 +462,7 @@ module internal BytesAvailableRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : BytesAvailableRefusal) : RefusalKind =
         match refusal with
-        | BytesAvailableRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | BytesAvailableRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | BytesAvailableRefusal.UnmodelledTarget _ -> RefusalKind.Unmodelled
 
 /// What `tcgetattr(3)` answered, which is also what `isatty(3)` answers: it is
@@ -511,7 +511,7 @@ module internal GetGroupsRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetGroupsRefusal) : RefusalKind =
         match refusal with
-        | GetGroupsRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetGroupsRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetGroupsRefusal.UnmeasuredGroupList _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer an `ioctl(2)` of `FICLONE`.

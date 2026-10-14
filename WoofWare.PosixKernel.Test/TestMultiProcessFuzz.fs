@@ -1314,11 +1314,7 @@ module TestMultiProcessFuzz =
             match pick inotify (ofKind pid isInotify view) with
             | None -> Made.Answered view
             | Some fd ->
-                UnixInotify.tryInotifyAddWatchEager
-                    fd
-                    (PathArg.ofText standing.[dir % standing.Length])
-                    inotifyEvents
-                    view
+                Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view
                 |> answered
         | Op.InotifyRmWatch (inotify, wd) ->
             match pick inotify (ofKind pid isInotify view) with
@@ -1330,11 +1326,7 @@ module TestMultiProcessFuzz =
             match newestInotify pid view with
             | None -> Made.Answered view
             | Some fd ->
-                UnixInotify.tryInotifyAddWatchEager
-                    fd
-                    (PathArg.ofText standing.[dir % standing.Length])
-                    inotifyEvents
-                    view
+                Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view
                 |> answered
         | Op.InotifyAwait dir ->
             match UnixInotify.tryInotifyInit1 0 view with
@@ -1342,13 +1334,7 @@ module TestMultiProcessFuzz =
             | Ok (Error _) -> Made.Answered view
             | Ok (Ok (fd, view)) ->
 
-            match
-                UnixInotify.tryInotifyAddWatchEager
-                    fd
-                    (PathArg.ofText standing.[dir % standing.Length])
-                    inotifyEvents
-                    view
-            with
+            match Eager.tryInotifyAddWatch fd (PathArg.ofText standing.[dir % standing.Length]) inotifyEvents view with
             | Error _ -> Made.Refused
             | Ok (_, view) ->
 

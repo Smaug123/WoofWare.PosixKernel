@@ -569,7 +569,7 @@ module internal GetCwdRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetCwdRefusal) : RefusalKind =
         match refusal with
-        | GetCwdRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetCwdRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetCwdRefusal.FatalToTheProcess -> RefusalKind.Unmodelled
 
 /// An `access(2)` or `faccessat(2)` whose mode and flag words this kernel has
@@ -2790,11 +2790,7 @@ module UnixPathResolution =
         (paused : PausedAccess<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
-        match box paused with
-        | null ->
-            failwith
-                "UnixPathResolution.accessWithPath: this paused access is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixPathResolution.access or faccessat instead."
-        | _ -> ()
+        CallProgress.requirePaused "UnixPathResolution.accessWithPath" "UnixPathResolution.access or faccessat" paused
 
         let system = paused.System
         let directory = paused.Directory
@@ -2889,20 +2885,5 @@ module UnixPathResolution =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
-        match tryFaccessat dirfd mode flags system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answer) -> Ok answer
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryAccessWithPath path paused
-
-    /// `access(2)` given its path up front: `tryAccess`, then
-    /// `tryAccessWithPath` of `path` if the call reaches the copy.
-    let internal tryAccessEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (path : PathArgumentBytes)
-        (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer, AccessRefusal>
-        =
-        match tryAccess mode system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answer) -> Ok answer
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryAccessWithPath path paused
+        tryFaccessat dirfd mode flags system
+        |> CallProgress.resumeWith (tryAccessWithPath path)

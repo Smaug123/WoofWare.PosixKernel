@@ -292,13 +292,7 @@ module TestInotifyAgainstHost =
                                 let host = hostAnswer numbering (nativeint (hostAddWatch (hostFd, hostBytes, mask)))
 
                                 let model =
-                                    match
-                                        UnixInotify.tryInotifyAddWatchEager
-                                            modelFd
-                                            (PathArg.ofText relative)
-                                            mask
-                                            system
-                                    with
+                                    match Eager.tryInotifyAddWatch modelFd (PathArg.ofText relative) mask system with
                                     | Ok (answer, after) ->
                                         system <- after
                                         modelAnswer answer

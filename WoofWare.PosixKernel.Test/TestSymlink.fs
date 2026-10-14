@@ -254,7 +254,7 @@ module TestSymlink =
         let target, path, created = symlinkRow envelope label
         let system = probeCell envelope
 
-        match UnixNamespace.trySymlinkEager target path system with
+        match Eager.trySymlink target path system with
         | Error SymlinkRefusal.EmptyTarget -> "refused: empty target"
         | Error refusal -> $"refused: %s{SymlinkRefusal.describe refusal}"
         | Ok (answer, after) ->
@@ -403,8 +403,7 @@ module TestSymlink =
                 let label = row.[0]
                 let target, path = permRow label
 
-                let actual =
-                    UnixNamespace.trySymlinkEager target path (probeCell envelope) |> rendered
+                let actual = Eager.trySymlink target path (probeCell envelope) |> rendered
 
                 let expected = probeAnswer row.[1]
 
@@ -446,7 +445,7 @@ module TestSymlink =
                         Convert.ToInt32 (row.[1].Substring (row.[1].IndexOf "mode=" + "mode=".Length), 8)
 
                     let system =
-                        UnixNamespace.trySymlinkEager (text "t") (text "n") (boot envelope umask (cell None 0o755))
+                        Eager.trySymlink (text "t") (text "n") (boot envelope umask (cell None 0o755))
                         |> created
 
                     umask, modeOf "n" system, mode
@@ -475,8 +474,7 @@ module TestSymlink =
                 let seed = cell (Some directoryGroup) (if setgid then 0o2777 else 0o777)
 
                 let system =
-                    UnixNamespace.trySymlinkEager (text "t") (text "e/n") (boot envelope 0o022 seed)
-                    |> created
+                    Eager.trySymlink (text "t") (text "e/n") (boot envelope 0o022 seed) |> created
 
                 let group =
                     match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (text "e/n") system with
@@ -502,8 +500,7 @@ module TestSymlink =
             let envelope = if darwin then darwinUser else linuxUser
 
             let system =
-                UnixNamespace.trySymlinkEager (ofBytes target) (text "n") (probeCell envelope)
-                |> created
+                Eager.trySymlink (ofBytes target) (text "n") (probeCell envelope) |> created
 
             match UnixNamespace.tryReadlink (text "n") UserBuffer.Mapped 4096 system with
             | Ok (ReadLinkAnswer.Reported written) -> written |> List.ofSeq |> shouldEqual target

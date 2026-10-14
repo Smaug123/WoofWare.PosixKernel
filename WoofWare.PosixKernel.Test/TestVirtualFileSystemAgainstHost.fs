@@ -2854,9 +2854,7 @@ module TestVirtualFileSystemAgainstHost =
             let modelSaid =
                 let bytes (path : string) = PathArg.ofText path
 
-                match
-                    UnixNamespace.tryRenameEager (bytes source) (bytes destination) (renameModelSystem (buildModel ()))
-                with
+                match Eager.tryRename (bytes source) (bytes destination) (renameModelSystem (buildModel ())) with
                 | Ok (SyscallAnswer.Completed 0L, _) -> RenameRefusal.Succeeded
                 | Ok (SyscallAnswer.Failed error, _) -> RenameRefusal.Refused (hostErrno error)
                 | other -> failwith $"the model answered %A{other}, which no row here expects"

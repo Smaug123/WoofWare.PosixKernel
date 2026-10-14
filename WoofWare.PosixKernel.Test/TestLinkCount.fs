@@ -110,9 +110,7 @@ module TestLinkCount =
         | LinkCountStep.RemoveDirectory path ->
             held, Answered.rmdir (rooted path) system |> completed $"rmdir %s{path}" |> snd
         | LinkCountStep.Rename (source, destination) ->
-            match
-                UnixNamespace.tryRenameEager (PathArg.ofText $"/%s{source}") (PathArg.ofText $"/%s{destination}") system
-            with
+            match Eager.tryRename (PathArg.ofText $"/%s{source}") (PathArg.ofText $"/%s{destination}") system with
             | Ok result -> held, result |> completed $"rename %s{source} %s{destination}" |> snd
             | Error refusal -> failwith $"rename %s{source} %s{destination} was refused: %A{refusal}"
         | LinkCountStep.Hold path ->

@@ -127,7 +127,7 @@ module internal AcceptRefusal =
         | AcceptRefusal.DescriptorLimit _ -> RefusalKind.Unmodelled
         | AcceptRefusal.UnmodelledDomain _ -> RefusalKind.Unmodelled
         | AcceptRefusal.UnmeasuredKind _ -> RefusalKind.Unmodelled
-        | AcceptRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | AcceptRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | AcceptRefusal.UnmeasuredCopyOutFault _ -> RefusalKind.Unmodelled
         | AcceptRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | AcceptRefusal.DarwinDrainedListener _ -> RefusalKind.Unmodelled
@@ -1652,9 +1652,9 @@ module UnixConnection =
         =
         let platform = system.Machine.UnixPlatform
 
-        UnixSocket.requireCopied
+        CopyRange.require
             "UnixConnection.connectSocket"
-            (UnixSocket.mappedCopyLength platform declaredLength)
+            (CopyRange.fromStart (UnixSocket.mappedCopyLength platform declaredLength))
             copied
 
         let rejectedBeforeTheSocket =
@@ -1695,11 +1695,11 @@ module UnixConnection =
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
         | Ok (SockaddrCopyAdmission.Answered error) ->
-            UnixSocket.requireCopied "UnixConnection.connect" 0 copied
+            CopyRange.require "UnixConnection.connect" (CopyRange.fromStart 0) copied
             Ok (SyscallAnswer.Failed error, system)
         | Ok (SockaddrCopyAdmission.Transfer length) ->
 
-        UnixSocket.requireCopied "UnixConnection.connect" length copied
+        CopyRange.require "UnixConnection.connect" (CopyRange.fromStart length) copied
 
         // `tryAdmitSockaddrCopy` reached the copy, so the descriptor is a live IPv4
         // socket; nothing between there and here could have changed that.
@@ -1788,11 +1788,7 @@ module UnixConnection =
                 Fd = fd
                 Address = address
                 DeclaredLength = declaredLength
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = length
-                    }
+                Range = CopyRange.fromStart length
                 System = system
             }
             |> CallProgress.NeedsCopyIn
@@ -1842,6 +1838,7 @@ module UnixConnection =
         (paused : PausedConnect<'Thread, 'Handler>)
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
+        CallProgress.requirePaused "UnixConnection.connectWithAddress" "UnixConnection.connect" paused
         CopyRange.require "UnixConnection.connectWithAddress" paused.Range copied
         finishConnect paused.Thread paused.Fd paused.Address paused.DeclaredLength copied paused.System
 

@@ -90,7 +90,7 @@ module internal ReadRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadRefusal) : RefusalKind =
         match refusal with
-        | ReadRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | ReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
@@ -124,7 +124,7 @@ module internal PReadRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PReadRefusal) : RefusalKind =
         match refusal with
-        | PReadRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | PReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
@@ -322,7 +322,7 @@ module internal WriteRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : WriteRefusal) : RefusalKind =
         match refusal with
-        | WriteRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | WriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | WriteRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | WriteRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | WriteRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
@@ -377,7 +377,7 @@ module internal ReceiveRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReceiveRefusal) : RefusalKind =
         match refusal with
-        | ReceiveRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReceiveRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
@@ -430,7 +430,7 @@ module internal SendRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SendRefusal) : RefusalKind =
         match refusal with
-        | SendRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | SendRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SendRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | SendRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | SendRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
@@ -642,7 +642,7 @@ module internal PWriteRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PWriteRefusal) : RefusalKind =
         match refusal with
-        | PWriteRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | PWriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PWriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | PWriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | PWriteRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
@@ -4598,11 +4598,7 @@ module UnixReadWrite =
             {
                 Thread = thread
                 Call = call
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = count
-                    }
+                Range = CopyRange.fromStart count
                 System = system
             }
 
@@ -4783,6 +4779,7 @@ module UnixReadWrite =
         (paused : PausedWrite<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.writeWithBytes" "UnixReadWrite.write or finishWrite" paused
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
         match paused.Call with
@@ -4846,11 +4843,7 @@ module UnixReadWrite =
             {
                 Thread = thread
                 Call = call
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = count
-                    }
+                Range = CopyRange.fromStart count
                 System = system
             }
 
@@ -4914,6 +4907,7 @@ module UnixReadWrite =
         (paused : PausedSend<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.sendWithBytes" "UnixReadWrite.send" paused
         CopyRange.require "UnixReadWrite.sendWithBytes" paused.Range bytes
 
         match paused.Call with
@@ -4966,11 +4960,7 @@ module UnixReadWrite =
                         Thread = thread
                         Fd = fd
                         FileOffset = offset
-                        Range =
-                            {
-                                FirstByte = 0
-                                ByteCount = count
-                            }
+                        Range = CopyRange.fromStart count
                         System = system
                     }
         )
@@ -5020,6 +5010,7 @@ module UnixReadWrite =
         (paused : PausedPWrite<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.pwriteWithBytes" "UnixReadWrite.pwrite" paused
         CopyRange.require "UnixReadWrite.pwriteWithBytes" paused.Range bytes
         tryPwriteBytes paused.Thread paused.Fd bytes paused.FileOffset paused.System
 
