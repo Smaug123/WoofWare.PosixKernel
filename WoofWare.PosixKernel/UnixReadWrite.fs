@@ -3313,7 +3313,8 @@ module UnixReadWrite =
             Ok (unchanged (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT)))
         | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.File (fd, inode, offset, through))))
+        | UserBuffer.Mapped ->
+            Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.File (fd, inode, offset, through))))
 
     /// The step after the copy of a `write` or `send` its admission said to
     /// transfer (`WriteAdmission.Transfer`): `bytes`, exactly the ones it
