@@ -95,7 +95,10 @@ module TestEpollWait =
             }
 
         let listenerFd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         let system =
             { system with

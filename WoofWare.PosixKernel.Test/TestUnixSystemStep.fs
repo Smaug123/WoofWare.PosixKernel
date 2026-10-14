@@ -81,6 +81,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -112,6 +113,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 accessMode
@@ -299,7 +301,10 @@ module TestUnixSystemStep =
     /// A descriptor onto one unbound, unconnected INET stream socket.
     let private withSocket (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketZero (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketZero
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -424,7 +429,10 @@ module TestUnixSystemStep =
 
         for phase in phases do
             let fd, registry =
-                FileDescriptorRegistry.createSocket socketZero (Lone.fileDescriptors linux)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                    socketZero
+                    (Lone.fileDescriptors linux)
 
             let system =
                 { linux with
@@ -672,7 +680,10 @@ module TestUnixSystemStep =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors linux)
 
         let system =
             { linux with
@@ -776,7 +787,10 @@ module TestUnixSystemStep =
 
         let withSocket (flavour : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let fd, registry =
-                FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors flavour)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour flavour.Machine.UnixPlatform)
+                    socketId
+                    (Lone.fileDescriptors flavour)
 
             fd,
             { flavour with
@@ -845,6 +859,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadOnly
@@ -861,7 +876,10 @@ module TestUnixSystemStep =
 
     /// A descriptor onto an epoll instance.
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         fd, Lone.withFileDescriptors registry system
 
@@ -1877,6 +1895,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -2173,6 +2192,7 @@ module TestUnixSystemStep =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system target)
                 target
                 FileAccessMode.ReadOnly
@@ -2763,6 +2783,7 @@ module TestUnixSystemStep =
 
         let second, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -2777,6 +2798,7 @@ module TestUnixSystemStep =
         | Some (OpenFileTarget.File (inode, _)) ->
             let another, registry =
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadWrite
@@ -4589,13 +4611,30 @@ module TestUnixSystemStep =
                          OpenFileTable.mapStatus
                              (FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors after) |> Option.get)
                              (fun status ->
-                                 status.Synchronous |> shouldEqual true
-                                 status.DataSynchronous |> shouldEqual true
+                                 match status with
+                                 | OpenFileStatus.Linux (
+                                     sync = sync ; openedDirectory = openedDirectory ; openedNoFollow = openedNoFollow) ->
+                                     sync |> shouldEqual LinuxSync.FullSync
 
-                                 { status with
-                                     Synchronous = false
-                                     DataSynchronous = false
-                                 }
+                                     OpenFileStatus.Linux (
+                                         sync = LinuxSync.NoSync,
+                                         openedDirectory = openedDirectory,
+                                         openedNoFollow = openedNoFollow
+                                     )
+                                 | OpenFileStatus.Darwin (
+                                     synchronous = synchronous
+                                     dataSynchronous = dataSynchronous
+                                     written = written
+                                     flocked = flocked) ->
+                                     synchronous |> shouldEqual true
+                                     dataSynchronous |> shouldEqual true
+
+                                     OpenFileStatus.Darwin (
+                                         synchronous = false,
+                                         dataSynchronous = false,
+                                         written = written,
+                                         flocked = flocked
+                                     )
                              )
                      ))
                     after
@@ -5680,6 +5719,7 @@ module TestUnixSystemStep =
 
         let fd, descriptors =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system held)
                 held
                 FileAccessMode.ReadOnly

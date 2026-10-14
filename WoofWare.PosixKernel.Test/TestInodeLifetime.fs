@@ -96,11 +96,13 @@ module TestInodeLifetime =
             match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
             | Some (InodeContent.Directory _) ->
                 FileDescriptorRegistry.openDirectory
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
                     (Lone.fileDescriptors kernel)
             | _ ->
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                     (ForgedName.ofInode kernel inode)
                     inode
                     FileAccessMode.ReadOnly

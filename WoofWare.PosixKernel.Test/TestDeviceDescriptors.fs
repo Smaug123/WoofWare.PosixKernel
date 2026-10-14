@@ -274,18 +274,21 @@ module TestDeviceDescriptors =
         for registry in
             [
                 FileDescriptorRegistry.openCharacterDevice
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
                     (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -296,6 +299,7 @@ module TestDeviceDescriptors =
             | other -> failwith $"expected one kind mismatch, got %A{other}"
 
         FileDescriptorRegistry.openCharacterDevice
+            (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -318,6 +322,7 @@ module TestDeviceDescriptors =
         for device in [ CharacterDevice.Zero ; CharacterDevice.Random ; CharacterDevice.Tty ] do
             let fd, registry =
                 FileDescriptorRegistry.openCharacterDevice
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour booted.Machine.UnixPlatform))
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device
@@ -1053,7 +1058,9 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
             let queueFd, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
 

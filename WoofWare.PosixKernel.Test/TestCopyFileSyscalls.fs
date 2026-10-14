@@ -149,6 +149,7 @@ module TestCopyFileSyscalls =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system fileName))
                 (inodeAt system fileName)
                 access
@@ -202,6 +203,7 @@ module TestCopyFileSyscalls =
         | "dir" ->
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (VirtualFileSystem.root system.Machine.FileSystem))
                     (VirtualFileSystem.root system.Machine.FileSystem)
                     (Lone.fileDescriptors system)
@@ -907,6 +909,7 @@ module TestCopyFileRangeLarge =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly

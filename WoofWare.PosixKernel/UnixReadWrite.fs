@@ -1009,30 +1009,16 @@ module UnixReadWrite =
 
         int (min count (uint64 maxTransfer))
 
-    /// Mark the description `id` as written through (`OpenFileStatus.Written`),
-    /// under the flavour that records it, if it is still in the table.
+    /// Mark the description `id` as written through
+    /// (`OpenFileStatus.markWritten`), if it is still in the table.
     let private markWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : OpenFileDescriptionId)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let darwin =
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> true
-            | SimulatedUnixFlavour.Linux -> false
-
-        if darwin && (OpenFileTable.tryFind id system.Machine.OpenFiles).IsSome then
-            UnixSystemState.mapOpenFiles
-                (OpenFileTable.mapStatus
-                    id
-                    (fun status ->
-                        { status with
-                            Written = true
-                        }
-                    ))
-                system
-        else
-            system
+        match OpenFileTable.tryFind id system.Machine.OpenFiles with
+        | Some _ -> UnixSystemState.mapOpenFiles (OpenFileTable.mapStatus id OpenFileStatus.markWritten) system
+        | None -> system
 
     /// Whether a write that had moved `alreadyMoved` bytes before this step,
     /// and returns `answer`, returns having moved any: its answer counts them,

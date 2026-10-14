@@ -45,8 +45,9 @@ module TestUnixThreadLifecycle =
 
         let create =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-            | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-            | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+            | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+            | SimulatedUnixFlavour.Darwin ->
+                FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
         let fd, registry = create (Lone.fileDescriptors system)
 

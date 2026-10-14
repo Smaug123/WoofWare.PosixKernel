@@ -496,6 +496,7 @@ module ProcessLaunch =
 
         let registry =
             FileDescriptorRegistry.ofLaunchedPipes
+                (SimulatedUnixPlatform.flavour platform)
                 census
                 (launched
                  |> List.map (fun (fd, pipeId, pipeEnd, _) -> fd, (pipeId, pipeEnd))

@@ -40,18 +40,24 @@ module TestUnixMachineState =
 
         let _fd, withFile =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 fileInode
                 FileAccessMode.ReadOnly
                 LaunchedStreams.registry
 
         let _directoryFd, withDirectory =
-            FileDescriptorRegistry.openDirectory ReachedThrough.Unnamed directoryInode withFile
+            FileDescriptorRegistry.openDirectory
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                directoryInode
+                withFile
 
         let _sock, withSocket =
-            FileDescriptorRegistry.createSocket (SocketId 1L) withDirectory
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 1L) withDirectory
 
-        let _epollFd, registry = FileDescriptorRegistry.createEpoll withSocket
+        let _epollFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux withSocket
 
         let machine = machineWith registry
 
@@ -81,7 +87,12 @@ module TestUnixMachineState =
             )
 
         let _fd, registry =
-            FileDescriptorRegistry.openFile through fileInode FileAccessMode.ReadOnly LaunchedStreams.registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                through
+                fileInode
+                FileAccessMode.ReadOnly
+                LaunchedStreams.registry
 
         let machine = machineWith registry
 
@@ -99,10 +110,13 @@ module TestUnixMachineState =
         let other = SocketId 2L
 
         let _watchedFd, registry =
-            FileDescriptorRegistry.createSocket watched LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux watched LaunchedStreams.registry
 
-        let _otherFd, registry = FileDescriptorRegistry.createSocket other registry
-        let _queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let _otherFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux other registry
+
+        let _queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let machine = machineWith registry
 
@@ -118,9 +132,10 @@ module TestUnixMachineState =
         let watched = SocketId 1L
 
         let watchedFd, registry =
-            FileDescriptorRegistry.createSocket watched LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux watched LaunchedStreams.registry
 
-        let queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let idOf (fd : int) : OpenFileDescriptionId =
             match FileDescriptorRegistry.tryFindId fd registry with

@@ -98,7 +98,7 @@ module TestSocketTable =
                          AccessMode = FileAccessMode.ReadWrite
                          NonBlocking = false
                          Flock = None
-                         Status = OpenFileStatus.none
+                         Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                      }
                  )
                  |> Map.ofList)
@@ -218,7 +218,9 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let epoll, registry =
-            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                (Lone.fileDescriptors kernel)
 
         let kernel = Lone.withFileDescriptors registry kernel
 
@@ -419,11 +421,13 @@ module TestSocketTable =
                             match VirtualFileSystem.tryGetContent inode kernel.Machine.FileSystem with
                             | Some (InodeContent.Directory _) ->
                                 FileDescriptorRegistry.openDirectory
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     (Lone.fileDescriptors kernel)
                             | _ ->
                                 FileDescriptorRegistry.openFile
+                                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform))
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly
@@ -514,7 +518,10 @@ module TestSocketTable =
                             | Some (InodeContent.Symlink _)
                             | None -> ()
                 | 6 ->
-                    let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+                    let _, registry =
+                        FileDescriptorRegistry.createEpoll
+                            (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                            (Lone.fileDescriptors kernel)
 
                     kernel <- Lone.withFileDescriptors registry kernel
                 | _ ->

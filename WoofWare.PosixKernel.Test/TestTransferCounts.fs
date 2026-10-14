@@ -109,6 +109,7 @@ module TestTransferCounts =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
@@ -661,7 +662,12 @@ module TestTransferCounts =
 
         let reopen (inode : InodeNumber) (mode : FileAccessMode) =
             let fd, registry =
-                FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode mode registry
+                FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (ForgedName.ofInode system inode)
+                    inode
+                    mode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
 
@@ -671,21 +677,30 @@ module TestTransferCounts =
         | "stdout" -> 1, system
         | "dir" ->
             let fd, registry =
-                FileDescriptorRegistry.openDirectory (ForgedName.ofInode system rootInode) rootInode registry
+                FileDescriptorRegistry.openDirectory
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (ForgedName.ofInode system rootInode)
+                    rootInode
+                    registry
 
             fd, Lone.withFileDescriptors registry system
         | "event queue" ->
             // The flavour's own: an epoll instance, or a kqueue.
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create registry
 
             fd, Lone.withFileDescriptors registry system
         | "socket" ->
-            let fd, registry = FileDescriptorRegistry.createSocket socketId registry
+            let fd, registry =
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    socketId
+                    registry
 
             fd,
             { system with
@@ -717,6 +732,7 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
@@ -733,6 +749,7 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
@@ -919,6 +936,7 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)
@@ -993,6 +1011,7 @@ module TestTransferCounts =
 
             let fd, registry =
                 FileDescriptorRegistry.openDirectory
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system rootInode)
                     rootInode
                     (Lone.fileDescriptors system)

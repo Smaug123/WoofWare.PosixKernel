@@ -84,7 +84,10 @@ module TestPollTimeout =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -427,6 +430,7 @@ module TestPollTimeout =
         // them, such as PRI alone, leaves it waiting.
         let directory, registry =
             FileDescriptorRegistry.openDirectory
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour idle.Machine.UnixPlatform))
                 (ForgedName.ofInode idle (InodeNumber 1L))
                 (InodeNumber 1L)
                 (Lone.fileDescriptors idle)
@@ -469,6 +473,7 @@ module TestPollTimeout =
 
         let reopened, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly

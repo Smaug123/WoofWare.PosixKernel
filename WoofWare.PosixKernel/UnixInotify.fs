@@ -213,6 +213,7 @@ module UnixInotify =
 
         let fd, registry =
             FileDescriptorRegistry.createInotify
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
                 owner
                 (flags &&& InotifyInitFlags.NonBlock <> 0)
                 (UnixSystemState.fileDescriptors system)

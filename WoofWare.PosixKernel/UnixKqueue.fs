@@ -267,7 +267,10 @@ module UnixKqueue =
         // descriptor, O_RDWR, not O_NONBLOCK; and (`fcntl-dup.c`, KIND rows)
         // F_GETFD reports FD_CLOEXEC|FD_CLOFORK.
         let fd, registry =
-            FileDescriptorRegistry.createKqueue system.Process.ProcessId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                system.Process.ProcessId
+                (UnixSystemState.fileDescriptors system)
             |> fun (fd, registry) ->
                 fd,
                 FileDescriptorRegistry.setFlags

@@ -261,13 +261,19 @@ module TestUnblockForAnotherThread =
 
         let lockedThrough, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
                 (Lone.fileDescriptors system)
 
         let waitingThrough, registry =
-            FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode FileAccessMode.ReadWrite registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (ForgedName.ofInode system inode)
+                inode
+                FileAccessMode.ReadWrite
+                registry
 
         let system =
             { system with

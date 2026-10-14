@@ -604,7 +604,9 @@ module TestDirectoryDescription =
                 NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system
 
             let epoll, registry =
-                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (Lone.fileDescriptors system)
 
             let system = Lone.withFileDescriptors registry system
 
@@ -837,7 +839,7 @@ module TestDirectoryDescription =
                         AccessMode = access
                         NonBlocking = false
                         Flock = None
-                        Status = OpenFileStatus.none
+                        Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                     }
                 ])
             (OpenFileDescriptionId 9L)

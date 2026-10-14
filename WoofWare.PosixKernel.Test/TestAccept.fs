@@ -60,7 +60,10 @@ module TestAccept =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -348,12 +351,14 @@ module TestAccept =
         // things a descriptor can name that are not sockets.
         let fileFd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
                 (Lone.fileDescriptors system)
 
-        let queueFd, registry = FileDescriptorRegistry.createEpoll registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         let system = Lone.withFileDescriptors registry system
 

@@ -74,6 +74,12 @@ type BlockingConnectionOp =
 [<Parallelizable(ParallelScope.All)>]
 module TestBlockingConnection =
 
+    /// Whether `status` records Darwin's `FWASWRITTEN`, which Linux never sets.
+    let private markedWritten (status : OpenFileStatus) : bool =
+        match status with
+        | OpenFileStatus.Darwin (written = written) -> written
+        | OpenFileStatus.Linux _ -> false
+
     let private threads : int list = [ 0 ; 1 ; 2 ; 3 ]
 
     let private port : uint16 = 6100us
@@ -1821,7 +1827,7 @@ module TestBlockingConnection =
                     for KeyValue (fd, connectionEnd) in reference.Fds do
                         let written =
                             match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
-                            | Some (_, description) -> description.Status.Written
+                            | Some (_, description) -> markedWritten description.Status
                             | None -> failwith $"%s{where ()}: fd %d{fd} names no description"
 
                         if written <> Set.contains connectionEnd reference.Marked then
@@ -3748,7 +3754,7 @@ module TestBlockingConnection =
 
             let marked (fd : int) (system : UnixSystem<int, string>) : bool =
                 match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
-                | Some (_, description) -> description.Status.Written
+                | Some (_, description) -> markedWritten description.Status
                 | None -> failwith $"fd %d{fd} names no description"
 
             for call, count in [ "write", 10 ; "send", 10 ; "send", 0 ] do
@@ -3790,7 +3796,7 @@ module TestBlockingConnection =
             let system = KeventWorld.close client system
 
             match FileDescriptorRegistry.tryFindWithId copy (Lone.fileDescriptors system) with
-            | Some (_, description) -> description.Status.Written |> shouldEqual (call = TcpSendCall.Write)
+            | Some (_, description) -> markedWritten description.Status |> shouldEqual (call = TcpSendCall.Write)
             | None -> failwith "the copy names no description"
 
     /// A Darwin `write` that slept, woken and finished, marks its description
@@ -3818,7 +3824,7 @@ module TestBlockingConnection =
 
             let marked (system : UnixSystem<int, string>) : bool =
                 match FileDescriptorRegistry.tryFindWithId client (Lone.fileDescriptors system) with
-                | Some (_, description) -> description.Status.Written
+                | Some (_, description) -> markedWritten description.Status
                 | None -> failwith "the client names no description"
 
             // Asleep part way, it has marked nothing yet.

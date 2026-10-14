@@ -52,7 +52,10 @@ module TestEpollCtl =
         Lone.withFileDescriptors registry system
 
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
 
@@ -81,7 +84,10 @@ module TestEpollCtl =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -99,6 +105,7 @@ module TestEpollCtl =
     let private withFile (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadWrite

@@ -99,7 +99,10 @@ module TestCallHolds =
 
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
-            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
+            let _, registry =
+                FileDescriptorRegistry.createEpoll
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (Lone.fileDescriptors system)
 
             Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->

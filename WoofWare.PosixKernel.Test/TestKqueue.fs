@@ -173,7 +173,7 @@ module TestKqueue =
                         AccessMode = FileAccessMode.ReadWrite
                         NonBlocking = false
                         Flock = None
-                        Status = OpenFileStatus.none
+                        Status = OpenFileStatus.none SimulatedUnixFlavour.Darwin
                     }
 
                 // A fresh description, not one any other descriptor shares.
@@ -333,7 +333,10 @@ module TestKqueue =
                 }
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket system.Machine.NextSocketId (Lone.fileDescriptors system)
+                FileDescriptorRegistry.createSocket
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    system.Machine.NextSocketId
+                    (Lone.fileDescriptors system)
 
             let (SocketId raw) = system.Machine.NextSocketId
 
@@ -350,6 +353,7 @@ module TestKqueue =
         let fileFd, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -1084,7 +1088,10 @@ module TestKqueue =
     [<Test>]
     let ``checkInvariants rejects an object the flavour's kernel does not have`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createKqueue (Lone.proc linux).ProcessId (Lone.fileDescriptors linux)
+            FileDescriptorRegistry.createKqueue
+                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (Lone.proc linux).ProcessId
+                (Lone.fileDescriptors linux)
 
         let withKqueue = withRegistry registry linux
 
@@ -1104,7 +1111,10 @@ module TestKqueue =
                 )
             ]
 
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors darwin)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                (Lone.fileDescriptors darwin)
 
         let withEpoll = withRegistry registry darwin
 

@@ -26,7 +26,7 @@ module TestFileDescriptorRegistry =
             AccessMode = FileAccessMode.ReadOnly
             NonBlocking = false
             Flock = None
-            Status = OpenFileStatus.none
+            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
         }
 
     /// The process whose table every registry here is.
@@ -50,6 +50,7 @@ module TestFileDescriptorRegistry =
     let ``openFile takes the lowest free descriptor and a fresh description`` () : unit =
         let a, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -58,7 +59,12 @@ module TestFileDescriptorRegistry =
         a |> shouldEqual 3
 
         let b, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed otherInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                otherInode
+                FileAccessMode.ReadOnly
+                registry
 
         b |> shouldEqual 4
 
@@ -79,13 +85,19 @@ module TestFileDescriptorRegistry =
     let ``two opens of one inode are two descriptions, unlike dup`` () : unit =
         let a, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
                 LaunchedStreams.registry
 
         let b, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                someInode
+                FileAccessMode.ReadOnly
+                registry
 
         FileDescriptorRegistry.tryFind a registry
         |> shouldEqual (FileDescriptorRegistry.tryFind b registry)
@@ -114,9 +126,10 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``two sockets are two descriptions and two flock objects`` () : unit =
         let a, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
-        let b, registry = FileDescriptorRegistry.createSocket (SocketId 1L) registry
+        let b, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 1L) registry
 
         a |> shouldEqual 3
         b |> shouldEqual 4
@@ -146,7 +159,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``dup of a socket names the same socket`` () : unit =
         let a, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
         match FileDescriptorRegistry.dup a registry with
         | Error e -> failwith $"expected dup to succeed, got %O{e}"
@@ -169,7 +182,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``a fresh socket description names its socket and is ReadWrite`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 4L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 4L) LaunchedStreams.registry
 
         match FileDescriptorRegistry.tryFind fd registry with
         | None -> failwith "the socket descriptor is not live"
@@ -186,7 +199,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``closing the last descriptor destroys the description`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
         OpenFileTable.descriptions (FileDescriptorRegistry.openFiles registry)
         |> Map.count
@@ -217,9 +230,11 @@ module TestFileDescriptorRegistry =
     /// identity would wake the wrong waiter.
     [<Test>]
     let ``two epoll instances are two descriptions but one flock object`` () : unit =
-        let a, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let a, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let b, registry = FileDescriptorRegistry.createEpoll registry
+        let b, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
 
         a |> shouldEqual 3
         b |> shouldEqual 4
@@ -254,7 +269,8 @@ module TestFileDescriptorRegistry =
     /// be a different bug.
     [<Test>]
     let ``an epoll instance outlives a closed descriptor but not its last`` () : unit =
-        let a, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let a, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
         let b, registry =
             match FileDescriptorRegistry.dup a registry with
@@ -294,6 +310,7 @@ module TestFileDescriptorRegistry =
     let ``a closed description's identity is never handed out again`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -307,7 +324,12 @@ module TestFileDescriptorRegistry =
             | Error e -> failwith $"expected close to succeed, got %O{e}"
 
         let reused, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed otherInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                otherInode
+                FileAccessMode.ReadOnly
+                registry
 
         // The *descriptor* comes back...
         reused |> shouldEqual fd
@@ -397,7 +419,12 @@ module TestFileDescriptorRegistry =
                 FileAccessMode.ReadWrite
             ] do
             let fd, registry =
-                FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode mode LaunchedStreams.registry
+                FileDescriptorRegistry.openFile
+                    (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                    ReachedThrough.Unnamed
+                    someInode
+                    mode
+                    LaunchedStreams.registry
 
             let duplicated, registry =
                 match FileDescriptorRegistry.dup fd registry with
@@ -674,19 +701,43 @@ module TestFileDescriptorRegistry =
                     registry <-
                         snd (
                             FileDescriptorRegistry.openFile
+                                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                                 ReachedThrough.Unnamed
                                 someInode
                                 FileAccessMode.ReadOnly
                                 registry
                         )
                 | CountStep.Directory ->
-                    registry <- snd (FileDescriptorRegistry.openDirectory ReachedThrough.Unnamed otherInode registry)
+                    registry <-
+                        snd (
+                            FileDescriptorRegistry.openDirectory
+                                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                                ReachedThrough.Unnamed
+                                otherInode
+                                registry
+                        )
                 | CountStep.Socket ->
-                    registry <- snd (FileDescriptorRegistry.createSocket (SocketId nextSocket) registry)
+                    registry <-
+                        snd (
+                            FileDescriptorRegistry.createSocket
+                                SimulatedUnixFlavour.Linux
+                                (SocketId nextSocket)
+                                registry
+                        )
+
                     nextSocket <- nextSocket + 1L
-                | CountStep.Epoll -> registry <- snd (FileDescriptorRegistry.createEpoll registry)
+                | CountStep.Epoll ->
+                    registry <- snd (FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry)
                 | CountStep.Pipe ->
-                    registry <- snd (FileDescriptorRegistry.createPipe (PipeId nextPipe) false registry)
+                    registry <-
+                        snd (
+                            FileDescriptorRegistry.createPipe
+                                SimulatedUnixFlavour.Linux
+                                (PipeId nextPipe)
+                                false
+                                registry
+                        )
+
                     nextPipe <- nextPipe + 1L
                 | CountStep.Dup source ->
                     match FileDescriptorRegistry.dup source registry with
@@ -795,6 +846,7 @@ module TestFileDescriptorRegistry =
                     | 0 ->
                         snd (
                             FileDescriptorRegistry.openFile
+                                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                                 ReachedThrough.Unnamed
                                 someInode
                                 FileAccessMode.ReadOnly
@@ -1080,7 +1132,12 @@ module TestFileDescriptorRegistry =
     /// and threading the Result through by hand at every step obscures which
     /// step is the one under test.
     let private openOrFail (inode : InodeNumber) (registry : FileDescriptorRegistry) : int * FileDescriptorRegistry =
-        FileDescriptorRegistry.openFile ReachedThrough.Unnamed inode FileAccessMode.ReadOnly registry
+        FileDescriptorRegistry.openFile
+            (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+            ReachedThrough.Unnamed
+            inode
+            FileAccessMode.ReadOnly
+            registry
 
     let private lockOrFail
         (fd : int)
@@ -1340,7 +1397,7 @@ module TestFileDescriptorRegistry =
                 AccessMode = FileAccessMode.ReadOnly
                 NonBlocking = false
                 Flock = Some mode
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
             }
 
         let table (first : FlockMode) (second : FlockMode) =
@@ -1380,7 +1437,7 @@ module TestFileDescriptorRegistry =
                 AccessMode = FileAccessMode.ReadOnly
                 NonBlocking = false
                 Flock = Some FlockMode.Exclusive
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
             }
 
         FileDescriptorRegistry.Unchecked.ofParts
@@ -1439,7 +1496,12 @@ module TestFileDescriptorRegistry =
                     let inode = inodes.[rng.Next inodes.Length]
 
                     let fd, registry' =
-                        FileDescriptorRegistry.openFile ReachedThrough.Unnamed inode FileAccessMode.ReadOnly registry
+                        FileDescriptorRegistry.openFile
+                            (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                            ReachedThrough.Unnamed
+                            inode
+                            FileAccessMode.ReadOnly
+                            registry
 
                     let id =
                         match FileDescriptorRegistry.tryFindId fd registry' with
@@ -1598,6 +1660,7 @@ module TestFileDescriptorRegistry =
     let ``a fresh description starts at offset zero`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1617,6 +1680,7 @@ module TestFileDescriptorRegistry =
     let ``dup shares one offset`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1643,13 +1707,19 @@ module TestFileDescriptorRegistry =
     let ``two opens on one file hold independent offsets`` () : unit =
         let first, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
                 LaunchedStreams.registry
 
         let second, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                someInode
+                FileAccessMode.ReadOnly
+                registry
 
         let registry = FileDescriptorRegistry.setOffset first 9L registry
 
@@ -1663,13 +1733,19 @@ module TestFileDescriptorRegistry =
     let ``seeking leaves the object identity alone`` () : unit =
         let first, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
                 LaunchedStreams.registry
 
         let second, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                someInode
+                FileAccessMode.ReadOnly
+                registry
 
         // Positioned differently, and still the same file.
         let registry = FileDescriptorRegistry.setOffset first 40L registry
@@ -1711,6 +1787,7 @@ module TestFileDescriptorRegistry =
 
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1730,6 +1807,7 @@ module TestFileDescriptorRegistry =
     let ``a reopened file starts from zero again`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -1743,7 +1821,12 @@ module TestFileDescriptorRegistry =
             | Error error -> failwith $"close failed: %O{error}"
 
         let reopened, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode FileAccessMode.ReadOnly registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                someInode
+                FileAccessMode.ReadOnly
+                registry
 
         offsetOf reopened registry |> shouldEqual (Some 0L)
 
@@ -1754,7 +1837,7 @@ module TestFileDescriptorRegistry =
             AccessMode = FileAccessMode.ReadWrite
             NonBlocking = false
             Flock = None
-            Status = OpenFileStatus.none
+            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
         }
 
     /// Two descriptions naming one socket. The library models no way to produce
@@ -1857,6 +1940,7 @@ module TestFileDescriptorRegistry =
                 | 5 ->
                     let _, registry' =
                         FileDescriptorRegistry.openFile
+                            (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                             ReachedThrough.Unnamed
                             (InodeNumber (int64 (rng.Next 5)))
                             FileAccessMode.ReadOnly
@@ -1864,7 +1948,9 @@ module TestFileDescriptorRegistry =
 
                     registry <- registry'
                 | 6 ->
-                    let _, registry' = FileDescriptorRegistry.createEpoll registry
+                    let _, registry' =
+                        FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
+
                     registry <- registry'
                 | _ ->
                     // A different triple each time, so that a `createSocket`
@@ -1889,7 +1975,7 @@ module TestFileDescriptorRegistry =
                     ignore<SocketDomain * SocketKind> (domain, kind)
 
                     let _, registry' =
-                        FileDescriptorRegistry.createSocket (SocketId nextSocketId) registry
+                        FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId nextSocketId) registry
 
                     nextSocketId <- nextSocketId + 1L
                     registry <- registry'
@@ -1938,7 +2024,7 @@ module TestFileDescriptorRegistry =
                             AccessMode = FileAccessMode.ReadOnly
                             NonBlocking = false
                             Flock = None
-                            Status = OpenFileStatus.none
+                            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                         }
                     ])
                 (OpenFileDescriptionId 9L)
@@ -1969,7 +2055,7 @@ module TestFileDescriptorRegistry =
                             AccessMode = mode
                             NonBlocking = false
                             Flock = None
-                            Status = OpenFileStatus.none
+                            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                         }
                     ])
                 (OpenFileDescriptionId 9L)
@@ -2010,6 +2096,7 @@ module TestFileDescriptorRegistry =
         // instance is handed out as `epoll_create1` makes it.
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
                 ReachedThrough.Unnamed
                 someInode
                 FileAccessMode.ReadOnly
@@ -2017,19 +2104,28 @@ module TestFileDescriptorRegistry =
 
         nonBlockingOf fd registry |> shouldEqual false
 
-        let fd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
+        let fd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
+
         nonBlockingOf fd registry |> shouldEqual false
 
-        let fd, registry = FileDescriptorRegistry.createEpoll registry
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux registry
+
         nonBlockingOf fd registry |> shouldEqual false
 
     [<Test>]
     let ``setNonBlocking round-trips on a socket and on a file`` () : unit =
         let socketFd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
         let fileFd, registry =
-            FileDescriptorRegistry.openFile ReachedThrough.Unnamed someInode FileAccessMode.ReadWrite registry
+            FileDescriptorRegistry.openFile
+                (OpenFileStatus.none SimulatedUnixFlavour.Linux)
+                ReachedThrough.Unnamed
+                someInode
+                FileAccessMode.ReadWrite
+                registry
 
         for fd in [ socketFd ; fileFd ] do
             let registry = FileDescriptorRegistry.setNonBlocking fd true registry
@@ -2048,7 +2144,7 @@ module TestFileDescriptorRegistry =
     [<Test>]
     let ``setNonBlocking on one descriptor of a dup pair is visible through the other`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) LaunchedStreams.registry
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) LaunchedStreams.registry
 
         let duplicated, registry =
             match FileDescriptorRegistry.dup fd registry with
@@ -2107,7 +2203,8 @@ module TestFileDescriptorRegistry =
     /// `UnixDescriptor.setNonBlocking`, which stores before reporting).
     [<Test>]
     let ``setNonBlocking round-trips on an epoll instance`` () : unit =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
         let registry = FileDescriptorRegistry.setNonBlocking queueFd true registry
         nonBlockingOf queueFd registry |> shouldEqual true
@@ -2177,9 +2274,12 @@ module TestFileDescriptorRegistry =
         ()
         : unit
         =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let sockFd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
+        let sockFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
+
         let queueId = idOf queueFd registry
         let key = sockFd, idOf sockFd registry
 
@@ -2238,10 +2338,15 @@ module TestFileDescriptorRegistry =
     /// entry's place alone; a modification moves nothing.
     [<Test>]
     let ``Remove drops the pending entry and Modify keeps its place`` () : unit =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let aFd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
-        let bFd, registry = FileDescriptorRegistry.createSocket (SocketId 1L) registry
+        let aFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
+
+        let bFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 1L) registry
+
         let queueId = idOf queueFd registry
         let a = aFd, idOf aFd registry
         let b = bFd, idOf bFd registry
@@ -2271,9 +2376,12 @@ module TestFileDescriptorRegistry =
     /// the caller, reported loudly rather than answered.
     [<Test>]
     let ``the table primitives refuse a key in the wrong state`` () : unit =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let sockFd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
+        let sockFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
+
         let queueId = idOf queueFd registry
         let key = sockFd, idOf sockFd registry
 
@@ -2312,9 +2420,11 @@ module TestFileDescriptorRegistry =
     /// readiness wake from delivering out of a corpse.
     [<Test>]
     let ``closing the target's last descriptor sweeps its registrations; a surviving dup keeps them`` () : unit =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let sockFd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
+        let sockFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
 
         let dupFd, registry =
             match FileDescriptorRegistry.dup sockFd registry with
@@ -2373,7 +2483,7 @@ module TestFileDescriptorRegistry =
                             AccessMode = FileAccessMode.ReadWrite
                             NonBlocking = false
                             Flock = None
-                            Status = OpenFileStatus.none
+                            Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
                         }
                     ])
                 (OpenFileDescriptionId 100L)
@@ -2385,9 +2495,11 @@ module TestFileDescriptorRegistry =
     /// nothing registers, and one registered entry pending twice.
     [<Test>]
     let ``checkInvariants rejects unregistered and duplicated ready entries`` () : unit =
-        let queueFd, registry = FileDescriptorRegistry.createEpoll LaunchedStreams.registry
+        let queueFd, registry =
+            FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux LaunchedStreams.registry
 
-        let sockFd, registry = FileDescriptorRegistry.createSocket (SocketId 0L) registry
+        let sockFd, registry =
+            FileDescriptorRegistry.createSocket SimulatedUnixFlavour.Linux (SocketId 0L) registry
 
         let sockId =
             match FileDescriptorRegistry.tryFindId sockFd registry with

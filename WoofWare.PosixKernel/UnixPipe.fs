@@ -218,7 +218,11 @@ module UnixPipe =
             }
 
         let (readFd, writeFd), registry =
-            FileDescriptorRegistry.createPipe pipeId nonBlocking (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createPipe
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                pipeId
+                nonBlocking
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             registry

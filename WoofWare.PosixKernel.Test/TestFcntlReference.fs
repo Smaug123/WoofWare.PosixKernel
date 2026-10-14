@@ -84,12 +84,11 @@ module TestFcntlReference =
     /// Whether `status` holds only what `flavour`'s kernel keeps on a
     /// description.
     let private statusIsOf (flavour : SimulatedUnixFlavour) (status : OpenFileStatus) : bool =
-        match flavour with
-        | SimulatedUnixFlavour.Linux ->
-            not status.Written
-            && not status.Flocked
-            && status.Synchronous = status.DataSynchronous
-        | SimulatedUnixFlavour.Darwin -> not status.OpenedDirectory && not status.OpenedNoFollow
+        match flavour, status with
+        | SimulatedUnixFlavour.Linux, OpenFileStatus.Linux _
+        | SimulatedUnixFlavour.Darwin, OpenFileStatus.Darwin _ -> true
+        | SimulatedUnixFlavour.Linux, OpenFileStatus.Darwin _
+        | SimulatedUnixFlavour.Darwin, OpenFileStatus.Linux _ -> false
 
     [<RequireQualifiedAccess>]
     type private Kind =

@@ -903,15 +903,30 @@ module UnixNamespace =
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
+            let status =
+                OpenFileStatus.opened
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    flags.Synchronous
+                    flags.DataSynchronous
+                    flags.Directory
+                    flags.NoFollow
+
+            let status =
+                if truncatedExisting then
+                    OpenFileStatus.markWritten status
+                else
+                    status
+
             // A directory gets a description positioned in its entries rather
             // than at a byte offset. It can only be here for reading: every
             // writable or truncating open of one answered EISDIR before this.
             let fd, registry =
                 match VirtualFileSystem.tryGetContent inode system.Machine.FileSystem with
                 | Some (InodeContent.Directory _) ->
-                    FileDescriptorRegistry.openDirectory through inode (UnixSystemState.fileDescriptors system)
+                    FileDescriptorRegistry.openDirectory status through inode (UnixSystemState.fileDescriptors system)
                 | Some (InodeContent.CharacterDevice (device, _)) ->
                     FileDescriptorRegistry.openCharacterDevice
+                        status
                         through
                         inode
                         device
@@ -926,7 +941,12 @@ module UnixNamespace =
                 | Some (InodeContent.RegularFile _)
                 | Some (InodeContent.Symlink _)
                 | None ->
-                    FileDescriptorRegistry.openFile through inode flags.Access (UnixSystemState.fileDescriptors system)
+                    FileDescriptorRegistry.openFile
+                        status
+                        through
+                        inode
+                        flags.Access
+                        (UnixSystemState.fileDescriptors system)
 
             let registry =
                 FileDescriptorRegistry.setFlags
@@ -935,36 +955,6 @@ module UnixNamespace =
                         CloseOnExec = flags.CloseOnExec
                     }
                     registry
-
-            // Each kept under the flavour whose F_GETFL reports it
-            // (`OpenFileStatus`): measured (`open-flags.c`), Linux keeps
-            // O_DIRECTORY and O_NOFOLLOW, and Darwin marks a description whose
-            // open truncated a file that existed (`fcntl-dup.c`, WRITTEN rows).
-            let linux =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> true
-                | SimulatedUnixFlavour.Darwin -> false
-
-            let registry =
-                match FileDescriptorRegistry.tryFindId fd registry with
-                | Some id ->
-                    registry
-                    |> FileDescriptorRegistry.mapOpenFiles (
-                        OpenFileTable.mapStatus
-                            id
-                            (fun status ->
-                                { status with
-                                    Synchronous = flags.Synchronous
-                                    DataSynchronous = flags.DataSynchronous
-                                    OpenedDirectory = linux && flags.Directory
-                                    OpenedNoFollow = linux && flags.NoFollow
-                                    Written = not linux && truncatedExisting
-                                }
-                            )
-                    )
-                | None ->
-                    failwith
-                        $"UnixNamespace.openPath: fd %d{fd} was handed out a moment ago and is not live (this is a bug in this library)."
 
             Ok (SyscallAnswer.Completed (int64 fd), UnixSystemState.withFileDescriptors registry system)
 

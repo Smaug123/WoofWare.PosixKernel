@@ -1068,7 +1068,10 @@ module UnixSocket =
         let (SocketId raw) = socketId
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                socketId
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             if nonBlocking then

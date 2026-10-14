@@ -509,6 +509,7 @@ module TestModeChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
@@ -519,6 +520,7 @@ module TestModeChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 (Lone.fileDescriptors system)
@@ -623,8 +625,9 @@ module TestModeChange =
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
+                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
+                | SimulatedUnixFlavour.Darwin ->
+                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
 
             let fd, registry = create (Lone.fileDescriptors system)
 

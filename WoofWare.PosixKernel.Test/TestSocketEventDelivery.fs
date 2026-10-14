@@ -79,7 +79,10 @@ module TestSocketEventDelivery =
         EpollReadyList.hasDeliverableEvent queueId kernel
 
     let private addEpoll (kernel : UnixSystem<int, string>) : int * OpenFileDescriptionId * UnixSystem<int, string> =
-        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
+        let fd, registry =
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour kernel.Machine.UnixPlatform)
+                (Lone.fileDescriptors kernel)
 
         let queueId =
             match FileDescriptorRegistry.tryFindId fd registry with

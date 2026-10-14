@@ -411,18 +411,14 @@ type UnixSystemDefect<'Thread> =
     /// A descriptor carries `FD_CLOFORK` under the Linux flavour, which has no
     /// such flag.
     | CloseOnForkUnderLinux of fd : int
-    /// A description carries one of `O_SYNC` and `O_DSYNC` without the other
-    /// under the Linux flavour, whose `open(2)` sets both together and whose
-    /// `F_SETFL` changes neither.
-    | UnpairedSynchronisationUnderLinux of description : OpenFileDescriptionId
-    /// A description's status holds a fact the flavour's `F_GETFL` does not
-    /// report, which `OpenFileStatus` keeps only under the other flavour.
+    /// A description's status is another flavour's than the machine's
+    /// `flavour` (`OpenFileStatus.flavour`).
     | StatusNotOfFlavour of
         description : OpenFileDescriptionId *
         status : OpenFileStatus *
         flavour : SimulatedUnixFlavour
-    /// Under the Darwin flavour, a description holds an `flock` lock and its
-    /// status does not record that one was granted (`OpenFileStatus.Flocked`).
+    /// A Darwin description holds an `flock` lock and its status does not
+    /// record that one was granted (`OpenFileStatus.Darwin`'s `flocked`).
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A thread is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
@@ -1953,6 +1949,8 @@ module UnixSystem =
             |> List.filter (fun (_, count) -> count > 1)
             |> List.map (fun (registeredAt, _) -> UnixSystemDefect.DuplicateEventRegistrationOrdinal registeredAt)
 
+        // Each description's status against the machine's flavour, and a
+        // Darwin description's lock against the grant its status records.
         let statusOfFlavour =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
 
@@ -1961,35 +1959,18 @@ module UnixSystem =
             |> List.collect (fun (id, description) ->
                 let status = description.Status
 
-                let foreign =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> status.Written || status.Flocked
-                    | SimulatedUnixFlavour.Darwin -> status.OpenedDirectory || status.OpenedNoFollow
-
                 let unrecorded =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> false
-                    | SimulatedUnixFlavour.Darwin -> description.Flock.IsSome && not status.Flocked
+                    match status with
+                    | OpenFileStatus.Darwin (flocked = flocked) -> description.Flock.IsSome && not flocked
+                    | OpenFileStatus.Linux _ -> false
 
                 [
-                    if foreign then
+                    if OpenFileStatus.flavour status <> flavour then
                         yield UnixSystemDefect.StatusNotOfFlavour (id, status, flavour)
                     if unrecorded then
                         yield UnixSystemDefect.FlockHeldNotRecorded id
                 ]
             )
-
-
-        let unpairedUnderLinux =
-            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
-            | SimulatedUnixFlavour.Darwin -> []
-            | SimulatedUnixFlavour.Linux ->
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
-                |> List.filter (fun (_, description) ->
-                    description.Status.Synchronous <> description.Status.DataSynchronous
-                )
-                |> List.map (fun (id, _) -> UnixSystemDefect.UnpairedSynchronisationUnderLinux id)
 
         // Every description is referenced: by a descriptor, or by a call in
         // flight that holds it. Both counts are the description's own: the
@@ -2631,7 +2612,6 @@ module UnixSystem =
         @ connectionFreshness
         @ ordinalFreshness
         @ ordinalDuplicates
-        @ unpairedUnderLinux
         @ statusOfFlavour
         @ unreferencedDescriptions
         @ lingeringHeldOnlyByCalls

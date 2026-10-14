@@ -1516,7 +1516,9 @@ module UnixPoll =
         | Ok () ->
 
         let fd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll
+                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (UnixSystemState.fileDescriptors system)
 
         let registry =
             FileDescriptorRegistry.setFlags

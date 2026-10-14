@@ -345,7 +345,11 @@ module TestInotifyInvariants =
         |> shouldEqual (Error (InotifyLimitsRefusal.NotReadOn SimulatedUnixFlavour.Darwin))
 
         let fd, registry =
-            FileDescriptorRegistry.createInotify UserId.root false (Lone.fileDescriptors darwin)
+            FileDescriptorRegistry.createInotify
+                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                UserId.root
+                false
+                (Lone.fileDescriptors darwin)
 
         let forged = Lone.withFileDescriptors registry darwin
         let id = idOf fd forged
@@ -950,7 +954,7 @@ module TestInotifyInvariants =
                 AccessMode = FileAccessMode.ReadOnly
                 NonBlocking = false
                 Flock = None
-                Status = OpenFileStatus.none
+                Status = OpenFileStatus.none SimulatedUnixFlavour.Linux
             }
 
         Assert.Throws<exn> (fun () ->
