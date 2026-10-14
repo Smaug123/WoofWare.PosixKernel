@@ -203,6 +203,10 @@ module UnixEntropy =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetRandomAnswer * UnixSystem<'Thread, 'Handler>, GetRandomRefusal>
         =
+        // A thread that cannot be making the call is the client's bug, whatever
+        // the call would have answered.
+        UnixThreadTable.requireIssuer "UnixEntropy.getRandom" thread system.Threads
+
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin as flavour -> Error (GetRandomRefusal.NoSuchSyscall flavour)
         | SimulatedUnixFlavour.Linux ->
@@ -224,10 +228,6 @@ module UnixEntropy =
         // the clamped count succeeds rather than faulting.
         let length = int (min count (getRandomMaxTransfer system.Machine.UnixPlatform))
 
-        if not (Map.containsKey thread system.Threads) then
-            failwith
-                $"UnixEntropy.getRandom: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
-
         let stopsShort (moved : int) =
             SyscallInterruption.stopsAtPageBoundary thread moved system
 
@@ -247,7 +247,8 @@ module UnixEntropy =
     ///
     /// Never blocks. Linux-only: under any other flavour the call is refused.
     ///
-    /// `thread` is the thread making the call, which must be one of the process's.
+    /// `thread` is the thread making the call, which must be one of the process's,
+    /// and not asleep in another call.
     /// A request that moves more than a page, by a thread with a signal pending,
     /// is refused: a real one stops
     /// short at the first page boundary.

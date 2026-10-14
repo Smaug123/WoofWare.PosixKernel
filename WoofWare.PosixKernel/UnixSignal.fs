@@ -605,16 +605,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
         =
-        match Map.tryFind thread system.Threads with
-        | None ->
-            failwith
-                $"UnixSignal.%s{operation}: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
-        | Some {
-                   Parked = Some park
-               } ->
-            failwith
-                $"UnixSignal.%s{operation}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
-        | Some _ ->
+        UnixThreadTable.requireIssuer $"UnixSignal.%s{operation}" thread system.Threads
 
         let signals = system.Process.Signals
         let old = SignalState.maskOf thread signals
@@ -845,16 +836,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
-        match Map.tryFind thread system.Threads with
-        | None ->
-            failwith
-                $"UnixSignal.%s{operation}: thread %O{thread} is not one of the process's threads (this is a bug in the client)."
-        | Some {
-                   Parked = Some park
-               } ->
-            failwith
-                $"UnixSignal.%s{operation}: thread %O{thread} is asleep in %A{park.Syscall}, so it cannot be making this call (this is a bug in the client)."
-        | Some _ ->
+        UnixThreadTable.requireIssuer $"UnixSignal.%s{operation}" thread system.Threads
 
         let signals =
             SignalState.suspend thread (temporary system.Process.Signals) system.Process.Signals
@@ -996,14 +978,15 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some ParkedSyscall.SigSuspend -> ()
-        | Some other ->
-            failwith
-                $"UnixSignal.finishSigsuspend: thread %O{thread} is parked in %A{other}, not in sigsuspend, so there is no sigsuspend to finish (this is a bug in the client)."
-        | None ->
-            failwith
-                $"UnixSignal.finishSigsuspend: thread %O{thread} is not parked, so there is no sigsuspend to finish. Only a thread `sigsuspend` or `pause` answered `WouldBlock` finishes here (this is a bug in the client)."
+        UnixThreadTable.expectParked
+            "UnixSignal.finishSigsuspend"
+            (fun parked ->
+                match parked with
+                | ParkedSyscall.SigSuspend -> Some ()
+                | _ -> None
+            )
+            thread
+            system.Threads
 
         match SyscallInterruption.suspension thread system system.Process.Signals with
         | Error refusal -> Error refusal

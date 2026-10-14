@@ -325,8 +325,6 @@ module UnixMachineState =
     [<Literal>]
     let maxBootTimeSeconds : int64 = 9223372027631403770L
 
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
-
     /// `machine` with the filesystem `mutation` leaves, which must have been
     /// made from `machine.FileSystem`, and the records its changes raise
     /// queued on the inotify instances watching what they changed, the
@@ -1216,14 +1214,14 @@ module UnixMachineState =
 
         let nanoseconds =
             int64 (UnixTimestamp.nanoseconds machine.BootTime)
-            + sinceBoot % nanosecondsPerSecond
+            + sinceBoot % UnixTimestamp.nanosecondsPerSecond
 
-        let carry = nanoseconds / nanosecondsPerSecond
+        let carry = nanoseconds / UnixTimestamp.nanosecondsPerSecond
 
         UnixTimestamp.createOrFail
             "UnixMachineState.realtime"
-            (bootSeconds + sinceBoot / nanosecondsPerSecond + carry)
-            (int (nanoseconds % nanosecondsPerSecond))
+            (bootSeconds + sinceBoot / UnixTimestamp.nanosecondsPerSecond + carry)
+            (int (nanoseconds % UnixTimestamp.nanosecondsPerSecond))
 
     /// `machine` with the timestamps of the pipe `pipeId` passed through
     /// `touch`, if this kernel holds them: it holds none for a pipe the process

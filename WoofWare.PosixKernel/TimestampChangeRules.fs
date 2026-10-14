@@ -84,8 +84,6 @@ module TimestampChangeRules =
     let private darwinUtimeNow : int64 = -1L
     let private darwinUtimeOmit : int64 = -2L
 
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
-
     /// `UTIME_NOW` in `flavour`'s numbering: 0x3FFFFFFF on Linux, -1 on
     /// Darwin.
     let utimeNow (flavour : SimulatedUnixFlavour) : int64 =
@@ -118,7 +116,10 @@ module TimestampChangeRules =
         match flavour with
         | SimulatedUnixFlavour.Darwin -> TimestampRequest.Explicit fields
         | SimulatedUnixFlavour.Linux ->
-            if fields.Nanoseconds < 0L || fields.Nanoseconds >= nanosecondsPerSecond then
+            if
+                fields.Nanoseconds < 0L
+                || fields.Nanoseconds >= UnixTimestamp.nanosecondsPerSecond
+            then
                 TimestampRequest.Invalid fields
             else
                 TimestampRequest.Explicit fields
@@ -145,7 +146,10 @@ module TimestampChangeRules =
     let internal stored (range : TimestampRange) (fields : TimespecFields) : UnixTimestamp =
         match range with
         | TimestampRange.Seconds64 ->
-            if fields.Nanoseconds < 0L || fields.Nanoseconds >= nanosecondsPerSecond then
+            if
+                fields.Nanoseconds < 0L
+                || fields.Nanoseconds >= UnixTimestamp.nanosecondsPerSecond
+            then
                 failwith
                     $"TimestampChangeRules.stored: %d{fields.Nanoseconds} is not a nanosecond field Linux's decoding lets through; decode first (this is a bug in this library)."
 
@@ -156,7 +160,7 @@ module TimestampChangeRules =
         | TimestampRange.Nanoseconds64 ->
             let exact =
                 System.Int128.op_Implicit fields.Seconds
-                * System.Int128.op_Implicit nanosecondsPerSecond
+                * System.Int128.op_Implicit UnixTimestamp.nanosecondsPerSecond
                 + System.Int128.op_Implicit fields.Nanoseconds
 
             let saturated =
@@ -168,8 +172,8 @@ module TimestampChangeRules =
                     int64 exact
 
             // Floor division, so that the nanosecond part is never negative.
-            let quotient = saturated / nanosecondsPerSecond
-            let remainder = saturated % nanosecondsPerSecond
+            let quotient = saturated / UnixTimestamp.nanosecondsPerSecond
+            let remainder = saturated % UnixTimestamp.nanosecondsPerSecond
 
             if remainder >= 0L then
                 UnixTimestamp.createOrFail "TimestampChangeRules.stored" quotient (int remainder)
@@ -177,7 +181,7 @@ module TimestampChangeRules =
                 UnixTimestamp.createOrFail
                     "TimestampChangeRules.stored"
                     (quotient - 1L)
-                    (int (remainder + nanosecondsPerSecond))
+                    (int (remainder + UnixTimestamp.nanosecondsPerSecond))
 
     let private bothNow (access : TimestampRequest) (modification : TimestampRequest) : bool =
         match access, modification with
