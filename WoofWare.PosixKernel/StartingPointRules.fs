@@ -43,6 +43,31 @@ type EmptyPathMeaning =
     /// `StartingPointRules.EmptyPath` says.
     | Walked
 
+/// What the path a `*at` syscall copied in names, once the call has read
+/// what its flag word makes of an empty path.
+[<RequireQualifiedAccess>]
+type internal AtPathTarget =
+    /// The object the descriptor `fd` names: the empty path, under Linux's
+    /// `AT_EMPTY_PATH`, with a `dirfd` other than `AT_FDCWD`.
+    | Descriptor of fd : int
+    /// The current directory: the empty path, under Linux's `AT_EMPTY_PATH`,
+    /// with `AT_FDCWD`.
+    | CurrentDirectory
+    /// Whatever a walk of the path from `dirfd` reaches.
+    | Walked
+
+[<RequireQualifiedAccess>]
+module internal AtPathTarget =
+    /// What `path`, relative to `directory`, names under `emptyPath`.
+    let classify (emptyPath : EmptyPathMeaning) (directory : AtDirectory) (path : UnixPath) : AtPathTarget =
+        match emptyPath with
+        | EmptyPathMeaning.NamesStartingPoint when UnixPath.isEmpty path ->
+            match directory with
+            | AtDirectory.Descriptor fd -> AtPathTarget.Descriptor fd
+            | AtDirectory.CurrentDirectory -> AtPathTarget.CurrentDirectory
+        | EmptyPathMeaning.NamesStartingPoint
+        | EmptyPathMeaning.Walked -> AtPathTarget.Walked
+
 /// When a walk of the empty path fails, relative to looking `dirfd` up.
 [<RequireQualifiedAccess>]
 type EmptyPathRule =

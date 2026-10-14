@@ -4829,6 +4829,11 @@ module TestMkDirRules =
     let private darwin : MkDirRules =
         SimulatedUnixPlatform.mkDirRules SimulatedUnixPlatform.macOsArm64
 
+    let private linuxPlatform : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
+
+    let private darwinPlatform : SimulatedUnixPlatform =
+        SimulatedUnixPlatform.macOsArm64
+
     let private mode (raw : int) : PermissionBits = PermissionBits.parseOrFail "test" raw
 
     /// A root holding `d` (a directory), `f` (a file), `lf -> f`, `ld -> d`,
@@ -4946,7 +4951,7 @@ module TestMkDirRules =
     /// hands privilege only to the verdict would be testing a resolution no
     /// `mkdir` could produce.
     let private verdict
-        (rules : MkDirRules)
+        (platform : SimulatedUnixPlatform)
         (privilege : CallerPrivilege)
         (vfs : VirtualFileSystem)
         (candidate : string)
@@ -4961,7 +4966,7 @@ module TestMkDirRules =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator platform)
                 (path candidate)
                 vfs
             |> Answered.errno
@@ -4986,9 +4991,9 @@ module TestMkDirRules =
         // the three navigations its own. `TestVirtualFileSystemAgainstHost`
         // cannot carry the "/" row: it prefixes every path with a temporary
         // directory, so the kernel never sees a path with no components.
-        for rules in [ linux ; darwin ] do
+        for platform in [ linuxPlatform ; darwinPlatform ] do
             for candidate in [ "/" ; "." ; "d/." ; "d/.." ; "/." ] do
-                verdict rules CallerPrivilege.Unprivileged tree candidate
+                verdict platform CallerPrivilege.Unprivileged tree candidate
                 |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
     [<Test>]
@@ -4996,41 +5001,41 @@ module TestMkDirRules =
         // Measured on both, with no trailing separator: a directory, a file, a
         // link to either, a dangling link and a cyclic link are all EEXIST.
         // `mkdir` never dereferences the name it is about to bind.
-        for rules in [ linux ; darwin ] do
+        for platform in [ linuxPlatform ; darwinPlatform ] do
             for candidate in [ "d" ; "f" ; "lf" ; "ld" ; "dang" ; "cyc" ] do
-                verdict rules CallerPrivilege.Unprivileged tree candidate
+                verdict platform CallerPrivilege.Unprivileged tree candidate
                 |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
     [<Test>]
     let ``a trailing separator reaches past the final component only on Darwin`` () : unit =
-        // The divergence, and the reason `MkDirRules.TrailingSeparator` exists.
+        // The divergence `SimulatedUnixPlatform.finalNameTrailingSeparator` holds.
         // Linux's creating lookup never dereferences the last component, so every
         // one of these is EEXIST there.
         for candidate in [ "f/" ; "lf/" ; "ld/" ; "dang/" ; "cyc/" ] do
-            verdict linux CallerPrivilege.Unprivileged tree candidate
+            verdict linuxPlatform CallerPrivilege.Unprivileged tree candidate
             |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
         // Darwin resolves it as a lookup would, so each row fails — or succeeds —
         // for its own reason. Measured individually rather than as a group: "f/"
         // and "lf/" are ENOTDIR, "ld/" lands on the directory the link names and
         // is EEXIST, and "cyc/" is ELOOP.
-        verdict darwin CallerPrivilege.Unprivileged tree "f/"
+        verdict darwinPlatform CallerPrivilege.Unprivileged tree "f/"
         |> shouldEqual (MkDirVerdict.Refuse UnixError.ENOTDIR)
 
-        verdict darwin CallerPrivilege.Unprivileged tree "lf/"
+        verdict darwinPlatform CallerPrivilege.Unprivileged tree "lf/"
         |> shouldEqual (MkDirVerdict.Refuse UnixError.ENOTDIR)
 
-        verdict darwin CallerPrivilege.Unprivileged tree "ld/"
+        verdict darwinPlatform CallerPrivilege.Unprivileged tree "ld/"
         |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
-        verdict darwin CallerPrivilege.Unprivileged tree "cyc/"
+        verdict darwinPlatform CallerPrivilege.Unprivileged tree "cyc/"
         |> shouldEqual (MkDirVerdict.Refuse UnixError.ELOOP)
 
         // And the destructive one: measured on macOS, `mkdir("dang/")` creates
         // the link's *target*. The name bound is "nx", not "dang" — which is
         // what no host-side comparison can see, since a kernel reports only that
         // it succeeded.
-        verdict darwin CallerPrivilege.Unprivileged tree "dang/"
+        verdict darwinPlatform CallerPrivilege.Unprivileged tree "dang/"
         |> bound
         |> shouldEqual "nx"
 
@@ -5040,16 +5045,16 @@ module TestMkDirRules =
         // is the one place `mkdir` and a creating `open` disagree about a
         // resolution of the same shape — `open` owes a free name that demands a
         // directory ENOENT on Darwin.
-        for rules in [ linux ; darwin ] do
-            verdict rules CallerPrivilege.Unprivileged tree "new"
+        for platform in [ linuxPlatform ; darwinPlatform ] do
+            verdict platform CallerPrivilege.Unprivileged tree "new"
             |> bound
             |> shouldEqual "new"
 
-            verdict rules CallerPrivilege.Unprivileged tree "new/"
+            verdict platform CallerPrivilege.Unprivileged tree "new/"
             |> bound
             |> shouldEqual "new"
 
-            verdict rules CallerPrivilege.Unprivileged tree "new//"
+            verdict platform CallerPrivilege.Unprivileged tree "new//"
             |> bound
             |> shouldEqual "new"
 
@@ -5057,13 +5062,13 @@ module TestMkDirRules =
     let ``binding a name needs both write and search on the holding directory`` () : unit =
         // Measured at uid 1000 on both: a 0o555 parent and a 0o666 parent are
         // each EACCES, while 0o300 — the bare pair — succeeds.
-        for rules in [ linux ; darwin ] do
+        for platform in [ linuxPlatform ; darwinPlatform ] do
             for bits in [ 0o555 ; 0o666 ; 0o111 ; 0o644 ] do
-                verdict rules CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/new"
+                verdict platform CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/new"
                 |> shouldEqual (MkDirVerdict.Refuse UnixError.EACCES)
 
             for bits in [ 0o300 ; 0o333 ; 0o755 ] do
-                verdict rules CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/new"
+                verdict platform CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/new"
                 |> bound
                 |> shouldEqual "new"
 
@@ -5074,18 +5079,18 @@ module TestMkDirRules =
         // a 0o200 parent are EACCES while a 0o100 parent — which cannot be
         // written — is EEXIST. So this check sits above the EEXIST arm, and the
         // write check sits below it.
-        for rules in [ linux ; darwin ] do
+        for platform in [ linuxPlatform ; darwinPlatform ] do
             for bits in [ 0o666 ; 0o200 ; 0o000 ; 0o644 ] do
-                verdict rules CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/kid"
+                verdict platform CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/kid"
                 |> shouldEqual (MkDirVerdict.Refuse UnixError.EACCES)
 
             for bits in [ 0o100 ; 0o500 ; 0o555 ; 0o300 ] do
-                verdict rules CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/kid"
+                verdict platform CallerPrivilege.Unprivileged (treeWith (mode bits)) "locked/kid"
                 |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
         // Root looks anything up.
-        for rules in [ linux ; darwin ] do
-            verdict rules CallerPrivilege.Privileged (treeWith (mode 0o000)) "locked/kid"
+        for platform in [ linuxPlatform ; darwinPlatform ] do
+            verdict platform CallerPrivilege.Privileged (treeWith (mode 0o000)) "locked/kid"
             |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
     [<Test>]
@@ -5112,23 +5117,23 @@ module TestMkDirRules =
         // "locked" itself is an existing name inside the (writable) root, so it
         // exercises the ordering without needing an entry inside the unwritable
         // directory — which the builder could not create anyway.
-        for rules in [ linux ; darwin ] do
-            verdict rules CallerPrivilege.Unprivileged locked "locked"
+        for platform in [ linuxPlatform ; darwinPlatform ] do
+            verdict platform CallerPrivilege.Unprivileged locked "locked"
             |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
     [<Test>]
     let ``root bypasses the permission rule but not the others`` () : unit =
         // Measured on Linux as uid 0: `mkdir` into a 0o555 directory succeeds.
         // The refusals above it do not care about privilege.
-        for rules in [ linux ; darwin ] do
-            verdict rules CallerPrivilege.Privileged (treeWith (mode 0o555)) "locked/new"
+        for platform in [ linuxPlatform ; darwinPlatform ] do
+            verdict platform CallerPrivilege.Privileged (treeWith (mode 0o555)) "locked/new"
             |> bound
             |> shouldEqual "new"
 
-            verdict rules CallerPrivilege.Privileged tree "d"
+            verdict platform CallerPrivilege.Privileged tree "d"
             |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
-            verdict rules CallerPrivilege.Privileged tree "/"
+            verdict platform CallerPrivilege.Privileged tree "/"
             |> shouldEqual (MkDirVerdict.Refuse UnixError.EEXIST)
 
     [<Test>]

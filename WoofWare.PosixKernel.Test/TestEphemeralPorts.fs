@@ -83,16 +83,29 @@ module TestEphemeralPorts =
         bindWithReuse false fd endpoint system
 
     /// `bind(2)` to the wildcard address and port 0, answering the port the
-    /// kernel chose.
+    /// kernel chose, or that it found none: an errno where the platform
+    /// answers one, and the refusal where it does not.
     let private bindEphemeral
         (fd : int)
         (system : UnixSystem<int, string>)
-        : Result<uint16, BindRefusal> * UnixSystem<int, string>
+        : Result<uint16, Choice<UnixError, BindRefusal>> * UnixSystem<int, string>
         =
         match bindTo fd (wildcard 0us) system with
         | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), system -> Ok endpoint.Port, system
+        | Ok (BindAnswer.Failed error), system -> Error (Choice1Of2 error), system
         | Ok answer, _ -> failwith $"bind(0.0.0.0:0) answered %A{answer}"
-        | Error refusal, system -> Error refusal, system
+        | Error refusal, system -> Error (Choice2Of2 refusal), system
+
+    /// What finding no ephemeral port answers on `platform`: Linux's
+    /// EADDRINUSE, and Darwin's refusal.
+    let private noPortForBind
+        (platform : SimulatedUnixPlatform)
+        (range : uint16 * uint16)
+        : Choice<UnixError, BindRefusal>
+        =
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> Choice1Of2 UnixError.EADDRINUSE
+        | SimulatedUnixFlavour.Darwin -> Choice2Of2 (BindRefusal.EphemeralPortsExhausted range)
 
     let private listenOn (fd : int) (system : UnixSystem<int, string>) : ListenAnswer * UnixSystem<int, string> =
         match UnixSocket.tryListen fd 8 system with
@@ -210,8 +223,7 @@ module TestEphemeralPorts =
         let fd2, system = newStream system
         let port2, system = bindEphemeral fd2 system
 
-        port2
-        |> shouldEqual (Error (BindRefusal.EphemeralPortsExhausted (40000us, 40001us)))
+        port2 |> shouldEqual (Error (noPortForBind platform (40000us, 40001us)))
 
         // ...and the socket that did get a port can connect to the listener,
         // which is what crashed when the occupied port was handed out.
@@ -320,21 +332,14 @@ module TestEphemeralPorts =
             | SyscallAnswer.Completed _, system -> system
             | SyscallAnswer.Failed error, _ -> failwith $"connect failed with %A{error}"
 
-        // The client took 40001; put the cursor back on the listener's port.
         localPort clientFd system |> shouldEqual 40001us
 
-        let system =
-            { system with
-                Machine =
-                    { system.Machine with
-                        NextEphemeralPort = 40000us
-                    }
-            }
-
+        // An explicit bind: a search for a port passes over every port held
+        // at an overlapping address, whatever SO_REUSEADDR says.
         let bindBesideListener (system : UnixSystem<int, string>) : uint16 =
             let fd, system = newStream system
 
-            match bindWithReuse true fd (loopback 0us) system with
+            match bindWithReuse true fd (loopback 40000us) system with
             | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), _ -> endpoint.Port
             | other, _ -> failwith $"binding beside the listener: %A{other}"
 
@@ -393,7 +398,9 @@ module TestEphemeralPorts =
         | Some (OpenFileTarget.Socket socketId) ->
             let socket = UnixMachineState.socket socketId run.System.Machine
 
-            socket.Phase, socket.Ipv4Binding |> Option.exists (fun binding -> binding.HoldsPort)
+            socket.Phase,
+            socket.Ipv4Binding
+            |> Option.exists (fun binding -> PortHold.isHeld binding.PortHold)
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     /// Whether `connect` from the unbound socket behind `fd` towards
@@ -408,7 +415,7 @@ module TestEphemeralPorts =
                     Endpoint = loopback port
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
 
             UnixMachineState.allocateEphemeralPort
@@ -444,11 +451,12 @@ module TestEphemeralPorts =
 
             match bindEphemeral fd run.System with
             | Ok _, system
-            | Error (BindRefusal.EphemeralPortsExhausted _), system ->
+            | Error (Choice1Of2 UnixError.EADDRINUSE), system
+            | Error (Choice2Of2 (BindRefusal.EphemeralPortsExhausted _)), system ->
                 { run with
                     System = system
                 }
-            | Error refusal, _ -> failwith $"bind refused: %A{refusal}"
+            | Error other, _ -> failwith $"bind answered %A{other}"
         | Op.Listen slot ->
             let fd = run.Slots.[slot]
 
@@ -545,7 +553,7 @@ module TestEphemeralPorts =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
-            |> Option.exists (fun binding -> not binding.HoldsPort)
+            |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     /// Whether `machine` and `without`, which lacks one of its sockets, agree
@@ -573,7 +581,7 @@ module TestEphemeralPorts =
                 Endpoint = Ipv4Endpoint.ofParts address port
                 LockedAddress = None
                 LockedPort = false
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
         let conflictsAgree =
@@ -612,7 +620,7 @@ module TestEphemeralPorts =
             |> Map.toSeq
             |> Seq.choose (fun (_, socket) ->
                 socket.Ipv4Binding
-                |> Option.filter (fun binding -> binding.HoldsPort)
+                |> Option.filter (fun binding -> PortHold.isHeld binding.PortHold)
                 |> Option.map (fun binding -> binding.Endpoint)
             )
             |> Set.ofSeq
@@ -676,7 +684,7 @@ module TestEphemeralPorts =
                     |> List.choose (fun (socketId, socket) ->
                         match socket.Ipv4Binding, socket.Phase with
                         | Some binding, (SocketPhase.Idle | SocketPhase.Listening _) when
-                            binding.HoldsPort
+                            PortHold.isHeld binding.PortHold
                             && binding.Endpoint.Port <> listenerPort 0
                             && binding.Endpoint.Port <> listenerPort 1
                             && Set.contains binding.Endpoint.Port orphaned
@@ -694,7 +702,7 @@ module TestEphemeralPorts =
                 // and no port an allocation chooses.
                 for KeyValue (socketId, socket) in run'.System.Machine.Sockets do
                     match socket.Ipv4Binding with
-                    | Some binding when not binding.HoldsPort ->
+                    | Some binding when not (PortHold.isHeld binding.PortHold) ->
                         let machine = run'.System.Machine
 
                         let without =
@@ -719,3 +727,417 @@ module TestEphemeralPorts =
 
         coverage.Count "a call on a socket whose refused connect gave its port back"
         |> shouldBeGreaterThan 10
+
+    /// Linux's search for a port to bind passes over a port another socket
+    /// holds, both carrying `SO_REUSEADDR`, though an explicit bind of it
+    /// would be admitted beside it (measured, `docs/probes/ephemeral-search`,
+    /// row lr/Br): the search never relaxes the bind rule.
+    [<Test>]
+    let ``Linux bind(0) with SO_REUSEADDR does not share a port another reuse socket holds`` () : unit =
+        let system = systemOn SimulatedUnixPlatform.linuxX64 (40000us, 40001us)
+        let holder, system = newStream system
+
+        let system =
+            match bindWithReuse true holder (loopback 40000us) system with
+            | Ok (BindAnswer.Bound _), system -> system
+            | other, _ -> failwith $"binding the holder: %A{other}"
+
+        // The control: an explicit bind beside it is admitted.
+        let beside, system = newStream system
+
+        match bindWithReuse true beside (loopback 40000us) system with
+        | Ok (BindAnswer.Bound _), _ -> ()
+        | other, _ -> failwith $"an explicit bind beside the holder: %A{other}"
+
+        match bindWithReuse true beside (loopback 0us) system with
+        | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), system ->
+            endpoint.Port |> shouldEqual 40001us
+            noDefects system
+        | other, _ -> failwith $"bind(127.0.0.1:0): %A{other}"
+
+    // ------------------------------------------------------------------
+    // Linux's search, against a reference written from the measured rule
+    // ------------------------------------------------------------------
+
+    /// What a walk socket holds, by how it came by its port, as the walk
+    /// itself recorded it rather than as the kernel's state says.
+    [<RequireQualifiedAccess>]
+    type private Holding =
+        /// No port: never bound, or given back by a refused connect. `address`
+        /// is where the socket's next implicit bind binds.
+        | Nothing of address : Ipv4Address
+        /// A port `bind(2)` or `listen(2)` gave the socket (`locked` where
+        /// `bind(2)` asked for it), or the listener's port an accepted socket
+        /// holds.
+        | BindMade of endpoint : Ipv4Endpoint * locked : bool
+        /// A port connect's own implicit bind gave the socket, connected to
+        /// `destination`.
+        | ConnectMade of endpoint : Ipv4Endpoint * destination : Ipv4Endpoint
+
+    type private Walk =
+        {
+            System : UnixSystem<int, string>
+            /// Each walk socket's descriptor, and what it holds.
+            Slots : Map<int, Holding>
+            /// The fds of the two fixed listeners, at 5000 and 5001.
+            Listeners : int list
+        }
+
+    /// Measured (`docs/probes/ephemeral-search`): Linux's search for a port to
+    /// bind, for `bind(2)` of port 0 and an unbound `listen(2)`, passes over
+    /// every port another socket holds at an address overlapping
+    /// `candidate`'s, however it came by it and whatever either's
+    /// `SO_REUSEADDR`.
+    let private reserveFree (holdings : Holding list) (candidate : Ipv4Endpoint) : bool =
+        holdings
+        |> List.forall (fun holding ->
+            match holding with
+            | Holding.Nothing _ -> true
+            | Holding.BindMade (held, _)
+            | Holding.ConnectMade (held, _) ->
+                not (held.Port = candidate.Port && Ipv4Endpoint.addressesOverlap held candidate)
+        )
+
+    /// Measured: Linux's search for a connect's port passes over every port a
+    /// socket holds by `bind(2)` or `listen(2)`, at any address, and shares a
+    /// port connect's own implicit bind gave another socket, unless that one
+    /// is connected from the same source to the same destination.
+    let private connectFree (holdings : Holding list) (source : Ipv4Endpoint) (destination : Ipv4Endpoint) : bool =
+        holdings
+        |> List.forall (fun holding ->
+            match holding with
+            | Holding.Nothing _ -> true
+            | Holding.BindMade (held, _) -> held.Port <> source.Port
+            | Holding.ConnectMade (held, connectedTo) -> not (held = source && connectedTo = destination)
+        )
+
+    /// The first port, from where the machine's allocator stands and wrapping
+    /// round its range once, that `free` admits.
+    let private firstFree (machine : UnixMachineState) (free : uint16 -> bool) : uint16 option =
+        let low, high = machine.EphemeralPortRange
+        let width = int high - int low + 1
+
+        let start =
+            if machine.NextEphemeralPort < low || machine.NextEphemeralPort > high then
+                low
+            else
+                machine.NextEphemeralPort
+
+        [ 0 .. width - 1 ]
+        |> List.map (fun i -> uint16 (int low + (int start - int low + i) % width))
+        |> List.tryFind free
+
+    /// What every walk socket but `fd` holds.
+    let private holdingsBut (fd : int) (walk : Walk) : Holding list =
+        walk.Slots
+        |> Map.toList
+        |> List.filter (fun (other, _) -> other <> fd)
+        |> List.map snd
+
+    /// What `getsockname(2)` would report for the socket behind `fd`.
+    let private nameOfFd (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
+        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        | Some (OpenFileTarget.Socket socketId) ->
+            match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
+            | Some binding -> binding.Endpoint
+            | None -> wildcard 0us
+        | other -> failwith $"fd %d{fd} is %A{other}"
+
+    let private phaseOfFd (fd : int) (system : UnixSystem<int, string>) : SocketPhase =
+        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        | Some (OpenFileTarget.Socket socketId) -> (UnixMachineState.socket socketId system.Machine).Phase
+        | other -> failwith $"fd %d{fd} is %A{other}"
+
+    [<RequireQualifiedAccess>]
+    type private SearchOp =
+        | New of reuse : bool
+        | BindExplicit of fd : int * address : Ipv4Address * port : uint16
+        | BindZero of fd : int * address : Ipv4Address
+        | Listen of fd : int
+        /// `connect` to a fixed listener, or, for `None`, to a port nothing is
+        /// bound at, which the kernel refuses.
+        | Connect of fd : int * listener : int option
+        | Accept of listener : int
+        | Close of fd : int
+
+    let private searchAddresses : Ipv4Address list =
+        [ Ipv4Address.loopback ; Ipv4Address.any ; Ipv4Address 0x7F000002u ]
+
+    let private nextSearchOp (rng : System.Random) (walk : Walk) : SearchOp =
+        let pick (list : 'a list) : 'a = list.[rng.Next list.Length]
+        let low, high = walk.System.Machine.EphemeralPortRange
+
+        let queue (listener : int) : int =
+            match phaseOfFd walk.Listeners.[listener] walk.System with
+            | SocketPhase.Listening state -> List.length state.Queue
+            | phase -> failwith $"a fixed listener is in %A{phase}"
+
+        // A socket holding a port, which SO_REUSEADDR may have let it share,
+        // connecting where a connection from that port already goes: how a
+        // kernel refuses the duplicate four-tuple is unmeasured.
+        let duplicates (fd : int) (destination : Ipv4Endpoint) : bool =
+            match walk.Slots.[fd] with
+            | Holding.Nothing _ -> false
+            | Holding.BindMade (held, _)
+            | Holding.ConnectMade (held, _) ->
+                let source =
+                    if held.Address = Ipv4Address.any then
+                        loopback held.Port
+                    else
+                        held
+
+                walk.System.Machine.Connections
+                |> Map.exists (fun _ connection ->
+                    connection.ClientAddress = source && connection.ServerAddress = destination
+                )
+
+        let connects (fd : int) : SearchOp list =
+            [
+                yield SearchOp.Connect (fd, None)
+
+                for listener in 0..1 do
+                    // A listener's queue at its capacity has no measured
+                    // answer, so keep every queue short of it.
+                    if queue listener < 8 && not (duplicates fd (loopback (listenerPort listener))) then
+                        yield SearchOp.Connect (fd, Some listener)
+            ]
+
+        let candidates =
+            [
+                yield SearchOp.New false
+                yield SearchOp.New true
+
+                for KeyValue (fd, holding) in walk.Slots do
+                    match phaseOfFd fd walk.System, holding with
+                    | SocketPhase.Idle, Holding.Nothing _ ->
+                        yield
+                            SearchOp.BindExplicit (fd, pick searchAddresses, uint16 (rng.Next (int low, int high + 1)))
+
+                        yield SearchOp.BindZero (fd, pick searchAddresses)
+                        yield SearchOp.Listen fd
+                        yield! connects fd
+                        yield SearchOp.Close fd
+                    | SocketPhase.Idle, _ ->
+                        yield SearchOp.Listen fd
+                        yield! connects fd
+                        yield SearchOp.Close fd
+                    // Only the fixed listeners are connected to, so a listener
+                    // the walk made closes holding no connection; and the walk
+                    // closes no connected socket, so no connection outlives its
+                    // sockets.
+                    | SocketPhase.Listening _, _ -> yield SearchOp.Close fd
+                    | _ -> ()
+
+                for listener in 0..1 do
+                    if queue listener > 0 then
+                        yield SearchOp.Accept listener
+            ]
+
+        pick candidates
+
+    /// One op, checked against the reference wherever the kernel searches for
+    /// a port; `cover` counts what the walk reached.
+    let private stepSearch (cover : string -> unit) (op : SearchOp) (walk : Walk) : Walk =
+        let system = walk.System
+        let machine = system.Machine
+
+        let holding (fd : int) : Holding = walk.Slots.[fd]
+
+        let withHolding (fd : int) (h : Holding) (system : UnixSystem<int, string>) : Walk =
+            { walk with
+                System = system
+                Slots = Map.add fd h walk.Slots
+            }
+
+        let unchanged (system : UnixSystem<int, string>) : Walk =
+            { walk with
+                System = system
+            }
+
+        /// Checks a search's outcome, `Some port` or `None`, against the
+        /// reference's first free port.
+        let checkSearch (what : string) (expected : uint16 option) (actual : uint16 option) : unit =
+            if expected <> actual then
+                let sockets =
+                    machine.Sockets
+                    |> Map.toList
+                    |> List.map (fun (socketId, socket) -> socketId, socket.Phase, socket.Ipv4Binding)
+
+                failwith
+                    $"%A{op}: %s{what} took %A{actual}, where the reference takes %A{expected}; the walk held %A{walk.Slots}; the kernel held %A{sockets}"
+
+            match actual with
+            | None -> cover $"%s{what} found no port"
+            | Some _ -> cover $"%s{what} found a port"
+
+        match op with
+        | SearchOp.New reuse ->
+            let fd, system = newStream system
+            let system = if reuse then ReuseAddress.set true fd system else system
+            withHolding fd (Holding.Nothing Ipv4Address.any) system
+        | SearchOp.BindExplicit (fd, address, port) ->
+            match bindTo fd (Ipv4Endpoint.ofParts address port) system with
+            | Ok (BindAnswer.Bound _), system ->
+                withHolding fd (Holding.BindMade (Ipv4Endpoint.ofParts address port, true)) system
+            | Ok (BindAnswer.Failed _), system -> unchanged system
+            | Error refusal, _ -> failwith $"%A{op}: refused %A{refusal}"
+        | SearchOp.BindZero (fd, address) ->
+            let expected =
+                firstFree machine (fun port -> reserveFree (holdingsBut fd walk) (Ipv4Endpoint.ofParts address port))
+
+            match bindTo fd (Ipv4Endpoint.ofParts address 0us) system with
+            | Ok (BindAnswer.Bound (SocketAddress.Inet bound)), system ->
+                checkSearch "bind of port 0" expected (Some bound.Port)
+                withHolding fd (Holding.BindMade (bound, false)) system
+            | Ok (BindAnswer.Failed UnixError.EADDRINUSE), system ->
+                checkSearch "bind of port 0" expected None
+                unchanged system
+            | other -> failwith $"%A{op}: %A{other}"
+        | SearchOp.Listen fd ->
+            match holding fd with
+            | Holding.Nothing address ->
+                let expected =
+                    firstFree
+                        machine
+                        (fun port -> reserveFree (holdingsBut fd walk) (Ipv4Endpoint.ofParts address port))
+
+                match listenOn fd system with
+                | ListenAnswer.Listening (SocketAddress.Inet bound), system ->
+                    checkSearch "listen" expected (Some bound.Port)
+                    withHolding fd (Holding.BindMade (bound, false)) system
+                | ListenAnswer.Failed UnixError.EADDRINUSE, system ->
+                    checkSearch "listen" expected None
+                    unchanged system
+                | other -> failwith $"%A{op}: %A{other}"
+            | held ->
+                // No search: Linux screens the binding again, by the bind rule.
+                match listenOn fd system with
+                | ListenAnswer.Listening _, system -> withHolding fd held system
+                | ListenAnswer.Failed _, system -> unchanged system
+        | SearchOp.Connect (fd, listener) ->
+            let destination =
+                match listener with
+                | Some listener -> loopback (listenerPort listener)
+                | None -> loopback closedPort
+
+            let expected =
+                match holding fd with
+                | Holding.Nothing address ->
+                    let source =
+                        if address = Ipv4Address.any then
+                            Ipv4Address.loopback
+                        else
+                            address
+
+                    let others = holdingsBut fd walk
+
+                    let expected =
+                        firstFree
+                            machine
+                            (fun port -> connectFree others (Ipv4Endpoint.ofParts source port) destination)
+
+                    let shared =
+                        others
+                        |> List.exists (fun h ->
+                            match h, expected with
+                            | Holding.ConnectMade (held, _), Some port -> held.Port = port
+                            | _ -> false
+                        )
+
+                    if shared then
+                        cover "a connect shared a port another connect's implicit bind took"
+
+                    Some expected
+                | Holding.BindMade _
+                | Holding.ConnectMade _ -> None
+
+            let answer, system =
+                match CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet machine.UnixPlatform destination) system with
+                | Ok result -> result
+                | Error refusal -> failwith $"%A{op}: refused %s{ConnectRefusal.describe refusal}"
+
+            let after = nameOfFd fd system
+
+            match expected, answer, listener with
+            | Some expected, SyscallAnswer.Failed UnixError.EADDRNOTAVAIL, _ ->
+                checkSearch "connect" expected None
+                unchanged system
+            | Some expected, SyscallAnswer.Failed UnixError.ECONNREFUSED, None ->
+                checkSearch "connect" expected (Some after.Port)
+                // The refusal gives an implicit bind's port straight back.
+                withHolding fd (Holding.Nothing after.Address) system
+            | Some expected, SyscallAnswer.Completed 0L, Some _ ->
+                checkSearch "connect" expected (Some after.Port)
+                withHolding fd (Holding.ConnectMade (after, destination)) system
+            | None, SyscallAnswer.Failed UnixError.ECONNREFUSED, None ->
+                match holding fd with
+                | Holding.BindMade (_, true) -> withHolding fd (Holding.BindMade (after, true)) system
+                | _ -> withHolding fd (Holding.Nothing after.Address) system
+            | None, SyscallAnswer.Completed 0L, Some _ ->
+                match holding fd with
+                | Holding.BindMade (_, locked) -> withHolding fd (Holding.BindMade (after, locked)) system
+                | other -> failwith $"%A{op}: a socket holding %A{other} connected"
+            | _ -> failwith $"%A{op}: answered %A{answer}"
+        | SearchOp.Accept listener ->
+            let accepted, system = acceptFrom walk.Listeners.[listener] system
+            withHolding accepted (Holding.BindMade (nameOfFd accepted system, false)) system
+        | SearchOp.Close fd ->
+            { walk with
+                System = closeFd fd system
+                Slots = Map.remove fd walk.Slots
+            }
+
+    /// Every port Linux's search hands out, for `bind(2)` of port 0, an
+    /// unbound `listen(2)` and an unbound `connect(2)`, is the first, from
+    /// where the allocator stands, that the measured rule leaves free, judged
+    /// by how the walk itself saw each other socket come by its port; and a
+    /// search that finds none is answered EADDRINUSE or EADDRNOTAVAIL exactly
+    /// when the rule leaves none free.
+    [<Test>]
+    let ``Linux's search takes the first port the measured rule leaves free`` () : unit =
+        let platform = SimulatedUnixPlatform.linuxX64
+
+        let property (cover : string -> unit) (seed : int) : bool =
+            let rng = System.Random seed
+
+            // A range two ports wide or so, so that searches run out.
+            let system = systemOn platform (40000us, 40000us + uint16 (rng.Next 3))
+            let listener0, system = listener (listenerPort 0) system
+            let listener1, system = listener (listenerPort 1) system
+
+            let initial =
+                {
+                    System = system
+                    Slots = Map.empty
+                    Listeners = [ listener0 ; listener1 ]
+                }
+
+            (initial, [ 1 .. 1 + rng.Next 30 ])
+            ||> List.fold (fun walk _ ->
+                let op = nextSearchOp rng walk
+                let walk = stepSearch cover op walk
+
+                match UnixSystem.checkInvariants walk.System with
+                | [] -> ()
+                | defects -> failwith $"after %A{op}: %A{defects}"
+
+                walk
+            )
+            |> ignore<Walk>
+
+            true
+
+        let coverage = CoverageSample.check propertyConfig walkSeed property
+
+        for label in
+            [
+                "bind of port 0 found a port"
+                "bind of port 0 found no port"
+                "listen found a port"
+                "listen found no port"
+                "connect found a port"
+                "connect found no port"
+                "a connect shared a port another connect's implicit bind took"
+            ] do
+            if coverage.Count label < 10 then
+                failwith $"the fixed sample reached %s{label} only %d{coverage.Count label} times"

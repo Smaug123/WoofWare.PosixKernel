@@ -1007,10 +1007,7 @@ module UnixPoll =
 
         let system = polledEntries entries system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1303,10 +1300,7 @@ module UnixPoll =
 
         let reported = triggered revents
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 
@@ -1361,11 +1355,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixPoll.poll: thread %O{thread} is parked in %A{parked}, and is issuing a poll. A thread blocks in one syscall at a time; a parked poll is finished with `finishPoll` (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixPoll.poll" thread system.Threads
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
@@ -1432,29 +1422,31 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some (ParkedSyscall.Poll parked as held) ->
-            // `close` refuses to close a descriptor a parked Linux poll
-            // watches, so each description the call held is still named by its
-            // descriptor; released all the same, as every finishing call
-            // releases what its park held.
-            finishLinuxPoll thread parked system
-            |> Result.map (fun (outcome, after) ->
-                outcome,
-                ObjectLifetime.releaseUnreferencedUnrefusable
-                    "UnixPoll.finishPoll"
-                    (ParkedSyscall.descriptions held)
-                    after
+        UnixThreadTable.expectParked
+            "UnixPoll.finishPoll"
+            (fun held ->
+                match held with
+                | ParkedSyscall.Poll parked ->
+                    // `close` refuses to close a descriptor a parked Linux poll
+                    // watches, so each description the call held is still named by its
+                    // descriptor; released all the same, as every finishing call
+                    // releases what its park held.
+                    finishLinuxPoll thread parked system
+                    |> Result.map (fun (outcome, after) ->
+                        outcome,
+                        ObjectLifetime.releaseUnreferencedUnrefusable
+                            "UnixPoll.finishPoll"
+                            (ParkedSyscall.descriptions held)
+                            after
+                    )
+                    |> Some
+                // A Darwin poll holds no description (see `ParkedSyscall.descriptions`),
+                // so its return releases nothing.
+                | ParkedSyscall.KqueuePoll parked -> Some (finishDarwinPoll thread parked system)
+                | _ -> None
             )
-        // A Darwin poll holds no description (see `ParkedSyscall.descriptions`),
-        // so its return releases nothing.
-        | Some (ParkedSyscall.KqueuePoll parked) -> finishDarwinPoll thread parked system
-        | Some other ->
-            failwith
-                $"UnixPoll.finishPoll: thread %O{thread} is parked in %A{other}, not in a poll, so there is no poll to finish (this is a bug in the client)."
-        | None ->
-            failwith
-                $"UnixPoll.finishPoll: thread %O{thread} is not parked, so there is no poll to finish. Only a thread `poll` answered `WouldBlock` finishes here (this is a bug in the client)."
+            thread
+            system.Threads
 
     /// Finish the `poll` `thread` parked in, as a woken real poll does, and
     /// answer.
@@ -1597,11 +1589,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixPoll.epollWait: thread %O{thread} is parked in %A{parked}, and is issuing an epoll_wait. A thread blocks in one syscall at a time; a parked wait is finished with `finishEpollWait` (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixPoll.epollWait" thread system.Threads
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollWaitRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -1682,21 +1670,19 @@ module UnixPoll =
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some (ParkedSyscall.EpollWait parked) -> parked
-            | Some other ->
-                failwith
-                    $"UnixPoll.finishEpollWait: thread %O{thread} is parked in %A{other}, not in an epoll_wait, so there is no wait to finish (this is a bug in the client)."
-            | None ->
-                failwith
-                    $"UnixPoll.finishEpollWait: thread %O{thread} is not parked, so there is no wait to finish. Only a thread `epollWait` answered `WouldBlock` finishes here (this is a bug in the client)."
+            UnixThreadTable.expectParked
+                "UnixPoll.finishEpollWait"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.EpollWait parked -> Some parked
+                    | _ -> None
+                )
+                thread
+                system.Threads
 
         let delivered, system = EpollReadyList.drain parked.Epoll parked.MaxEvents system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let finished = (UnixParkState.unpark thread system)
 

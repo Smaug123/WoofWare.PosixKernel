@@ -163,8 +163,6 @@ module UnixClock =
             | 16 -> ClockDecoding.Refused (ClockGettimeRefusal.CpuTime clockId)
             | _ -> ClockDecoding.Invalid
 
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
-
     /// Drop the digits of `reading`'s nanosecond part finer than `granularity`.
     let private truncate (granularity : int) (reading : UnixTimestamp) : UnixTimestamp =
         let nanoseconds = UnixTimestamp.nanoseconds reading
@@ -207,8 +205,8 @@ module UnixClock =
             let reading =
                 UnixTimestamp.createOrFail
                     "UnixClock.clockGettime"
-                    (sinceBoot / nanosecondsPerSecond)
-                    (int (sinceBoot % nanosecondsPerSecond))
+                    (sinceBoot / UnixTimestamp.nanosecondsPerSecond)
+                    (int (sinceBoot % UnixTimestamp.nanosecondsPerSecond))
 
             Ok (Ok (truncate granularity reading))
 

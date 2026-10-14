@@ -1288,7 +1288,16 @@ module TestConnectedTransfer =
                     | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint), system) ->
                         assertClean system
                         Some endpoint.Port
-                    | Error (BindRefusal.EphemeralPortsExhausted _) -> None
+                    // No port left: Linux answers EADDRINUSE, and Darwin's
+                    // answer is refused.
+                    | Ok (BindAnswer.Failed UnixError.EADDRINUSE, _) when
+                        SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
+                        ->
+                        None
+                    | Error (BindRefusal.EphemeralPortsExhausted _) when
+                        SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                        ->
+                        None
                     | other -> failwith $"%O{platform} %s{order}: %A{other}"
 
                 let expectedAtOnce = if order = "passive" then Some 40000us else None

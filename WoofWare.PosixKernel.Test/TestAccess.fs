@@ -261,11 +261,11 @@ module TestAccess =
     /// Whether the screen let the word through, failed it, or refused it, as
     /// the probe could tell: EINVAL or not. The probe asked every flag bit
     /// against F_OK on a 0777 file; a refused flag is one the kernel accepted.
-    let private screenedAs (screen : AccessScreen) : string =
+    let private screenedAs (screen : AtFlagScreen<AccessArguments>) : string =
         match screen with
-        | AccessScreen.Screened _ -> "ok"
-        | AccessScreen.Failed error -> $"%O{error}"
-        | AccessScreen.Refused _ -> "refused"
+        | AtFlagScreen.Screened _ -> "ok"
+        | AtFlagScreen.Failed error -> $"%O{error}"
+        | AtFlagScreen.Unmodelled _ -> "refused"
 
     [<Test>]
     let ``every single bit of the mode word screens as measured`` () : unit =
@@ -315,10 +315,10 @@ module TestAccess =
         // shows only in that both are EINVAL ahead of everything after them;
         // what matters here is that a good mode with bad flags still fails.
         AccessRules.screen SimulatedUnixFlavour.Linux 8 0x40000000
-        |> shouldEqual (AccessScreen.Failed UnixError.EINVAL)
+        |> shouldEqual (AtFlagScreen<AccessArguments>.Failed UnixError.EINVAL)
 
         AccessRules.screen SimulatedUnixFlavour.Linux 0 0x40000000
-        |> shouldEqual (AccessScreen.Failed UnixError.EINVAL)
+        |> shouldEqual (AtFlagScreen<AccessArguments>.Failed UnixError.EINVAL)
 
     [<Test>]
     let ``what a screened word says`` () : unit =
@@ -333,11 +333,11 @@ module TestAccess =
                     ||| (if emptyPath then 0x1000 else 0)
                 | SimulatedUnixFlavour.Darwin -> (if noFollow then 0x20 else 0) ||| (if eAccess then 0x10 else 0)
 
-            let expected : AccessScreen =
+            let expected : AtFlagScreen<AccessArguments> =
                 match flavour with
-                | SimulatedUnixFlavour.Linux when word &&& ~~~7 <> 0 -> AccessScreen.Failed UnixError.EINVAL
+                | SimulatedUnixFlavour.Linux when word &&& ~~~7 <> 0 -> AtFlagScreen.Failed UnixError.EINVAL
                 | _ ->
-                    AccessScreen.Screened
+                    AtFlagScreen.Screened
                         {
                             Question =
                                 {
@@ -779,7 +779,16 @@ module TestAccess =
 
         for flag in [ 0x800 ; 0x2000 ; 0x8000 ] do
             UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes "/f") 0 flag system
-            |> shouldEqual (Error (AccessRefusal.UnmodelledFlags flag))
+            |> shouldEqual (
+                Error (
+                    AccessRefusal.UnmodelledFlags
+                        {
+                            Flavour = SimulatedUnixFlavour.Darwin
+                            Flags = flag
+                            Unmodelled = flag
+                        }
+                )
+            )
 
     // ------------------------------------------------------------- paths
 
@@ -1207,7 +1216,18 @@ module TestAccess =
             systemOn SimulatedUnixPlatform.macOsArm64 u501 "/b" (screenTree (owner 501u 20u))
 
         UnixSystem.tryStep 0 (Syscall.FAccessAt (darwinAtFdCwd, bytes "screen_f", 0, 0x800)) darwin
-        |> shouldEqual (Error (SyscallRefusal.Access (AccessRefusal.UnmodelledFlags 0x800)))
+        |> shouldEqual (
+            Error (
+                SyscallRefusal.Access (
+                    AccessRefusal.UnmodelledFlags
+                        {
+                            Flavour = SimulatedUnixFlavour.Darwin
+                            Flags = 0x800
+                            Unmodelled = 0x800
+                        }
+                )
+            )
+        )
 
     [<Test>]
     let ``the screen phase answers a bad word before the path is read, and otherwise asks for it`` () : unit =

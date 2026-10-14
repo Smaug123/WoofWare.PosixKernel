@@ -48,29 +48,6 @@ type internal TimestampRequest =
     /// found the object whose times it would set. Linux only.
     | Invalid of TimespecFields
 
-/// The flag word of `utimensat(2)`, once this kernel has screened it.
-type internal TimestampChangeArguments =
-    {
-        /// Whether a symbolic link in the final position is followed:
-        /// `AT_SYMLINK_NOFOLLOW` says not.
-        FinalSymlink : SymlinkPolicy
-        /// What the call makes of an empty path: Linux's `AT_EMPTY_PATH` sets
-        /// the times of the object `dirfd` names.
-        EmptyPath : EmptyPathMeaning
-    }
-
-/// What screening the flag word of `utimensat(2)` came to.
-[<RequireQualifiedAccess>]
-type internal TimestampChangeScreen =
-    /// The word is one this kernel accepts, and this is what it says.
-    | Screened of TimestampChangeArguments
-    /// The call fails with this errno before its path is copied in.
-    | Failed of error : UnixError
-    /// The word carries flags the flavour reads and this library does not
-    /// model: Darwin's `AT_SYMLINK_NOFOLLOW_ANY` (0x800), `AT_RESOLVE_BENEATH`
-    /// (0x2000) and `AT_UNIQUE` (0x8000). `flags` is the whole word.
-    | Unmodelled of flags : int
-
 /// The range of times a filesystem stores, and what it stores for a time
 /// outside it.
 [<RequireQualifiedAccess>]
@@ -101,19 +78,11 @@ type internal TimestampChangePermission =
 [<RequireQualifiedAccess>]
 module TimestampChangeRules =
 
-    // Measured by `utimensat-rules.c` (CONST) on Linux 6.18.5 and Darwin 27.0;
-    // `<fcntl.h>`'s flag numbering by `at-dirfd.c` (CONST).
+    // Measured by `utimensat-rules.c` (CONST) on Linux 6.18.5 and Darwin 27.0.
     let private linuxUtimeNow : int64 = 0x3FFFFFFFL
     let private linuxUtimeOmit : int64 = 0x3FFFFFFEL
     let private darwinUtimeNow : int64 = -1L
     let private darwinUtimeOmit : int64 = -2L
-    let private linuxAtSymlinkNoFollow : int = 0x100
-    let private linuxAtEmptyPath : int = 0x1000
-    let private darwinAtSymlinkNoFollow : int = 0x20
-    // AT_SYMLINK_NOFOLLOW_ANY, AT_RESOLVE_BENEATH and AT_UNIQUE.
-    let private darwinUnmodelledFlags : int = 0x800 ||| 0x2000 ||| 0x8000
-
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
 
     /// `UTIME_NOW` in `flavour`'s numbering: 0x3FFFFFFF on Linux, -1 on
     /// Darwin.
@@ -147,59 +116,13 @@ module TimestampChangeRules =
         match flavour with
         | SimulatedUnixFlavour.Darwin -> TimestampRequest.Explicit fields
         | SimulatedUnixFlavour.Linux ->
-            if fields.Nanoseconds < 0L || fields.Nanoseconds >= nanosecondsPerSecond then
+            if
+                fields.Nanoseconds < 0L
+                || fields.Nanoseconds >= UnixTimestamp.nanosecondsPerSecond
+            then
                 TimestampRequest.Invalid fields
             else
                 TimestampRequest.Explicit fields
-
-    /// Screen the raw flag word of `utimensat(2)` as `flavour` does.
-    ///
-    /// Linux accepts `AT_SYMLINK_NOFOLLOW` (0x100) and `AT_EMPTY_PATH`
-    /// (0x1000), and answers EINVAL for a word carrying any other bit, before
-    /// the path is copied in and before `dirfd` is looked at. Darwin rejects
-    /// no bit: it reads `AT_SYMLINK_NOFOLLOW` (0x20) and three flags this
-    /// library does not model (see `TimestampChangeScreen.Unmodelled`), and
-    /// ignores every other.
-    let internal screen (flavour : SimulatedUnixFlavour) (flags : int) : TimestampChangeScreen =
-        // Measured by `at-dirfd.c` (FLAGS, FLAGORDER): each single bit with
-        // AT_FDCWD and a regular file; Linux's rejected bit beats an
-        // unreadable path, a bad dirfd, an empty path and a missing name.
-        // `utimensat-rules.c` (DFLAGS): on Darwin every single bit against a
-        // final link, a link mid-path, a path through "..", and an absolute
-        // path; only 0x20 (the final link not followed), 0x800 (ELOOP for a
-        // link anywhere, the final one not followed) and 0x2000 (an absolute
-        // path refused) changed anything.
-        match flavour with
-        | SimulatedUnixFlavour.Linux ->
-            if flags &&& ~~~(linuxAtSymlinkNoFollow ||| linuxAtEmptyPath) <> 0 then
-                TimestampChangeScreen.Failed UnixError.EINVAL
-            else
-                TimestampChangeScreen.Screened
-                    {
-                        FinalSymlink =
-                            if flags &&& linuxAtSymlinkNoFollow <> 0 then
-                                SymlinkPolicy.NoFollowFinal
-                            else
-                                SymlinkPolicy.Follow
-                        EmptyPath =
-                            if flags &&& linuxAtEmptyPath <> 0 then
-                                EmptyPathMeaning.NamesStartingPoint
-                            else
-                                EmptyPathMeaning.Walked
-                    }
-        | SimulatedUnixFlavour.Darwin ->
-            if flags &&& darwinUnmodelledFlags <> 0 then
-                TimestampChangeScreen.Unmodelled flags
-            else
-                TimestampChangeScreen.Screened
-                    {
-                        FinalSymlink =
-                            if flags &&& darwinAtSymlinkNoFollow <> 0 then
-                                SymlinkPolicy.NoFollowFinal
-                            else
-                                SymlinkPolicy.Follow
-                        EmptyPath = EmptyPathMeaning.Walked
-                    }
 
     /// The range a file on a mount of `fileSystem` keeps its times in, or
     /// `None` where that is unmeasured (NFS, whose server decides).
@@ -223,7 +146,10 @@ module TimestampChangeRules =
     let internal stored (range : TimestampRange) (fields : TimespecFields) : UnixTimestamp =
         match range with
         | TimestampRange.Seconds64 ->
-            if fields.Nanoseconds < 0L || fields.Nanoseconds >= nanosecondsPerSecond then
+            if
+                fields.Nanoseconds < 0L
+                || fields.Nanoseconds >= UnixTimestamp.nanosecondsPerSecond
+            then
                 failwith
                     $"TimestampChangeRules.stored: %d{fields.Nanoseconds} is not a nanosecond field Linux's decoding lets through; decode first (this is a bug in this library)."
 
@@ -234,7 +160,7 @@ module TimestampChangeRules =
         | TimestampRange.Nanoseconds64 ->
             let exact =
                 System.Int128.op_Implicit fields.Seconds
-                * System.Int128.op_Implicit nanosecondsPerSecond
+                * System.Int128.op_Implicit UnixTimestamp.nanosecondsPerSecond
                 + System.Int128.op_Implicit fields.Nanoseconds
 
             let saturated =
@@ -246,8 +172,8 @@ module TimestampChangeRules =
                     int64 exact
 
             // Floor division, so that the nanosecond part is never negative.
-            let quotient = saturated / nanosecondsPerSecond
-            let remainder = saturated % nanosecondsPerSecond
+            let quotient = saturated / UnixTimestamp.nanosecondsPerSecond
+            let remainder = saturated % UnixTimestamp.nanosecondsPerSecond
 
             if remainder >= 0L then
                 UnixTimestamp.createOrFail "TimestampChangeRules.stored" quotient (int remainder)
@@ -255,7 +181,7 @@ module TimestampChangeRules =
                 UnixTimestamp.createOrFail
                     "TimestampChangeRules.stored"
                     (quotient - 1L)
-                    (int (remainder + nanosecondsPerSecond))
+                    (int (remainder + UnixTimestamp.nanosecondsPerSecond))
 
     let private bothNow (access : TimestampRequest) (modification : TimestampRequest) : bool =
         match access, modification with

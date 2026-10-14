@@ -1310,11 +1310,7 @@ module UnixDescriptor =
         // Loudly partial in an unregistered thread, before anything is answered:
         // a non-blocking call by one would otherwise be served and only a
         // blocking one refused.
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixDescriptor.flock: thread %O{thread} is parked in %A{parked}, and is issuing an flock. A thread blocks in one syscall at a time; a parked flock is finished with `flockAcquire`, and any other parked call's completion must clear its record first (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixDescriptor.flock" thread system.Threads
 
         // Unlike a foreign-function layer's error and open-flag encodings, these
         // are *not* values anything translates: `flock(2)` takes them verbatim,
@@ -1500,39 +1496,15 @@ module UnixDescriptor =
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
         =
         let requester, mode =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some (ParkedSyscall.Flock parked) -> parked.Requester, parked.Mode
-            | Some (ParkedSyscall.EpollWait wait) ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in an epoll_wait on %O{wait.Epoll}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
-            | Some (ParkedSyscall.Kevent wait) ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in a kevent on %O{wait.Kqueue}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
-            | Some (ParkedSyscall.Poll poll) ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in a poll of %A{poll.Entries}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
-            | Some (ParkedSyscall.Accept accept) ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in an accept on %O{accept.Listener}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
-            | Some (ParkedSyscall.KqueuePoll _ as other)
-            | Some (ParkedSyscall.PipeRead _ as other)
-            | Some (ParkedSyscall.PipeWrite _ as other)
-            | Some (ParkedSyscall.SigSuspend as other)
-            | Some (ParkedSyscall.Sleep _ as other)
-            | Some (ParkedSyscall.Select _ as other)
-            | Some (ParkedSyscall.SignalWait _ as other)
-            | Some (ParkedSyscall.DatagramReceive _ as other)
-            | Some (ParkedSyscall.DatagramSend _ as other)
-            | Some (ParkedSyscall.Connect _ as other)
-            | Some (ParkedSyscall.FifoOpen _ as other)
-            | Some (ParkedSyscall.InotifyRead _ as other)
-            | Some (ParkedSyscall.ConnectionRead _ as other)
-            | Some (ParkedSyscall.ConnectionWrite _ as other) ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is parked in %A{other}, not in an flock, so there is no acquisition to finish (this is a bug in the client)."
-            | None ->
-                failwith
-                    $"UnixDescriptor.flockAcquire: thread %O{thread} is not parked, so there is no acquisition to finish. A blocked `flock` records the park; only a thread it answered `WouldBlock` finishes here (this is a bug in the client)."
+            UnixThreadTable.expectParked
+                "UnixDescriptor.flockAcquire"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.Flock parked -> Some (parked.Requester, parked.Mode)
+                    | _ -> None
+                )
+                thread
+                system.Threads
 
         match OpenFileTable.tryFind requester system.Machine.OpenFiles with
         | None ->

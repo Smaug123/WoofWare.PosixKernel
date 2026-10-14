@@ -1295,7 +1295,7 @@ module UnixReadWrite =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any port
                             LockedAddress = None
                             LockedPort = false
-                            HoldsPort = true
+                            PortHold = PortHold.Reserved
                         }
 
                 match
@@ -1379,26 +1379,6 @@ module UnixReadWrite =
                 ConnectionWriteStep.TakesThenSleeps (taken, after)
             else
                 ConnectionWriteStep.Takes (taken, after)
-
-    /// Fails loudly unless `thread` is one of `system`'s threads and is not
-    /// already asleep in a syscall: a thread makes one call at a time, and a
-    /// call that sleeps is finished, not issued again.
-    let private checkIssuer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (syscall : string)
-        (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : unit
-        =
-        match Map.tryFind thread system.Threads with
-        | None ->
-            failwith
-                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not one of the process's threads, so it cannot be making the call (this is a bug in the client)."
-        | Some {
-                   Parked = Some park
-               } ->
-            failwith
-                $"UnixReadWrite.%s{syscall}: thread %O{thread} is asleep in %A{park.Syscall}, and is issuing a %s{syscall}. A thread blocks in one syscall at a time, and a sleeping one is finished rather than issued again (this is a bug in the client)."
-        | Some _ -> ()
 
     /// Why a transfer to or from a connected socket has no answer at its copy.
     [<RequireQualifiedAccess>]
@@ -1766,7 +1746,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        checkIssuer "read" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.read" thread system.Threads
         let platform = system.Machine.UnixPlatform
 
         let answered (answer : ReadAnswer) (system : UnixSystem<'Thread, 'Handler>) =
@@ -2391,16 +2371,17 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some (ParkedSyscall.PipeRead parked) -> finishPipeRead thread parked system
-        | Some (ParkedSyscall.ConnectionRead parked) -> finishConnectionRead thread parked system
-        | Some (ParkedSyscall.InotifyRead parked) -> finishInotifyRead thread parked system
-        | Some other ->
-            failwith
-                $"UnixReadWrite.finishRead: thread %O{thread} is parked in %A{other}, not in a read, so there is no read to finish (this is a bug in the client)."
-        | None ->
-            failwith
-                $"UnixReadWrite.finishRead: thread %O{thread} is not parked, so there is no read to finish. Only a thread `read` answered `WouldBlock` finishes here (this is a bug in the client)."
+        UnixThreadTable.expectParked
+            "UnixReadWrite.finishRead"
+            (fun parked ->
+                match parked with
+                | ParkedSyscall.PipeRead parked -> Some (finishPipeRead thread parked system)
+                | ParkedSyscall.ConnectionRead parked -> Some (finishConnectionRead thread parked system)
+                | ParkedSyscall.InotifyRead parked -> Some (finishInotifyRead thread parked system)
+                | _ -> None
+            )
+            thread
+            system.Threads
 
     /// `finishRead`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2523,7 +2504,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReceiveRefusal>
         =
-        checkIssuer "recv" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.recv" thread system.Threads
         let platform = system.Machine.UnixPlatform
 
         match ReceiveFlags.decode (SimulatedUnixPlatform.flavour platform) flags with
@@ -2626,7 +2607,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, PReadRefusal>
         =
-        checkIssuer "pread" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.pread" thread system.Threads
         let platform = system.Machine.UnixPlatform
 
         if countRefused platform count then
@@ -3125,7 +3106,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
-        checkIssuer "write" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.write" thread system.Threads
 
         let platform = system.Machine.UnixPlatform
 
@@ -3261,7 +3242,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "writeWithBytes" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.writeWithBytes" thread system.Threads
         assertOneCallsWorth "write" system.Machine.UnixPlatform bytes
 
         let returns (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
@@ -3540,14 +3521,15 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : ParkedPipeWrite
         =
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some (ParkedSyscall.PipeWrite parked) -> parked
-        | Some other ->
-            failwith
-                $"UnixReadWrite.%s{syscall}: thread %O{thread} is parked in %A{other}, not in a write, so there is no write to finish (this is a bug in the client)."
-        | None ->
-            failwith
-                $"UnixReadWrite.%s{syscall}: thread %O{thread} is not parked, so there is no write to finish. Only a thread a write answered `WouldBlock` finishes here (this is a bug in the client)."
+        UnixThreadTable.expectParked
+            $"UnixReadWrite.%s{syscall}"
+            (fun parked ->
+                match parked with
+                | ParkedSyscall.PipeWrite parked -> Some parked
+                | _ -> None
+            )
+            thread
+            system.Threads
 
     /// After a sleeping write has put bytes in, its count `parked.Count` not
     /// all in yet: whether it sleeps on, or ends with the count it has put in,
@@ -4024,7 +4006,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "writeWithBytes" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.writeWithBytes" thread system.Threads
 
         let mismatch (what : string) : 'a =
             failwith
@@ -4126,7 +4108,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, SendRefusal>
         =
-        checkIssuer "send" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.send" thread system.Threads
         let platform = system.Machine.UnixPlatform
 
         match SendFlags.decode (SimulatedUnixPlatform.flavour platform) flags with
@@ -4181,7 +4163,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "sendWithBytes" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.sendWithBytes" thread system.Threads
         assertOneCallsWorth "send" system.Machine.UnixPlatform bytes
 
         match SendFlags.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) flags with
@@ -4227,7 +4209,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "sendWithBytes" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.sendWithBytes" thread system.Threads
 
         let mismatch (what : string) : 'a =
             failwith
@@ -4377,7 +4359,7 @@ module UnixReadWrite =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PWriteAdmission, PWriteRefusal>
         =
-        checkIssuer "pwrite" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.pwrite" thread system.Threads
         let platform = system.Machine.UnixPlatform
 
         if countRefused platform count then
@@ -4451,7 +4433,7 @@ module UnixReadWrite =
             failwith
                 "UnixReadWrite.pwriteWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
 
-        checkIssuer "pwriteWithBytes" thread system
+        UnixThreadTable.requireIssuer "UnixReadWrite.pwriteWithBytes" thread system.Threads
 
         assertOneCallsWorth "pwrite" system.Machine.UnixPlatform bytes
 

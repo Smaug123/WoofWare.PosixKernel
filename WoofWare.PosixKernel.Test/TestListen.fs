@@ -80,7 +80,7 @@ module TestListen =
                 Endpoint = endpoint
                 LockedAddress = Some endpoint.Address
                 LockedPort = true
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
     let private listenOrFail (fd : int) (backlog : int) (system : UnixSystem<int, string>) =
@@ -144,7 +144,7 @@ module TestListen =
                     Endpoint = where
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -414,7 +414,7 @@ module TestListen =
                     Endpoint = given
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = false
+                    PortHold = PortHold.GivenBack
                 }
 
         let fd, system =
@@ -453,11 +453,17 @@ module TestListen =
         |> fst
         |> shouldEqual (ListenAnswer.Failed UnixError.EOPNOTSUPP)
 
-    /// The implicit bind can run out of ports, and the library refuses rather
-    /// than inventing an errno for it.
-    [<Test>]
-    let ``an exhausted ephemeral range is refused`` () : unit =
-        let system = systemOn SimulatedUnixPlatform.linuxX64
+    /// The implicit bind can run out of ports: Linux answers EADDRINUSE,
+    /// leaving the socket unbound (measured, `docs/probes/ephemeral-search`,
+    /// the rows ending in Lsr). Darwin answers EADDRNOTAVAIL, but this
+    /// library's search can pass over a port Darwin's would take, so it
+    /// refuses.
+    [<TestCaseSource(nameof platforms)>]
+    let ``an exhausted ephemeral range is answered under Linux and refused under Darwin``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        let system = systemOn platform
 
         let system =
             { system with
@@ -480,7 +486,7 @@ module TestListen =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
                             LockedAddress = None
                             LockedPort = false
-                            HoldsPort = true
+                            PortHold = PortHold.Reserved
                         })
                     false
                     SocketPhase.Idle)
@@ -489,5 +495,9 @@ module TestListen =
         let fd, system =
             withSocket (SocketId 0L) (socketWith SocketKind.Stream None false SocketPhase.Idle) system
 
-        UnixSocket.tryListen fd 8 system
-        |> shouldEqual (Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us)))
+        let expected =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
+            | SimulatedUnixFlavour.Darwin -> Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+        UnixSocket.tryListen fd 8 system |> shouldEqual expected

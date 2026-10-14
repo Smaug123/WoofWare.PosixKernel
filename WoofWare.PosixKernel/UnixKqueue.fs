@@ -295,8 +295,6 @@ module UnixKqueue =
         tryKqueue system
         |> Refusal.orRaise "UnixKqueue.kqueue" KqueueRefusal.kind KqueueRefusal.describe
 
-    let private nanosecondsPerSecond : int64 = 1_000_000_000L
-
     /// Whether a close has drained the kqueue `kqueue`: the same question the
     /// wake condition of a waiter on it asks.
     let private drained<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -608,11 +606,7 @@ module UnixKqueue =
             failwith
                 $"UnixKqueue.kevent: %d{List.length changes} changes were passed for an nchanges of %d{nchanges}, and the copy-in reads at most nchanges and none for zero or less (this is a bug in the client)."
 
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some parked ->
-            failwith
-                $"UnixKqueue.kevent: thread %O{thread} is parked in %A{parked}, and is issuing a kevent. A thread blocks in one syscall at a time; a parked wait is finished with `finishKevent` (this is a bug in the client)."
-        | None ->
+        UnixThreadTable.requireIssuer "UnixKqueue.kevent" thread system.Threads
 
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KeventRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -628,7 +622,7 @@ module UnixKqueue =
                 seconds < 0L
                 || seconds > int64 System.Int32.MaxValue
                 || nanoseconds < 0L
-                || nanoseconds > nanosecondsPerSecond
+                || nanoseconds > UnixTimestamp.nanosecondsPerSecond
                 ->
                 Error UnixError.EINVAL
             | KeventTimeout.Readable (seconds, nanoseconds) -> Ok (Some (seconds, nanoseconds))
@@ -698,7 +692,7 @@ module UnixKqueue =
         | Some (seconds, nanoseconds) ->
 
         // Within `int64`: the screen above bounds `seconds` by INT32_MAX.
-        let duration = seconds * nanosecondsPerSecond + nanoseconds
+        let duration = seconds * UnixTimestamp.nanosecondsPerSecond + nanoseconds
         let now = system.Scheduling.NanosecondsSinceBoot
 
         if now > System.Int64.MaxValue - duration then
@@ -777,23 +771,21 @@ module UnixKqueue =
         : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some (ParkedSyscall.Kevent parked) -> parked
-            | Some other ->
-                failwith
-                    $"UnixKqueue.finishKevent: thread %O{thread} is parked in %A{other}, not in a kevent, so there is no wait to finish (this is a bug in the client)."
-            | None ->
-                failwith
-                    $"UnixKqueue.finishKevent: thread %O{thread} is not parked, so there is no wait to finish. Only a thread `kevent` answered `WouldBlock` finishes here (this is a bug in the client)."
+            UnixThreadTable.expectParked
+                "UnixKqueue.finishKevent"
+                (fun parked ->
+                    match parked with
+                    | ParkedSyscall.Kevent parked -> Some parked
+                    | _ -> None
+                )
+                thread
+                system.Threads
 
         let isDrained = drained thread parked.Kqueue system
 
         let deliverable = KqueueQueue.hasDeliverableEvent parked.Kqueue system
 
-        let timedOut =
-            match parked.Deadline with
-            | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
-            | None -> false
+        let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
         let completing (outcome : KeventOutcome) (answered : UnixSystem<'Thread, 'Handler>) =
             SyscallInterruption.beforeCompleting thread system

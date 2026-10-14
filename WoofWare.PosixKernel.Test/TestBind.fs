@@ -136,7 +136,7 @@ module TestBind =
                     // delivery reverts a connect's source resolution to exactly it.
                     LockedAddress = Some Ipv4Address.loopback
                     LockedPort = true
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -524,11 +524,17 @@ module TestBind =
 
             freshBind port system |> shouldEqual expected
 
-    /// The library refuses rather than inventing `EADDRINUSE` when a port-0 bind
-    /// finds the whole range taken.
-    [<Test>]
-    let ``an exhausted ephemeral range is refused`` () : unit =
-        let system = systemOn SimulatedUnixPlatform.linuxX64
+    /// A port-0 bind that finds the whole range taken: Linux answers
+    /// EADDRINUSE, leaving the socket unbound (measured,
+    /// `docs/probes/ephemeral-search`, the rows ending in B). Darwin answers
+    /// EADDRNOTAVAIL, but this library's search can pass over a port Darwin's
+    /// would take, so it refuses.
+    [<TestCaseSource(nameof platforms)>]
+    let ``an exhausted ephemeral range is answered under Linux and refused under Darwin``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        let system = systemOn platform
 
         // One port in the range, and a socket already holding it.
         let system =
@@ -548,8 +554,13 @@ module TestBind =
         let fd, system =
             withSocket (SocketId 0L) (socketOfKind SocketKind.Stream SocketPhase.Idle) system
 
-        CopyIn.bind fd UserBuffer.Mapped exactLength (CopyIn.inet SimulatedUnixPlatform.linuxX64 (loopback 0us)) system
-        |> shouldEqual (Error (BindRefusal.EphemeralPortsExhausted (40000us, 40000us)))
+        let expected =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> Ok (BindAnswer.Failed UnixError.EADDRINUSE, system)
+            | SimulatedUnixFlavour.Darwin -> Error (BindRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+        CopyIn.bind fd UserBuffer.Mapped exactLength (CopyIn.inet platform (loopback 0us)) system
+        |> shouldEqual expected
 
     /// The byte-count contract `connect` states, restated because `bind` is a
     /// second caller of it and a short copy here is just as silent.
