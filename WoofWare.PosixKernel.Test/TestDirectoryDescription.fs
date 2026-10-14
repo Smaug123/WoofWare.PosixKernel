@@ -118,7 +118,7 @@ module TestDirectoryDescription =
         | Error refusal ->
             failwith $"lseek(%d{fd}, %d{offset}, %d{whence}) was refused: %s{LSeekRefusal.describe refusal}"
 
-    let private text (name : DirectoryStreamName) : string = name.ToString ()
+    let private text (name : PathComponent) : string = name.ToString ()
 
     /// Every entry `fd` yields until end-of-directory, capped so that a
     /// position that failed to advance fails the test rather than hanging it.
@@ -228,17 +228,17 @@ module TestDirectoryDescription =
             for record in records do
                 let path =
                     match record.Name with
-                    | DirectoryStreamName.Dot -> "d"
-                    | DirectoryStreamName.DotDot -> ""
-                    | DirectoryStreamName.Entry _ -> $"d/%s{text record.Name}"
+                    | PathComponent.Current -> "d"
+                    | PathComponent.Parent -> ""
+                    | PathComponent.Name _ -> $"d/%s{text record.Name}"
 
                 record.Inode |> shouldEqual (inodeOf path system)
 
                 let expectedKind =
                     match record.Name with
-                    | DirectoryStreamName.Dot
-                    | DirectoryStreamName.DotDot -> DirectoryEntryKind.Directory
-                    | DirectoryStreamName.Entry _ -> DirectoryEntryKind.RegularFile
+                    | PathComponent.Current
+                    | PathComponent.Parent -> DirectoryEntryKind.Directory
+                    | PathComponent.Name _ -> DirectoryEntryKind.RegularFile
 
                 record.Kind |> shouldEqual expectedKind
 

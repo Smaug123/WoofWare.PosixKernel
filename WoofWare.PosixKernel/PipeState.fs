@@ -204,6 +204,40 @@ type internal ClientWriteProgress =
     }
 
 [<RequireQualifiedAccess>]
+module internal PipeTimes =
+    /// The times as an inode's, as Linux keeps them, one set for both ends:
+    /// the read end's access time is the pipe's, and its creation its birth.
+    let asInodeTimes (times : PipeTimes) : InodeTimes =
+        {
+            Access = times.ReadEndAccess
+            Modification = times.Modification
+            StatusChange = times.StatusChange
+            Birth = times.Created
+        }
+
+    /// `times` with the access, modification and status-change times of
+    /// `changed`, an inode's times as `asInodeTimes` gave them and a change
+    /// moved them.
+    let withInodeTimes (changed : InodeTimes) (times : PipeTimes) : PipeTimes =
+        { times with
+            ReadEndAccess = changed.Access
+            Modification = changed.Modification
+            StatusChange = changed.StatusChange
+        }
+
+[<RequireQualifiedAccess>]
+module internal PipeStatus =
+    /// `status` with its status-change time moved to `now`, as a change to
+    /// the pipe's inode moves it.
+    let statusChangedAt (now : UnixTimestamp) (status : PipeStatus) : PipeStatus =
+        { status with
+            Times =
+                { status.Times with
+                    StatusChange = now
+                }
+        }
+
+[<RequireQualifiedAccess>]
 module PipeState =
     /// Whether the client holds `pipeEnd` of `pipe` open: the read end of a
     /// pipe it drains, the write end of one it is still writing into, and no

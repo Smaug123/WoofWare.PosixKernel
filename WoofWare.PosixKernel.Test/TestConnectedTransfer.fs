@@ -920,51 +920,6 @@ module TestConnectedTransfer =
 
             assertClean system
 
-    /// `write` given the bytes without an admission first answers as the
-    /// admission and its write do, `SIGPIPE` included: three writes of 100
-    /// bytes each way, from each state a close can leave the writer in.
-    [<Test>]
-    let ``a write that skips its admission answers a connection as one that makes it`` () : unit =
-        let summary (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) =
-            match outcome with
-            | Ok (WriteStep.Returns (answer, system)) -> (answer, None), system
-            | Ok (WriteStep.ReturnsRaising (answer, entry, system)) -> (answer, Some entry.Signal), system
-            | other -> failwith $"%A{other}"
-
-        for platform in Machines.platforms do
-            // The peer closed over unread bytes; closed cleanly; or neither.
-            for build in [ "reset" ; "fin" ; "open" ] do
-                let c, s, system = pair true (systemOn id platform)
-
-                let system =
-                    match build with
-                    | "reset" -> sentAll c 10 system |> KeventWorld.close s
-                    | "fin" -> KeventWorld.close s system
-                    | _ -> system
-
-                let thrice
-                    (write : UnixSystem<int, string> -> Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>)
-                    =
-                    ((system, []), [ 1..3 ])
-                    ||> List.fold (fun (system, seen) _ ->
-                        let answer, system = summary (write system)
-                        system, seen @ [ answer ]
-                    )
-                    |> snd
-
-                let admitted = thrice (send c 100)
-
-                let direct =
-                    thrice (fun system ->
-                        UnixReadWrite.tryWriteBytes
-                            (Lone.leader system)
-                            c
-                            (ImmutableArray.Create (payload, 0, 100))
-                            system
-                    )
-
-                (build, direct) |> shouldEqual (build, admitted)
-
     /// What a reset leaves of the survivor's binding and options, against a
     /// FIN, replayed from `reset-binding.c`'s rows for both flavours: a reset
     /// releases the survivor's port (on Linux, unless it was bound
@@ -1288,7 +1243,16 @@ module TestConnectedTransfer =
                     | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint), system) ->
                         assertClean system
                         Some endpoint.Port
-                    | Error (BindRefusal.EphemeralPortsExhausted _) -> None
+                    // No port left: Linux answers EADDRINUSE, and Darwin's
+                    // answer is refused.
+                    | Ok (BindAnswer.Failed UnixError.EADDRINUSE, _) when
+                        SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
+                        ->
+                        None
+                    | Error (BindRefusal.EphemeralPortsExhausted _) when
+                        SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                        ->
+                        None
                     | other -> failwith $"%O{platform} %s{order}: %A{other}"
 
                 let expectedAtOnce = if order = "passive" then Some 40000us else None
@@ -1403,6 +1367,47 @@ module TestConnectedTransfer =
             | BindAnswer.Bound _ when listenerReuse -> ()
             | BindAnswer.Failed UnixError.EADDRINUSE when not listenerReuse -> ()
             | other -> failwith $"listener SO_REUSEADDR %b{listenerReuse}: a bind with it answered %A{other}"
+
+    /// A connection a Linux accept drops leaves its server end holding the
+    /// listener's port as an accepted socket would, one `bind(2)` or
+    /// `listen(2)` made, which Linux's search for a connect's port passes over
+    /// though it shares one connect's own implicit bind made
+    /// (`docs/probes/connect-search-holders`, rows fe and f). That the end
+    /// keeps the listener's bind bucket is inferred from Linux's source
+    /// (`__inet_inherit_port`), not measured.
+    [<Test>]
+    let ``a connection a Linux accept drops holds the listener's port against a connect's search`` () : unit =
+        let system =
+            systemOn
+                (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                 >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                SimulatedUnixPlatform.linuxX64
+
+        let listener, system = KeventWorld.listenerAt 40000us system
+        let _, system = KeventWorld.listenerAt port system
+        let client, system = KeventWorld.stream true system
+        let _, system = KeventWorld.connect client 40000us system
+
+        let system =
+            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
+            | other -> failwith $"accept: %A{other}"
+
+        let system = KeventWorld.close listener system
+        assertClean system
+
+        // 40000 is the dropped server end's, bind-made; 40001 the client's,
+        // made by its connect, and shared towards another destination.
+        let searching, system = KeventWorld.stream false system
+
+        match KeventWorld.connect searching port system with
+        | SyscallAnswer.Completed 0L, system ->
+            match (UnixMachineState.socket (socketOf searching system) system.Machine).Ipv4Binding with
+            | Some binding -> binding.Endpoint.Port |> shouldEqual 40001us
+            | None -> failwith "the searching socket is unbound"
+
+            assertClean system
+        | other, _ -> failwith $"the search's connect answered %A{other}"
 
     /// `bind-late-reuse.c`'s rows (docs/plans/2026-10-08-tcp-shutdown-linger),
     /// through the syscalls on each flavour: a client's `SO_REUSEADDR` flipped
@@ -1638,7 +1643,7 @@ module TestConnectedTransfer =
 
             // An end closed under its socket.
             system
-            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false >> snd)
+            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false PortHold.Connected >> snd)
             |> snd
             |> UnixSystem.checkInvariants
             |> shouldEqual

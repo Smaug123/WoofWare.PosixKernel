@@ -324,6 +324,14 @@ module TestBlockingConnection =
         | TcpSendCall.Write
         | TcpSendCall.Send _ -> r
 
+    /// Whether a blocking write at `connectionEnd` that has just taken part of
+    /// its bytes returns the count it has taken rather than sleeping for the
+    /// rest: on Linux, when those bytes reset the connection
+    /// (`connection-write-reset.c`, sections A and C). Darwin's sleeps until
+    /// the reset wakes it.
+    let private returnsOnOwnReset (connectionEnd : ConnectionEnd) (r : Reference) : bool =
+        r.Linux && r.Model.Ends.[connectionEnd].GotReset
+
     /// A write by `call` of `count` bytes; `dontWait` makes a Linux `send`
     /// non-blocking whatever the description says.
     let private referenceWrite
@@ -362,7 +370,7 @@ module TestBlockingConnection =
                     Model = model
                 }
 
-            if n < count && blocking then
+            if n < count && blocking && not (returnsOnOwnReset connectionEnd r) then
                 Seen.Sleeps, park thread fd (Call.Writing (connectionEnd, bytes, n, call)) r
             else
                 Seen.Wrote (int64 n), marking connectionEnd call (n > 0) r
@@ -504,6 +512,8 @@ module TestBlockingConnection =
 
                     if written = count then
                         Seen.Wrote (int64 count), answered thread r |> marking connectionEnd call true
+                    elif returnsOnOwnReset connectionEnd r then
+                        Seen.Wrote (int64 written), answered thread r |> marking connectionEnd call true
                     elif r.NonBlocking.[connectionEnd] then
                         Seen.RefusedNonBlocking, r
                     else
@@ -1764,23 +1774,25 @@ module TestBlockingConnection =
                     // FIN, made after the peer's had arrived, has arrived,
                     // whether its socket is open or closed
                     // (`bind-held-endpoint.c`), or, on Darwin, its socket
-                    // closed under linger zero once both FINs had arrived;
-                    // and forgotten with the
-                    // connection once both sockets have gone, where a real
-                    // kernel's `TIME_WAIT` would go on holding an active
-                    // closer's, which this library does not model. The pair's
-                    // sockets carry no `SO_REUSEADDR`, so a candidate's own
-                    // lets it through on Darwin alone.
+                    // closed under linger zero once both FINs had arrived.
+                    // Once both sockets have gone, held only by an end in
+                    // TIME_WAIT: its FIN made first, and both arrived
+                    // (`docs/probes/time-wait`); the clock never moves here,
+                    // so no TIME_WAIT outlives its window. The pair's sockets
+                    // carry no `SO_REUSEADDR`, so a candidate's own lets it
+                    // through on Darwin alone.
                     for connectionEnd, endPort in [ ConnectionEnd.Client, clientPort ; ConnectionEnd.Server, port ] do
                         let ends = reference.Model.Ends
                         let own = ends.[TcpTransferReference.other connectionEnd]
 
                         let held =
-                            Set.count reference.Gone < 2
-                            && not ends.[ConnectionEnd.Client].GotReset
+                            not ends.[ConnectionEnd.Client].GotReset
                             && not ends.[ConnectionEnd.Server].GotReset
-                            && not (own.FinArrived && own.FinPassive)
                             && not (Set.contains connectionEnd reference.AbortReleased)
+                            && (if Set.count reference.Gone < 2 then
+                                    not (own.FinArrived && own.FinPassive)
+                                else
+                                    own.FinArrived && not own.FinPassive && ends.[connectionEnd].FinArrived)
 
                         for reuse in [ false ; true ] do
                             let refused = bindRefused reuse endPort system
@@ -2921,25 +2933,6 @@ module TestBlockingConnection =
             | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
-    /// `write` given the bytes without `admitWrite` sleeps as the pair does.
-    [<Test>]
-    let ``a write without its admission sleeps as one with it`` () : unit =
-        for platform in Machines.platforms do
-            let client, _, system = pair (systemOn platform false)
-            let bytes = ImmutableArray.CreateRange (payload 9 600000)
-
-            let viaAdmission =
-                match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
-                | Ok (WriteStep.WouldBlock (condition, after)) -> condition, after
-                | other -> failwith $"%A{other}"
-
-            let direct =
-                match UnixReadWrite.tryWriteBytes 1 client bytes system with
-                | Ok (WriteStep.WouldBlock (condition, after)) -> condition, after
-                | other -> failwith $"%A{other}"
-
-            direct |> shouldEqual viaAdmission
-
     /// `SO_SNDTIMEO` would bound a sleeping write, as `SO_RCVTIMEO` would a
     /// read (whose refusal `TestBlockingAccept` holds); a park has no deadline
     /// because neither can be set. The numbers are each flavour's
@@ -3263,6 +3256,66 @@ module TestBlockingConnection =
             | events, _ -> events
 
         drain 0 system |> shouldEqual [ EpollEvents.Out ]
+
+    /// A woken Linux write that takes only part of what is left marks the
+    /// socket out of space again, as one that sleeps first does, so that the
+    /// buffer draining to two thirds full gives an edge-triggered `EPOLLOUT`
+    /// waiter another edge.
+    [<Test>]
+    let ``a woken Linux write that takes part of what is left arms the send-space edge again`` () : unit =
+        let client, server, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
+
+        let epoll, system =
+            match UnixPoll.tryEpollCreate1 0 system with
+            | Ok (Ok created) -> created
+            | other -> failwith $"epoll_create1: %A{other}"
+
+        let system =
+            match
+                UnixPoll.tryEpollCtl
+                    epoll
+                    1
+                    client
+                    (EpollEventArgument.Readable (EpollEvents.Out ||| EpollEvents.EdgeTriggered, 0UL))
+                    system
+            with
+            | Ok (EpollCtlAnswer.Changed, system) -> system
+            | other -> failwith $"epoll_ctl: %A{other}"
+
+        let edges (system : UnixSystem<int, string>) : uint32 list * UnixSystem<int, string> =
+            match UnixPoll.tryEpollWait 3 epoll 2 UserBuffer.Mapped 0 system with
+            | Ok (EpollWaitOutcome.Answered events, system) -> List.map snd events, system
+            | other -> failwith $"epoll_wait: %A{other}"
+
+        let added, system = edges system
+        added |> shouldEqual [ EpollEvents.Out ]
+
+        let bytes = payload 13 600000
+        let system = asleepWriting 1 client bytes system
+
+        // Read until the edge the sleeping write's mark gives, which wakes it.
+        let rec drain (reads : int) (system : UnixSystem<int, string>) =
+            if reads > 100 then
+                failwith "no edge came"
+
+            let system = readNow server 1000 system |> snd
+
+            match edges system with
+            | [], system -> drain (reads + 1) system
+            | events, system -> events, system
+
+        let events, system = drain 0 system
+        events |> shouldEqual [ EpollEvents.Out ]
+        wokenAmong [ 1 ] system |> shouldEqual [ 1 ]
+
+        // The woken write fills the room and sleeps for the rest.
+        let system =
+            match finishedWrite 1 bytes system with
+            | Ok (WriteStep.WouldBlock (_, system)) -> system
+            | other -> failwith $"%A{other}"
+
+        let events, _ = drain 0 system
+        events |> shouldEqual [ EpollEvents.Out ]
 
     /// Darwin's sleeping writer with less than the low-water mark left wakes
     /// once there is room for all of what is left, though not for the mark.
@@ -3734,6 +3787,55 @@ module TestBlockingConnection =
             | Some (_, description) -> description.Status.Written |> shouldEqual (call = TcpSendCall.Write)
             | None -> failwith "the copy names no description"
 
+    /// A Darwin `write` that slept, woken and finished, marks its description
+    /// written as it returns having moved bytes; a `send` marks nothing
+    /// (`fcntl-dup.c`, WRITTEN rows, as `only a Darwin write marks its
+    /// description written` holds for a call that never slept).
+    [<Test>]
+    let ``Darwin: a woken write marks its description as it returns, and a woken send does not`` () : unit =
+        for call in [ TcpSendCall.Write ; TcpSendCall.Send false ] do
+            let client, server, system = pair (systemOn SimulatedUnixPlatform.macOsArm64 false)
+            let connection = connectionOf client system
+
+            let toServer =
+                (UnixMachineState.connection connection system.Machine).Transfer.ToServer
+
+            let bytes = payload 6 (toServer.SendCapacity + toServer.ReceiveCapacity + 5000)
+
+            let system =
+                match call with
+                | TcpSendCall.Write -> asleepWriting 1 client bytes system
+                | TcpSendCall.Send _ ->
+                    match sent 1 client bytes [] system with
+                    | WriteStep.WouldBlock (_, system) -> system
+                    | other -> failwith $"%A{other}"
+
+            let marked (system : UnixSystem<int, string>) : bool =
+                match FileDescriptorRegistry.tryFindWithId client (Lone.fileDescriptors system) with
+                | Some (_, description) -> description.Status.Written
+                | None -> failwith "the client names no description"
+
+            // Asleep part way, it has marked nothing yet.
+            marked system |> shouldEqual false
+
+            let rec toTheEnd (rounds : int) (system : UnixSystem<int, string>) =
+                if rounds > 1000 then
+                    failwith $"%A{call}: the call never returned"
+
+                let system = readNow server 65536 system |> snd
+
+                match wokenAmong [ 1 ] system with
+                | [] -> toTheEnd (rounds + 1) system
+                | _ ->
+                    match finishedWrite 1 bytes system with
+                    | Ok (WriteStep.WouldBlock (_, system)) -> toTheEnd (rounds + 1) system
+                    | Ok (WriteStep.Returns (WriteAnswer.Completed n, system)) ->
+                        n |> shouldEqual (int64 bytes.Length)
+                        system
+                    | other -> failwith $"%A{call}: %A{other}"
+
+            toTheEnd 0 system |> marked |> shouldEqual (call = TcpSendCall.Write)
+
     /// Every flag but those modelled is refused, naming it: `MSG_PEEK`,
     /// `MSG_DONTWAIT` and `MSG_NOSIGNAL` for recv, `MSG_DONTWAIT` and
     /// `MSG_NOSIGNAL` for send, and a bit the flavour names nothing is
@@ -3810,6 +3912,6 @@ module TestBlockingConnection =
                 | Error (SendRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"
 
-                match UnixReadWrite.trySendBytes 0 fd (ImmutableArray.CreateRange (payload 6 10)) 0 system with
+                match WriteOutcomes.sendBytes 0 fd (ImmutableArray.CreateRange (payload 6 10)) 0 system with
                 | Error (SendRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"

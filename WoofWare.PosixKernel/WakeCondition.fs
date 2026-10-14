@@ -217,6 +217,17 @@ type WakeCondition =
 [<RequireQualifiedAccess>]
 module WakeCondition =
 
+    /// Whether the machine's monotonic clock has reached `deadline`, if the call
+    /// has one: what `WakePrimitive.DeadlinePassed` waits for.
+    let internal deadlinePassed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (deadline : int64 option)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        match deadline with
+        | Some deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
+        | None -> false
+
     /// The pipe the open file description `description` names `pipeEnd` of, and
     /// that pipe; fails loudly, naming the waiter's `primitive`, for a
     /// description that is gone or names something else.
@@ -321,6 +332,12 @@ module WakeCondition =
         | Some (ParkedSyscall.Connect _)
         | None -> false
 
+    /// Every primitive `condition` waits for, in order, repeats and all.
+    let rec internal primitives (condition : WakeCondition) : WakePrimitive list =
+        match condition with
+        | WakeCondition.Primitive primitive -> [ primitive ]
+        | WakeCondition.AnyOf (first, rest) -> primitives first @ List.collect primitives rest
+
     // A primitive that names a description no longer in the table has had its
     // wait broken underneath it: see `satisfied`.
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -417,7 +434,7 @@ module WakeCondition =
         | WakePrimitive.ConnectionWritable (writer, remaining) ->
             let connectionEnd, transfer = connectionOfWaiter primitive writer system
             TcpTransfer.writeResumes connectionEnd remaining transfer
-        | WakePrimitive.DeadlinePassed deadline -> system.Scheduling.NanosecondsSinceBoot >= deadline
+        | WakePrimitive.DeadlinePassed deadline -> deadlinePassed (Some deadline) system
         | WakePrimitive.SignalDeliverable -> SyscallInterruption.wakes thread system
         // `satisfied` answers a call a close has ended before it asks any
         // primitive, so this is asked only of one no close has ended.
@@ -473,11 +490,6 @@ module WakeCondition =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
-        let rec primitives (condition : WakeCondition) : WakePrimitive list =
-            match condition with
-            | WakeCondition.Primitive primitive -> [ primitive ]
-            | WakeCondition.AnyOf (first, rest) -> primitives first @ List.collect primitives rest
-
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =
             match condition with
             | WakeCondition.Primitive primitive ->

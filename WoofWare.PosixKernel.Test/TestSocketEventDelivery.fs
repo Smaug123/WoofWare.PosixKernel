@@ -126,7 +126,7 @@ module TestSocketEventDelivery =
                                                     Endpoint = loopback port
                                                     LockedAddress = None
                                                     LockedPort = false
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             (UnixMachineState.socket socketId kernel.Machine).Addressing
                                     Phase =

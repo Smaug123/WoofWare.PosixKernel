@@ -306,6 +306,19 @@ type UnixSystemDefect<'Thread> =
         connection : ConnectionId *
         rules : SimulatedUnixFlavour *
         flavour : SimulatedUnixFlavour
+    /// A connection records the exchange of its FINs as complete at
+    /// `recorded`, where both FINs have arrived exactly when it records an
+    /// instant, and that instant is not after the machine's clock.
+    | FinsExchangedAtDisagrees of connection : ConnectionId * recorded : int64 option
+    /// An end is in TIME_WAIT at `local`, towards `remote`, from an instant
+    /// after the machine's clock, or filed under a four-tuple not its own.
+    | TimeWaitMisrecorded of local : Ipv4Endpoint * remote : Ipv4Endpoint
+    /// An end is in TIME_WAIT on the four-tuple between `local` and `remote`,
+    /// which `connection`, no reset having reached it, occupies too: a connect
+    /// that takes a TIME_WAIT's four-tuple over ends it.
+    | TimeWaitBesideConnection of local : Ipv4Endpoint * remote : Ipv4Endpoint * connection : ConnectionId
+    /// The machine's TIME_WAIT sysctls are another flavour's.
+    | TimeWaitSysctlsNotOfFlavour of flavour : SimulatedUnixFlavour
     /// The socket `socket` is the `connectionEnd` end of `connection`, or is
     /// the listener whose accept queue holds its server end, which the
     /// connection records as closed.
@@ -745,12 +758,16 @@ type UnixSystemDefect<'Thread> =
     /// such as `SocketPhase.Connecting`: a case reserved for behaviour not yet
     /// modelled.
     | ReservedSocketPhase of socket : SocketId * phase : SocketPhase
-    /// A socket's binding no longer holds its port (`InetBinding.HoldsPort`),
+    /// A socket's binding no longer holds its port (`PortHold.GivenBack`),
     /// and the socket is not one a refused TCP connect, the only thing that
     /// gives a port back, leaves so: a stream socket in `SocketPhase.Refused`,
     /// or under Linux an idle one, whose port, under Linux, `bind(2)` did not
     /// choose.
     | PortGivenBackOutsideRefusal of socket : SocketId * phase : SocketPhase
+    /// The filesystem mounted at `root` is `mounted`, which is not what the
+    /// machine says it mounted at `/dev` (`UnixMachineState.DeviceMount`),
+    /// whose configuration `stat(2)` and `statfs(2)` report for it.
+    | MountNotDeviceMount of root : InodeNumber * mounted : MountedFileSystem * deviceMount : MountedFileSystem
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -1774,6 +1791,12 @@ module UnixSystem =
                     else
                         [ UnixSystemDefect.TcpTransferNotOfFlavour (connection, rulesFlavour, flavour) ]
 
+                let exchangeStamp =
+                    match TcpTransfer.exchangeComplete tcp.Transfer, tcp.FinsExchangedAt with
+                    | true, Some exchanged when exchanged <= scheduling.NanosecondsSinceBoot -> []
+                    | false, None -> []
+                    | _, recorded -> [ UnixSystemDefect.FinsExchangedAtDisagrees (connection, recorded) ]
+
                 // An orphan has no holder of either end, which
                 // `OrphanConnection` reports alone.
                 let ends =
@@ -1809,8 +1832,51 @@ module UnixSystem =
                         | _, _ -> []
                     )
 
-                broken @ ofFlavour @ ends
+                broken @ ofFlavour @ exchangeStamp @ ends
             )
+
+        // Each end in TIME_WAIT against the clock, the key it is filed under,
+        // and the connections still on the machine; and the TIME_WAIT
+        // sysctls against the flavour.
+        let timeWaitDefects =
+            let sysctls =
+                match SimulatedUnixPlatform.flavour machine.UnixPlatform, machine.TcpTimeWait with
+                | SimulatedUnixFlavour.Linux, TcpTimeWaitSysctls.Linux _
+                | SimulatedUnixFlavour.Darwin, TcpTimeWaitSysctls.Darwin _ -> []
+                | flavour, _ -> [ UnixSystemDefect.TimeWaitSysctlsNotOfFlavour flavour ]
+
+            let entries =
+                machine.TimeWaits
+                |> Map.toList
+                |> List.collect (fun ((local, remote), timeWait) ->
+                    let misrecorded =
+                        if
+                            timeWait.Local <> local
+                            || timeWait.Remote <> remote
+                            || timeWait.EnteredAt > scheduling.NanosecondsSinceBoot
+                        then
+                            [ UnixSystemDefect.TimeWaitMisrecorded (local, remote) ]
+                        else
+                            []
+
+                    let beside =
+                        machine.Connections
+                        |> Map.toList
+                        |> List.choose (fun (connection, tcp) ->
+                            if
+                                not (UnixMachineState.resetReleasedTuple tcp)
+                                && ((tcp.ClientAddress = local && tcp.ServerAddress = remote)
+                                    || (tcp.ClientAddress = remote && tcp.ServerAddress = local))
+                            then
+                                Some (UnixSystemDefect.TimeWaitBesideConnection (local, remote, connection))
+                            else
+                                None
+                        )
+
+                    misrecorded @ beside
+                )
+
+            sysctls @ entries
 
         let phaseKindMismatches =
             machine.Sockets
@@ -2141,7 +2207,7 @@ module UnixSystem =
 
                 let portGivenBack =
                     match socket.Ipv4Binding with
-                    | Some binding when not binding.HoldsPort ->
+                    | Some binding when not (PortHold.isHeld binding.PortHold) ->
                         let refusalLeftIt =
                             socket.Kind = SocketKind.Stream
                             && SimulatedUnixPlatform.refusalReleasesPort machine.UnixPlatform binding.LockedPort
@@ -2176,6 +2242,16 @@ module UnixSystem =
                 []
             else
                 [ UnixSystemDefect.FileSystemTypeNotReportable (flavour, fsType) ]
+
+        // The graph records which filesystem it has mounted, and the machine
+        // the configuration of that mount; the two must name one filesystem.
+        let deviceMount =
+            let expected = DeviceFileSystemMount.mounted machine.DeviceMount
+
+            VirtualFileSystem.mounts machine.FileSystem
+            |> Map.toList
+            |> List.filter (fun (_, mount) -> mount.FileSystem <> expected)
+            |> List.map (fun (root, mount) -> UnixSystemDefect.MountNotDeviceMount (root, mount.FileSystem, expected))
 
         let protectedFiles =
             let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
@@ -2555,6 +2631,7 @@ module UnixSystem =
         @ duplicateQueued
         @ connectionEndsHeldTwice
         @ transferDefects
+        @ timeWaitDefects
         @ phaseKindMismatches
         @ drainedUnderLinux
         @ connectionFreshness
@@ -2571,6 +2648,7 @@ module UnixSystem =
         @ parkOrdinalDuplicates
         @ bindings
         @ fileSystemType
+        @ deviceMount
         @ protectedFiles
         @ symlinkPermissions
         @ userBufferCheck
@@ -3515,6 +3593,8 @@ module UnixSystem =
                     NextPipeInode = InodeNumber 1L
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
+                    TimeWaits = Map.empty
+                    TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L
                     NextEventRegistrationOrdinal = 0L
                     NextParkOrdinal = ParkOrdinal 0L

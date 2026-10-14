@@ -622,6 +622,7 @@ module TestSocketTable =
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 6000us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }
@@ -751,7 +752,7 @@ module TestSocketTable =
                                         Endpoint = loopback port
                                         LockedAddress = None
                                         LockedPort = false
-                                        HoldsPort = true
+                                        PortHold = PortHold.Reserved
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -996,7 +997,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = None
                                                     LockedPort = false
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             someSocket.Addressing
                                 }
@@ -1094,7 +1095,7 @@ module TestSocketTable =
                                         Endpoint = loopback 5000us
                                         LockedAddress = None
                                         LockedPort = false
-                                        HoldsPort = true
+                                        PortHold = PortHold.Reserved
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1184,7 +1185,7 @@ module TestSocketTable =
                     Endpoint = loopback 5000us
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -1387,7 +1388,7 @@ module TestSocketTable =
                                         Endpoint = loopback 2us
                                         LockedAddress = None
                                         LockedPort = false
-                                        HoldsPort = true
+                                        PortHold = PortHold.Reserved
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1419,6 +1420,7 @@ module TestSocketTable =
                                     ConnectionId 2L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }
@@ -1473,7 +1475,7 @@ module TestSocketTable =
                                         Endpoint = loopback 2us
                                         LockedAddress = None
                                         LockedPort = false
-                                        HoldsPort = true
+                                        PortHold = PortHold.Reserved
                                     })
                                 someSocket.Addressing
                         Phase =
@@ -1497,12 +1499,13 @@ module TestSocketTable =
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
                                         // No socket is the client end: it has
                                         // closed.
                                         Transfer =
                                             TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
-                                            |> TcpTransfer.close ConnectionEnd.Client false
+                                            |> TcpTransfer.close ConnectionEnd.Client false PortHold.Connected
                                             |> snd
                                     }
                                 ]
@@ -1548,7 +1551,7 @@ module TestSocketTable =
                                          Endpoint = loopback (uint16 (100 + i))
                                          LockedAddress = None
                                          LockedPort = false
-                                         HoldsPort = true
+                                         PortHold = PortHold.Reserved
                                      })
                                  someSocket.Addressing
                          Phase = phase
@@ -1565,11 +1568,13 @@ module TestSocketTable =
                                 ConnectionId 0L,
                                 {
                                     ClientAddress = loopback 1us
+                                    FinsExchangedAt = None
                                     ServerAddress = loopback 2us
                                     Transfer =
                                         (TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine, closed)
                                         ||> List.fold (fun transfer closer ->
-                                            TcpTransfer.close closer false transfer |> snd
+                                            TcpTransfer.close closer false (ForgedConnection.portHold closer) transfer
+                                            |> snd
                                         )
                                 }
                             ]
@@ -1682,7 +1687,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                                                     LockedAddress = None
                                                     LockedPort = false
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
                                 }
@@ -1788,7 +1793,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 4444us
                                                     LockedAddress = None
                                                     LockedPort = false
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             someSocket.Addressing
                                 }
@@ -1808,7 +1813,7 @@ module TestSocketTable =
                     Endpoint = loopback 4444us
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
         )
 
@@ -1855,7 +1860,7 @@ module TestSocketTable =
                         Endpoint = loopback 4444us
                         LockedAddress = Some Ipv4Address.loopback
                         LockedPort = true
-                        HoldsPort = true
+                        PortHold = PortHold.Reserved
                     },
                 Ipv4Address.loopback
                 Some
@@ -1863,7 +1868,7 @@ module TestSocketTable =
                         Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 4444us
                         LockedAddress = Some Ipv4Address.any
                         LockedPort = true
-                        HoldsPort = true
+                        PortHold = PortHold.Reserved
                     },
                 Ipv4Address.any
             ]
@@ -1956,7 +1961,7 @@ module TestSocketTable =
                                             Endpoint = loopback 5000us
                                             LockedAddress = Some Ipv4Address.loopback
                                             LockedPort = true
-                                            HoldsPort = true
+                                            PortHold = PortHold.Reserved
                                         })
                                     someSocket.Addressing
                             Phase = phase
@@ -1993,6 +1998,7 @@ module TestSocketTable =
                         ConnectionId 0L,
                         {
                             ClientAddress = loopback 4000us
+                            FinsExchangedAt = None
                             ServerAddress = loopback 5000us
                             Transfer = TcpTransfer.create SimulatedUnixFlavour.Darwin 146988 408300
                         }
@@ -2042,7 +2048,7 @@ module TestSocketTable =
                                                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                                                     LockedAddress = Some Ipv4Address.any
                                                     LockedPort = true
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             (UnixMachineState.socket (SocketId 0L) kernel.Machine).Addressing
                                 }
@@ -2056,7 +2062,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 5000us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             someSocket.Addressing
                                 }
@@ -2087,7 +2093,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             someSocket.Addressing
                                 }
@@ -2175,7 +2181,7 @@ module TestSocketTable =
                                                     Endpoint = loopback 4444us
                                                     LockedAddress = Some Ipv4Address.loopback
                                                     LockedPort = true
-                                                    HoldsPort = true
+                                                    PortHold = PortHold.Reserved
                                                 })
                                             someSocket.Addressing
                                 }
@@ -2189,6 +2195,7 @@ module TestSocketTable =
                                         // from the listener's endpoint to the
                                         // client's.
                                         ClientAddress = loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 4444us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }

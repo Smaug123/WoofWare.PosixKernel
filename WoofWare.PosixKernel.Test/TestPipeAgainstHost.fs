@@ -360,11 +360,11 @@ module TestPipeAgainstHost =
 
                                     (Lone.proc after).Signals |> shouldEqual (Lone.proc system).Signals
                                     Ok (Some (answer, after))
-                                | Ok (WriteStep.Returns (WriteAdmission.Transfer n, admitted)) ->
+                                | Ok (WriteStep.Returns (WriteAdmission.Transfer (n, into), admitted)) ->
                                     match
-                                        UnixReadWrite.tryWriteBytes
-                                            (Lone.leader system)
+                                        WriteOutcomes.applyWrite
                                             modelFd
+                                            into
                                             (ImmutableArray.Create<byte> (Array.sub bytes 0 n))
                                             admitted
                                     with

@@ -121,6 +121,38 @@ transcripts must agree. Each has two halves:
 A divergence the live run finds belongs in the corpus once it is fixed, so that
 every later run replays it without a container.
 
+## A host replay that flakes: run its probe first
+
+When a replay of a committed probe against the host fails now and then, run
+the probe itself many times, several copies at once, and compare each run with
+its recording before suspecting the replay's timing. A recording is one run of
+the probe's procedure, and that procedure may not pin the state it meant to
+measure: `TestShutdownAgainstHost`'s flakes on a loaded Mac were the probe's
+own, reproduced by `tcp-shutdown.c` alone in a few runs in a hundred, where
+its fill sometimes left Darwin free to grow the reader's buffer, or its settles
+left an acknowledgement still to go out before a reset. Find what separates
+the runs that answer as recorded (count it against the answer, as
+`fill-settling.c` does), then have the replay wait for it where time brings it
+about, or detect it and run the scenario again on fresh sockets where time does
+not, failing after a bounded number of runs.
+
+## A port another address already holds
+
+On both flavours, a bind of 127.0.0.1:0 can be given a port that a socket at
+another of the host's addresses already holds (a browser's connection from the
+Wi-Fi address, say), and that socket refuses a later wildcard bind of the port
+while letting every bind at 127.0.0.1 through (`port-held-elsewhere.c`, beside
+`tcp-shutdown.c`). So a host replay whose pair took its port that way can see a
+wildcard bind refused where the probe measured it binding: in about two runs in
+a hundred of `bind-held-endpoint.c`'s replay on a desktop Mac, depending on
+what else holds ports there. To find such a holder, Linux lists every socket in
+`/proc/net/tcp`, but Darwin 27's `net.inet.tcp.pcblist64` sysctl lists only the
+calling process's own (and `netstat` shows none at all), so instead bind the
+port, without `SO_REUSEADDR`, at each of the host's addresses outside
+127.0.0.0/8: a socket there or at the wildcard refuses that bind, and a pair's
+own sockets at 127.0.0.1 never do. `TestShutdownAgainstHost`'s `heldElsewhere`
+does this, and its `hostReplay` runs such a scenario again.
+
 ## The set-ID caveat that looks like a flake
 
 A host-touching test can run in two environments: unsandboxed (`nix develop

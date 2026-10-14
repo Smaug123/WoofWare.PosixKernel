@@ -25,4 +25,29 @@ type internal TcpConnection =
         /// The bytes travelling each way, and what each end knows of the
         /// connection's ending.
         Transfer : TcpTransfer
+        /// When both of the connection's FINs had arrived, by the kernel
+        /// clock (`UnixSchedulingState.NanosecondsSinceBoot`): when the end
+        /// whose FIN was made first entered TIME_WAIT. `None` until then.
+        FinsExchangedAt : int64 option
+    }
+
+/// One end of a TCP connection in TIME_WAIT once both of the connection's
+/// sockets have closed and the connection itself is gone: what Linux keeps as
+/// an `inet_timewait_sock`. It holds its endpoint's port, and its four-tuple,
+/// until it expires.
+type internal TcpTimeWait =
+    {
+        /// The end's own endpoint, whose port it holds.
+        Local : Ipv4Endpoint
+        /// The other end's endpoint: the end holds the four-tuple from
+        /// `Local` to here.
+        Remote : Ipv4Endpoint
+        /// The `SO_REUSEADDR` the end's socket carried when it closed, which a
+        /// bind of the port is judged against.
+        ReuseAddress : bool
+        /// How the end's socket held its port.
+        PortHold : PortHold
+        /// When the end entered TIME_WAIT, by the kernel clock: when both of
+        /// the connection's FINs had arrived.
+        EnteredAt : int64
     }

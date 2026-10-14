@@ -235,6 +235,13 @@ module TestTransferCounts =
             let bytes = ImmutableArray.Create (content, int position, int transfer)
             Rule.Moved (moved < count), Ok (ReadAnswer.Completed bytes, position + int64 transfer)
 
+    /// What a write's or a `pwrite`'s admission says, short of where the bytes
+    /// go, which each property checks of its own call.
+    [<RequireQualifiedAccess>]
+    type private Admitted =
+        | Answered of answer : WriteAnswer
+        | Transfer of count : int
+
     /// The admission of a write of `count` bytes at `position` (the description's
     /// for `write`, the argument for `pwrite`) into a regular file open for
     /// writing.
@@ -244,10 +251,10 @@ module TestTransferCounts =
         (position : int64)
         (buffer : UserBuffer)
         (count : uint64)
-        : Rule * Result<WriteAdmission, BufferRefusal>
+        : Rule * Result<Admitted, BufferRefusal>
         =
         let failed (error : UnixError) =
-            Ok (WriteAdmission.Answered (WriteAnswer.Failed error))
+            Ok (Admitted.Answered (WriteAnswer.Failed error))
 
         match sharedSteps platform limit buffer (Some position) count with
         | Error (rule, Ok error) -> rule, failed error
@@ -255,14 +262,14 @@ module TestTransferCounts =
         | Ok moved ->
 
         if moved = 0UL then
-            Rule.NothingToMove, Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L))
+            Rule.NothingToMove, Ok (Admitted.Answered (WriteAnswer.Completed 0L))
         else
 
         match buffer with
         | UserBuffer.Unmapped _ -> Rule.FaultAtCopy, failed UnixError.EFAULT
         | UserBuffer.Opaque -> Rule.RefusedAtCopy, Error BufferRefusal.OpaqueAtTransfer
         | UserBuffer.Addressless -> Rule.RefusedAtCopy, Error BufferRefusal.AddresslessAtTransfer
-        | UserBuffer.Mapped -> Rule.Moved (moved < count), Ok (WriteAdmission.Transfer (int moved))
+        | UserBuffer.Mapped -> Rule.Moved (moved < count), Ok (Admitted.Transfer (int moved))
 
     // ------------------------------------------------------- the generators
 
@@ -477,7 +484,13 @@ module TestTransferCounts =
 
             let actual =
                 match WriteAdmissions.unchanged fd case.Buffer case.Count system with
-                | Ok admission -> Ok admission
+                | Ok (WriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
+                // Into the file, at the description's offset.
+                | Ok (WriteAdmission.Transfer (count, WriteInto.File (into, _, offset, _))) when
+                    into = fd && offset = case.Position
+                    ->
+                    Ok (Admitted.Transfer count)
+                | Ok other -> failwith $"%A{case}: a regular file's write came to %A{other}"
                 | Error (WriteRefusal.Buffer refusal) -> Error refusal
                 | Error other ->
                     failwith $"a regular file's write was refused for something other than its buffer: %O{other}"
@@ -507,7 +520,7 @@ module TestTransferCounts =
                 if offset < 0L then
                     // Ahead of the descriptor on both flavours, and Darwin's count
                     // refusal is the same errno.
-                    Ok (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EINVAL))
+                    Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EINVAL))
                 else
                     snd (expectedAdmission platform limit offset case.Buffer case.Count)
 
@@ -515,8 +528,10 @@ module TestTransferCounts =
                 // A pwrite's admission says what a write's does, but for the
                 // sleeping write, which a file never makes.
                 match UnixReadWrite.tryAdmitPWrite 0 fd case.Buffer case.Count offset system with
-                | Ok (PWriteAdmission.Answered answer) -> Ok (WriteAdmission.Answered answer)
-                | Ok (PWriteAdmission.Transfer count) -> Ok (WriteAdmission.Transfer count)
+                | Ok (PWriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
+                | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
+                | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device)) ->
+                    failwith $"%A{case}: a regular file's pwrite came to a device's"
                 | Error (PWriteRefusal.Buffer refusal) -> Error refusal
                 | Error other ->
                     failwith $"a regular file's pwrite was refused for something other than its buffer: %O{other}"
@@ -580,8 +595,8 @@ module TestTransferCounts =
         Set.difference (Set.add "Moved true" everyRule) writeRules
         |> shouldEqual Set.empty
 
-    /// `write` and `pwrite` answer the position check themselves, so a caller
-    /// that skipped the admission still gets a kernel's answer: EINVAL on Linux
+    /// A whole `write` and `pwrite` answer the position check before their
+    /// copy: EINVAL on Linux
     /// once position + count passes INT64_MAX, and one byte fewer reaches the
     /// file, whose length this kernel cannot represent. Darwin has no such
     /// check, and every one of these reaches the file. At `INT64_MAX` itself
@@ -609,7 +624,7 @@ module TestTransferCounts =
                 (machine, length, "write", outcome (WriteOutcomes.write fd bytes system))
                 |> shouldEqual (machine, length, "write", expected)
 
-                (machine, length, "pwrite", outcome (UnixReadWrite.tryPwriteBytes 0 fd bytes nearTop system))
+                (machine, length, "pwrite", outcome (WriteOutcomes.admitThenPwrite 0 fd bytes nearTop system))
                 |> shouldEqual (machine, length, "pwrite", expected)
 
         for machine, length, expected in
@@ -625,7 +640,7 @@ module TestTransferCounts =
             (machine, length, "write", outcome (WriteOutcomes.write fd bytes system))
             |> shouldEqual (machine, length, "write", expected)
 
-            (machine, length, "pwrite", outcome (UnixReadWrite.tryPwriteBytes 0 fd bytes Int64.MaxValue system))
+            (machine, length, "pwrite", outcome (WriteOutcomes.admitThenPwrite 0 fd bytes Int64.MaxValue system))
             |> shouldEqual (machine, length, "pwrite", expected)
 
     // --------------------------------------- the descriptors, as measured
@@ -771,7 +786,7 @@ module TestTransferCounts =
                 match admission with
                 | WriteAdmission.Answered (WriteAnswer.Failed error) -> Seen.Errno error
                 | WriteAdmission.Answered (WriteAnswer.Completed written) -> Seen.Moved (int written)
-                | WriteAdmission.Transfer count -> Seen.Moved count
+                | WriteAdmission.Transfer (count, _) -> Seen.Moved count
                 | WriteAdmission.TransferThenSleep _ ->
                     failwith $"a write of a descriptor here would sleep: %A{admission}"
             | Ok other -> failwith $"unexpected write outcome %A{other}"
@@ -780,7 +795,7 @@ module TestTransferCounts =
             match UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
-            | Ok (PWriteAdmission.Transfer count) -> Seen.Moved count
+            | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count
             | Error _ -> Seen.Refused
         | other -> failwith $"no op %s{other}"
 
@@ -1095,9 +1110,9 @@ module TestTransferCountsLarge =
 
         GC.Collect ()
 
-    /// `write` and `pwrite` take the bytes their admission said to extract. A
-    /// caller that skipped the admission and hands over more than one call
-    /// moves is refused loudly rather than answered.
+    /// A `write` or `pwrite` of more than one call moves stops at its copy for
+    /// one call's worth, and given more bytes than that, refuses them loudly
+    /// rather than answering.
     ///
     /// Two gigabytes of bytes.
     [<Test>]
@@ -1114,15 +1129,23 @@ module TestTransferCountsLarge =
                 0L
                 (TestTransferCounts.systemOn (SimulatedUnixPlatform.linuxX64, None))
 
-        let exn =
-            Assert.Throws<Exception> (fun () -> WriteOutcomes.write fd bytes system |> ignore)
+        match UnixReadWrite.write (Lone.leader system) fd UserBuffer.Mapped (uint64 bytes.Length) system with
+        | CallProgress.NeedsCopyIn paused ->
+            (PausedWrite.copyRange paused).ByteCount
+            |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
 
-        exn.Message |> shouldContainText "one call moves"
+            Assert.Throws<InvalidOperationException> (fun () -> UnixReadWrite.writeWithBytes bytes paused |> ignore)
+            |> ignore
+        | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
-        let exn =
-            Assert.Throws<Exception> (fun () -> UnixReadWrite.tryPwriteBytes 0 fd bytes 0L system |> ignore)
+        match UnixReadWrite.pwrite 0 fd UserBuffer.Mapped (uint64 bytes.Length) 0L system with
+        | CallProgress.NeedsCopyIn paused ->
+            (PausedPWrite.copyRange paused).ByteCount
+            |> shouldEqual (int TestTransferCounts.LinuxMaxTransfer)
 
-        exn.Message |> shouldContainText "one call moves"
+            Assert.Throws<InvalidOperationException> (fun () -> UnixReadWrite.pwriteWithBytes bytes paused |> ignore)
+            |> ignore
+        | other -> failwith $"expected the pwrite to stop at its copy, got %A{other}"
 
         // The same bytes are one call's worth on Darwin, whose limit is INT_MAX,
         // and move.

@@ -141,8 +141,6 @@ module TestRmDirRules =
         (candidate : string)
         : RmDirVerdict
         =
-        let rules = SimulatedUnixPlatform.rmDirRules platform
-
         match
             PathWalk.resolveFull
                 (SimulatedUnixPlatform.pathLimits platform)
@@ -150,7 +148,7 @@ module TestRmDirRules =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root tree)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator platform)
                 (path candidate)
                 tree
             |> Answered.errno

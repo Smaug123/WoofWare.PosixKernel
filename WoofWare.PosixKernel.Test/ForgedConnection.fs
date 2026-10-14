@@ -7,6 +7,14 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module internal ForgedConnection =
 
+    /// How a forged end's socket held its port: a client's as connect's own
+    /// implicit bind holds one, a server's as an accepted socket holds its
+    /// listener's.
+    let portHold (connectionEnd : ConnectionEnd) : PortHold =
+        match connectionEnd with
+        | ConnectionEnd.Client -> PortHold.Connected
+        | ConnectionEnd.Server -> PortHold.Reserved
+
     /// `system` with `connection` in the connection table, between two
     /// loopback ports, its bytes as a fresh connection of `domain` holds them
     /// on this machine (`TcpBufferSizing.newTransfer`), and then each end in
@@ -21,7 +29,7 @@ module internal ForgedConnection =
         =
         let transfer =
             (TcpBufferSizing.newTransfer domain system.Machine, closed)
-            ||> List.fold (fun transfer closer -> TcpTransfer.close closer false transfer |> snd)
+            ||> List.fold (fun transfer closer -> TcpTransfer.close closer false (portHold closer) transfer |> snd)
 
         { system with
             Machine =
@@ -31,6 +39,7 @@ module internal ForgedConnection =
                             connection
                             {
                                 ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 40000us
+                                FinsExchangedAt = None
                                 ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                 Transfer = transfer
                             }

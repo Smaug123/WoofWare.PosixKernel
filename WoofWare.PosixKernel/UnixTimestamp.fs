@@ -43,7 +43,8 @@ type UnixTimestamp =
 
 [<RequireQualifiedAccess>]
 module UnixTimestamp =
-    let private nanosecondsPerSecond : int = 1_000_000_000
+    /// How many nanoseconds a second holds.
+    let internal nanosecondsPerSecond : int64 = 1_000_000_000L
 
     /// <summary>
     /// The raw number of seconds in this timestamp (i.e. the timestamp rounded down to the latest second).
@@ -66,7 +67,7 @@ module UnixTimestamp =
     /// <c>None</c> if the nanosecond part is not in <c>[0, 1e9)</c>.
     /// </returns>
     let create (seconds : int64) (nanoseconds : int) : UnixTimestamp option =
-        if nanoseconds < 0 || nanoseconds >= nanosecondsPerSecond then
+        if nanoseconds < 0 || int64 nanoseconds >= nanosecondsPerSecond then
             None
         else
             Some (UnixTimestamp (seconds, nanoseconds))

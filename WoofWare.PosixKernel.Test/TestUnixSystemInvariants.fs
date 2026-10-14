@@ -166,11 +166,12 @@ module TestUnixSystemInvariants =
                                         connection,
                                         {
                                             ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 40000us
+                                            FinsExchangedAt = None
                                             ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                             // No socket is the server end: it has closed.
                                             Transfer =
                                                 TcpBufferSizing.newTransfer SocketDomain.Inet unlaunched.Machine
-                                                |> TcpTransfer.close ConnectionEnd.Server false
+                                                |> TcpTransfer.close ConnectionEnd.Server false PortHold.Reserved
                                                 |> snd
                                         }
                                     ]
@@ -590,7 +591,7 @@ module TestUnixSystemInvariants =
                 Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback port
                 LockedAddress = None
                 LockedPort = false
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
     let private listening : SocketPhase =
@@ -648,7 +649,7 @@ module TestUnixSystemInvariants =
                 }
             LockedAddress = Some Ipv6Address.loopback
             LockedPort = true
-            HoldsPort = true
+            PortHold = PortHold.Reserved
         }
 
     let private socketName : UnixSocketName =
@@ -764,7 +765,7 @@ module TestUnixSystemInvariants =
                     Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 5000us
                     LockedAddress = Some Ipv4Address.any
                     LockedPort = lockedPort
-                    HoldsPort = false
+                    PortHold = PortHold.GivenBack
                 }
 
         let faulty =
@@ -942,6 +943,34 @@ module TestUnixSystemInvariants =
             }
         |> UnixSystem.checkInvariants
         |> shouldEqual []
+
+    [<Test>]
+    let ``a mounted filesystem the machine's device mount does not name is a defect`` () : unit =
+        // Reachable only by assembling the record by hand: `UnixSystem.initial`
+        // derives the device mount from the flavour, and mounts what it says.
+        let linux =
+            UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+        let devRoot =
+            VirtualFileSystem.mounts linux.Machine.FileSystem
+            |> Map.toList
+            |> List.exactlyOne
+            |> fst
+
+        UnixSystem.checkInvariants linux |> shouldEqual []
+
+        { linux with
+            Machine =
+                { linux.Machine with
+                    DeviceMount = DeviceFileSystemMount.Devfs
+                }
+        }
+        |> UnixSystem.checkInvariants
+        |> shouldEqual
+            [
+                UnixSystemDefect.MountNotDeviceMount (devRoot, MountedFileSystem.Devtmpfs, MountedFileSystem.Devfs)
+            ]
 
     // ------------------------------------------------------------------
     // Thread IDs. Every one of these is reachable only by a record copy past

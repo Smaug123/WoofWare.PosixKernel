@@ -57,9 +57,10 @@ type internal TcpEndState =
     | Reset of errorPending : bool
     /// This end's socket is closed: nothing reads here any more.
     /// `reuseAddress` is the `SO_REUSEADDR` the end's socket carried when it
-    /// closed, which the end holds its endpoint with against a bind while it
-    /// still holds it.
-    | Closed of reuseAddress : bool
+    /// closed, and `portHold` how its socket held its port, which the end
+    /// holds its endpoint with against a bind or a search while it still
+    /// holds it.
+    | Closed of reuseAddress : bool * portHold : PortHold
 
 /// The bytes travelling towards one end of a TCP connection, and that end's
 /// state.
@@ -1301,6 +1302,7 @@ module internal TcpTransfer =
         (abortive : bool)
         (closer : ConnectionEnd)
         (reuseAddress : bool)
+        (portHold : PortHold)
         (transfer : TcpTransfer)
         : TcpWake list * TcpTransfer
         =
@@ -1314,7 +1316,7 @@ module internal TcpTransfer =
             { own with
                 Sending = ByteQueue.empty
                 Receiving = ByteQueue.empty
-                Receiver = TcpEndState.Closed reuseAddress
+                Receiver = TcpEndState.Closed (reuseAddress, portHold)
             }
 
         match own.Receiver, outbound.Receiver with
@@ -1322,6 +1324,55 @@ module internal TcpTransfer =
             failwith $"TcpTransfer.%s{context}: the %A{closer} end is closed already (this is a bug in this library)."
         | _, TcpEndState.Closed _ ->
             // Both ends have now closed, and nothing is left to send or keep.
+            // The close is a reset where a close beside an open peer would be
+            // one (bytes left unread, or SO_LINGER {1, 0} before the exchange
+            // of FINs is done), or where a reset reached the closer already;
+            // otherwise it makes the closer's FIN, unless the closer made it
+            // already, and with nothing left to send the FIN arrives at once.
+            // A FIN made already and still queued is behind bytes the closed
+            // peer never took, and never arrives: Darwin's close there leaves
+            // neither end holding its port (measured, `docs/probes/time-wait`,
+            // tw-stranded.c rows S; Linux reset at the peer's close). Which
+            // end then goes to TIME_WAIT follows from the FINs (`timeWait`).
+            let resets =
+                match own.Receiver with
+                | TcpEndState.Reset _ -> true
+                | TcpEndState.Open _
+                | TcpEndState.Closed _ ->
+                    let unread = ByteQueue.length own.Receiving > 0
+
+                    let closerFinArrived =
+                        match outbound.Fin with
+                        | TcpFin.Arrived _ -> true
+                        | TcpFin.NotSent
+                        | TcpFin.Queued _ -> false
+
+                    let unreadResets =
+                        unread
+                        && not (
+                            if isLinux transfer then
+                                exchangeComplete transfer
+                            else
+                                closerFinArrived && sendShut peer transfer
+                        )
+
+                    unreadResets || (abortive && not (exchangeComplete transfer))
+
+            let closerFin =
+                if resets then
+                    outbound.Fin
+                else
+                    match outbound.Fin with
+                    | TcpFin.NotSent ->
+                        TcpFin.Arrived (
+                            match own.Fin with
+                            | TcpFin.Arrived _ -> true
+                            | TcpFin.NotSent
+                            | TcpFin.Queued _ -> false
+                        )
+                    | TcpFin.Queued passive -> TcpFin.Queued passive
+                    | TcpFin.Arrived passive -> TcpFin.Arrived passive
+
             let transfer =
                 transfer
                 |> withTowards closer closedOwn
@@ -1329,7 +1380,19 @@ module internal TcpTransfer =
                     peer
                     { outbound with
                         Sending = ByteQueue.empty
+                        Fin = closerFin
                     }
+
+            // As below: a Darwin close under linger zero once both FINs have
+            // arrived frees the closer's endpoint whichever FIN came first.
+            let transfer =
+                match transfer.Rules with
+                | TcpTransferRules.Darwin (stranded, abortReleased) when abortive && not resets ->
+                    { transfer with
+                        Rules = TcpTransferRules.Darwin (stranded, Set.add closer abortReleased)
+                    }
+                | TcpTransferRules.Darwin _
+                | TcpTransferRules.Linux _ -> transfer
 
             [], keepingRules context transfer
         // The reset reached both ends, so there is nothing to tell the peer.
@@ -1431,13 +1494,26 @@ module internal TcpTransfer =
     /// arrived on Linux, or on Darwin once the closer's has arrived and the
     /// peer has made its own, bytes left unread are discarded without a
     /// reset. Not to be asked where `closeRefused` holds. `reuseAddress` is
-    /// the closing socket's `SO_REUSEADDR`, which the closed end keeps.
-    let close (closer : ConnectionEnd) (reuseAddress : bool) (transfer : TcpTransfer) : TcpWake list * TcpTransfer =
-        closeWith "close" false closer reuseAddress transfer
+    /// the closing socket's `SO_REUSEADDR`, and `portHold` how it held its
+    /// port, which the closed end keeps.
+    let close
+        (closer : ConnectionEnd)
+        (reuseAddress : bool)
+        (portHold : PortHold)
+        (transfer : TcpTransfer)
+        : TcpWake list * TcpTransfer
+        =
+        closeWith "close" false closer reuseAddress portHold transfer
 
     /// `closer`'s socket closes under `SO_LINGER` {1, 0}: a reset, unless
     /// both FINs have arrived, when it is the ordinary close (measured,
     /// `tcp-shutdown.c` section L). Not to be asked where `abortRefused`
-    /// holds. `reuseAddress` is as for `close`.
-    let abort (closer : ConnectionEnd) (reuseAddress : bool) (transfer : TcpTransfer) : TcpWake list * TcpTransfer =
-        closeWith "abort" true closer reuseAddress transfer
+    /// holds. `reuseAddress` and `portHold` are as for `close`.
+    let abort
+        (closer : ConnectionEnd)
+        (reuseAddress : bool)
+        (portHold : PortHold)
+        (transfer : TcpTransfer)
+        : TcpWake list * TcpTransfer
+        =
+        closeWith "abort" true closer reuseAddress portHold transfer

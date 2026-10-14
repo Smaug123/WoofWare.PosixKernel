@@ -267,6 +267,17 @@ module TransferCountLimit =
         | TransferCountLimit.Shortened maxTransfer
         | TransferCountLimit.Refused maxTransfer -> maxTransfer
 
+/// The call whose search for an ephemeral port found every port of the range
+/// taken.
+[<RequireQualifiedAccess>]
+type internal EphemeralSearchCall =
+    /// `bind(2)` of port 0.
+    | Bind
+    /// `listen(2)` on a socket holding no port.
+    | Listen
+    /// `connect(2)` on a socket holding no port.
+    | Connect
+
 [<RequireQualifiedAccess>]
 module SimulatedUnixPlatform =
     /// Loosest ceiling any Unix we model imposes on `utsname.release`:
@@ -763,6 +774,51 @@ module SimulatedUnixPlatform =
                 NonDirectory = NonDirectoryDescriptorRule.NotSupportedOffTheFileSystem
             }
 
+    /// The walk this platform's `mkdir(2)`, `mknod(2)`, `symlink(2)`,
+    /// `link(2)` (for its new name), `unlink(2)`, `rmdir(2)` and `rename(2)`
+    /// (for both names) give a trailing separator on the final name they bind
+    /// or remove, which none of them follows as a symbolic link otherwise.
+    ///
+    /// Linux looks that name up in its parent without resolving it
+    /// (`TrailingSeparatorPolicy.Ignore`): a trailing separator neither
+    /// follows a final symbolic link nor is enforced by the walk, and each
+    /// call's verdict decides what it owes. Darwin resolves it as any lookup
+    /// would (`TrailingSeparatorPolicy.Demand`), following a final symbolic
+    /// link and demanding a directory, so the two flavours can bind or remove
+    /// different objects for the same path.
+    ///
+    /// A creating `open(2)` is the exception: see
+    /// `CreatingOpenRules.TrailingSeparator`.
+    let finalNameTrailingSeparator (platform : SimulatedUnixPlatform) : TrailingSeparatorPolicy =
+        // Linux's `filename_create` (mkdir, mknod, symlink, link) and
+        // `filename_parentat` (unlink, rmdir, rename) walk the parent and look
+        // the last component up bare; Darwin's `namei` resolves it. Measured
+        // rows that separate them, each from a fresh tree on Linux 6.x and
+        // Darwin (macOS 26.6 and 27.0):
+        //
+        //  * `mkdir("dang/")`, `dang` dangling, creates the link's target on
+        //    Darwin; "f/" is ENOTDIR and "cyc/" ELOOP there, and every
+        //    existing name EEXIST on Linux.
+        //  * `symlink(t, "f/")` and `symlink(t, "dl/")` (dl dangling) are
+        //    EEXIST on Linux; on Darwin the first is ENOTDIR and the second
+        //    follows the link to its free target (`link-symlink.c`, SYMLINK).
+        //    `link`'s new name is resolved as `symlink`'s is (LINKDST).
+        //  * `mknod`'s walk is its `mkdir`'s and `symlink`'s on Linux
+        //    (`mknodat-rules.c`, PATH): "f/", "dang/", "cyc/", "lf/" and
+        //    "ld/" are EEXIST and a free "nx/" is ENOENT.
+        //  * `unlink("lroot/")`, `lroot -> "/"`, is ENOTDIR on Linux, which
+        //    cannot have traversed the link, and EISDIR on Darwin, which did.
+        //  * `rmdir("ld/")`, `ld -> d` an empty directory, is ENOTDIR on Linux
+        //    and removes `d` on Darwin.
+        //  * `rename("s/", "moved")`, `s -> real` a directory, moves `real` on
+        //    Darwin, leaving `s` dangling, and is ENOTDIR on Linux;
+        //    `rename("src", "s/")` replaces `real` on Darwin and is ENOTDIR on
+        //    Linux. Each kernel resolves both of rename's paths alike: no row
+        //    costs one path something it does not cost the other.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> TrailingSeparatorPolicy.Ignore
+        | SimulatedUnixFlavour.Darwin -> TrailingSeparatorPolicy.Demand
+
     /// How this platform's `link(2)` and `linkat(2)` differ from the other's;
     /// see `LinkRules`.
     let linkRules (platform : SimulatedUnixPlatform) : LinkRules =
@@ -772,13 +828,11 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux ->
             {
                 PlainLinkSource = SymlinkPolicy.NoFollowFinal
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 DirectorySource = DirectorySourceRefusal.Last
             }
         | SimulatedUnixFlavour.Darwin ->
             {
                 PlainLinkSource = SymlinkPolicy.Follow
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 DirectorySource = DirectorySourceRefusal.BeforeDestination
             }
 
@@ -790,12 +844,10 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 EmptyTarget = EmptySymlinkTarget.NoSuchEntry
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 EmptyTarget = EmptySymlinkTarget.Accepted
             }
 
@@ -804,11 +856,9 @@ module SimulatedUnixPlatform =
     let mkNodRules (platform : SimulatedUnixPlatform) : MkNodRules =
         // Measured by `mknodat-rules.c` (TYPE, ORDER, PATH, PATHTYPE) on
         // Linux 6.18.5, root and uid 1000, ext4 and tmpfs, and Darwin 27.0,
-        // uid 501. Linux's walk is its `mkdir`'s and `symlink`'s
-        // (`filename_create`): "f/", "dang/", "cyc/", "lf/" and "ld/" are
-        // EEXIST and a free "nx/" is ENOENT.
+        // uid 501.
         match flavour platform with
-        | SimulatedUnixFlavour.Linux -> MkNodRules.TypeBeforePath TrailingSeparatorPolicy.Ignore
+        | SimulatedUnixFlavour.Linux -> MkNodRules.TypeBeforePath
         | SimulatedUnixFlavour.Darwin -> MkNodRules.PrivilegeBeforePath
 
     /// How this platform's `open(2)` behaves when asked to create; see
@@ -857,13 +907,11 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 ModeMask = PermissionBits.parseOrFail "SimulatedUnixPlatform.mkDirRules" 0o1777
                 InheritsSetGroupIdFromParent = true
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 ModeMask = PermissionBits.parseOrFail "SimulatedUnixPlatform.mkDirRules" 0o0777
                 InheritsSetGroupIdFromParent = false
             }
@@ -887,49 +935,32 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> PermissionBits.parseOrFail "SimulatedUnixPlatform.umaskStoredBits" 0o0777
         | SimulatedUnixFlavour.Darwin -> PermissionBits.parseOrFail "SimulatedUnixPlatform.umaskStoredBits" 0o7777
 
-    /// Everything this platform's `unlink(2)` does differently. See
-    /// `UnlinkRules`, whose one field this picks; the rest of the divergence
-    /// follows from the flavour alone.
-    let unlinkRules (platform : SimulatedUnixPlatform) : UnlinkRules =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux ->
-            {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
-            }
-        | SimulatedUnixFlavour.Darwin ->
-            {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
-            }
-
     /// Everything this platform's `rmdir(2)` does differently. See `RmDirRules`,
-    /// whose two fields this picks; the ordering half of the divergence
-    /// follows from the flavour alone.
+    /// whose field this picks; the walk is `finalNameTrailingSeparator`'s, and
+    /// the ordering half of the divergence follows from the flavour alone.
     let rmDirRules (platform : SimulatedUnixPlatform) : RmDirRules =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 RemovedDirectoryEffect = UnbindTargetEffect.LostALink
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 RemovedDirectoryEffect = UnbindTargetEffect.Untouched
             }
 
     /// Everything this platform's `rename(2)` does differently. See
-    /// `RenameRules`, whose two fields this picks; the ordering of the refusals
-    /// — which is most of the divergence — follows from the flavour alone.
+    /// `RenameRules`, whose field this picks; the walk is
+    /// `finalNameTrailingSeparator`'s, and the ordering of the refusals —
+    /// which is most of the divergence — follows from the flavour alone.
     let renameRules (platform : SimulatedUnixPlatform) : RenameRules =
         match flavour platform with
         | SimulatedUnixFlavour.Linux ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Ignore
                 WalkOrder = RenameWalkOrder.ParentsThenFinals
             }
         | SimulatedUnixFlavour.Darwin ->
             {
-                TrailingSeparator = TrailingSeparatorPolicy.Demand
                 WalkOrder = RenameWalkOrder.SourceThenDestination
             }
 
@@ -1339,100 +1370,6 @@ module SimulatedUnixPlatform =
         | Some BindGroupAddressRule.RejectedWithTheFamily -> false
         | None -> not (isBindableAddress platform localAddresses localRoutes address)
 
-    /// Does a bind of `candidate` collide with what already holds `existing`,
-    /// as `existingHolder` says: a socket bound there, or a connection end
-    /// whose socket has closed?
-    ///
-    /// Both flavours refuse two sockets the same port on overlapping addresses,
-    /// and both relax that when `SO_REUSEADDR` is set — in opposite directions,
-    /// which is the whole of the divergence here and is measured in both:
-    ///
-    /// * **Linux** relaxes only while nothing is listening. Two sockets that both
-    ///   set the flag may share an address, exactly or through the wildcard,
-    ///   until one of them calls `listen(2)`; after that the second bind is
-    ///   `EADDRINUSE`.
-    /// * **Darwin** relaxes only for addresses that differ. Two sockets that both
-    ///   set the flag may hold the wildcard and a specific address on one port,
-    ///   listening or not; the exact duplicate is `EADDRINUSE` either way.
-    ///
-    /// With the flag absent from the candidate, the two agree and refuse.
-    ///
-    /// Each socket's flag is read as it stands when the question is asked, not
-    /// as it stood when that socket was bound; a connection end whose socket
-    /// has closed holds its endpoint with the flag that socket carried then.
-    ///
-    /// The same relation answers `listen(2)`, which is measured rather than
-    /// assumed: on Linux two reuse-carrying sockets may share an endpoint until
-    /// one listens, and the *second* `listen` is then EADDRINUSE — exactly what
-    /// this says when the other socket is already listening. Darwin never refuses
-    /// a listen, and never lets the pair coexist in the first place.
-    let internal bindConflict
-        (platform : SimulatedUnixPlatform)
-        (existing : Ipv4Endpoint)
-        (existingReuse : bool)
-        (existingHolder : EndpointHolder)
-        (candidate : Ipv4Endpoint)
-        (candidateReuse : bool)
-        : bool
-        =
-        if existing.Port <> candidate.Port then
-            false
-        elif not (Ipv4Endpoint.addressesOverlap existing candidate) then
-            false
-        else
-
-        let existingIsListening = existingHolder = EndpointHolder.Listener
-
-        // A connection end's pcb is keyed by its full peer tuple, and a
-        // replacement listener can bind over it: measured on both kernels
-        // (accept a connection, close the listener, bind a reuse-carrying
-        // replacement at the exact endpoint — OK; without the candidate's
-        // reuse flag — EADDRINUSE). The same holds of an end whose socket has
-        // closed and which still holds its endpoint, on both
-        // (`bind-held-endpoint.c` in
-        // docs/plans/2026-10-08-tcp-shutdown-linger), whose flag is the one its
-        // socket carried when it closed.
-        let existingIsEstablished = existingHolder = EndpointHolder.ConnectionEnd
-
-        match flavour platform with
-        // Linux relaxes only while nothing listens, and only when *both* sockets
-        // carry the flag. That rule already answers the measured established
-        // rows correctly: an established child carries its listener's flag, so
-        // a reuse-carrying rebind over it passes and a flagless one conflicts.
-        | SimulatedUnixFlavour.Linux -> not (existingReuse && candidateReuse) || existingIsListening
-        // Darwin relaxes only for addresses that differ, and keys on the
-        // *candidate's* flag alone — measured: a wildcard listener that
-        // `listen(2)` bound implicitly carries no flag at all, and a later
-        // reuse-carrying bind to a specific address on its port still succeeds.
-        // The exact-duplicate refusal exempts established sockets (measured
-        // above).
-        | SimulatedUnixFlavour.Darwin ->
-            (existing.Address = candidate.Address && not existingIsEstablished)
-            || not candidateReuse
-
-    /// Whether `listen(2)` on a socket that is *already bound*, and not yet
-    /// listening, asks the port admission question again, so that a binding
-    /// admitted earlier can still be refused a listen. A socket already
-    /// listening is asked nothing on either flavour: its listen only updates
-    /// the backlog (measured, `relisten-held.c` in
-    /// docs/plans/2026-10-08-tcp-shutdown-linger).
-    ///
-    /// The flavours differ, and not merely in strictness. Linux's
-    /// `inet_csk_listen_start` calls `get_port` a second time, which is why two
-    /// sockets carrying SO_REUSEADDR may share an endpoint right up until one of
-    /// them listens; Darwin's `tcp_usr_listen` binds only when the socket has no
-    /// port yet, so an already-bound listen consults nothing. Both measured.
-    ///
-    /// This is not a strictness knob that could be left on for safety. Darwin's
-    /// bind rule is asymmetric in SO_REUSEADDR -- it keys on the *candidate's*
-    /// flag alone -- so re-asking it at listen time asks with the roles swapped,
-    /// and a pair admitted at bind time answers the other way. Re-checking there
-    /// would invent an EADDRINUSE, not merely tighten one.
-    let listenRescreensBinding (platform : SimulatedUnixPlatform) : bool =
-        match flavour platform with
-        | SimulatedUnixFlavour.Linux -> true
-        | SimulatedUnixFlavour.Darwin -> false
-
     /// Whether a refused TCP connect gives back the port of a socket whose
     /// port `bind(2)` chose (`lockedPort`) or did not. A port given back
     /// holds off no other socket's bind, though `getsockname` goes on
@@ -1457,6 +1394,26 @@ module SimulatedUnixPlatform =
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> true
         | SimulatedUnixFlavour.Darwin -> false
+
+    /// What `call` on a TCP socket answers when its search for an ephemeral
+    /// port finds every port of the range taken, or `None` where this library
+    /// does not answer. Linux answers `EADDRINUSE` to `bind(2)` and `listen(2)`
+    /// (`inet_csk_get_port`) and `EADDRNOTAVAIL` to `connect(2)`
+    /// (`__inet_hash_connect`), leaving the socket unbound. Darwin answers
+    /// `EADDRNOTAVAIL` to all three, but this library's search can pass over a
+    /// port Darwin's would take, one an established socket holds for a search
+    /// carrying `SO_REUSEADDR` being unmeasured, so it is not answered. Both
+    /// measured (`docs/probes/ephemeral-search`).
+    let internal ephemeralPortsExhausted
+        (platform : SimulatedUnixPlatform)
+        (call : EphemeralSearchCall)
+        : UnixError option
+        =
+        match flavour platform, call with
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Bind
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Listen -> Some UnixError.EADDRINUSE
+        | SimulatedUnixFlavour.Linux, EphemeralSearchCall.Connect -> Some UnixError.EADDRNOTAVAIL
+        | SimulatedUnixFlavour.Darwin, _ -> None
 
     /// Where this platform keeps a socket address's family, and how wide it is.
     /// See `SockaddrFamilyField`, which is also where the reason every other

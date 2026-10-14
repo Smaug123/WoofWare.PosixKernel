@@ -20,6 +20,77 @@ type internal ExclusiveWaitQueue =
 [<RequireQualifiedAccess>]
 module UnixWait =
 
+    /// The pipe the open file description `description` names an end of, if
+    /// `machine`'s table holds it and it names one.
+    let private pipeOf (machine : UnixMachineState) (description : OpenFileDescriptionId) : PipeId option =
+        match OpenFileTable.tryFind description machine.OpenFiles with
+        | Some {
+                   Target = OpenFileTarget.Pipe (pipeId, _)
+               } -> Some pipeId
+        | Some _
+        | None -> None
+
+    /// The queue a call waiting for `primitive` sleeps on, under `machine`'s
+    /// flavour, if a real kernel wakes that queue's waiters one at a time.
+    let internal exclusiveQueueOf (machine : UnixMachineState) (primitive : WakePrimitive) : ExclusiveWaitQueue option =
+        let linux =
+            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
+            | SimulatedUnixFlavour.Linux -> true
+            | SimulatedUnixFlavour.Darwin -> false
+
+        // A pipe's description is looked up leniently: `WakeCondition.satisfied`
+        // has already failed loudly for one that is gone or names something
+        // else, for every thread it was asked about, but a thread woken and not
+        // yet finished is not asked.
+        match primitive with
+        | WakePrimitive.EpollEventDeliverable epoll -> Some (ExclusiveWaitQueue.Epoll epoll)
+        | WakePrimitive.AcceptQueueNonEmpty listener -> Some (ExclusiveWaitQueue.Listener listener)
+        | WakePrimitive.PipeHasBytes reader when linux ->
+            pipeOf machine reader |> Option.map ExclusiveWaitQueue.PipeReaders
+        | WakePrimitive.PipeHasRoom (writer, _, _) when linux ->
+            pipeOf machine writer |> Option.map ExclusiveWaitQueue.PipeWriters
+        | WakePrimitive.PipeHasBytes _
+        | WakePrimitive.PipeHasRoom _
+        | WakePrimitive.PipeWriteEndClosed _
+        | WakePrimitive.PipeReadEndClosed _
+        | WakePrimitive.PipeReadWhileNonBlocking _
+        | WakePrimitive.ConnectionReadable _
+        | WakePrimitive.ConnectionWritable _
+        | WakePrimitive.FlockGrantable _
+        | WakePrimitive.KqueueDrained _
+        | WakePrimitive.KqueueEventDeliverable _
+        | WakePrimitive.KqueuePollReportable
+        | WakePrimitive.DescriptorReady _
+        | WakePrimitive.DeadlinePassed _
+        | WakePrimitive.SignalDeliverable
+        | WakePrimitive.EndedByClose
+        // A partner's open wakes every opener asleep on the FIFO, on both
+        // flavours (measured, two sleepers of two).
+        | WakePrimitive.FifoPartnerOpened _
+        // `inotify_read` waits on the instance's queue non-exclusively, so
+        // a record wakes every reader asleep on it, and the first to run
+        // takes it (from Linux's source; which reader runs first is not
+        // observable). Measured (`inotify-descriptor-probe.c` row S
+        // two-sleepers-one-record): of two readers, one took the record.
+        | WakePrimitive.InotifyRecordQueued _
+        // A signal is pending to the thread it was sent to, or, sent to the
+        // process, to whichever thread the receiver rule picks. No wait queue
+        // is shared.
+        | WakePrimitive.AwaitedSignalPending _ -> None
+        // Reserved, and in no condition yet. Linux's `unix_wait_for_peer`
+        // waits exclusively on the listener's `peer_wait`, which the
+        // connect that sleeps will model.
+        | WakePrimitive.AcceptQueueHasRoom _ -> None
+
+    /// The queues the call `parked` sleeps on, under `machine`'s flavour, whose
+    /// waiters a real kernel wakes one at a time: those of the primitives of its
+    /// wake condition (`exclusiveQueueOf`).
+    let internal exclusiveQueuesOfPark (machine : UnixMachineState) (parked : ParkedSyscall) : ExclusiveWaitQueue list =
+        WakeCondition.ofPark parked
+        |> WakeCondition.primitives
+        |> List.choose (exclusiveQueueOf machine)
+        |> List.distinct
+
     /// Record that `thread` has parked in `parked`, placing it after every park
     /// made before it, and taking the holds the call keeps on the open file
     /// descriptions it names (`ParkedSyscall.descriptions`). A thread that sleeps
@@ -52,6 +123,42 @@ module UnixWait =
             Scheduling = UnixSchedulingState.vacate state.Cpu state.OsThreadId system.Scheduling
         }
         |> UnixParkState.setPark thread threadPark
+
+    /// Park `thread` in `parked`, as `park` does, for a call that sleeps
+    /// because nothing its wake condition waits for, a signal aside, holds
+    /// yet. A Debug build fails loudly if something does.
+    let internal parkWaiting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (parked : ParkedSyscall)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let asleep = park thread parked system
+
+#if DEBUG
+        // A call whose own condition held as it parked would be woken at once,
+        // and its finishing call would find what it waited for, or, if the
+        // finisher and the condition disagreed, park it again for ever. A
+        // signal is the exception: a call parks whatever signal is pending,
+        // and its finishing call decides what one does to it.
+        match
+            WakeCondition.ofPark parked
+            |> WakeCondition.primitives
+            |> List.filter (fun primitive -> primitive <> WakePrimitive.SignalDeliverable)
+        with
+        | [] -> ()
+        | first :: rest ->
+            let unsignalled =
+                WakeCondition.AnyOf (WakeCondition.Primitive first, List.map WakeCondition.Primitive rest)
+
+            let held = WakeCondition.satisfied thread unsignalled asleep
+
+            if not (Set.isEmpty held) then
+                failwith
+                    $"UnixWait.parkWaiting: thread %O{thread} parks in %A{parked}, but %A{held} of its own wake condition already hold, so a client would wake it at once (this is a bug in this library)."
+#endif
+
+        asleep
 
     /// The primitives of the wake condition of the call `thread` is parked in
     /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `thread` is
@@ -209,63 +316,8 @@ module UnixWait =
         // watches non-exclusively, so every poller of a description that
         // becomes ready wakes; and a deadline, like a signal, is each waiter's
         // own.
-        let linux =
-            match SimulatedUnixPlatform.flavour machine.UnixPlatform with
-            | SimulatedUnixFlavour.Linux -> true
-            | SimulatedUnixFlavour.Darwin -> false
-
-        // The pipe a parked transfer's description names. `WakeCondition.satisfied`
-        // has already failed loudly for a description that is gone or names
-        // something else, for every thread asked about; a thread woken and not yet
-        // finished is not asked, so is looked up leniently here.
-        let pipeOf (description : OpenFileDescriptionId) : PipeId option =
-            match OpenFileTable.tryFind description machine.OpenFiles with
-            | Some {
-                       Target = OpenFileTarget.Pipe (pipeId, _)
-                   } -> Some pipeId
-            | Some _
-            | None -> None
-
-        let exclusiveQueueOf (primitive : WakePrimitive) : ExclusiveWaitQueue option =
-            match primitive with
-            | WakePrimitive.EpollEventDeliverable epoll -> Some (ExclusiveWaitQueue.Epoll epoll)
-            | WakePrimitive.AcceptQueueNonEmpty listener -> Some (ExclusiveWaitQueue.Listener listener)
-            | WakePrimitive.PipeHasBytes reader when linux -> pipeOf reader |> Option.map ExclusiveWaitQueue.PipeReaders
-            | WakePrimitive.PipeHasRoom (writer, _, _) when linux ->
-                pipeOf writer |> Option.map ExclusiveWaitQueue.PipeWriters
-            | WakePrimitive.PipeHasBytes _
-            | WakePrimitive.PipeHasRoom _
-            | WakePrimitive.PipeWriteEndClosed _
-            | WakePrimitive.PipeReadEndClosed _
-            | WakePrimitive.PipeReadWhileNonBlocking _
-            | WakePrimitive.ConnectionReadable _
-            | WakePrimitive.ConnectionWritable _
-            | WakePrimitive.FlockGrantable _
-            | WakePrimitive.KqueueDrained _
-            | WakePrimitive.KqueueEventDeliverable _
-            | WakePrimitive.KqueuePollReportable
-            | WakePrimitive.DescriptorReady _
-            | WakePrimitive.DeadlinePassed _
-            | WakePrimitive.SignalDeliverable
-            | WakePrimitive.EndedByClose
-            // A partner's open wakes every opener asleep on the FIFO, on both
-            // flavours (measured, two sleepers of two).
-            | WakePrimitive.FifoPartnerOpened _
-            // `inotify_read` waits on the instance's queue non-exclusively, so
-            // a record wakes every reader asleep on it, and the first to run
-            // takes it (from Linux's source; which reader runs first is not
-            // observable). Measured (`inotify-descriptor-probe.c` row S
-            // two-sleepers-one-record): of two readers, one took the record.
-            | WakePrimitive.InotifyRecordQueued _
-            // A signal is pending to the thread it was sent to, or, sent to the
-            // process, to whichever thread the receiver rule picks. No wait queue
-            // is shared.
-            | WakePrimitive.AwaitedSignalPending _ -> None
-            // Reserved, and in no condition yet. Linux's `unix_wait_for_peer`
-            // waits exclusively on the listener's `peer_wait`, which the
-            // connect that sleeps will model.
-            | WakePrimitive.AcceptQueueHasRoom _ -> None
-
+        // A thread woken and not yet finished stands, on each queue its own
+        // call waits on exclusively, for whatever woke it.
         let finishing : Set<ExclusiveWaitQueue> =
             views
             |> Seq.collect (fun (_, asleep, system) ->
@@ -273,81 +325,10 @@ module UnixWait =
                 |> Map.toSeq
                 |> Seq.filter (fun (thread, _) -> not (Set.contains thread asleep))
             )
-            |> Seq.choose (fun (_, state) ->
+            |> Seq.collect (fun (_, state) ->
                 match state.Parked with
-                | Some {
-                           Syscall = ParkedSyscall.EpollWait wait
-                       } -> Some (ExclusiveWaitQueue.Epoll wait.Epoll)
-                // A call a close has ended waits on no queue.
-                | Some {
-                           Syscall = ParkedSyscall.Accept accept
-                       } ->
-                    SleepTarget.description accept.Listener
-                    |> Option.map ExclusiveWaitQueue.Listener
-                | Some {
-                           Syscall = ParkedSyscall.PipeRead read
-                       } when linux ->
-                    SleepTarget.description read.Reader
-                    |> Option.bind pipeOf
-                    |> Option.map ExclusiveWaitQueue.PipeReaders
-                | Some {
-                           Syscall = ParkedSyscall.PipeWrite write
-                       } when linux ->
-                    SleepTarget.description write.Writer
-                    |> Option.bind pipeOf
-                    |> Option.map ExclusiveWaitQueue.PipeWriters
-                | Some {
-                           Syscall = ParkedSyscall.Flock _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.Kevent _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.Poll _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.KqueuePoll _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.PipeRead _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.PipeWrite _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.ConnectionRead _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.ConnectionWrite _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.SigSuspend
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.Sleep _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.SignalWait _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.FifoOpen _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.InotifyRead _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.Select _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.DatagramReceive _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.DatagramSend _
-                       }
-                | Some {
-                           Syscall = ParkedSyscall.Connect _
-                       }
-                | None -> None
+                | Some park -> exclusiveQueuesOfPark machine park.Syscall
+                | None -> []
             )
             |> Set.ofSeq
 
@@ -357,7 +338,8 @@ module UnixWait =
                 fired
                 |> Set.toList
                 |> List.choose (fun primitive ->
-                    exclusiveQueueOf primitive |> Option.map (fun queue -> queue, (ordinal, thread))
+                    exclusiveQueueOf machine primitive
+                    |> Option.map (fun queue -> queue, (ordinal, thread))
                 )
             )
             |> List.groupBy fst
@@ -382,7 +364,7 @@ module UnixWait =
         |> List.filter (fun (_, thread, fired) ->
             fired
             |> Set.exists (fun primitive ->
-                match exclusiveQueueOf primitive with
+                match exclusiveQueueOf machine primitive with
                 | Some queue -> Map.tryFind queue chosen = Some thread
                 | None -> true
             )

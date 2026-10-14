@@ -127,6 +127,36 @@ type SocketProtocol =
     /// UDP.
     | Udp
 
+/// How a socket holds the port its binding names.
+[<RequireQualifiedAccess>]
+type PortHold =
+    /// The port is reserved outright: `bind(2)` chose it, or the implicit bind
+    /// of a `listen(2)`, or of a datagram socket's `connect(2)` or write, or it
+    /// is the port of the listener an accepted socket came from.
+    | Reserved
+    /// A stream socket's `connect(2)` chose the port by its own implicit bind,
+    /// for the four-tuple it connects. Linux's search for another connect's
+    /// port shares such a port towards another destination, where it passes
+    /// over a reserved one.
+    | Connected
+    /// A refused TCP connect gave the port back: on Linux unless `bind(2)`
+    /// chose it (`InetBinding.LockedPort`), and on Darwin whatever chose it.
+    /// `getsockname` goes on reporting the port, but the socket holds it
+    /// against nothing. A Linux socket that has given its port back binds,
+    /// listens and connects as one with no port, choosing a new one at its
+    /// binding's address.
+    | GivenBack
+
+[<RequireQualifiedAccess>]
+module internal PortHold =
+    /// Whether the socket holds the port at all, against other sockets'
+    /// binds and against a search for a free port.
+    let isHeld (hold : PortHold) : bool =
+        match hold with
+        | PortHold.Reserved
+        | PortHold.Connected -> true
+        | PortHold.GivenBack -> false
+
 /// The local address an IP socket holds, once `bind(2)` — or a call that binds
 /// implicitly — has given it one. Generic in the family's endpoint and address,
 /// so that one definition serves IPv4 and IPv6 and an IPv4 binding cannot hold
@@ -152,14 +182,10 @@ type InetBinding<'Endpoint, 'Address> =
         /// `0.0.0.0:5555` dissolves to `0.0.0.0:5555` where one bound to
         /// `0.0.0.0:0` dissolves to nothing.
         LockedPort : bool
-        /// Whether the socket still holds `Endpoint`'s port against other
-        /// sockets' binds and against a search for a free port. A refused TCP
-        /// connect gives the port back, which `getsockname` goes on reporting:
-        /// on Linux unless `bind(2)` chose it (`LockedPort`), and on Darwin
-        /// whoever chose it. A Linux socket that has given its port back binds,
-        /// listens and connects as one with no port, choosing a new one at its
-        /// `Endpoint`'s address.
-        HoldsPort : bool
+        /// How the socket holds `Endpoint`'s port: reserved, chosen by a
+        /// stream connect for its four-tuple, or given back by a refused
+        /// connect.
+        PortHold : PortHold
     }
 
 /// An IPv4 socket's local address: the binding of an `AF_INET` socket, and the
@@ -419,35 +445,6 @@ module internal ReservedConnecting =
     let failOfPhase (call : string) : 'a =
         failwith
             $"%s{call}: a socket has a connect in flight, and what this call does to one is not modelled. Nothing in this version puts a socket in SocketPhase.Connecting, which is reserved until a connect to a full listener is modelled, and UnixSystem.checkInvariants reports a socket in it as ReservedSocketPhase (this is a bug in this library, or in a caller that assembled the state by hand)."
-
-/// What holds an endpoint against a `bind(2)`, as far as the bind's conflict
-/// rule (`SimulatedUnixPlatform.bindConflict`) asks.
-[<RequireQualifiedAccess>]
-type internal EndpointHolder =
-    /// A listening socket.
-    | Listener
-    /// One end of a TCP connection: a connected socket, or an end whose socket
-    /// has closed and which still holds its endpoint.
-    | ConnectionEnd
-    /// A socket bound and doing neither: idle, a refused connect, or a
-    /// datagram socket with or without a default peer.
-    | Unconnected
-
-[<RequireQualifiedAccess>]
-module internal EndpointHolder =
-    /// What a socket in `phase` holds its binding as.
-    let ofPhase (phase : SocketPhase) : EndpointHolder =
-        match phase with
-        | SocketPhase.Listening _ -> EndpointHolder.Listener
-        | SocketPhase.EstablishedPendingReport _
-        | SocketPhase.Established _ -> EndpointHolder.ConnectionEnd
-        | SocketPhase.Idle
-        | SocketPhase.Refused _
-        | SocketPhase.DatagramPeer _ -> EndpointHolder.Unconnected
-        // Linux hashes a connect in flight by its four-tuple, as it does an
-        // established end; how that holds the endpoint against a bind is
-        // unmeasured.
-        | SocketPhase.Connecting _ -> ReservedConnecting.failOfPhase "EndpointHolder.ofPhase"
 
 /// A socket's domain, with its `IPV6_V6ONLY` where it is an IPv6 socket, and
 /// the local address it holds, typed in the domain's own addresses.
@@ -1605,6 +1602,16 @@ module OpenFileTable =
     let tryFind (id : OpenFileDescriptionId) (table : OpenFileTable) : OpenFileDescription option =
         Map.tryFind id table.Entries |> Option.map (fun entry -> entry.Description)
 
+    /// The description `id` names and the name it was opened through
+    /// (`openedThrough`), if it is live: one lookup, so the two agree.
+    let internal tryFindOpenedThrough
+        (id : OpenFileDescriptionId)
+        (table : OpenFileTable)
+        : (OpenFileDescription * ReachedThrough option) option
+        =
+        Map.tryFind id table.Entries
+        |> Option.map (fun entry -> entry.Description, entry.OpenedThrough)
+
     /// Every live description and its identity, in identity order, for a walk
     /// that would otherwise build `descriptions` only to read it once.
     let internal toSeq (table : OpenFileTable) : (OpenFileDescriptionId * OpenFileDescription) seq =
@@ -1633,7 +1640,7 @@ module OpenFileTable =
 
     /// The inode a description of `target` is onto, if it is onto one: a
     /// file, a directory, a device's node or a FIFO.
-    let private inodeOf (target : OpenFileTarget) : InodeNumber option =
+    let internal inodeOf (target : OpenFileTarget) : InodeNumber option =
         match target with
         | OpenFileTarget.File (inode, _)
         | OpenFileTarget.Directory (inode, _)
@@ -2922,6 +2929,32 @@ module OpenFileTable =
         =
         defects true descriptorTables table
 
+/// What a live descriptor names, as one lookup finds it: its open file
+/// description, the description's identity, and the name it was opened
+/// through.
+type internal ReachedDescription =
+    {
+        /// The description's identity.
+        Id : OpenFileDescriptionId
+        /// The description.
+        Description : OpenFileDescription
+        /// The name the description was opened through: `Some` exactly for
+        /// one onto an inode (`OpenFileTable.namesInode`).
+        OpenedThrough : ReachedThrough option
+    }
+
+[<RequireQualifiedAccess>]
+module internal ReachedDescription =
+    /// The name `reached` was opened through, which `operation`, named in the
+    /// failure, has found onto an inode. Loudly partial: a description onto an
+    /// inode always records one.
+    let through (operation : string) (reached : ReachedDescription) : ReachedThrough =
+        match reached.OpenedThrough with
+        | Some through -> through
+        | None ->
+            failwith
+                $"%s{operation}: open file description %O{reached.Id} records no name it was opened through, though it is onto an inode (this is a bug in this library)."
+
 [<RequireQualifiedAccess>]
 module FileDescriptorRegistry =
     /// A table entry naming `id`, with neither descriptor flag.
@@ -3016,19 +3049,24 @@ module FileDescriptorRegistry =
         tryFindWithId fd registry
         |> Option.map (fun (id, description) -> OpenFileDescription.object id description)
 
-    /// The name the description `fd` names was opened through
-    /// (`OpenFileTable.openedThrough`). Loudly partial: `operation`, named in
-    /// the message, has just found `fd` naming a description onto an inode.
-    let internal openedThrough (operation : string) (fd : int) (registry : FileDescriptorRegistry) : ReachedThrough =
-        let recorded =
-            named fd registry.Descriptors.Fds
-            |> Option.bind (fun id -> OpenFileTable.openedThrough id registry.OpenFiles)
-
-        match recorded with
-        | Some through -> through
-        | None ->
-            failwith
-                $"%s{operation}: fd %d{fd} names no description onto an inode, though the caller found it naming one moments ago (this is a bug in this library)."
+    /// What `fd` names, if `fd` is live: its description, the description's
+    /// identity, and the name it was opened through, from one lookup, for a
+    /// caller that needs more than one of them.
+    let internal tryFindReached (fd : int) (registry : FileDescriptorRegistry) : ReachedDescription option =
+        named fd registry.Descriptors.Fds
+        |> Option.map (fun id ->
+            match OpenFileTable.tryFindOpenedThrough id registry.OpenFiles with
+            | Some (description, through) ->
+                ({
+                    Id = id
+                    Description = description
+                    OpenedThrough = through
+                }
+                : ReachedDescription)
+            | None ->
+                failwith
+                    $"file descriptor %d{fd} names open file description %O{id}, which is not present in the table (this is a bug in this library: every descriptor names a description in the table)"
+        )
 
     /// What `fd` refers to and where in it, if `fd` is live. For the callers
     /// that move or consume the file offset.

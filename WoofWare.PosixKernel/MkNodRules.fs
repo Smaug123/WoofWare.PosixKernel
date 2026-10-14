@@ -49,11 +49,12 @@ type MkNodRules =
     /// Linux's. The type is screened first, ahead of the path's copy-in and
     /// the `dirfd`, whoever asks: a directory is EPERM, and a field naming
     /// no type it makes (a symbolic link among them) is EINVAL. Any other
-    /// type goes on to walk its path, never following a final link, under
-    /// `trailingSeparator`, and is created as `open(O_CREAT|O_EXCL)` creates;
+    /// type goes on to walk its path, never following a final link, as
+    /// `SimulatedUnixPlatform.finalNameTrailingSeparator` says, and is
+    /// created as `open(O_CREAT|O_EXCL)` creates;
     /// a character or block device needs privilege only once its name has
     /// been found free and its directory writable.
-    | TypeBeforePath of trailingSeparator : TrailingSeparatorPolicy
+    | TypeBeforePath
     /// Darwin's. A FIFO is `mkfifo(2)`'s business; any other type, a regular
     /// file's included, is EPERM before the path is copied in for a caller
     /// without privilege.
@@ -133,9 +134,9 @@ type internal MkNodScreen =
     | Fails of error : UnixError
     /// This kernel will not answer. The path is never read.
     | Refused of refusal : MkNodRefusal
-    /// Copy the path in and walk it under `trailingSeparator`, to make `node`
-    /// if `MkNodRules.verdict` says so.
-    | Walks of node : MkNodNode * trailingSeparator : TrailingSeparatorPolicy
+    /// Copy the path in and walk it, to make `node` if `MkNodRules.verdict`
+    /// says so.
+    | Walks of node : MkNodNode
 
 /// What a `mknod(2)` does once its path has resolved.
 [<RequireQualifiedAccess>]
@@ -161,9 +162,8 @@ module internal MkNodRules =
         let field = NodeTypeField.ofMode mode
 
         match rules with
-        | MkNodRules.TypeBeforePath trailingSeparator ->
-            let walks (node : MkNodNode) =
-                MkNodScreen.Walks (node, trailingSeparator)
+        | MkNodRules.TypeBeforePath ->
+            let walks (node : MkNodNode) = MkNodScreen.Walks node
 
             match field with
             | NodeTypeField.Unset

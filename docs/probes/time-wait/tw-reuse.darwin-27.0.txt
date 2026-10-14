@@ -1,0 +1,24 @@
+Darwin 27.0.0 arm64
+E00@0.0 bind 127.0.0.1:T -> EADDRINUSE
+E00@0.5 bind 127.0.0.1:T -> EADDRINUSE
+E00@1.5 bind 127.0.0.1:T -> EADDRINUSE
+E01@0.0 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+E01@0.5 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+E01@1.5 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+E10@0.0 bind 127.0.0.1:T -> EADDRINUSE
+E10@0.5 bind 127.0.0.1:T -> EADDRINUSE
+E10@1.5 bind 127.0.0.1:T -> EADDRINUSE
+E11@0.0 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+E11@0.5 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+E11@1.5 bind 127.0.0.1:T -> OK; connect to X -> EADDRINUSE; then getsockname port T, getpeername ENOTCONN
+V01@1.5 bind 0.0.0.0:T -> OK; connect to X -> EADDRINUSE; then getsockname 0.0.0.0:T
+V11@1.5 bind 0.0.0.0:T -> OK; connect to X -> EADDRINUSE; then getsockname 0.0.0.0:T
+Z0e bind 127.0.0.1:T reuse=1 -> OK; connect to Z -> EADDRINUSE from T; then bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+Z1e bind 127.0.0.1:T reuse=1 -> OK; connect to Z -> EADDRINUSE from T; then bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+Qs@0.0 search aimed at T; connect to X -> OK from T; accept -> OK
+Qs@1.5 search aimed at T; connect to X -> OK from T; accept -> OK
+Qe@0.0 bind 127.0.0.1:T reuse=1 -> OK; connect to X -> OK from T; accept -> OK
+Qe@1.5 bind 127.0.0.1:T reuse=1 -> OK; connect to X -> OK from T; accept -> OK
+Ys search aimed at T; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:Z reuse=0 -> OK
+Ye bind 127.0.0.1:T reuse=1 -> OK; connect to Z -> ECONNREFUSED from T; then bind 127.0.0.1:Z reuse=0 -> OK
+D connect to 127.0.0.1:T -> ECONNREFUSED

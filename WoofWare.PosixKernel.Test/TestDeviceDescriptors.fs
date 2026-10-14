@@ -549,12 +549,12 @@ module TestDeviceDescriptors =
                     refused |> shouldEqual false
 
                     match admission with
-                    | PWriteAdmission.Transfer transfer -> transfer |> shouldEqual count
+                    | PWriteAdmission.Transfer (transfer, _) -> transfer |> shouldEqual count
                     | PWriteAdmission.Answered answer -> answer |> shouldEqual (WriteAnswer.Completed 0L)
                 | Error other -> failwith $"admitPWrite: %A{other}"
 
-                // The commit asks too, for a caller that skipped the admission.
-                match UnixReadWrite.tryPwriteBytes thread fd bytes 0L system with
+                // The whole call answers as its admission did.
+                match WriteOutcomes.admitThenPwrite thread fd bytes 0L system with
                 | Error (PWriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
                 | Ok (answer, _) ->
                     refused |> shouldEqual false
@@ -569,12 +569,12 @@ module TestDeviceDescriptors =
                     refused |> shouldEqual false
 
                     match admission with
-                    | WriteAdmission.Transfer transfer -> transfer |> shouldEqual count
+                    | WriteAdmission.Transfer (transfer, _) -> transfer |> shouldEqual count
                     | WriteAdmission.Answered answer -> answer |> shouldEqual (WriteAnswer.Completed 0L)
                     | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
                 | other -> failwith $"admitWrite: %A{other}"
 
-                match UnixReadWrite.tryWriteBytes thread fd bytes system with
+                match WriteOutcomes.writeBytes thread fd bytes system with
                 | Error (WriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
                 | Ok (WriteStep.Returns (answer, _)) ->
                     refused |> shouldEqual false
@@ -756,13 +756,13 @@ module TestDeviceDescriptors =
                     | UserBuffer.Unmapped _, _ -> answer |> shouldEqual (WriteAnswer.Failed UnixError.EFAULT)
                     | _ -> failwith $"%A{buffer} of %d{count}: expected a transfer, got %A{answer}"
                 | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
-                | WriteAdmission.Transfer transfer ->
+                | WriteAdmission.Transfer (transfer, into) ->
                     buffer |> shouldEqual UserBuffer.Mapped
                     transfer |> shouldEqual (int count)
 
                     let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                    match UnixReadWrite.tryWriteBytes thread fd bytes after with
+                    match WriteOutcomes.applyWrite fd into bytes after with
                     | Ok (WriteStep.Returns (answer, written)) ->
                         answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                         // Bytes written to the device are not what it reads back:
@@ -819,11 +819,11 @@ module TestDeviceDescriptors =
             | CharacterDevice.URandom, PWriteAdmission.Answered answer ->
                 count |> shouldEqual 0UL
                 answer |> shouldEqual (WriteAnswer.Completed 0L)
-            | CharacterDevice.URandom, PWriteAdmission.Transfer transfer ->
+            | CharacterDevice.URandom, PWriteAdmission.Transfer (transfer, into) ->
                 transfer |> shouldEqual (int count)
                 let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                match UnixReadWrite.tryPwriteBytes 0 fd bytes offset system with
+                match UnixReadWrite.tryApplyPWrite fd offset into bytes system with
                 | Ok (answer, after) ->
                     answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                     after |> shouldEqual system

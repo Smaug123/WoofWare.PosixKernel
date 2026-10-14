@@ -9,7 +9,7 @@ namespace WoofWare.PosixKernel
 /// ENOENT on Darwin; `rename("<300 bytes>", "nodir/x")` is ENOENT on Linux and
 /// ENAMETOOLONG on Darwin.
 ///
-/// Not derivable from `RenameRules.TrailingSeparator`, and not something the
+/// Not derivable from `SimulatedUnixPlatform.finalNameTrailingSeparator`, and not something the
 /// verdict could express: it decides which resolutions are *performed at all*,
 /// before there are two resolutions to judge.
 [<RequireQualifiedAccess>]
@@ -56,22 +56,6 @@ type RenameWalkOrder =
 /// uid 0, one fresh tree per row; `docs/probes/rename/` holds the probes.
 type RenameRules =
     {
-        /// The walk `rename` resolves *both* of its paths with, under
-        /// `SymlinkPolicy.NoFollowFinal` on both platforms. Linux `Ignore`,
-        /// Darwin `Demand`, exactly as `unlink`'s and `rmdir`'s are.
-        ///
-        /// One field for two paths because, measured, each kernel resolves its
-        /// source and its destination under the same policy — there is no row
-        /// where a separator costs one path something it does not cost the
-        /// other.
-        ///
-        /// This is the field that makes the two flavours **destroy different
-        /// objects**, the divergence that a final symlink
-        /// followed under a trailing separator causes. With `s -> real` a directory, `rename("s/", "moved")` moves
-        /// *real* on Darwin, leaving `s` dangling, and is ENOTDIR on Linux;
-        /// `rename("src", "s/")` replaces *real* on Darwin and is ENOTDIR on
-        /// Linux.
-        TrailingSeparator : TrailingSeparatorPolicy
         /// Which path is resolved first, and how far, before the other is
         /// looked at. See `RenameWalkOrder`.
         WalkOrder : RenameWalkOrder
@@ -107,27 +91,6 @@ type internal RenameVerdict =
 /// The questions `rename(2)` asks about the four directories it can refuse for.
 [<RequireQualifiedAccess>]
 module private RenameChecks =
-    /// Whether `inode` refuses this caller the write bit.
-    ///
-    /// Asked of four different directories — the source's parent, the
-    /// destination's parent, the moved directory (whose ".." a change of parent
-    /// rewrites) and, on Darwin only, the directory a directory displaces — so
-    /// `role` names which, for the crash message. The sticky bit is a separate
-    /// question, which `RemovalChecks.sticky` answers.
-    ///
-    /// Partial in `inode`, which every caller has just obtained from a
-    /// resolution or from a directory entry.
-    let lacksWrite (role : string) (credentials : Credentials) (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
-        match VirtualFileSystem.tryGet inode vfs with
-        | Some entry ->
-            PermissionBits.deniedTo
-                (Standing.toward credentials entry.Owner)
-                AccessRequest.Write
-                (Inode.permissions entry)
-        | None ->
-            failwith
-                $"RenameChecks.lacksWrite: %s{role} is inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
-
     /// The inode the destination name is bound to, when that inode is a
     /// directory. `None` covers both "the name is free" and "it names something
     /// that is not a directory", which no arm needs to tell apart — the arms
@@ -325,11 +288,11 @@ module internal RenameRules =
              | None -> false)
         then
             RenameVerdict.Refuse UnixError.ENOTEMPTY
-        elif RenameChecks.lacksWrite "the source's parent" credentials sourceDirectory vfs then
+        elif RemovalChecks.lacksWrite "RenameRules: the source's parent" credentials sourceDirectory vfs then
             RenameVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials sourceDirectory sourceName moved vfs = StickyRemoval.Forbidden then
             RenameVerdict.Refuse UnixError.EPERM
-        elif RenameChecks.lacksWrite "the destination's parent" credentials destinationDirectory vfs then
+        elif RemovalChecks.lacksWrite "RenameRules: the destination's parent" credentials destinationDirectory vfs then
             RenameVerdict.Refuse UnixError.EACCES
         elif
             (match destinationExisting with
@@ -345,7 +308,7 @@ module internal RenameRules =
         elif
             movedIsDirectory
             && sourceDirectory <> destinationDirectory
-            && RenameChecks.lacksWrite "the moved directory" credentials moved vfs
+            && RemovalChecks.lacksWrite "RenameRules: the moved directory" credentials moved vfs
         then
             RenameVerdict.Refuse UnixError.EACCES
         else
@@ -519,7 +482,7 @@ module internal RenameRules =
             && VirtualFileSystem.isWithinSubtree moved destinationDirectory vfs
         then
             Ok (RenameVerdict.Refuse UnixError.EINVAL)
-        elif RenameChecks.lacksWrite "the source's parent" credentials sourceDirectory vfs then
+        elif RemovalChecks.lacksWrite "RenameRules: the source's parent" credentials sourceDirectory vfs then
             Ok (RenameVerdict.Refuse UnixError.EACCES)
         else
 
@@ -548,9 +511,15 @@ module internal RenameRules =
                         )
                     )
                 | StickyRemoval.Unrestricted ->
-                    Ok (RenameChecks.lacksWrite "the displaced directory" credentials displaced vfs)
+                    Ok (RemovalChecks.lacksWrite "RenameRules: the displaced directory" credentials displaced vfs)
             | None ->
-                if RenameChecks.lacksWrite "the destination's parent" credentials destinationDirectory vfs then
+                if
+                    RemovalChecks.lacksWrite
+                        "RenameRules: the destination's parent"
+                        credentials
+                        destinationDirectory
+                        vfs
+                then
                     Ok true
                 else
                     match destinationExisting with
@@ -579,7 +548,7 @@ module internal RenameRules =
             // rather than a spelling of the displaced-directory one above.
             movedIsDirectory
             && (sourceDirectory <> destinationDirectory || displacedDirectory.IsSome)
-            && RenameChecks.lacksWrite "the moved directory" credentials moved vfs
+            && RemovalChecks.lacksWrite "RenameRules: the moved directory" credentials moved vfs
         then
             Ok (RenameVerdict.Refuse UnixError.EACCES)
         else

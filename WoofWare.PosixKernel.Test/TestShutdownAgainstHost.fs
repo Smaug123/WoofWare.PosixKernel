@@ -26,7 +26,11 @@ open WoofWare.PosixKernel
 /// connection once neither socket refers to it, so the `TIME_WAIT` an end
 /// whose FIN was made first leaves once both sockets have closed is
 /// unmodelled, and F's lines that bind after both have closed are the
-/// host's alone.
+/// host's alone. The probe's fill and settles do not always bring a Darwin
+/// pair to the state its rows were measured in (`fill-settling.c` beside
+/// it), so a host pair waits for every byte to be acknowledged before it
+/// closes an end, and a scenario whose pair still left that state is run
+/// again on fresh pairs.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestShutdownAgainstHost =
@@ -67,6 +71,9 @@ module TestShutdownAgainstHost =
 
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
+
+    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
+    extern int private hostGetSockOptBytes(int fd, int level, int optionName, byte[] value, uint32& length)
 
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
@@ -132,6 +139,67 @@ module TestShutdownAgainstHost =
     /// How long a host drain waits, past the probe's three dry reads, for
     /// more to read before it takes EAGAIN as its answer.
     let private drainPatienceMs : int = 5000
+
+    /// How long a Darwin host pair waits, before an end closes, for every
+    /// byte an open end has sent to be acknowledged.
+    let private acknowledgementPatienceMs : int = 2000
+
+    /// Darwin's `SO_RCVBUF`, which reads back the receive buffer's size as
+    /// the kernel has grown it.
+    let private darwinReceiveBufferOption : int = 0x1002
+
+    /// What Darwin's `TCP_CONNECTION_INFO` (`struct tcp_connection_info` of
+    /// `<netinet/tcp.h>`) says of what an end has sent.
+    type private DarwinSending =
+        {
+            /// `tcpi_state`, a `TCPS_*` of `<netinet/tcp_fsm.h>`.
+            State : int
+            /// `tcpi_snd_sbbytes`: the bytes in the send buffer, sent or not,
+            /// that the peer has not acknowledged.
+            Buffered : int64
+            /// `tcpi_txbytes` less `tcpi_txretransmitbytes`: each byte sent
+            /// counted once.
+            Sent : int64
+        }
+
+    let private darwinSendingOf (fd : int) : DarwinSending =
+        // sizeof (struct tcp_connection_info) on Darwin 27.0 arm64, whose
+        // tcpi_snd_sbbytes is at 32, tcpi_txbytes at 64 and
+        // tcpi_txretransmitbytes at 72.
+        let info = Array.zeroCreate<byte> 112
+        let mutable length = uint32 info.Length
+
+        // IPPROTO_TCP, TCP_CONNECTION_INFO
+        if hostGetSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
+            failwith $"getsockopt(TCP_CONNECTION_INFO) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+        if length <> uint32 info.Length then
+            failwith $"getsockopt(TCP_CONNECTION_INFO) gave %d{length} bytes, not %d{info.Length}"
+
+        {
+            State = int info.[0]
+            Buffered = int64 (BitConverter.ToUInt32 (info, 32))
+            Sent = int64 (BitConverter.ToUInt64 (info, 64) - BitConverter.ToUInt64 (info, 72))
+        }
+
+    /// The bytes a Darwin end has sent that its peer has not acknowledged,
+    /// `written` being all that its writes took; `None` once its connection
+    /// has been reset (`TCPS_CLOSED`) or is in `TIME_WAIT`, whose counters
+    /// Darwin zeroes.
+    let private darwinUnacknowledged (fd : int) (written : int64) : int64 option =
+        let sending = darwinSendingOf fd
+
+        // TCPS_ESTABLISHED (4) through TCPS_FIN_WAIT_2 (9)
+        if sending.State < 4 || sending.State > 9 then
+            None
+        else
+            let unacknowledged = sending.Sent - (written - sending.Buffered)
+
+            if unacknowledged < 0L then
+                failwith
+                    $"fd %d{fd} has sent %d{sending.Sent} bytes, fewer than the %d{written - sending.Buffered} its peer has acknowledged"
+
+            Some unacknowledged
 
     let private hostBuffer : byte[] = Array.zeroCreate (1 <<< 20)
 
@@ -231,6 +299,62 @@ module TestShutdownAgainstHost =
                 && overlapsIpv4 (localAddress.Substring mapped.Length))
         | _ -> failwith $"a /proc/net/tcp local address of unexpected length: %s{localAddress}"
 
+    /// The host's IPv4 addresses outside 127.0.0.0/8, as its interfaces list
+    /// them now: they come and go, as a virtual machine's bridge does.
+    let private nonLoopbackIpv4Addresses () : Ipv4Address list =
+        Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties().GetUnicastAddresses ()
+        |> Seq.map (fun unicast -> unicast.Address)
+        |> Seq.filter (fun address -> address.AddressFamily = Net.Sockets.AddressFamily.InterNetwork)
+        |> Seq.map (fun address ->
+            Ipv4Address (
+                Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian (ReadOnlySpan (address.GetAddressBytes ()))
+            )
+        )
+        |> Seq.filter (fun address -> not (Ipv4Prefix.contains address Ipv4Prefix.loopbackNetwork))
+        |> Seq.distinct
+        |> Seq.toList
+
+    /// Each of the host's IPv4 addresses outside 127.0.0.0/8 at which a bind
+    /// of `port` without `SO_REUSEADDR` was refused with `EADDRINUSE`, so
+    /// that some socket holds the port there or at the wildcard. On both
+    /// flavours, a pair's own sockets, all at 127.0.0.1, never refuse such a
+    /// bind, in any state `bind-held-endpoint.c` brings an end to; a socket
+    /// there refuses it whether bound, listening, connected or in TIME_WAIT
+    /// with no descriptor, and so does one bound or listening at the wildcard
+    /// (`port-held-elsewhere.c`, C).
+    let private heldElsewhere (flavour : SimulatedUnixFlavour) (port : int) : Ipv4Address list =
+        let platform = HostPlatform.platformOf flavour
+
+        let errno =
+            UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform)
+
+        nonLoopbackIpv4Addresses ()
+        |> List.filter (fun address ->
+            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+
+            if fd < 0 then
+                failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+            let sockaddr =
+                SimulatedUnixPlatform.encodeInternetSockaddr platform (Ipv4Endpoint.ofParts address (uint16 port))
+
+            Marshal.SetLastPInvokeError 0
+            let bound = hostBind (fd, sockaddr, uint32 sockaddr.Length)
+            let bindErrno = Marshal.GetLastPInvokeError ()
+            hostClose fd |> ignore<int>
+
+            if bound = 0 then
+                false
+            elif bindErrno = errno UnixError.EADDRINUSE then
+                true
+            // The address has left its interface since it was listed.
+            elif bindErrno = errno UnixError.EADDRNOTAVAIL then
+                false
+            else
+                failwith
+                    $"a bind of %s{Ipv4Address.toString address}:%d{port}, to look for a socket holding the port there, failed with errno %d{bindErrno}"
+        )
+
     /// A pair on the host, as the probe's `pair_locked` makes one.
     type private HostPair (flavour : SimulatedUnixFlavour, shape : ShutdownPairShape) =
         let platform = HostPlatform.platformOf flavour
@@ -318,15 +442,118 @@ module TestShutdownAgainstHost =
         // c's port and p's, read once the pair has connected.
         let mutable connection : int * int = 0, 0
         let mutable foreignHolders : string list = []
+        // What each end's writes have taken.
+        let mutable written : Map<ConnectionEnd, int64> = Map.empty
+        let mutable unsettled : string list = []
+        // On Darwin, the end that the last fill left unable to take more,
+        // and the size of its receive buffer when the fill ended.
+        let mutable filled : (ConnectionEnd * int) option = None
 
-        // Linux's `connect` chooses a local port that a socket outside the
-        // pair already holds, provided their remote endpoints differ, and such
-        // a socket refuses a bind of that port whatever the pair's own sockets
-        // do. Darwin's chooses only a free port. Read while the refused
+        let noteWritten (e : ConnectionEnd) (count : int64) : unit =
+            written <- Map.add e ((Map.tryFind e written |> Option.defaultValue 0L) + count) written
+
+        let receiveBuffer (fd : int) : int =
+            let mutable value = 0
+            let mutable length = 4u
+
+            check
+                "getsockopt(SO_RCVBUF)"
+                (hostGetSockOpt (
+                    fd,
+                    SimulatedUnixPlatform.socketOptionLevel platform,
+                    darwinReceiveBufferOption,
+                    &value,
+                    &length
+                ))
+
+            value
+
+        // The probe's fill stops once three writes 30 ms apart take nothing,
+        // and its rows were measured where that left bytes the reader could
+        // not take. Darwin sometimes grows the reader's receive buffer after
+        // the fill has ended, and the reader then takes them all, and the
+        // FIN queued behind them: in fill-settling.c's section G, the buffer
+        // grew in exactly the runs where the FIN got through. Stops watching
+        // the end.
+        let checkFilled () : unit =
+            match filled with
+            | None -> ()
+            | Some (e, size) ->
+                filled <- None
+
+                match Map.tryFind e fds with
+                | None -> ()
+                | Some fd ->
+                    let grown = receiveBuffer fd
+
+                    if grown > size then
+                        unsettled <-
+                            unsettled
+                            @ [
+                                $"the %A{e} end's receive buffer grew from %d{size} to %d{grown} bytes after a fill had left it unable to take more"
+                            ]
+
+        // A Darwin close that resets while the peer has yet to acknowledge
+        // bytes the closer sent usually never reaches the peer: in
+        // fill-settling.c's section A, every reset sent with everything
+        // acknowledged arrived, and nearly every other did not. The probe's
+        // rows were measured where its settles had let the acknowledgements
+        // out first. That probe never found a Linux end with bytes
+        // unacknowledged at a close.
+        let awaitAcknowledged () : unit =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> ()
+            | SimulatedUnixFlavour.Darwin ->
+                let deadline = Environment.TickCount64 + int64 acknowledgementPatienceMs
+
+                let outstanding () : (ConnectionEnd * int64) list =
+                    [
+                        for KeyValue (e, fd) in fds do
+                            match darwinUnacknowledged fd (Map.tryFind e written |> Option.defaultValue 0L) with
+                            | Some count when count > 0L -> e, count
+                            | Some _
+                            | None -> ()
+                    ]
+
+                let rec go () =
+                    match outstanding () with
+                    | [] -> ()
+                    | waiting when Environment.TickCount64 >= deadline ->
+                        for e, count in waiting do
+                            unsettled <-
+                                unsettled
+                                @ [
+                                    $"the %A{e} end had %d{count} bytes still unacknowledged %d{acknowledgementPatienceMs} ms after a close was due"
+                                ]
+                    | _ ->
+                        Thread.Sleep 1
+                        go ()
+
+                go ()
+
+        // A socket outside the pair can hold the pair's port, and then refuses
+        // a bind of it whatever the pair's own sockets do: Linux's `connect`
+        // chooses a local port that such a socket holds, provided their
+        // remote endpoints differ, and on both flavours a bind of
+        // 127.0.0.1:0, as the listener's and `freePort`'s are, can be given a
+        // port that a socket at another of the host's addresses holds
+        // (`port-held-elsewhere.c`, A). Looked for while the refused
         // candidate is still open, so that the holder cannot yet have gone.
+        // Darwin lists only the caller's own sockets
+        // (`port-held-elsewhere.c`, D), so there the holder is looked for by
+        // binding the port at each of the host's other addresses
+        // (`heldElsewhere`), which finds one there or at the wildcard and
+        // cannot tell one at 127.0.0.1 from the pair's own sockets.
         let noteRefusal (wildcard : bool) (port : int) : unit =
             match flavour with
-            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Darwin ->
+                let found =
+                    heldElsewhere flavour port
+                    |> List.map (fun address ->
+                        $"a bind of %s{Ipv4Address.toString address}:%d{port} was refused, so a socket outside the pair holds that port there or at the wildcard"
+                    )
+
+                foreignHolders <- foreignHolders @ found
             | SimulatedUnixFlavour.Linux ->
                 let cPort, pPort = connection
 
@@ -395,9 +622,19 @@ module TestShutdownAgainstHost =
             connection <- portOf client, portOf server
 
         /// Each socket outside this pair that was found holding a port whose
-        /// bind was refused with `EADDRINUSE`, as `/proc/net/tcp` listed it;
-        /// empty on Darwin, whose `connect` never shares a port.
+        /// bind was refused with `EADDRINUSE`: on Linux, as `/proc/net/tcp`
+        /// listed it, where its address overlaps the refused bind's; on
+        /// Darwin, as `heldElsewhere` found it, at another of the host's
+        /// addresses or the wildcard, which overlaps a refused wildcard bind
+        /// and, from the wildcard only, a refused bind at 127.0.0.1.
         member _.ForeignHolders : string list = foreignHolders
+
+        /// Each way this pair was found to have moved on from the state the
+        /// probe measured before a call depending on it (fill-settling.c): an
+        /// end whose receive buffer grew after a fill had left it unable to
+        /// take more, or an end with bytes still unacknowledged when a close
+        /// was due. Empty on Linux, where neither was ever found.
+        member _.Unsettled : string list = unsettled
 
         member _.Fd (e : ConnectionEnd) : int =
             match Map.tryFind e fds with
@@ -415,6 +652,9 @@ module TestShutdownAgainstHost =
             let result, errno =
                 call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, unativeint count)))
 
+            if result > 0L then
+                noteWritten e result
+
             settle ()
 
             if result < 0L then
@@ -425,6 +665,7 @@ module TestShutdownAgainstHost =
         /// Close what is still open, with `SO_LINGER` {1, 0}, as the probe's
         /// `discard` does, and the edge registration's port.
         member _.Discard () : unit =
+            checkFilled ()
             let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
             for fd in Map.values fds do
@@ -473,6 +714,10 @@ module TestShutdownAgainstHost =
                 ans result errno
 
             member this.Close e =
+                if filled |> Option.exists (fun (watched, _) -> watched = e) then
+                    checkFilled ()
+
+                awaitAcknowledged ()
                 let result, errno = call (fun () -> int64 (hostClose (this.Fd e)))
                 fds <- Map.remove e fds
                 settle ()
@@ -555,6 +800,8 @@ module TestShutdownAgainstHost =
                 $"poll=0x%x{revents} %s{waiters} fionread=%d{(this :> IShutdownPair).Fionread e}"
 
             member this.Fill e =
+                checkFilled ()
+
                 let rec go (total : int64) (dry : int) =
                     if dry >= 3 || total >= (64L <<< 20) then
                         total
@@ -574,7 +821,22 @@ module TestShutdownAgainstHost =
                         else
                             total
 
-                go 0L 0
+                let total = go 0L 0
+                noteWritten e total
+
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> ()
+                | SimulatedUnixFlavour.Darwin ->
+                    let reader =
+                        match e with
+                        | ConnectionEnd.Client -> ConnectionEnd.Server
+                        | ConnectionEnd.Server -> ConnectionEnd.Client
+
+                    match Map.tryFind reader fds with
+                    | Some fd -> filled <- Some (reader, receiveBuffer fd)
+                    | None -> ()
+
+                total
 
             // The probe's three dry reads 30 ms apart, and then, before an
             // EAGAIN is taken as the answer, a wait of up to
@@ -583,6 +845,9 @@ module TestShutdownAgainstHost =
             // pauses. Waiting longer changes only an answer that would
             // otherwise have depended on how soon the bytes came.
             member this.Drain e =
+                if filled |> Option.exists (fun (watched, _) -> watched = e) then
+                    checkFilled ()
+
                 let eagain =
                     UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) UnixError.EAGAIN
 
@@ -766,20 +1031,25 @@ module TestShutdownAgainstHost =
 
             member _.KeepsTimeWaitOnceBothClosed = true
 
-    /// How many times `hostReplay` runs a scenario whose bind another socket
-    /// refused before it fails.
+    /// How many times `hostReplay` runs a scenario whose answers came from a
+    /// state the probe did not measure before it fails.
     let private hostScenarioAttempts : int = 5
 
     /// Each scenario on a pair of its own, `concurrently` or one at a time; their
     /// lines in order. A scenario in which a pair's bind was refused while a
     /// socket outside that pair held the port (`HostPair.ForeignHolders`) is run
     /// again on fresh pairs, since that refusal is the other socket's and not
-    /// the answer the scenario measures; this fails once
-    /// `hostScenarioAttempts` runs have each been refused so. A foreign
-    /// socket can only refuse a bind that would otherwise have succeeded, so
-    /// a line that survives is the pairs' own answer, except where a foreign
-    /// holder came and went in the moment between the refusal and the
-    /// listing of sockets, which leaves the refusal in place.
+    /// the answer the scenario measures; so is one in which a pair moved on
+    /// from the state the probe measured before a call that depended on it
+    /// (`HostPair.Unsettled`). This fails once `hostScenarioAttempts` runs
+    /// have each been spoilt so. A foreign socket can only refuse a bind
+    /// that would otherwise have succeeded, so a line that survives is the
+    /// pairs' own answer, except where a foreign holder came and went in the
+    /// moment between the refusal and the look for it, or, on Darwin, held
+    /// the port at 127.0.0.1, which it can have taken only once the pair had
+    /// released it, since neither a bind of 127.0.0.1:0 nor `connect` is
+    /// given a port held there (`port-held-elsewhere.c`, A). Either leaves
+    /// the refusal in place.
     let private hostReplay
         (flavour : SimulatedUnixFlavour)
         (concurrently : bool)
@@ -801,14 +1071,23 @@ module TestShutdownAgainstHost =
                     for pair in made do
                         pair.Discard ()
 
-            match made |> List.collect (fun pair -> pair.ForeignHolders) with
+            let spoilt =
+                [
+                    for pair in made do
+                        for holder in pair.ForeignHolders do
+                            $"another socket held a port whose bind was refused: %s{holder}"
+
+                        yield! pair.Unsettled
+                ]
+
+            match spoilt with
             | [] -> lines
             | _ when attempt < hostScenarioAttempts -> run (attempt + 1) scenario
-            | holders ->
-                let listed = String.concat "\n" holders
+            | spoilt ->
+                let listed = String.concat "\n" spoilt
 
                 failwith
-                    $"in each of %d{hostScenarioAttempts} runs of a scenario, another socket held a port whose bind was refused; in the last:\n%s{listed}"
+                    $"each of %d{hostScenarioAttempts} runs of a scenario answered from a state the probe did not measure; in the last:\n%s{listed}"
 
         let scenarios = List.toArray scenarios
 
@@ -973,22 +1252,28 @@ module TestShutdownAgainstHost =
                 "0000000000000000FFFF00000200007F", false, true
             ]
 
-    /// `releasedThenBound`'s listener could not take the port, because
-    /// another socket took it once `c` had released it.
-    exception private ForeignListenerRefused of port : int
+    /// A socket outside a scenario's pair held a port the scenario binds
+    /// before the scenario could measure what it was written to, so its test
+    /// is run again (`whilePortAlreadyHeld`).
+    exception private PortAlreadyHeld of port : int
 
     /// Section H's `c released closed` row, reduced to one candidate: `c`
-    /// releases its endpoint, and a fresh socket binds it. On the attempts
-    /// `foreignOn` names, a listener outside the pair holds the port across
-    /// that bind, as another test's socket can; this raises
-    /// `ForeignListenerRefused` if another socket took the port first. Each
-    /// run of the scenario is counted in `attempts`.
+    /// releases its endpoint, and a fresh socket binds it, at the wildcard if
+    /// `wildcard` and at 127.0.0.1 otherwise. On the attempts `foreignOn`
+    /// names, a listener outside the pair holds the port at `foreignAt`
+    /// across that bind, as another test's or another process's socket can;
+    /// this raises `PortAlreadyHeld` if another socket held the port there
+    /// first. Each run of the scenario is counted in `attempts`.
     ///
     /// `c` binds explicitly to a port its own `bind` chose (`ClientLocked`),
     /// which no other socket's `connect` will share, so that until `c`
-    /// releases it no socket but the pair holds that port.
+    /// releases it no socket but the pair holds that port at 127.0.0.1 or the
+    /// wildcard; a socket at another of the host's addresses can already hold
+    /// it (`port-held-elsewhere.c`, A).
     let private releasedThenBound
         (flavour : SimulatedUnixFlavour)
+        (foreignAt : Ipv4Address)
+        (wildcard : bool)
         (foreignOn : int -> bool)
         (attempts : int ref)
         : ShutdownProbe.Scenario
@@ -1010,35 +1295,36 @@ module TestShutdownAgainstHost =
                     let address =
                         SimulatedUnixPlatform.encodeInternetSockaddr
                             (HostPlatform.platformOf flavour)
-                            (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
+                            (Ipv4Endpoint.ofParts foreignAt (uint16 port))
 
                     if hostBind (fd, address, uint32 address.Length) <> 0 || hostListen (fd, 4) <> 0 then
                         hostClose fd |> ignore<int>
-                        raise (ForeignListenerRefused port)
+                        raise (PortAlreadyHeld port)
 
                     Some fd
                 else
                     None
 
-            s.Emit (s.Candidate false false port)
+            s.Emit (s.Candidate false wildcard port)
             foreign |> Option.iter (hostClose >> ignore<int>)
             s.Lines
 
-    /// Runs `test` again, up to four more times, while `releasedThenBound`'s
-    /// listener found its port taken.
-    let rec private whileForeignListenerRefused (tries : int) (test : unit -> unit) : unit =
+    /// Runs `test` again, up to four more times, while it raises
+    /// `PortAlreadyHeld`.
+    let rec private whilePortAlreadyHeld (tries : int) (test : unit -> unit) : unit =
         try
             test ()
-        with ForeignListenerRefused _ when tries > 1 ->
-            whileForeignListenerRefused (tries - 1) test
+        with PortAlreadyHeld _ when tries > 1 ->
+            whilePortAlreadyHeld (tries - 1) test
 
-    /// Only Linux's `connect` chooses a local port that another socket holds,
-    /// so only there is a foreign holder looked for.
+    /// A foreign holder at 127.0.0.1 is told from the pair's own sockets only
+    /// by Linux's listing of every socket; on Darwin, `heldElsewhere` finds
+    /// one only at another address or the wildcard.
     let private onLinuxHost (action : unit -> unit) : unit =
         HostPlatform.onUnixHost (fun flavour ->
             match flavour with
             | SimulatedUnixFlavour.Linux -> action ()
-            | SimulatedUnixFlavour.Darwin -> Assert.Ignore "a foreign holder is looked for on Linux only"
+            | SimulatedUnixFlavour.Darwin -> Assert.Ignore "a foreign holder at 127.0.0.1 is looked for on Linux only"
         )
 
     // A later attempt can meet a foreign holder of its own, so the count is
@@ -1046,7 +1332,7 @@ module TestShutdownAgainstHost =
     [<Test>]
     let ``a host scenario whose bind another socket refused is run again`` () =
         onLinuxHost (fun () ->
-            whileForeignListenerRefused
+            whilePortAlreadyHeld
                 5
                 (fun () ->
                     let attempts = ref 0
@@ -1054,7 +1340,9 @@ module TestShutdownAgainstHost =
                     hostReplay
                         SimulatedUnixFlavour.Linux
                         false
-                        [ releasedThenBound SimulatedUnixFlavour.Linux ((=) 1) attempts ]
+                        [
+                            releasedThenBound SimulatedUnixFlavour.Linux Ipv4Address.loopback false ((=) 1) attempts
+                        ]
                     |> shouldEqual [ ShutdownLine.Line "bind-ok listen-ok" ]
 
                     attempts.Value |> shouldBeGreaterThan 1
@@ -1064,7 +1352,7 @@ module TestShutdownAgainstHost =
     [<Test>]
     let ``a host scenario whose binds another socket always refuses fails the replay`` () =
         onLinuxHost (fun () ->
-            whileForeignListenerRefused
+            whilePortAlreadyHeld
                 5
                 (fun () ->
                     let attempts = ref 0
@@ -1074,12 +1362,19 @@ module TestShutdownAgainstHost =
                             hostReplay
                                 SimulatedUnixFlavour.Linux
                                 false
-                                [ releasedThenBound SimulatedUnixFlavour.Linux (fun _ -> true) attempts ]
+                                [
+                                    releasedThenBound
+                                        SimulatedUnixFlavour.Linux
+                                        Ipv4Address.loopback
+                                        false
+                                        (fun _ -> true)
+                                        attempts
+                                ]
                             |> ignore<ShutdownLine list>
 
                             None
                         with
-                        | ForeignListenerRefused _ -> reraise ()
+                        | PortAlreadyHeld _ -> reraise ()
                         | error -> Some error
 
                     match error with
@@ -1092,7 +1387,8 @@ module TestShutdownAgainstHost =
 
     // `c` holds its endpoint in TIME_WAIT, so the bind's refusal is the
     // pair's own, and the scenario runs once. `ClientLocked`, as for
-    // `releasedThenBound`, so that no other socket shares c's port.
+    // `releasedThenBound`, so that no other socket shares c's port at
+    // 127.0.0.1.
     [<Test>]
     let ``a host scenario whose bind the pair itself refused is not run again`` () =
         onLinuxHost (fun () ->
@@ -1112,6 +1408,180 @@ module TestShutdownAgainstHost =
             |> shouldEqual [ ShutdownLine.Line "bind-EADDRINUSE" ]
 
             attempts.Value |> shouldEqual 1
+        )
+
+    /// Only a Darwin pair is watched for having moved on from the state the
+    /// probe measured (`fill-settling.c`).
+    let private onDarwinHost (action : unit -> unit) : unit =
+        HostPlatform.onUnixHost (fun flavour ->
+            match flavour with
+            | SimulatedUnixFlavour.Darwin -> action ()
+            | SimulatedUnixFlavour.Linux -> Assert.Ignore "a pair is watched for settling on Darwin only"
+        )
+
+    /// `c` fills; on the attempts `growOn` names, `p`'s receive buffer is
+    /// then doubled, as Darwin's own growth of it can be once more bytes
+    /// reach it (`fill-settling.c`'s section G). Each run of the scenario is
+    /// counted in `attempts`.
+    let private filledThenGrown (growOn : int -> bool) (attempts : int ref) : ShutdownProbe.Scenario =
+        fun pairOf ->
+            attempts.Value <- attempts.Value + 1
+            let pair = pairOf ShutdownPairShape.Plain
+            let s = ShutdownRecorder pair
+            s.Fill c |> ignore<int64>
+
+            if growOn attempts.Value then
+                let fd =
+                    match pair with
+                    | :? HostPair as host -> host.Fd p
+                    | _ -> failwith "hostReplay makes only host pairs"
+
+                let level =
+                    SimulatedUnixPlatform.socketOptionLevel (HostPlatform.platformOf SimulatedUnixFlavour.Darwin)
+
+                let sizeOf () : int =
+                    let mutable value = 0
+                    let mutable length = 4u
+
+                    if hostGetSockOpt (fd, level, darwinReceiveBufferOption, &value, &length) <> 0 then
+                        failwith $"getsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+                    value
+
+                let before = sizeOf ()
+                let doubled = BitConverter.GetBytes (2 * before)
+
+                if hostSetSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
+                    failwith $"setsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
+
+                sizeOf () |> shouldBeGreaterThan before
+
+            s.Emit "filled"
+            s.Lines
+
+    [<Test>]
+    let ``a host scenario whose filled end's receive buffer grew is run again`` () =
+        onDarwinHost (fun () ->
+            let attempts = ref 0
+
+            hostReplay SimulatedUnixFlavour.Darwin false [ filledThenGrown ((=) 1) attempts ]
+            |> shouldEqual [ ShutdownLine.Line "filled" ]
+
+            attempts.Value |> shouldBeGreaterThan 1
+        )
+
+    [<Test>]
+    let ``a host scenario whose filled end's receive buffer always grows fails the replay`` () =
+        onDarwinHost (fun () ->
+            let attempts = ref 0
+
+            let error =
+                try
+                    hostReplay SimulatedUnixFlavour.Darwin false [ filledThenGrown (fun _ -> true) attempts ]
+                    |> ignore<ShutdownLine list>
+
+                    None
+                with error ->
+                    Some error
+
+            match error with
+            | None -> Assert.Fail "the replay returned although every run's receive buffer grew"
+            | Some error -> error.Message |> shouldContainText "receive buffer grew"
+
+            attempts.Value |> shouldEqual hostScenarioAttempts
+        )
+
+    /// Runs `action` with one of the host's IPv4 addresses outside
+    /// 127.0.0.0/8; ignores the test on a host with none, where no socket can
+    /// hold a port at another address.
+    let private onHostWithAddressElsewhere (action : SimulatedUnixFlavour -> Ipv4Address -> unit) : unit =
+        HostPlatform.onUnixHost (fun flavour ->
+            match nonLoopbackIpv4Addresses () with
+            | elsewhere :: _ -> action flavour elsewhere
+            | [] -> Assert.Ignore "the host has no IPv4 address outside 127.0.0.0/8"
+        )
+
+    // A bind of 127.0.0.1:0, as the listener's and `freePort`'s are, can be
+    // given a port that a socket at another of the host's addresses holds,
+    // and on both flavours such a socket refuses a wildcard bind of that port
+    // without SO_REUSEADDR (`port-held-elsewhere.c`, A and B). A later
+    // attempt can meet a holder of its own, so the count is at least two.
+    [<Test>]
+    let ``a host scenario whose wildcard bind a socket at another address refused is run again`` () =
+        onHostWithAddressElsewhere (fun flavour elsewhere ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    hostReplay flavour false [ releasedThenBound flavour elsewhere true ((=) 1) attempts ]
+                    |> shouldEqual [ ShutdownLine.Line "bind-ok listen-ok" ]
+
+                    attempts.Value |> shouldBeGreaterThan 1
+                )
+        )
+
+    [<Test>]
+    let ``a host scenario whose wildcard binds a socket at another address always refuses fails the replay`` () =
+        onHostWithAddressElsewhere (fun flavour elsewhere ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    let error =
+                        try
+                            hostReplay
+                                flavour
+                                false
+                                [ releasedThenBound flavour elsewhere true (fun _ -> true) attempts ]
+                            |> ignore<ShutdownLine list>
+
+                            None
+                        with
+                        | PortAlreadyHeld _ -> reraise ()
+                        | error -> Some error
+
+                    match error with
+                    | None -> Assert.Fail "the replay returned although every run was refused by another socket"
+                    | Some error -> error.Message |> shouldContainText "another socket"
+
+                    attempts.Value |> shouldEqual hostScenarioAttempts
+                )
+        )
+
+    // `c` holds its endpoint in TIME_WAIT at 127.0.0.1, which refuses a
+    // wildcard bind on both flavours (`bind-held-endpoint.c`'s `tw` rows) and
+    // never a bind at another address (`port-held-elsewhere.c`, C), so the
+    // scenario runs once, unless a socket elsewhere held c's port from the
+    // start.
+    [<Test>]
+    let ``a host scenario whose wildcard bind the pair itself refused is not run again`` () =
+        onHostWithAddressElsewhere (fun flavour _ ->
+            whilePortAlreadyHeld
+                5
+                (fun () ->
+                    let attempts = ref 0
+
+                    let scenario : ShutdownProbe.Scenario =
+                        fun pairOf ->
+                            attempts.Value <- attempts.Value + 1
+                            let s = ShutdownRecorder (pairOf ShutdownPairShape.ClientLocked)
+                            let port = s.PortOf c
+
+                            if not (List.isEmpty (heldElsewhere flavour port)) then
+                                raise (PortAlreadyHeld port)
+
+                            s.Close c |> ignore<string>
+                            s.Shutdown p TcpShutdownHow.Write |> ignore<string>
+                            s.Emit (s.Candidate false true port)
+                            s.Lines
+
+                    hostReplay flavour false [ scenario ]
+                    |> shouldEqual [ ShutdownLine.Line "bind-EADDRINUSE" ]
+
+                    attempts.Value |> shouldEqual 1
+                )
         )
 
     // The shape of Linux 6.18.5's /proc/net/netstat, with most of each

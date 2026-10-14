@@ -1584,8 +1584,6 @@ module TestVirtualFileSystemAgainstHost =
             MkDirOutcome.Failed (errno ())
 
     let private modelMkDirOutcome (vfs : VirtualFileSystem) (relative : string) : MkDirOutcome =
-        let rules = SimulatedUnixPlatform.mkDirRules (hostPlatform ())
-
         match
             PathWalk.resolveFull
                 (limits ())
@@ -1593,7 +1591,7 @@ module TestVirtualFileSystemAgainstHost =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator (hostPlatform ()))
                 (UnixPath.parseOrFail "test" relative)
                 vfs
             |> Answered.errno
@@ -1919,8 +1917,6 @@ module TestVirtualFileSystemAgainstHost =
         UnlinkOutcome.Failed failure
 
     let private modelUnlinkOutcome (vfs : VirtualFileSystem) (relative : string) : UnlinkOutcome =
-        let rules = SimulatedUnixPlatform.unlinkRules (hostPlatform ())
-
         match
             PathWalk.resolveFull
                 (limits ())
@@ -1928,7 +1924,7 @@ module TestVirtualFileSystemAgainstHost =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator (hostPlatform ()))
                 (UnixPath.parseOrFail "test" relative)
                 vfs
             |> Answered.errno
@@ -2011,7 +2007,7 @@ module TestVirtualFileSystemAgainstHost =
                     SymlinkProtection.Off
                     root
                     SymlinkPolicy.NoFollowFinal
-                    (SimulatedUnixPlatform.unlinkRules (hostPlatform ())).TrailingSeparator
+                    (SimulatedUnixPlatform.finalNameTrailingSeparator (hostPlatform ()))
                     (UnixPath.parseOrFail "test" relative)
                     vfs
             with
@@ -2141,7 +2137,7 @@ module TestVirtualFileSystemAgainstHost =
                 SymlinkProtection.Off
                 (VirtualFileSystem.root vfs)
                 SymlinkPolicy.NoFollowFinal
-                rules.TrailingSeparator
+                (SimulatedUnixPlatform.finalNameTrailingSeparator (hostPlatform ()))
                 (UnixPath.parseOrFail "test" relative)
                 vfs
             |> Answered.errno
@@ -2437,7 +2433,7 @@ module TestVirtualFileSystemAgainstHost =
 
             match VirtualFileSystem.nextDirectoryEntry inode cursor vfs with
             | None -> acc
-            | Some (DirectoryStreamName.Entry name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
+            | Some (PathComponent.Name name, _, next) -> go next (fuel - 1) (PathText.ofName name :: acc)
             | Some (_, _, next) -> go next (fuel - 1) acc
 
         go DirectoryCursor.Start 1000 [] |> List.sort

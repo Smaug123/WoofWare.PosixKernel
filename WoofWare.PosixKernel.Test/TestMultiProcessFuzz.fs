@@ -1423,9 +1423,10 @@ module TestMultiProcessFuzz =
             let made =
                 match UnixReadWrite.tryAdmitFinishWrite thread view with
                 | Error _ -> Made.Refused
-                | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count), admitted)) ->
-                    UnixReadWrite.tryFinishWriteBytes
+                | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
+                    UnixReadWrite.tryApplyResumedWrite
                         thread
+                        into
                         (ImmutableArray.Create<byte> (Array.init count (fun i -> byte (offset + i))))
                         admitted
                     |> ofWrite

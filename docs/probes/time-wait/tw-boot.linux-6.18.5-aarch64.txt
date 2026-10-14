@@ -1,0 +1,15 @@
+started at uptime 0.640 s
+T=44801 ended at uptime 0.641 s (CLOCK_MONOTONIC 0.641 s)
+T=44801 connect to X at uptime 2.647 s, 2.006 s after -> EADDRNOTAVAIL
+T=44802 ended at uptime 2.647 s (CLOCK_MONOTONIC 2.647 s)
+T=44802 connect to X at uptime 4.659 s, 2.012 s after -> OK
+started at uptime 1.097 s
+T=44801 ended at uptime 1.098 s (CLOCK_MONOTONIC 1.098 s)
+T=44801 connect to X at uptime 3.105 s, 2.008 s after -> OK
+T=44802 ended at uptime 3.105 s (CLOCK_MONOTONIC 3.105 s)
+T=44802 connect to X at uptime 5.108 s, 2.003 s after -> OK
+started at uptime 0.702 s
+T=44801 ended at uptime 0.703 s (CLOCK_MONOTONIC 0.703 s)
+T=44801 connect to X at uptime 2.713 s, 2.010 s after -> EADDRNOTAVAIL
+T=44802 ended at uptime 2.713 s (CLOCK_MONOTONIC 2.713 s)
+T=44802 connect to X at uptime 4.720 s, 2.006 s after -> OK

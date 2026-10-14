@@ -217,6 +217,9 @@
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
     <Compile Include="TestEphemeralPorts.fs" />
+    <Compile Include="TestPortHolders.fs" />
+    <Compile Include="TestEphemeralSearchMeasured.fs" />
+    <Compile Include="TestConnectSearchHoldersMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -263,6 +266,8 @@
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeSweepMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
+    <Compile Include="TestTimeWait.fs" />
+    <Compile Include="TestTimeWaitMeasured.fs" />
     <Compile Include="TestListenerTeardown.fs" />
     <Compile Include="TestQueuedOptions.fs" />
     <Compile Include="TestShutdownAgainstHost.fs" />
@@ -279,6 +284,7 @@
     <Compile Include="TestBlockingPipe.fs" />
     <Compile Include="TestBlockingConnection.fs" />
     <Compile Include="TestNonBlockingAsleepMeasured.fs" />
+    <Compile Include="TestConnectionWriteResetMeasured.fs" />
     <Compile Include="TestReceiveSendMeasured.fs" />
     <Compile Include="TestStreamReaderGone.fs" />
     <Compile Include="TestPipeAgainstHost.fs" />
@@ -362,6 +368,28 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\refused-connect-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.refused-connect-port.darwin.txt" />
+    <!-- Which ports a TCP socket's ephemeral search passed over, and what bind(2),
+         listen(2) and connect(2) answered when it found none, measured per
+         flavour by docs/probes/ephemeral-search. `TestEphemeralSearchMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.darwin.txt" />
+    <!-- Which ports a TCP connect's implicit bind passed over, for each kind of
+         thing that held a port, measured per flavour by
+         docs/probes/connect-search-holders. `TestConnectSearchHoldersMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.darwin.txt" />
+    <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
+         connect took its four-tuple over, measured per flavour by
+         docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\time-wait.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-reuse.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.reuse-darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-boot.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.boot-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\time-wait\tw-stranded.darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.time-wait.stranded-darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
@@ -395,6 +423,12 @@
     <EmbeddedResource Include="..\docs\probes\sockname-fault-length\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.sockname-fault-length.linux-6.18.5-aarch64.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\setresid.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setresid.darwin.txt" />
+    <!-- What a blocking write to a connected socket answers when its own bytes
+         reset the connection, measured per flavour by
+         docs/probes/connection-write-reset. `TestConnectionWriteResetMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\connection-write-reset\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connection-write-reset.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\connection-write-reset\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connection-write-reset.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>

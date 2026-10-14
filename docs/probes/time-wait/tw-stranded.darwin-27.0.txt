@@ -1,0 +1,8 @@
+Darwin 27.0.0 arm64
+C wrote nothing; client SO_ERROR after the server's close -> OK; then bind T -> EADDRINUSE, Z -> EADDRINUSE; after 1 s T -> EADDRINUSE, Z -> EADDRINUSE; after 5 s T -> EADDRINUSE, Z -> EADDRINUSE
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK
+S wrote until EAGAIN; client SO_ERROR after the server's close -> OK; then bind T -> OK, Z -> OK; after 1 s T -> OK, Z -> OK; after 5 s T -> OK, Z -> OK

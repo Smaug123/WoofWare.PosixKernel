@@ -14,9 +14,11 @@ open WoofWare.PosixKernel
 /// The occupant these tests care about is a TCP connection whose client
 /// closed: the connection survives in the accepted socket, and a real kernel
 /// keeps the closed client's port in its bind table until the connection is
-/// gone. `bind(0)` and `listen` must therefore not hand that port out, while
-/// `connect` towards a *different* listener may, because a kernel selects a
-/// connect-time port by four-tuple.
+/// gone. `bind(0)` and `listen` must therefore not hand that port out. Linux's
+/// `connect` towards a *different* listener may, because it selects a
+/// connect-time port by four-tuple where connect's own implicit bind chose the
+/// port, and Darwin's does not (measured,
+/// `docs/probes/connect-search-holders`, rows f and fr).
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestEphemeralPorts =
@@ -83,16 +85,29 @@ module TestEphemeralPorts =
         bindWithReuse false fd endpoint system
 
     /// `bind(2)` to the wildcard address and port 0, answering the port the
-    /// kernel chose.
+    /// kernel chose, or that it found none: an errno where the platform
+    /// answers one, and the refusal where it does not.
     let private bindEphemeral
         (fd : int)
         (system : UnixSystem<int, string>)
-        : Result<uint16, BindRefusal> * UnixSystem<int, string>
+        : Result<uint16, Choice<UnixError, BindRefusal>> * UnixSystem<int, string>
         =
         match bindTo fd (wildcard 0us) system with
         | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), system -> Ok endpoint.Port, system
+        | Ok (BindAnswer.Failed error), system -> Error (Choice1Of2 error), system
         | Ok answer, _ -> failwith $"bind(0.0.0.0:0) answered %A{answer}"
-        | Error refusal, system -> Error refusal, system
+        | Error refusal, system -> Error (Choice2Of2 refusal), system
+
+    /// What finding no ephemeral port answers on `platform`: Linux's
+    /// EADDRINUSE, and Darwin's refusal.
+    let private noPortForBind
+        (platform : SimulatedUnixPlatform)
+        (range : uint16 * uint16)
+        : Choice<UnixError, BindRefusal>
+        =
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux -> Choice1Of2 UnixError.EADDRINUSE
+        | SimulatedUnixFlavour.Darwin -> Choice2Of2 (BindRefusal.EphemeralPortsExhausted range)
 
     let private listenOn (fd : int) (system : UnixSystem<int, string>) : ListenAnswer * UnixSystem<int, string> =
         match UnixSocket.tryListen fd 8 system with
@@ -210,8 +225,7 @@ module TestEphemeralPorts =
         let fd2, system = newStream system
         let port2, system = bindEphemeral fd2 system
 
-        port2
-        |> shouldEqual (Error (BindRefusal.EphemeralPortsExhausted (40000us, 40001us)))
+        port2 |> shouldEqual (Error (noPortForBind platform (40000us, 40001us)))
 
         // ...and the socket that did get a port can connect to the listener,
         // which is what crashed when the occupied port was handed out.
@@ -257,12 +271,9 @@ module TestEphemeralPorts =
         system.Machine.NextEphemeralPort |> shouldEqual 40000us
         occupied, listener1, system
 
-    [<TestCaseSource(nameof platforms)>]
-    let ``connect reuses a closed client's port towards a different listener``
-        (platform : SimulatedUnixPlatform)
-        : unit
-        =
-        let occupied, _, system = cursorBackAtClosedClient platform
+    [<Test>]
+    let ``Linux's connect reuses a closed client's port towards a different listener`` () : unit =
+        let occupied, _, system = cursorBackAtClosedClient SimulatedUnixPlatform.linuxX64
 
         // Towards the other listener the four-tuple is free, so the kernel's
         // connect-time selection reuses the port.
@@ -274,9 +285,9 @@ module TestEphemeralPorts =
             noDefects system
         | SyscallAnswer.Failed error, _ -> failwith $"connect to the second listener failed with %A{error}"
 
-    [<TestCaseSource(nameof platforms)>]
-    let ``connect skips a closed client's port towards the same listener`` (platform : SimulatedUnixPlatform) : unit =
-        let occupied, _, system = cursorBackAtClosedClient platform
+    [<Test>]
+    let ``Linux's connect skips a closed client's port towards the same listener`` () : unit =
+        let occupied, _, system = cursorBackAtClosedClient SimulatedUnixPlatform.linuxX64
 
         // 40000 is taken towards 5000; 40001 is taken only towards 5001.
         let fd, system = newStream system
@@ -287,6 +298,25 @@ module TestEphemeralPorts =
             localPort fd system |> shouldEqual 40001us
             noDefects system
         | SyscallAnswer.Failed error, _ -> failwith $"connect to the first listener failed with %A{error}"
+
+    /// Darwin's search for a connect's port passes over a port a closed
+    /// client's connection still holds, towards any destination (measured,
+    /// `docs/probes/connect-search-holders`, rows f and fr).
+    [<Test>]
+    let ``Darwin's connect passes over a closed client's port towards any listener`` () : unit =
+        for destination in [ 5000us ; 5001us ] do
+            let occupied, system =
+                cursorOnClosedClient SimulatedUnixPlatform.macOsArm64 (40000us, 40001us)
+
+            let _, system = listener 5001us system
+            let fd, system = newStream system
+
+            match connectTo fd (loopback destination) system with
+            | SyscallAnswer.Completed _, system ->
+                localPort fd system |> shouldNotEqual occupied
+                localPort fd system |> shouldEqual 40001us
+                noDefects system
+            | SyscallAnswer.Failed error, _ -> failwith $"connect to %d{destination} failed with %A{error}"
 
     /// A connection queued at a wildcard listener has a concrete server
     /// endpoint that no socket is bound at, and the listener owns it through
@@ -320,21 +350,14 @@ module TestEphemeralPorts =
             | SyscallAnswer.Completed _, system -> system
             | SyscallAnswer.Failed error, _ -> failwith $"connect failed with %A{error}"
 
-        // The client took 40001; put the cursor back on the listener's port.
         localPort clientFd system |> shouldEqual 40001us
 
-        let system =
-            { system with
-                Machine =
-                    { system.Machine with
-                        NextEphemeralPort = 40000us
-                    }
-            }
-
+        // An explicit bind: a search for a port passes over every port held
+        // at an overlapping address, whatever SO_REUSEADDR says.
         let bindBesideListener (system : UnixSystem<int, string>) : uint16 =
             let fd, system = newStream system
 
-            match bindWithReuse true fd (loopback 0us) system with
+            match bindWithReuse true fd (loopback 40000us) system with
             | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), _ -> endpoint.Port
             | other, _ -> failwith $"binding beside the listener: %A{other}"
 
@@ -393,7 +416,9 @@ module TestEphemeralPorts =
         | Some (OpenFileTarget.Socket socketId) ->
             let socket = UnixMachineState.socket socketId run.System.Machine
 
-            socket.Phase, socket.Ipv4Binding |> Option.exists (fun binding -> binding.HoldsPort)
+            socket.Phase,
+            socket.Ipv4Binding
+            |> Option.exists (fun binding -> PortHold.isHeld binding.PortHold)
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     /// Whether `connect` from the unbound socket behind `fd` towards
@@ -408,16 +433,20 @@ module TestEphemeralPorts =
                     Endpoint = loopback port
                     LockedAddress = None
                     LockedPort = false
-                    HoldsPort = true
+                    PortHold = PortHold.Reserved
                 }
 
-            UnixMachineState.allocateEphemeralPort
-                (EphemeralPortUse.ConnectTo destination)
-                socketId
-                socket
-                candidate
-                run.System.Machine
-            |> Option.isSome
+            match
+                UnixMachineState.allocateEphemeralPort
+                    run.System.Scheduling.NanosecondsSinceBoot
+                    (EphemeralPortUse.ConnectTo destination)
+                    socketId
+                    socket
+                    candidate
+                    run.System.Machine
+            with
+            | Ok found -> Option.isSome found
+            | Error refusal -> failwith $"slot fd %d{fd}'s search met %A{refusal}"
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     let private queueLength (listenerFd : int) (run : Run) : int =
@@ -444,11 +473,12 @@ module TestEphemeralPorts =
 
             match bindEphemeral fd run.System with
             | Ok _, system
-            | Error (BindRefusal.EphemeralPortsExhausted _), system ->
+            | Error (Choice1Of2 UnixError.EADDRINUSE), system
+            | Error (Choice2Of2 (BindRefusal.EphemeralPortsExhausted _)), system ->
                 { run with
                     System = system
                 }
-            | Error refusal, _ -> failwith $"bind refused: %A{refusal}"
+            | Error other, _ -> failwith $"bind answered %A{other}"
         | Op.Listen slot ->
             let fd = run.Slots.[slot]
 
@@ -545,7 +575,7 @@ module TestEphemeralPorts =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
-            |> Option.exists (fun binding -> not binding.HoldsPort)
+            |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
         | other -> failwith $"slot fd %d{fd} is %A{other}"
 
     /// Whether `machine` and `without`, which lacks one of its sockets, agree
@@ -553,7 +583,7 @@ module TestEphemeralPorts =
     /// at loopback and at the wildcard conflicts with, and which port an
     /// allocation for it chooses, for a bind and for a connect to either
     /// fixed listener.
-    let private invisibleTo (machine : UnixMachineState) (without : UnixMachineState) : bool =
+    let private invisibleTo (now : int64) (machine : UnixMachineState) (without : UnixMachineState) : bool =
         let probeId = SocketId 999999L
 
         let probe : SocketDescription =
@@ -573,7 +603,7 @@ module TestEphemeralPorts =
                 Endpoint = Ipv4Endpoint.ofParts address port
                 LockedAddress = None
                 LockedPort = false
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
         let conflictsAgree =
@@ -581,7 +611,8 @@ module TestEphemeralPorts =
             |> List.forall (fun port ->
                 [ Ipv4Address.loopback ; Ipv4Address.any ]
                 |> List.forall (fun address ->
-                    UnixMachineState.bindingConflicts probeId probe (binding address port) machine = UnixMachineState.bindingConflicts
+                    UnixMachineState.bindingConflicts now probeId probe (binding address port) machine = UnixMachineState.bindingConflicts
+                        now
                         probeId
                         probe
                         (binding address port)
@@ -589,9 +620,12 @@ module TestEphemeralPorts =
                 )
             )
 
-        let chosen (use' : EphemeralPortUse) (machine : UnixMachineState) : uint16 option =
-            UnixMachineState.allocateEphemeralPort use' probeId probe (binding Ipv4Address.loopback) machine
-            |> Option.map (fun (binding, _) -> binding.Endpoint.Port)
+        let chosen (use' : EphemeralPortUse) (machine : UnixMachineState) : Result<uint16, TimeWaitRefusal> option =
+            match
+                UnixMachineState.allocateEphemeralPort now use' probeId probe (binding Ipv4Address.loopback) machine
+            with
+            | Ok found -> found |> Option.map (fun (binding, _) -> Ok binding.Endpoint.Port)
+            | Error refusal -> Some (Error refusal)
 
         let uses =
             [
@@ -612,7 +646,7 @@ module TestEphemeralPorts =
             |> Map.toSeq
             |> Seq.choose (fun (_, socket) ->
                 socket.Ipv4Binding
-                |> Option.filter (fun binding -> binding.HoldsPort)
+                |> Option.filter (fun binding -> PortHold.isHeld binding.PortHold)
                 |> Option.map (fun binding -> binding.Endpoint)
             )
             |> Set.ofSeq
@@ -676,7 +710,7 @@ module TestEphemeralPorts =
                     |> List.choose (fun (socketId, socket) ->
                         match socket.Ipv4Binding, socket.Phase with
                         | Some binding, (SocketPhase.Idle | SocketPhase.Listening _) when
-                            binding.HoldsPort
+                            PortHold.isHeld binding.PortHold
                             && binding.Endpoint.Port <> listenerPort 0
                             && binding.Endpoint.Port <> listenerPort 1
                             && Set.contains binding.Endpoint.Port orphaned
@@ -694,7 +728,7 @@ module TestEphemeralPorts =
                 // and no port an allocation chooses.
                 for KeyValue (socketId, socket) in run'.System.Machine.Sockets do
                     match socket.Ipv4Binding with
-                    | Some binding when not binding.HoldsPort ->
+                    | Some binding when not (PortHold.isHeld binding.PortHold) ->
                         let machine = run'.System.Machine
 
                         let without =
@@ -702,7 +736,7 @@ module TestEphemeralPorts =
                                 Sockets = Map.remove socketId machine.Sockets
                             }
 
-                        if invisibleTo machine without |> not then
+                        if invisibleTo run'.System.Scheduling.NanosecondsSinceBoot machine without |> not then
                             failwith
                                 $"after %A{op}: socket %O{socketId}, whose port was given back, still holds something"
                     | _ -> ()
@@ -719,3 +753,30 @@ module TestEphemeralPorts =
 
         coverage.Count "a call on a socket whose refused connect gave its port back"
         |> shouldBeGreaterThan 10
+
+    /// Linux's search for a port to bind passes over a port another socket
+    /// holds, both carrying `SO_REUSEADDR`, though an explicit bind of it
+    /// would be admitted beside it (measured, `docs/probes/ephemeral-search`,
+    /// row lr/Br): the search never relaxes the bind rule.
+    [<Test>]
+    let ``Linux bind(0) with SO_REUSEADDR does not share a port another reuse socket holds`` () : unit =
+        let system = systemOn SimulatedUnixPlatform.linuxX64 (40000us, 40001us)
+        let holder, system = newStream system
+
+        let system =
+            match bindWithReuse true holder (loopback 40000us) system with
+            | Ok (BindAnswer.Bound _), system -> system
+            | other, _ -> failwith $"binding the holder: %A{other}"
+
+        // The control: an explicit bind beside it is admitted.
+        let beside, system = newStream system
+
+        match bindWithReuse true beside (loopback 40000us) system with
+        | Ok (BindAnswer.Bound _), _ -> ()
+        | other, _ -> failwith $"an explicit bind beside the holder: %A{other}"
+
+        match bindWithReuse true beside (loopback 0us) system with
+        | Ok (BindAnswer.Bound (SocketAddress.Inet endpoint)), system ->
+            endpoint.Port |> shouldEqual 40001us
+            noDefects system
+        | other, _ -> failwith $"bind(127.0.0.1:0): %A{other}"

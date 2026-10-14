@@ -253,7 +253,7 @@ module TestDatagramDissolve =
                 Endpoint = endpoint loopback 0us
                 LockedAddress = Some loopback
                 LockedPort = false
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
         let forge (platform : SimulatedUnixPlatform) (phase : SocketPhase) : UnixSystem<int, string> =

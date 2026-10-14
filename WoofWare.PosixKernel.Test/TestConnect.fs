@@ -87,7 +87,7 @@ module TestConnect =
                 Endpoint = endpoint
                 LockedAddress = Some endpoint.Address
                 LockedPort = true
-                HoldsPort = true
+                PortHold = PortHold.Reserved
             }
 
     /// A client socket bound to loopback, and the descriptor it is open on.
@@ -529,8 +529,15 @@ module TestConnect =
         refusedBy fd other system
         |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, false))
 
+    /// Linux answers EADDRNOTAVAIL, leaving the socket unbound (measured,
+    /// `docs/probes/ephemeral-search`, the rows ending in Y). Darwin answers
+    /// EADDRNOTAVAIL too, but this library's search can pass over a port
+    /// Darwin's would take, so it refuses, naming the range.
     [<TestCaseSource(nameof platforms)>]
-    let ``an implicit bind with no port left is refused, naming the range`` (platform : SimulatedUnixPlatform) : unit =
+    let ``an implicit bind with no port left is answered under Linux and refused under Darwin``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
         // One port in the range, and a live socket already holding it.
         let holder =
             streamSocket (boundAt (Ipv4Endpoint.ofParts Ipv4Address.any 40000us)) SocketPhase.Idle
@@ -547,8 +554,13 @@ module TestConnect =
         let fd, system =
             withSocket (SocketId 1L) (streamSocket None SocketPhase.Idle) system
 
-        refusedBy fd (loopback 5000us) system
-        |> shouldEqual (ConnectRefusal.EphemeralPortsExhausted (40000us, 40000us))
+        let expected =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> Ok (SyscallAnswer.Failed UnixError.EADDRNOTAVAIL, system)
+            | SimulatedUnixFlavour.Darwin -> Error (ConnectRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+        CopyIn.connect fd UserBuffer.Mapped 16u (CopyIn.inet platform (loopback 5000us)) system
+        |> shouldEqual expected
 
     /// A system whose ephemeral range is the one port `port`, so that an
     /// implicit bind can only take that port.
@@ -626,7 +638,7 @@ module TestConnect =
                             Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
                             LockedAddress = None
                             LockedPort = false
-                            HoldsPort = true
+                            PortHold = PortHold.Connected
                         }
 
                 if socket.Ipv4Binding <> Some expected then
@@ -637,20 +649,22 @@ module TestConnect =
     /// Darwin's implicit bind binds the wildcard at the port before it resolves
     /// the source, and its search passes over a port another socket holds at
     /// any address, whatever `SO_REUSEADDR` says (measured,
-    /// `docs/probes/implicit-self-connect`, rows H and Hr), though this
-    /// library's search, judging the port for 127.0.0.1, can take it. Where it
-    /// took the destination's own port, the EINVAL answer would leave the
-    /// socket holding the wildcard over that other socket's binding, so it is
-    /// refused instead.
+    /// `docs/probes/implicit-self-connect`, rows H and Hr). So where the
+    /// destination's own port is held at another address, the connect never
+    /// takes it, and is refused from the next port.
     [<Test>]
-    let ``Darwin refuses an implicit self-tuple on a port held at another address`` () : unit =
+    let ``Darwin's implicit bind passes over the destination's port held at another address`` () : unit =
         let platform = SimulatedUnixPlatform.macOsArm64
 
         for reuse in [ false ; true ] do
             // Held at an address 127.0.0.1 does not overlap; a holder that did
             // would have Darwin drop the SYN before any port is chosen.
             let system =
-                let system = systemWithOnePort platform 40000us
+                let system =
+                    systemOnWith
+                        (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                         >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                        platform
 
                 { system with
                     Machine =
@@ -673,11 +687,14 @@ module TestConnect =
 
             let fd, system = withSocket (SocketId 1L) connecting system
 
-            match refusedBy fd (loopback 40000us) system with
-            | ConnectRefusal.DarwinImplicitBindHeld binding ->
-                binding
-                |> shouldEqual (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
-            | other -> failwith $"SO_REUSEADDR %b{reuse}: expected DarwinImplicitBindHeld, got %A{other}"
+            match connectTo fd 16u (loopback 40000us) system with
+            | SyscallAnswer.Failed UnixError.ECONNREFUSED, after ->
+                match (UnixMachineState.socket (SocketId 1L) after.Machine).Ipv4Binding with
+                | Some binding when binding.Endpoint.Port = 40001us -> ()
+                | other -> failwith $"SO_REUSEADDR %b{reuse}: the refused socket is bound at %A{other}"
+
+                UnixSystem.checkInvariants after |> shouldEqual []
+            | answer, _ -> failwith $"SO_REUSEADDR %b{reuse}: expected ECONNREFUSED from 40001, got %A{answer}"
 
     /// A socket `bind(2)` gave the wildcard at the port searches for no port,
     /// so another socket holding the port at another address, which the bind
@@ -768,7 +785,7 @@ module TestConnect =
         let given = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
 
         given
-        |> Option.map (fun binding -> binding.Endpoint.Port, binding.HoldsPort)
+        |> Option.map (fun binding -> binding.Endpoint.Port, PortHold.isHeld binding.PortHold)
         |> shouldEqual (Some (40000us, false))
 
         let answer, system = connectTo fd 16u (loopback 40000us) system
