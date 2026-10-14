@@ -459,7 +459,7 @@ module TestDeviceFileSystem =
     let ``renaming the mount point onto itself succeeds and changes nothing`` () : unit =
         for system in [ booted linux ; bootedAsRoot linux ] do
             for destination in [ "/dev" ; "//dev" ] do
-                match UnixNamespace.tryRenameEager (PathArg.ofText "/dev") (PathArg.ofText destination) system with
+                match Eager.tryRename (PathArg.ofText "/dev") (PathArg.ofText destination) system with
                 | Ok (answer, after) ->
                     answer |> shouldEqual (SyscallAnswer.Completed 0L)
                     after |> shouldEqual system
