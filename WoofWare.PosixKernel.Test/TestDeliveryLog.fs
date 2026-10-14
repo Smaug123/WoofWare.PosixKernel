@@ -127,7 +127,7 @@ module TestDeliveryLog =
                             else
                                 reference.Add
                                     {
-                                        Endpoint = ExternalEndpoint (UnixSystem.processId after, fd)
+                                        Endpoint = ExternalEndpoint (Lone.pid after, fd)
                                         Bytes = bytes
                                     }
 

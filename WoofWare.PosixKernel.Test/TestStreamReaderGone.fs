@@ -160,7 +160,7 @@ module TestStreamReaderGone =
                     DeliveryLog.toList system.Machine.Delivered
                     |> List.map (fun delivery ->
                         let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
-                        launchedInto |> shouldEqual (UnixSystem.processId system)
+                        launchedInto |> shouldEqual (Lone.pid system)
                         fd, List.ofSeq delivery.Bytes
                     )
 

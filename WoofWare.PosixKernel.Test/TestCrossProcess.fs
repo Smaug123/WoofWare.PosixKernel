@@ -40,7 +40,7 @@ module TestCrossProcess =
 
             Machines.assertClean machine
 
-            let registry = UnixSystem.fileDescriptors (Machines.viewOf a machine)
+            let registry = UnixSystem.fileDescriptors a (Machines.viewOf a machine)
             FileDescriptorRegistry.checkInvariants registry |> shouldEqual []
 
             // A description this table alone names more often than its count
@@ -61,7 +61,10 @@ module TestCrossProcess =
     let ``a descriptor table on a machine holding its process alone checks every count exactly`` () : unit =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
-            let registry = UnixSystem.fileDescriptors (Machines.viewOf pids.[0] machine)
+
+            let registry =
+                UnixSystem.fileDescriptors pids.[0] (Machines.viewOf pids.[0] machine)
+
             let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
 
             FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
@@ -690,7 +693,9 @@ module TestCrossProcess =
         (machine : SimulatedMachine<int, string>)
         : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
         =
-        let ended = UnixThreadLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
+        let ended =
+            UnixThreadLifecycle.exitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
+
         Machines.tryEndProcess ended machine
 
     let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
@@ -737,7 +742,7 @@ module TestCrossProcess =
         let machine =
             Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd) machine
 
-        let ended = UnixThreadLifecycle.exitGroup 0 0 stale
+        let ended = UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 stale
 
         let error =
             Assert.Throws<exn> (fun () -> Machines.tryEndProcess ended machine |> ignore)
@@ -750,7 +755,7 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
             let view = Machines.viewOf pids.[0] machine
-            let ended = UnixThreadLifecycle.exitGroup 0 3 view
+            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 0 view) 3 view
 
             match Machines.tryEndLoneProcess ended with
             | Ok (termination, after) ->
@@ -767,7 +772,9 @@ module TestCrossProcess =
     [<Test>]
     let ``a process that ended beside others is not ended as a lone one`` () : unit =
         let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
-        let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf pids.[0] machine)
+
+        let ended =
+            UnixThreadLifecycle.exitGroup (Caller.make pids.[0] 0) 0 (Machines.viewOf pids.[0] machine)
 
         let error =
             Assert.Throws<exn> (fun () -> Machines.tryEndLoneProcess ended |> ignore)
@@ -1030,12 +1037,12 @@ module TestCrossProcess =
                     )
                     machine
 
-            let named (view : UnixSystem<int, string>) : Set<OpenFileDescriptionId> =
-                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors view)
+            let named (pid : ProcessId) (view : UnixSystem<int, string>) : Set<OpenFileDescriptionId> =
+                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid view)
                 |> Map.values
                 |> Set.ofSeq
 
-            let survivors = named (Machines.viewOf b machine)
+            let survivors = named b (Machines.viewOf b machine)
             let machine = exitedOk a machine
             Machines.assertClean machine
 
@@ -1484,7 +1491,7 @@ module TestCrossProcess =
             let listenerId = KeventWorld.idOfIn a listener (Machines.viewOf a machine)
 
             let named (pid : ProcessId) =
-                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors (Machines.viewOf pid machine))
+                FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid (Machines.viewOf pid machine))
 
             Machines.doIn
                 b
@@ -1561,7 +1568,7 @@ module TestCrossProcess =
                     machine
 
             let inode =
-                match UnixSystem.descriptorTarget opened (Machines.viewOf b machine) with
+                match UnixSystem.descriptorTarget b opened (Machines.viewOf b machine) with
                 | Some (OpenFileTarget.File (inode, _)) -> inode
                 | other -> failwith $"the descriptor names %A{other}"
 
@@ -1617,7 +1624,7 @@ module TestCrossProcess =
                 machine
 
         let pipe =
-            match UnixSystem.descriptorTarget reader (Machines.viewOf a machine) with
+            match UnixSystem.descriptorTarget a reader (Machines.viewOf a machine) with
             | Some (OpenFileTarget.Pipe (pipe, _)) -> pipe
             | other -> failwith $"the read end names %A{other}"
 

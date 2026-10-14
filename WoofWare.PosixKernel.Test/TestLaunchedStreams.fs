@@ -110,9 +110,7 @@ module TestLaunchedStreams =
 
     let private deliveredLog (system : UnixSystem<int, string>) : (Stream * byte list) list =
         DeliveryLog.toList system.Machine.Delivered
-        |> List.map (fun delivery ->
-            streamOf (UnixSystem.processId system) delivery.Endpoint, List.ofSeq delivery.Bytes
-        )
+        |> List.map (fun delivery -> streamOf (Lone.pid system) delivery.Endpoint, List.ofSeq delivery.Bytes)
 
     /// One write as a client issues it: admitted, and then given the bytes the
     /// admission asked for. A pipe the process made can lose its reader, and a

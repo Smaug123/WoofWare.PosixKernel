@@ -790,7 +790,7 @@ module TestInotifyMeasured =
         )
 
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
-        match UnixWait.satisfied thread system with
+        match UnixWait.satisfied (Callers.thread thread system) system with
         | Some woken -> not (Set.isEmpty woken)
         | None -> failwith $"thread %d{thread} is not asleep"
 
@@ -862,10 +862,10 @@ module TestInotifyMeasured =
 
         // The handler runs and returns, and the client issues the read again.
         let s =
-            match UnixSignal.tryOnReturnToUser reader s with
+            match UnixSignal.tryOnReturnToUser (Callers.thread reader s) s with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, s)) ->
                 (s, frames)
-                ||> List.fold (fun s frame -> UnixSignal.sigreturn reader frame.Id s)
+                ||> List.fold (fun s frame -> UnixSignal.sigreturn (Callers.thread reader s) frame.Id s)
             | other -> failwith $"%A{other}"
 
         system <- sleeps reader fd s

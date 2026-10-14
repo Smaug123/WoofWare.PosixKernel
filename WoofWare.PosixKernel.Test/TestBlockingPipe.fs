@@ -572,11 +572,11 @@ module TestBlockingPipe =
 
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSignal.tryOnReturnToUser thread system with
+        match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn thread frame.Id system)
+            ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
         | other -> failwith $"returning thread %d{thread} to user mode: %A{other}"
 
@@ -2002,8 +2002,8 @@ module TestBlockingPipe =
                 | SimulatedUnixFlavour.Linux -> false
 
             let system = pipeHolding platform false 0
-            UnixWait.satisfied sleeper system |> shouldEqual None
-            UnixWait.satisfied 99 system |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper system) system |> shouldEqual None
+            UnixWait.satisfied (Callers.thread 99 system) system |> shouldEqual None
 
             let condition, asleep =
                 match UnixReadWrite.tryRead (Callers.thread sleeper system) 3 UserBuffer.Mapped 16UL system with
@@ -2013,15 +2013,17 @@ module TestBlockingPipe =
             let reader =
                 FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors asleep) |> Option.get
 
-            UnixWait.satisfied sleeper asleep |> shouldEqual (Some Set.empty)
-            UnixWait.satisfied 99 asleep |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper asleep) asleep
+            |> shouldEqual (Some Set.empty)
+
+            UnixWait.satisfied (Callers.thread 99 asleep) asleep |> shouldEqual None
 
             let written = leaderWrites 1 asleep
 
-            UnixWait.satisfied sleeper written
+            UnixWait.satisfied (Callers.thread sleeper written) written
             |> shouldEqual (Some (Set.singleton (WakePrimitive.PipeHasBytes reader)))
 
-            UnixWait.satisfied sleeper written
+            UnixWait.satisfied (Callers.thread sleeper written) written
             |> shouldEqual (Some (WakeCondition.satisfied sleeper condition written))
 
             // The descriptor the call was made through closes under it: the
@@ -2029,7 +2031,7 @@ module TestBlockingPipe =
             // ends the call.
             let closedUnder = closed 3 asleep
 
-            UnixWait.satisfied sleeper closedUnder
+            UnixWait.satisfied (Callers.thread sleeper closedUnder) closedUnder
             |> shouldEqual (
                 Some (
                     if darwin then
@@ -2049,7 +2051,7 @@ module TestBlockingPipe =
 
             let gone = closed 3 finished
             descriptionExists reader gone |> shouldEqual false
-            UnixWait.satisfied sleeper gone |> shouldEqual None
+            UnixWait.satisfied (Callers.thread sleeper gone) gone |> shouldEqual None
 
             Assert.Throws<exn> (fun () -> WakeCondition.satisfied sleeper condition gone |> ignore<Set<WakePrimitive>>)
             |> ignore<exn>

@@ -844,7 +844,7 @@ module TestProtectedFiles =
         let linuxAtEAccess = 0x200
 
         let step (call : Syscall) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSystem.tryStep 0 call system with
+            match UnixSystem.tryStep (Callers.thread 0 system) call system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), after) -> after
             | other -> failwith $"setting up, %A{call}: %A{other}"
 
@@ -913,25 +913,35 @@ module TestProtectedFiles =
                 )
                 "open", (fun p -> OpenOutcomes.openPath 0 (bytes p) 0 system |> ofOpen)
                 "openat", (fun p -> OpenOutcomes.openat atFdCwd (bytes p) 0 0 system |> ofOpen)
-                "chdir", (fun p -> UnixSystem.tryStep 0 (Syscall.ChDir (bytes p)) system |> ofStep)
+                "chdir",
+                (fun p ->
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.ChDir (bytes p)) system
+                    |> ofStep
+                )
                 "chmod",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FChModAt (atFdCwd, bytes p, 0o755, 0)) system
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FChModAt (atFdCwd, bytes p, 0o755, 0)) system
                     |> ofStep
                 )
                 "chown",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FChOwnAt (atFdCwd, bytes p, None, None, 0)) system
+                    UnixSystem.tryStep
+                        (Callers.thread 0 system)
+                        (Syscall.FChOwnAt (atFdCwd, bytes p, None, None, 0))
+                        system
                     |> ofStep
                 )
                 "access",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FAccessAt (atFdCwd, bytes p, 0, 0)) system
+                    UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (atFdCwd, bytes p, 0, 0)) system
                     |> ofStep
                 )
                 "faccessat(AT_EACCESS)",
                 (fun p ->
-                    UnixSystem.tryStep 0 (Syscall.FAccessAt (atFdCwd, bytes p, 0, linuxAtEAccess)) system
+                    UnixSystem.tryStep
+                        (Callers.thread 0 system)
+                        (Syscall.FAccessAt (atFdCwd, bytes p, 0, linuxAtEAccess))
+                        system
                     |> ofStep
                 )
                 // `readlink` reads a final link rather than following it,
@@ -955,7 +965,7 @@ module TestProtectedFiles =
                 "linkat(AT_SYMLINK_FOLLOW)",
                 (fun p ->
                     UnixSystem.tryStep
-                        0
+                        (Callers.thread 0 system)
                         (Syscall.LinkAt (atFdCwd, bytes p, atFdCwd, bytes "/a/new", linuxAtSymlinkFollow))
                         system
                     |> ofStep

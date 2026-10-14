@@ -689,12 +689,12 @@ module TestCopyFileSyscalls =
         let inFd, system = opened "ksrc" FileAccessMode.ReadOnly system
         let outFd, system = opened "kdst" FileAccessMode.WriteOnly system
 
-        match UnixSystem.tryStep 0 (Syscall.CopyFileRange (inFd, outFd, 5UL, 0)) system with
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.CopyFileRange (inFd, outFd, 5UL, 0)) system with
         | Ok (SyscallOutcome.Answered answer, after) ->
             (answer, after) |> shouldEqual (copyFileRangeAnswer inFd outFd 5UL 0 system)
         | other -> failwith $"%A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FileClone (outFd, inFd)) system with
+        match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FileClone (outFd, inFd)) system with
         | Ok (SyscallOutcome.Answered answer, after) ->
             answer |> shouldEqual (SyscallAnswer.Failed UnixError.EOPNOTSUPP)
             after |> shouldEqual system
@@ -865,7 +865,7 @@ module TestCopyFileSyscalls =
                         0
                     )
 
-                match UnixSystem.tryStep 0 call system with
+                match UnixSystem.tryStep (Callers.thread 0 system) call system with
                 | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), stepped) -> stepped |> shouldEqual after
                 | other -> failwith $"step: %A{other}"
             | other -> failwith $"%A{other}"

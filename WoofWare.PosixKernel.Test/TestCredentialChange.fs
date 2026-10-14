@@ -829,7 +829,7 @@ module TestCredentialChange =
             let mutable system = systemWith linux CoreDumps.Suppressed credentials
 
             for call in calls do
-                let viaStep = UnixSystem.tryStep 0 call system
+                let viaStep = UnixSystem.tryStep (Callers.thread 0 system) call system
                 let direct = primitive call system
 
                 match viaStep, direct with

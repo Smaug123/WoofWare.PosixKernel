@@ -260,12 +260,12 @@ module TestNonBlockingAsleepMeasured =
     /// The sleeper returns to user mode: every handler it takes runs and
     /// returns. How many ran.
     let rec private returnToUser (where : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixSignal.onReturnToUser sleeper system with
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
         | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> 0, system
         | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system) ->
             let system =
                 (system, frames)
-                ||> List.fold (fun system frame -> UnixSignal.sigreturn sleeper frame.Id system)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
 
             let more, system = returnToUser where system
             List.length frames + more, system
@@ -396,7 +396,7 @@ module TestNonBlockingAsleepMeasured =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
 
         let system =
-            match UnixSignal.pthreadKill sleeper signo system with
+            match UnixSignal.pthreadKill (Callers.leader system) sleeper signo system with
             | Ok (ProcessFate.Continues (_, system)) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 

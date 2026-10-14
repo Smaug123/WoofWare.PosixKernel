@@ -59,24 +59,8 @@ module internal GetCpuRefusal =
 [<RequireQualifiedAccess>]
 module UnixScheduling =
 
-    /// `thread` is now running on the logical processor `cpu`: the client's
-    /// report of a dispatch.
-    ///
-    /// `thread`'s processor becomes `cpu`. Whichever thread `cpu` was running,
-    /// in this process or another on the machine, stops running there and
-    /// keeps `cpu` as its processor, as a preempted thread does. If `thread` was
-    /// running on another processor, that one is now idle. Dispatching a thread
-    /// to the processor it is already running on changes nothing, and answers
-    /// `system` itself.
-    ///
-    /// A parked thread may be dispatched. Whether it was woken is the client's
-    /// record (`UnixWait.wakes`), so this library does not refuse one that was
-    /// not.
-    ///
-    /// Fails loudly if `thread` names no thread, or if `cpu` is not one of the
-    /// machine's processors (`UnixSystem.processorCount`): each is a bug in
-    /// the client.
-    let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `dispatch` once `Entry` has admitted its caller.
+    let private dispatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -119,11 +103,37 @@ module UnixScheduling =
             Threads = threads
         }
 
-    /// The logical processor `thread` is running on: `None` if it is not
-    /// running, because the client has not dispatched it since it was created
-    /// or since it last parked, or has dispatched another thread to its
-    /// processor since, and `None` if `thread` names no thread.
-    let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The thread `caller` names is now running on the logical processor `cpu`:
+    /// the client's report of a dispatch.
+    ///
+    /// The thread's processor becomes `cpu`. Whichever thread `cpu` was running,
+    /// in this process or another on the machine, stops running there and
+    /// keeps `cpu` as its processor, as a preempted thread does. If the thread was
+    /// running on another processor, that one is now idle. Dispatching a thread
+    /// to the processor it is already running on changes nothing, and answers
+    /// `system` itself.
+    ///
+    /// A parked thread may be dispatched. Whether it was woken is the client's
+    /// record (`UnixWait.wakes`), so this library does not refuse one that was
+    /// not.
+    ///
+    /// Fails loudly if `caller` names no thread, or if `cpu` is not one of the
+    /// machine's processors (`UnixSystem.processorCount`): each is a bug in
+    /// the client.
+    let dispatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (cpu : CpuId)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        // `Entry.call` with `Shape.system`, written out: a client reports the
+        // thread it runs before every instruction, and the closure `call` takes
+        // would make each report allocate.
+        Entry.admit "UnixScheduling.dispatch" CallerRequirement.Exists caller system
+        dispatchIn (Caller.thread caller) cpu system
+
+    /// `runningOn` once `Entry` has admitted the process.
+    let private runningOnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : CpuId option
@@ -133,8 +143,20 @@ module UnixScheduling =
         | Some _
         | None -> None
 
-    /// `getcpu`, with a refusal answered as the `Error` rather than raised.
-    let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The logical processor the thread `caller` names is running on: `None` if
+    /// it is not running, because the client has not dispatched it since it
+    /// was created or since it last parked, or has dispatched another thread to
+    /// its processor since, and `None` if its process has no thread by that
+    /// name.
+    let runningOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : CpuId option
+        =
+        Entry.query "UnixScheduling.runningOn" (Caller.processId caller) (runningOnIn (Caller.thread caller)) system
+
+    /// `tryGetcpu` once `Entry` has admitted its caller.
+    let private tryGetcpuIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<GetCpuAnswer, GetCpuRefusal>
@@ -144,12 +166,6 @@ module UnixScheduling =
         | SimulatedUnixFlavour.Linux ->
 
         let state = UnixThreadTable.get thread system.Threads
-
-        match state.Parked with
-        | Some park ->
-            failwith
-                $"UnixScheduling.getcpu: thread %O{thread} is parked in %A{park.Syscall}, so it cannot be making the getcpu syscall (this is a bug in the client)."
-        | None ->
 
         match Map.tryFind state.Cpu system.Scheduling.Occupants with
         | Some running when running = state.OsThreadId ->
@@ -167,6 +183,20 @@ module UnixScheduling =
             failwith
                 $"UnixScheduling.getcpu: thread %O{thread} is not running on any processor (%s{occupied}), so it cannot be making the getcpu syscall. Report each thread the client runs with UnixScheduling.dispatch (this is a bug in the client)."
 
+    /// `getcpu`, with a refusal answered as the `Error` rather than raised.
+    let internal tryGetcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<GetCpuAnswer, GetCpuRefusal>
+        =
+        Entry.call
+            "UnixScheduling.getcpu"
+            CallerRequirement.Running
+            caller
+            Shape.answer
+            (tryGetcpuIn (Caller.thread caller))
+            system
+
     /// <summary>
     /// `getcpu(2)`, made by `thread`: the processor it is running on, and that
     /// processor's NUMA node. glibc's `sched_getcpu(3)` reads the same value.
@@ -180,9 +210,9 @@ module UnixScheduling =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let getcpu<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : GetCpuAnswer
         =
-        tryGetcpu thread system
+        tryGetcpu caller system
         |> Refusal.orRaise "UnixScheduling.getcpu" GetCpuRefusal.kind GetCpuRefusal.describe

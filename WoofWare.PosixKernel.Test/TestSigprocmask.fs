@@ -32,7 +32,7 @@ module TestSigprocmask =
         (system : UnixSystem<int, string>)
         : Result<SignalMask * UnixSystem<int, string>, UnixError>
         =
-        match UnixSignal.trySigprocmask thread how set system with
+        match UnixSignal.trySigprocmask (Callers.thread thread system) how set system with
         | Ok answered -> answered
         | Error refusal -> failwith $"sigprocmask was refused: %s{SigprocmaskRefusal.describe refusal}"
 
@@ -73,8 +73,8 @@ module TestSigprocmask =
         =
         match route with
         | Route.Libc -> sigprocmask thread how set system
-        | Route.Pthread -> UnixSignal.pthreadSigmask thread how set system
-        | Route.Raw -> UnixSignal.rtSigprocmask thread how set 8UL system
+        | Route.Pthread -> UnixSignal.pthreadSigmask (Callers.thread thread system) how set system
+        | Route.Raw -> UnixSignal.rtSigprocmask (Callers.thread thread system) how set 8UL system
 
     let private maskOfWord (flavour : SimulatedUnixFlavour) (word : uint64) : SignalMask =
         match SignalMask.ofWord (numberingOf flavour) word with
@@ -97,7 +97,11 @@ module TestSigprocmask =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSignal.pthreadSigmask thread (setmask flavour) (Some (maskOfWord flavour word)) system
+        UnixSignal.pthreadSigmask
+            (Callers.thread thread system)
+            (setmask flavour)
+            (Some (maskOfWord flavour word))
+            system
         |> orFail
 
     // HUP, INT and TERM are 1, 2 and 15 under both numberings.
@@ -180,14 +184,21 @@ module TestSigprocmask =
         let rt = 0x180000000UL
 
         let blocked =
-            UnixSignal.rtSigprocmask 0 (block flavour) (Some (maskOfWord flavour (rt ||| hup))) 8UL (systemOn flavour)
+            let system = systemOn flavour
+
+            UnixSignal.rtSigprocmask
+                (Callers.thread 0 system)
+                (block flavour)
+                (Some (maskOfWord flavour (rt ||| hup)))
+                8UL
+                system
             |> orFail
 
         match sigprocmask 0 (block flavour) None blocked with
         | Ok (old, _) -> SignalMask.toWord old |> shouldEqual 0x180000001UL
         | Error errno -> failwith $"%O{errno}"
 
-        match UnixSignal.pthreadSigmask 0 (block flavour) None blocked with
+        match UnixSignal.pthreadSigmask (Callers.thread 0 blocked) (block flavour) None blocked with
         | Ok (old, _) -> SignalMask.toWord old |> shouldEqual 0x180000001UL
         | Error errno -> failwith $"%O{errno}"
 
@@ -212,23 +223,25 @@ module TestSigprocmask =
 
         for size in [ 0UL ; 1UL ; 4UL ; 7UL ; 9UL ; 16UL ; 128UL ] do
             for how, set in [ block flavour, set ; block flavour, None ; 100, None ; 100, set ] do
-                UnixSignal.rtSigprocmask 0 how set size start
+                UnixSignal.rtSigprocmask (Callers.thread 0 start) how set size start
                 |> Result.map fst
                 |> shouldEqual (Error UnixError.EINVAL)
 
         // At 8, the rows answered as every route does.
-        UnixSignal.rtSigprocmask 0 100 None 8UL start
+        UnixSignal.rtSigprocmask (Callers.thread 0 start) 100 None 8UL start
         |> Result.map (fun (old, system) -> SignalMask.toWord old, wordOf 0 system)
         |> shouldEqual (Ok (0x3UL, 0x3UL))
 
-        UnixSignal.rtSigprocmask 0 100 set 8UL start
+        UnixSignal.rtSigprocmask (Callers.thread 0 start) 100 set 8UL start
         |> Result.map fst
         |> shouldEqual (Error UnixError.EINVAL)
 
     [<Test>]
     let ``Darwin: rt_sigprocmask is not a system call there`` () : unit =
+        let darwin = systemOn SimulatedUnixFlavour.Darwin
+
         Assert.Throws<exn> (fun () ->
-            UnixSignal.rtSigprocmask 0 1 None 8UL (systemOn SimulatedUnixFlavour.Darwin)
+            UnixSignal.rtSigprocmask (Callers.thread 0 darwin) 1 None 8UL darwin
             |> ignore<Result<SignalMask * UnixSystem<int, string>, UnixError>>
         )
         |> ignore
@@ -273,6 +286,7 @@ module TestSigprocmask =
     let private catching (flavour : SimulatedUnixFlavour) (signal : Signal) (system : UnixSystem<int, string>) =
         match
             UnixSignal.sigaction
+                (Callers.leader system)
                 (signo flavour signal)
                 (Some (SignalDisposition.Catch (SignalCatch.ofHandler (string<Signal> signal))))
                 system
@@ -288,8 +302,7 @@ module TestSigprocmask =
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
         | other -> failwith $"expected the process to carry on, got %A{other}"
 
-    let private self (system : UnixSystem<int, string>) : int =
-        ProcessId.toInt32 (UnixSystem.processId system)
+    let private self (system : UnixSystem<int, string>) : int = ProcessId.toInt32 (Lone.pid system)
 
     [<Test>]
     let ``unblocking three pending caught signals runs every handler before the call returns, last taken first``
@@ -314,32 +327,37 @@ module TestSigprocmask =
                 let system =
                     (systemOn flavour, three)
                     ||> List.fold (fun system signal -> catching flavour signal system)
-                    |> UnixSignal.pthreadSigmask 0 (setmask flavour) (Some mask)
+                    |> (fun system ->
+                        UnixSignal.pthreadSigmask (Callers.thread 0 system) (setmask flavour) (Some mask) system
+                    )
                     |> orFail
 
                 let system =
                     (system, three)
                     ||> List.fold (fun system signal ->
                         if threadDirected then
-                            UnixSignal.tryPthreadKill 0 (signo flavour signal) system |> sent
+                            UnixSignal.tryPthreadKill (Callers.leader system) 0 (signo flavour signal) system
+                            |> sent
                         else
-                            UnixSignal.tryKill (self system) (signo flavour signal) system |> sent
+                            UnixSignal.tryKill (Callers.leader system) (self system) (signo flavour signal) system
+                            |> sent
                     )
 
-                match UnixSignal.tryOnReturnToUser 0 system with
+                match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> ()
                 | other -> failwith $"%O{flavour}: expected nothing taken while blocked, got %A{other}"
 
-                UnixSignal.sigpending 0 system |> shouldEqual mask
+                UnixSignal.sigpending (Callers.thread 0 system) system |> shouldEqual mask
 
                 let unblocked = sigprocmask 0 (unblock flavour) (Some mask) system |> orFail
 
-                match UnixSignal.tryOnReturnToUser 0 unblocked with
+                match UnixSignal.tryOnReturnToUser (Callers.thread 0 unblocked) unblocked with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
                     (flavour, threadDirected, frames |> List.map (fun frame -> frame.Entry.Signal))
                     |> shouldEqual (flavour, threadDirected, measured flavour)
 
-                    UnixSignal.sigpending 0 after |> shouldEqual SignalMask.empty
+                    UnixSignal.sigpending (Callers.thread 0 after) after
+                    |> shouldEqual SignalMask.empty
                 | other -> failwith $"%O{flavour}: expected three frames, got %A{other}"
 
     [<Test>]
@@ -365,11 +383,13 @@ module TestSigprocmask =
 
             let proc =
                 let system = both Signal.SIGUSR1
-                UnixSignal.tryKill (self system) (signo flavour Signal.SIGUSR1) system |> sent
 
-            UnixSignal.sigpending 0 proc |> shouldEqual usr1
+                UnixSignal.tryKill (Callers.leader system) (self system) (signo flavour Signal.SIGUSR1) system
+                |> sent
 
-            UnixSignal.sigpending 1 proc
+            UnixSignal.sigpending (Callers.thread 0 proc) proc |> shouldEqual usr1
+
+            UnixSignal.sigpending (Callers.thread 1 proc) proc
             |> shouldEqual (
                 match flavour with
                 | SimulatedUnixFlavour.Linux -> usr1
@@ -378,11 +398,15 @@ module TestSigprocmask =
 
             for target, other in [ 1, 0 ; 0, 1 ] do
                 let thread =
-                    UnixSignal.tryPthreadKill target (signo flavour Signal.SIGUSR2) (both Signal.SIGUSR2)
+                    let system = both Signal.SIGUSR2
+
+                    UnixSignal.tryPthreadKill (Callers.leader system) target (signo flavour Signal.SIGUSR2) system
                     |> sent
 
-                UnixSignal.sigpending target thread |> shouldEqual usr2
-                UnixSignal.sigpending other thread |> shouldEqual SignalMask.empty
+                UnixSignal.sigpending (Callers.thread target thread) thread |> shouldEqual usr2
+
+                UnixSignal.sigpending (Callers.thread other thread) thread
+                |> shouldEqual SignalMask.empty
 
     [<Test>]
     let ``an ignored signal sent while blocked is pending as measured, and gone once unblocked`` () : unit =
@@ -406,15 +430,21 @@ module TestSigprocmask =
                 let mask = SignalMask.ofSignals numbering (Set.singleton signal)
 
                 let system =
-                    match UnixSignal.sigaction (signo flavour signal) (Some disposition) (systemOn flavour) with
+                    let system = systemOn flavour
+
+                    match
+                        UnixSignal.sigaction (Callers.leader system) (signo flavour signal) (Some disposition) system
+                    with
                     | Ok (_, system) -> system
                     | Error errno -> failwith $"%O{errno}"
                     |> withMask flavour 0 (SignalMask.toWord mask)
 
-                let system = UnixSignal.tryKill (self system) (signo flavour signal) system |> sent
+                let system =
+                    UnixSignal.tryKill (Callers.leader system) (self system) (signo flavour signal) system
+                    |> sent
 
                 let system =
-                    match UnixSignal.tryOnReturnToUser 0 system with
+                    match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
                     | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
                     | other -> failwith $"%O{flavour} %O{signal}: expected nothing taken, got %A{other}"
 
@@ -423,21 +453,22 @@ module TestSigprocmask =
                     | SimulatedUnixFlavour.Linux -> onLinux
                     | SimulatedUnixFlavour.Darwin -> onDarwin
 
-                (flavour, signal, UnixSignal.sigpending 0 system)
+                (flavour, signal, UnixSignal.sigpending (Callers.thread 0 system) system)
                 |> shouldEqual (flavour, signal, (if expected then mask else SignalMask.empty))
 
                 if disposition = SignalDisposition.Ignore then
                     let unblocked =
-                        UnixSignal.pthreadSigmask 0 (unblock flavour) (Some mask) system |> orFail
+                        UnixSignal.pthreadSigmask (Callers.thread 0 system) (unblock flavour) (Some mask) system
+                        |> orFail
 
                     let returned =
-                        match UnixSignal.tryOnReturnToUser 0 unblocked with
+                        match UnixSignal.tryOnReturnToUser (Callers.thread 0 unblocked) unblocked with
                         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
                         | other -> failwith $"%O{flavour} %O{signal}: expected nothing taken, got %A{other}"
 
                     let reblocked = withMask flavour 0 (SignalMask.toWord mask) returned
 
-                    (flavour, signal, UnixSignal.sigpending 0 reblocked)
+                    (flavour, signal, UnixSignal.sigpending (Callers.thread 0 reblocked) reblocked)
                     |> shouldEqual (flavour, signal, SignalMask.empty)
 
     [<Test>]
@@ -450,8 +481,11 @@ module TestSigprocmask =
             let numbering = numberingOf flavour
 
             let system =
+                let system = systemOn flavour |> catching flavour Signal.SIGTERM
+
                 match
                     UnixSignal.sigaction
+                        (Callers.leader system)
                         (signo flavour Signal.SIGUSR1)
                         (Some (
                             SignalDisposition.Catch
@@ -459,30 +493,32 @@ module TestSigprocmask =
                                     Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
                                 }
                         ))
-                        (systemOn flavour |> catching flavour Signal.SIGTERM)
+                        system
                 with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"%O{errno}"
 
             let raised =
-                UnixSignal.tryPthreadKill 0 (signo flavour Signal.SIGUSR1) system |> sent
+                UnixSignal.tryPthreadKill (Callers.leader system) 0 (signo flavour Signal.SIGUSR1) system
+                |> sent
 
             let frame, inHandler =
-                match UnixSignal.tryOnReturnToUser 0 raised with
+                match UnixSignal.tryOnReturnToUser (Callers.thread 0 raised) raised with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
                 | other -> failwith $"expected USR1's handler, got %A{other}"
 
             let inHandler =
-                UnixSignal.tryPthreadKill 0 (signo flavour Signal.SIGUSR1) inHandler |> sent
+                UnixSignal.tryPthreadKill (Callers.leader inHandler) 0 (signo flavour Signal.SIGUSR1) inHandler
+                |> sent
 
             let inHandler =
-                UnixSignal.tryKill (self inHandler) (signo flavour Signal.SIGTERM) inHandler
+                UnixSignal.tryKill (Callers.leader inHandler) (self inHandler) (signo flavour Signal.SIGTERM) inHandler
                 |> sent
 
             let both =
                 SignalMask.ofSignals numbering (Set.ofList [ Signal.SIGUSR1 ; Signal.SIGTERM ])
 
-            UnixSignal.sigpending 0 inHandler |> shouldEqual both
+            UnixSignal.sigpending (Callers.thread 0 inHandler) inHandler |> shouldEqual both
             SignalState.maskOf 0 (Lone.proc inHandler).Signals |> shouldEqual both
 
             let rec run
@@ -494,10 +530,10 @@ module TestSigprocmask =
                 | [] -> ran, system
                 | frame :: outer ->
                     let ran = ran @ [ frame.Entry.Signal ]
-                    let system = UnixSignal.sigreturn 0 frame.Id system
+                    let system = UnixSignal.sigreturn (Callers.thread 0 system) frame.Id system
 
                     let ran, system =
-                        match UnixSignal.tryOnReturnToUser 0 system with
+                        match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
                         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> ran, system
                         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
                             run ran frames system
@@ -511,7 +547,9 @@ module TestSigprocmask =
             |> shouldEqual (flavour, [ Signal.SIGUSR1 ; Signal.SIGUSR1 ; Signal.SIGTERM ])
 
             SignalState.maskOf 0 (Lone.proc after).Signals |> shouldEqual SignalMask.empty
-            UnixSignal.sigpending 0 after |> shouldEqual SignalMask.empty
+
+            UnixSignal.sigpending (Callers.thread 0 after) after
+            |> shouldEqual SignalMask.empty
 
     [<Test>]
     let ``a caught signal the leader blocks and another thread does not is refused, with no handler involved``
@@ -533,7 +571,7 @@ module TestSigprocmask =
 
             SignalState.framesOf 0 (Lone.proc system).Signals |> shouldEqual []
 
-            UnixSignal.tryKill (self system) (signo flavour Signal.SIGUSR1) system
+            UnixSignal.tryKill (Callers.leader system) (self system) (signo flavour Signal.SIGUSR1) system
             |> Result.map (fun _ -> ())
             |> shouldEqual (Error (KillRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)))
 
@@ -541,9 +579,12 @@ module TestSigprocmask =
             let both = system |> withMask flavour 1 usr1
 
             let pending =
-                UnixSignal.tryKill (self both) (signo flavour Signal.SIGUSR1) both |> sent
+                UnixSignal.tryKill (Callers.leader both) (self both) (signo flavour Signal.SIGUSR1) both
+                |> sent
 
-            UnixSignal.sigpending 0 pending |> SignalMask.toWord |> shouldEqual usr1
+            UnixSignal.sigpending (Callers.thread 0 pending) pending
+            |> SignalMask.toWord
+            |> shouldEqual usr1
 
     [<Test>]
     let ``a sigprocmask that unblocks a signal pending for a thread asleep in poll is refused on Darwin, and wakes nothing on Linux``
@@ -563,7 +604,8 @@ module TestSigprocmask =
                 |> withMask flavour 1 (SignalMask.toWord usr1)
 
             let system =
-                UnixSignal.tryPthreadKill 1 (signo flavour Signal.SIGUSR1) system |> sent
+                UnixSignal.tryPthreadKill (Callers.leader system) 1 (signo flavour Signal.SIGUSR1) system
+                |> sent
 
             // A poll of nothing, with no deadline, sleeps until a signal ends
             // it.
@@ -574,7 +616,7 @@ module TestSigprocmask =
 
             UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
 
-            match flavour, UnixSignal.trySigprocmask 0 (unblock flavour) (Some usr1) parked with
+            match flavour, UnixSignal.trySigprocmask (Callers.thread 0 parked) (unblock flavour) (Some usr1) parked with
             | SimulatedUnixFlavour.Darwin, Error refusal ->
                 refusal
                 |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (1, Signal.SIGUSR1))
@@ -714,7 +756,7 @@ module TestSigprocmask =
 
                 let actual =
                     match c.Route with
-                    | Route.Raw -> UnixSignal.rtSigprocmask c.Thread c.How set c.Size system
+                    | Route.Raw -> UnixSignal.rtSigprocmask (Callers.thread c.Thread system) c.How set c.Size system
                     | route -> call route c.Thread c.How set system
 
                 let expected = referenceCall flavour masks c
@@ -782,8 +824,11 @@ module TestSigprocmask =
                 SignalMask.ofSignals numbering (Set.ofList signals)
 
             let system =
+                let system = systemOn flavour
+
                 match
                     UnixSignal.sigaction
+                        (Callers.leader system)
                         (signo flavour Signal.SIGUSR1)
                         (Some (
                             SignalDisposition.Catch
@@ -792,17 +837,18 @@ module TestSigprocmask =
                                     NoDefer = noDefer
                                 }
                         ))
-                        (systemOn flavour)
+                        system
                 with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"%O{errno}"
                 |> withMask flavour 0 (SignalMask.toWord (ofList before))
 
             let system =
-                UnixSignal.tryPthreadKill 0 (signo flavour Signal.SIGUSR1) system |> sent
+                UnixSignal.tryPthreadKill (Callers.leader system) 0 (signo flavour Signal.SIGUSR1) system
+                |> sent
 
             let frame, inHandler =
-                match UnixSignal.tryOnReturnToUser 0 system with
+                match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
                 | other -> failwith $"expected one frame, got %A{other}"
 
@@ -822,10 +868,11 @@ module TestSigprocmask =
             let changed =
                 (inHandler, inside)
                 ||> List.fold (fun system (how, set) ->
-                    UnixSignal.pthreadSigmask 0 how (Some (ofList set)) system |> orFail
+                    UnixSignal.pthreadSigmask (Callers.thread 0 system) how (Some (ofList set)) system
+                    |> orFail
                 )
 
-            let returned = UnixSignal.sigreturn 0 frame.Id changed
+            let returned = UnixSignal.sigreturn (Callers.thread 0 changed) frame.Id changed
             SignalState.maskOf 0 (Lone.proc returned).Signals |> shouldEqual (ofList before)
             UnixSystem.checkInvariants returned |> shouldEqual []
 

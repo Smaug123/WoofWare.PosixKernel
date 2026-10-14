@@ -543,5 +543,8 @@ module TestSymlink =
                     | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
                     | Error refusal -> Error (SyscallRefusal.Symlink refusal)
 
-                UnixSystem.tryStep 0 (Syscall.SymlinkAt (text target, atFdCwd, text path)) system
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.SymlinkAt (text target, atFdCwd, text path))
+                    system
                 |> shouldEqual direct
