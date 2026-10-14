@@ -57,9 +57,10 @@ type internal TcpEndState =
     | Reset of errorPending : bool
     /// This end's socket is closed: nothing reads here any more.
     /// `reuseAddress` is the `SO_REUSEADDR` the end's socket carried when it
-    /// closed, which the end holds its endpoint with against a bind while it
-    /// still holds it.
-    | Closed of reuseAddress : bool
+    /// closed, and `portHold` how its socket held its port, which the end
+    /// holds its endpoint with against a bind or a search while it still
+    /// holds it.
+    | Closed of reuseAddress : bool * portHold : PortHold
 
 /// The bytes travelling towards one end of a TCP connection, and that end's
 /// state.
@@ -1301,6 +1302,7 @@ module internal TcpTransfer =
         (abortive : bool)
         (closer : ConnectionEnd)
         (reuseAddress : bool)
+        (portHold : PortHold)
         (transfer : TcpTransfer)
         : TcpWake list * TcpTransfer
         =
@@ -1314,7 +1316,7 @@ module internal TcpTransfer =
             { own with
                 Sending = ByteQueue.empty
                 Receiving = ByteQueue.empty
-                Receiver = TcpEndState.Closed reuseAddress
+                Receiver = TcpEndState.Closed (reuseAddress, portHold)
             }
 
         match own.Receiver, outbound.Receiver with
@@ -1431,13 +1433,26 @@ module internal TcpTransfer =
     /// arrived on Linux, or on Darwin once the closer's has arrived and the
     /// peer has made its own, bytes left unread are discarded without a
     /// reset. Not to be asked where `closeRefused` holds. `reuseAddress` is
-    /// the closing socket's `SO_REUSEADDR`, which the closed end keeps.
-    let close (closer : ConnectionEnd) (reuseAddress : bool) (transfer : TcpTransfer) : TcpWake list * TcpTransfer =
-        closeWith "close" false closer reuseAddress transfer
+    /// the closing socket's `SO_REUSEADDR`, and `portHold` how it held its
+    /// port, which the closed end keeps.
+    let close
+        (closer : ConnectionEnd)
+        (reuseAddress : bool)
+        (portHold : PortHold)
+        (transfer : TcpTransfer)
+        : TcpWake list * TcpTransfer
+        =
+        closeWith "close" false closer reuseAddress portHold transfer
 
     /// `closer`'s socket closes under `SO_LINGER` {1, 0}: a reset, unless
     /// both FINs have arrived, when it is the ordinary close (measured,
     /// `tcp-shutdown.c` section L). Not to be asked where `abortRefused`
-    /// holds. `reuseAddress` is as for `close`.
-    let abort (closer : ConnectionEnd) (reuseAddress : bool) (transfer : TcpTransfer) : TcpWake list * TcpTransfer =
-        closeWith "abort" true closer reuseAddress transfer
+    /// holds. `reuseAddress` and `portHold` are as for `close`.
+    let abort
+        (closer : ConnectionEnd)
+        (reuseAddress : bool)
+        (portHold : PortHold)
+        (transfer : TcpTransfer)
+        : TcpWake list * TcpTransfer
+        =
+        closeWith "abort" true closer reuseAddress portHold transfer

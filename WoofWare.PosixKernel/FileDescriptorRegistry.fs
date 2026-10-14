@@ -446,35 +446,6 @@ module internal ReservedConnecting =
         failwith
             $"%s{call}: a socket has a connect in flight, and what this call does to one is not modelled. Nothing in this version puts a socket in SocketPhase.Connecting, which is reserved until a connect to a full listener is modelled, and UnixSystem.checkInvariants reports a socket in it as ReservedSocketPhase (this is a bug in this library, or in a caller that assembled the state by hand)."
 
-/// What holds an endpoint against a `bind(2)`, as far as the bind's conflict
-/// rule (`SimulatedUnixPlatform.bindConflict`) asks.
-[<RequireQualifiedAccess>]
-type internal EndpointHolder =
-    /// A listening socket.
-    | Listener
-    /// One end of a TCP connection: a connected socket, or an end whose socket
-    /// has closed and which still holds its endpoint.
-    | ConnectionEnd
-    /// A socket bound and doing neither: idle, a refused connect, or a
-    /// datagram socket with or without a default peer.
-    | Unconnected
-
-[<RequireQualifiedAccess>]
-module internal EndpointHolder =
-    /// What a socket in `phase` holds its binding as.
-    let ofPhase (phase : SocketPhase) : EndpointHolder =
-        match phase with
-        | SocketPhase.Listening _ -> EndpointHolder.Listener
-        | SocketPhase.EstablishedPendingReport _
-        | SocketPhase.Established _ -> EndpointHolder.ConnectionEnd
-        | SocketPhase.Idle
-        | SocketPhase.Refused _
-        | SocketPhase.DatagramPeer _ -> EndpointHolder.Unconnected
-        // Linux hashes a connect in flight by its four-tuple, as it does an
-        // established end; how that holds the endpoint against a bind is
-        // unmeasured.
-        | SocketPhase.Connecting _ -> ReservedConnecting.failOfPhase "EndpointHolder.ofPhase"
-
 /// A socket's domain, with its `IPV6_V6ONLY` where it is an IPv6 socket, and
 /// the local address it holds, typed in the domain's own addresses.
 ///

@@ -213,7 +213,9 @@
     <Compile Include="TestTcpBufferSizing.fs" />
     <Compile Include="TestSocketBinding.fs" />
     <Compile Include="TestEphemeralPorts.fs" />
+    <Compile Include="TestPortHolders.fs" />
     <Compile Include="TestEphemeralSearchMeasured.fs" />
+    <Compile Include="TestConnectSearchHoldersMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -365,6 +367,12 @@
          replays every row. -->
     <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\ephemeral-search\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.ephemeral-search.darwin.txt" />
+    <!-- Which ports a TCP connect's implicit bind passed over, for each kind of
+         thing that held a port, measured per flavour by
+         docs/probes/connect-search-holders. `TestConnectSearchHoldersMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\connect-search-holders\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.connect-search-holders.darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound

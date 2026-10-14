@@ -1647,7 +1647,7 @@ module TestConnectedTransfer =
 
             // An end closed under its socket.
             system
-            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false >> snd)
+            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false PortHold.Connected >> snd)
             |> snd
             |> UnixSystem.checkInvariants
             |> shouldEqual

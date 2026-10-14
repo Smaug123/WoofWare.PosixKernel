@@ -1740,19 +1740,17 @@ module UnixSocket =
         | None ->
 
         // On Linux two sockets carrying SO_REUSEADDR may share an endpoint until
-        // one of them listens, and the second `listen(2)` is then EADDRINUSE.
-        // Darwin asks nothing of a socket that already has a port; see
-        // `listenRescreensBinding` for why that is not a strictness difference
-        // to round in the safe direction. A socket already listening is not
+        // one of them listens, and the second `listen(2)` is then EADDRINUSE;
+        // Darwin asks nothing of a socket that already has a port
+        // (`PortHolderRules.listenMeets`). A socket already listening is not
         // screened again on either: its listen only updates the backlog, even
         // while a connection it accepted holds its port (`relisten-held.c` in
         // docs/plans/2026-10-08-tcp-shutdown-linger).
         match binding with
         | Some binding when
             PortHold.isHeld binding.PortHold
-            && SimulatedUnixPlatform.listenRescreensBinding system.Machine.UnixPlatform
             && not (SocketPhase.isListening socket.Phase)
-            && UnixMachineState.bindingConflicts socketId socket binding system.Machine
+            && UnixMachineState.listenConflicts socketId socket binding system.Machine
             ->
             Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
         | _ ->

@@ -1502,7 +1502,7 @@ module TestSocketTable =
                                         // closed.
                                         Transfer =
                                             TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
-                                            |> TcpTransfer.close ConnectionEnd.Client false
+                                            |> TcpTransfer.close ConnectionEnd.Client false PortHold.Connected
                                             |> snd
                                     }
                                 ]
@@ -1569,7 +1569,8 @@ module TestSocketTable =
                                     Transfer =
                                         (TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine, closed)
                                         ||> List.fold (fun transfer closer ->
-                                            TcpTransfer.close closer false transfer |> snd
+                                            TcpTransfer.close closer false (ForgedConnection.portHold closer) transfer
+                                            |> snd
                                         )
                                 }
                             ]
