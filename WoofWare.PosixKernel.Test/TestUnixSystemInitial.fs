@@ -214,14 +214,16 @@ module TestUnixSystemInitial =
 
         match
             UnixMachineState.allocateEphemeralPort
+                0L
                 EphemeralPortUse.Reserve
                 (SocketId 0L)
                 socket
                 candidate
                 system.Machine
         with
-        | None -> failwith "a fresh machine could allocate no ephemeral port at all"
-        | Some (bound, machine) ->
+        | Ok None -> failwith "a fresh machine could allocate no ephemeral port at all"
+        | Error refusal -> failwith $"a fresh machine's search met %A{refusal}"
+        | Ok (Some (bound, machine)) ->
             bound.Endpoint.Port |> shouldEqual (fst system.Machine.EphemeralPortRange)
             // ...and the cursor advances by one, so the next draw is not the same port.
             machine.NextEphemeralPort

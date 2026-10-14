@@ -35,6 +35,19 @@ type internal UnixMachineState =
             /// connections waiting in some listener's accept queue. An entry is
             /// removed when nothing references it any more (`UnixDescriptor.close`).
             Connections : Map<ConnectionId, TcpConnection>
+            /// Every TCP connection end in TIME_WAIT whose connection both
+            /// sockets have closed, keyed by its own endpoint and its peer's.
+            /// An entry is made as the connection is forgotten, for the end
+            /// whose FIN was made first, and goes only when a connect takes
+            /// its four-tuple over: when TIME_WAIT ends is unmeasured, so past
+            /// the window it was measured to last
+            /// (`PortHolderRules.timeWaitWindow`) a question it decides is
+            /// refused.
+            TimeWaits : Map<Ipv4Endpoint * Ipv4Endpoint, TcpTimeWait>
+            /// How long TIME_WAIT lasts, and when a connect may take its
+            /// four-tuple over: the machine's sysctls, at their measured
+            /// defaults (`UnixMachineState.defaultTcpTimeWait`).
+            TcpTimeWait : TcpTimeWaitSysctls
             /// The identity the next completed connect will allocate. Monotonic
             /// and never reused, for the same replay-trace reason as
             /// `NextSocketId`.
@@ -619,10 +632,25 @@ module UnixMachineState =
             failwith
                 $"UnixMachineState.connection: %O{connectionId} names no connection in this kernel's connection table. UnixSystemDefect.DanglingConnection and DanglingQueuedConnection exist to make this unreachable, so the system breaks UnixSystem.checkInvariants: this is a bug in this library, or in a caller that assembled the state by hand."
 
+    /// `connection` carrying `transfer`, which a call made at `now` by the
+    /// kernel clock left it: if that completed the exchange of FINs, it did so
+    /// at `now`.
+    let internal transferredAt (now : int64) (transfer : TcpTransfer) (connection : TcpConnection) : TcpConnection =
+        { connection with
+            Transfer = transfer
+            FinsExchangedAt =
+                match connection.FinsExchangedAt with
+                | Some exchanged -> Some exchanged
+                | None when TcpTransfer.exchangeComplete transfer -> Some now
+                | None -> None
+        }
+
     /// `connectionId`'s entry in the connection table, with the bytes and end
-    /// states it carries replaced by `transfer`. Loudly partial, as
+    /// states it carries replaced by `transfer`, which a call made at `now` by
+    /// the kernel clock left (`transferredAt`). Loudly partial, as
     /// `connection` is.
     let internal withTransfer
+        (now : int64)
         (connectionId : ConnectionId)
         (transfer : TcpTransfer)
         (machine : UnixMachineState)
@@ -631,13 +659,7 @@ module UnixMachineState =
         let existing = connection connectionId machine
 
         { machine with
-            Connections =
-                Map.add
-                    connectionId
-                    { existing with
-                        Transfer = transfer
-                    }
-                    machine.Connections
+            Connections = Map.add connectionId (transferredAt now transfer existing) machine.Connections
         }
 
     /// The socket that is the `connectionEnd` end of `connectionId`
@@ -777,7 +799,7 @@ module UnixMachineState =
     /// docs/plans/2026-10-07-tcp-byte-transfer), a fresh socket bound to the
     /// surviving end's address connects to the same destination once a reset
     /// has reached it, though not after a FIN.
-    let private resetReleasedTuple (connection : TcpConnection) : bool =
+    let internal resetReleasedTuple (connection : TcpConnection) : bool =
         [ ConnectionEnd.Client ; ConnectionEnd.Server ]
         |> List.exists (fun connectionEnd ->
             match (TcpTransfer.towards connectionEnd connection.Transfer).Receiver with
@@ -812,6 +834,16 @@ module UnixMachineState =
         || TcpTransfer.passiveFinArrived connectionEnd connection.Transfer
         || TcpTransfer.abortReleased connectionEnd connection.Transfer
 
+    /// An end in TIME_WAIT, as a port holder.
+    let internal timeWaitHolder (timeWait : TcpTimeWait) : PortHolder =
+        {
+            Endpoint = timeWait.Local
+            Kind = PortHolderKind.TimeWait timeWait.EnteredAt
+            Claim = PortClaim.ofPortHold timeWait.PortHold
+            ReuseAddress = timeWait.ReuseAddress
+            Peer = Some timeWait.Remote
+        }
+
     /// What a socket in `phase` is, as a port holder.
     let private holderKind (socketId : SocketId) (phase : SocketPhase) : PortHolderKind =
         match phase with
@@ -831,7 +863,8 @@ module UnixMachineState =
     /// on the socket `asking`: every other socket bound at an IPv4 endpoint
     /// and not connected, and for a stream socket every end of every TCP
     /// connection, whether a socket holds it, its socket has closed, or it
-    /// waits in an accept queue. No such call is made on a connected socket.
+    /// waits in an accept queue, and every end in TIME_WAIT whose connection
+    /// is gone (`TimeWaits`). No such call is made on a connected socket.
     ///
     /// Ports are per transport: a UDP socket takes a port a TCP socket
     /// holds.
@@ -945,36 +978,58 @@ module UnixMachineState =
                 )
             )
 
-        unconnected @ connectionEnds
+        let timeWaits =
+            match transport with
+            | SocketKind.Datagram
+            | SocketKind.SeqPacket -> []
+            | SocketKind.Stream -> machine.TimeWaits |> Map.toList |> List.map (snd >> timeWaitHolder)
+
+        unconnected @ connectionEnds @ timeWaits
+
+    /// What an end in TIME_WAIT on `machine` is judged by, at `now` by the
+    /// kernel clock (`UnixSchedulingState.NanosecondsSinceBoot`).
+    let internal timeWaitClock (now : int64) (machine : UnixMachineState) : TimeWaitClock =
+        {
+            Now = now
+            Sysctls = machine.TcpTimeWait
+        }
 
     /// Whether anything else holding a port stands in the way of `socket`'s
-    /// `bind(2)` of `candidate` (`PortHolderRules.bindMeets`).
+    /// `bind(2)` of `candidate` at `now` (`PortHolderRules.bindVerdict`).
     let internal bindingConflicts
+        (now : int64)
         (socketId : SocketId)
         (socket : SocketDescription)
         (candidate : Ipv4Binding)
         (machine : UnixMachineState)
-        : bool
+        : PortVerdict
         =
         let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
 
         portHolders socketId socket.Kind machine
-        |> List.exists (fun holder -> PortHolderRules.bindMeets flavour holder candidate.Endpoint socket.ReuseAddress)
+        |> Seq.map (fun holder ->
+            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress
+        )
+        |> PortVerdict.ofAll
 
     /// Whether anything else holding a port stands in the way of `listen(2)`
-    /// on `socket`, already bound at `bound` and not yet listening
-    /// (`PortHolderRules.listenMeets`).
+    /// at `now` on `socket`, already bound at `bound` and not yet listening
+    /// (`PortHolderRules.listenVerdict`).
     let internal listenConflicts
+        (now : int64)
         (socketId : SocketId)
         (socket : SocketDescription)
         (bound : Ipv4Binding)
         (machine : UnixMachineState)
-        : bool
+        : PortVerdict
         =
         let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
 
         portHolders socketId socket.Kind machine
-        |> List.exists (fun holder -> PortHolderRules.listenMeets flavour holder bound.Endpoint socket.ReuseAddress)
+        |> Seq.map (fun holder -> PortHolderRules.listenVerdict flavour clock holder bound.Endpoint socket.ReuseAddress)
+        |> PortVerdict.ofAll
 
     /// Whether a TCP SYN from `socketId` towards `destination`, where nothing
     /// listens, is dropped rather than answered with a reset
@@ -988,7 +1043,8 @@ module UnixMachineState =
     /// Whether a TCP connection occupies the four-tuple between `source` and
     /// `destination`, in either orientation: one of its ends occupies it each
     /// way round (`PortHolderRules.occupiesFourTuple`). One a reset has
-    /// reached does not.
+    /// reached does not, nor does an end in TIME_WAIT, whose connection is
+    /// gone (`timeWaitOn`).
     let internal fourTupleOccupied
         (socketId : SocketId)
         (source : Ipv4Endpoint)
@@ -997,33 +1053,66 @@ module UnixMachineState =
         : bool
         =
         portHolders socketId SocketKind.Stream machine
-        |> List.exists (fun holder -> PortHolderRules.occupiesFourTuple holder source destination)
+        |> List.exists (fun holder ->
+            holder.Kind = PortHolderKind.ConnectionEnd
+            && PortHolderRules.occupiesFourTuple holder source destination
+        )
+
+    /// The end in TIME_WAIT at `local`, towards `remote`, as a port holder, if
+    /// there is one.
+    let internal timeWaitOn
+        (local : Ipv4Endpoint)
+        (remote : Ipv4Endpoint)
+        (machine : UnixMachineState)
+        : PortHolder option
+        =
+        Map.tryFind (local, remote) machine.TimeWaits |> Option.map timeWaitHolder
+
+    /// `machine` with the end in TIME_WAIT at `local`, towards `remote`, gone,
+    /// as a connect that takes its four-tuple over ends it; as it was if there
+    /// is none.
+    let internal endTimeWait
+        (local : Ipv4Endpoint)
+        (remote : Ipv4Endpoint)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        { machine with
+            TimeWaits = Map.remove (local, remote) machine.TimeWaits
+        }
 
     /// Hands out the lowest free port at or after the cursor, sweeping the
     /// range once and wrapping, as the binding `candidate` makes of it, on
-    /// behalf of `socket`. `purpose` decides what makes a port free.
+    /// behalf of `socket`, at `now` by the kernel clock. `purpose` decides
+    /// what makes a port free. A connect's search may take over the
+    /// four-tuple of an end in TIME_WAIT, which the connect then ends.
     ///
-    /// `None` when a full sweep finds nothing, which the caller answers: see
-    /// `SimulatedUnixPlatform.ephemeralPortsExhausted`.
+    /// `Ok None` when a full sweep finds nothing, which the caller answers:
+    /// see `SimulatedUnixPlatform.ephemeralPortsExhausted`. An error where
+    /// whether the first port the sweep cannot rule out is free depends on an
+    /// end in TIME_WAIT this kernel cannot judge.
     let internal allocateEphemeralPort
+        (now : int64)
         (purpose : EphemeralPortUse)
         (socketId : SocketId)
         (socket : SocketDescription)
         (candidate : uint16 -> Ipv4Binding)
         (machine : UnixMachineState)
-        : (Ipv4Binding * UnixMachineState) option
+        : Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>
         =
         let low, high = machine.EphemeralPortRange
         let width = int high - int low + 1
         let flavour = SimulatedUnixPlatform.flavour machine.UnixPlatform
+        let clock = timeWaitClock now machine
 
-        let meets (holder : PortHolder) (binding : Ipv4Binding) : bool =
+        let verdict (holder : PortHolder) (binding : Ipv4Binding) : PortVerdict =
             match purpose with
             | EphemeralPortUse.Reserve ->
-                PortHolderRules.bindSearchMeets flavour socket.Kind holder binding.Endpoint socket.ReuseAddress
+                PortHolderRules.bindSearchVerdict flavour clock socket.Kind holder binding.Endpoint socket.ReuseAddress
             | EphemeralPortUse.ConnectTo destination ->
-                PortHolderRules.connectSearchMeets
+                PortHolderRules.connectSearchVerdict
                     flavour
+                    clock
                     socket.Kind
                     holder
                     binding.Endpoint
@@ -1039,7 +1128,7 @@ module UnixMachineState =
                  |> List.groupBy (fun holder -> holder.Endpoint.Port)
                  |> Map.ofList)
 
-        let acceptable (port : uint16) : Ipv4Binding option =
+        let judge (port : uint16) : Ipv4Binding * PortVerdict =
             let binding = candidate port
 
             if binding.Endpoint.Port <> port then
@@ -1047,28 +1136,31 @@ module UnixMachineState =
                     $"UnixMachineState.allocateEphemeralPort: the candidate binding for port %d{port} names port %d{binding.Endpoint.Port} instead (this is a bug in this library)."
 
             let standing = holdersAt.Force () |> Map.tryFind port |> Option.defaultValue []
+            binding, standing |> Seq.map (fun holder -> verdict holder binding) |> PortVerdict.ofAll
 
-            if standing |> List.exists (fun holder -> meets holder binding) then
-                None
-            else
-                Some binding
-
-        let rec sweep (remaining : int) (port : uint16) : (Ipv4Binding * UnixMachineState) option =
+        let rec sweep
+            (remaining : int)
+            (port : uint16)
+            : Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>
+            =
             if remaining = 0 then
-                None
+                Ok None
             else
 
             let next = if port = high then low else port + 1us
 
-            match acceptable port with
-            | Some binding ->
-                Some (
-                    binding,
-                    { machine with
-                        NextEphemeralPort = next
-                    }
+            match judge port with
+            | _, PortVerdict.InTheWay -> sweep (remaining - 1) next
+            | _, PortVerdict.Undetermined refusal -> Error refusal
+            | binding, PortVerdict.Clear ->
+                Ok (
+                    Some (
+                        binding,
+                        { machine with
+                            NextEphemeralPort = next
+                        }
+                    )
                 )
-            | None -> sweep (remaining - 1) next
 
         // A cursor outside the range can only come from a hand-built machine;
         // start from the bottom rather than sweeping from nowhere.
@@ -1079,6 +1171,66 @@ module UnixMachineState =
                 machine.NextEphemeralPort
 
         sweep width start
+
+    /// `machine` with the connection `connectionId` forgotten, as when
+    /// neither of its ends has a socket or a place in an accept queue any
+    /// more, and each end of it in TIME_WAIT recorded in `TimeWaits`: an end
+    /// whose FIN was made first, both FINs having arrived
+    /// (`TcpTransfer.timeWait`), unless a reset reached the connection or a
+    /// Darwin close under `SO_LINGER` {1, 0} freed the end
+    /// (`TcpTransfer.abortReleased`). It entered TIME_WAIT when both FINs had
+    /// arrived (`TcpConnection.FinsExchangedAt`).
+    let internal forgetConnection (connectionId : ConnectionId) (machine : UnixMachineState) : UnixMachineState =
+        let forgotten = connection connectionId machine
+
+        let timeWaits =
+            if resetReleasedTuple forgotten then
+                []
+            else
+
+            [
+                ConnectionEnd.Client, forgotten.ClientAddress, forgotten.ServerAddress
+                ConnectionEnd.Server, forgotten.ServerAddress, forgotten.ClientAddress
+            ]
+            |> List.choose (fun (connectionEnd, local, remote) ->
+                if
+                    not (TcpTransfer.timeWait connectionEnd forgotten.Transfer)
+                    || TcpTransfer.abortReleased connectionEnd forgotten.Transfer
+                then
+                    None
+                else
+
+                match (TcpTransfer.towards connectionEnd forgotten.Transfer).Receiver, forgotten.FinsExchangedAt with
+                | TcpEndState.Closed (reuseAddress, portHold), Some exchanged ->
+                    Some
+                        {
+                            Local = local
+                            Remote = remote
+                            ReuseAddress = reuseAddress
+                            PortHold = portHold
+                            EnteredAt = exchanged
+                        }
+                | other, exchanged ->
+                    failwith
+                        $"UnixMachineState.forgetConnection: the %A{connectionEnd} end of %O{connectionId} is in TIME_WAIT as it is forgotten, but it is %A{other} and the exchange of FINs completed at %A{exchanged} (this is a bug in this library)."
+            )
+
+        { machine with
+            Connections = Map.remove connectionId machine.Connections
+            TimeWaits =
+                (machine.TimeWaits, timeWaits)
+                ||> List.fold (fun timeWaits timeWait -> Map.add (timeWait.Local, timeWait.Remote) timeWait timeWaits)
+        }
+
+    /// The TIME_WAIT sysctls' defaults on each flavour, measured on the
+    /// probe machines (2026-10-14): `net.inet.tcp.msl` reads 15000 (ms) on
+    /// Darwin 27.0.0, and `net.ipv4.tcp_tw_reuse_delay` reads 1000 (ms), with
+    /// `net.ipv4.tcp_tw_reuse` at 2, on the Linux 6.18.5 container
+    /// (`docs/probes/time-wait`).
+    let internal defaultTcpTimeWait (flavour : SimulatedUnixFlavour) : TcpTimeWaitSysctls =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> TcpTimeWaitSysctls.Linux 1_000_000_000L
+        | SimulatedUnixFlavour.Darwin -> TcpTimeWaitSysctls.Darwin 15_000_000_000L
 
     /// The `somaxconn` sysctl's default on each flavour, measured on the
     /// probe machines (2026-08-21): `net.core.somaxconn` reads 4096 on the

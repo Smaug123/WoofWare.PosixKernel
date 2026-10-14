@@ -659,9 +659,40 @@ module internal TcpTransferReference =
                     Stranded = 0
                 }
 
+            // The last close is a reset where a close beside an open peer
+            // would be one, or where a reset reached this end already;
+            // otherwise it makes this end's FIN, unless made already, and with
+            // nothing left to send the FIN arrives at once.
+            let toMe = m.Flows.[c]
+            let unread = not toMe.Arrived.IsEmpty || not toMe.InFlight.IsEmpty
+            let exchangeDone = m.Ends.[p].FinArrived && me.FinArrived
+
+            let unreadResets =
+                unread
+                && not (
+                    if m.Linux then
+                        exchangeDone
+                    else
+                        m.Ends.[p].FinArrived && me.FinSent
+                )
+
+            let resets = me.GotReset || unreadResets || (abortive && not exchangeDone)
+            let peer = m.Ends.[p]
+
+            let peer =
+                if resets then
+                    peer
+                else
+                    { peer with
+                        FinSent = true
+                        FinArrived = true
+                        FinPassive = if peer.FinSent then peer.FinPassive else me.FinArrived
+                    }
+
             [],
             m
             |> setEnd c closedMe
+            |> setEnd p peer
             |> setFlow c (empty m.Flows.[c])
             |> setFlow p (empty m.Flows.[p])
         elif me.GotReset then

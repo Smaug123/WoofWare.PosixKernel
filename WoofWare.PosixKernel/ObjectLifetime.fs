@@ -487,35 +487,32 @@ module ObjectLifetime =
         | Error refusal -> Error refusal
         | Ok closing ->
 
+        let now = system.Scheduling.NanosecondsSinceBoot
+
         let connections =
             (system.Machine.Connections, closing)
             ||> List.fold (fun connections (connection, _, transfer) ->
-                Map.change
-                    connection
-                    (Option.map (fun existing ->
-                        { existing with
-                            Transfer = transfer
-                        }
-                    ))
-                    connections
+                Map.change connection (Option.map (UnixMachineState.transferredAt now transfer)) connections
             )
 
-        let connections =
-            (connections, candidates)
-            ||> List.fold (fun connections connection ->
+        // A connection nothing references any more is forgotten, and an end
+        // of it in TIME_WAIT outlives it (`UnixMachineState.forgetConnection`).
+        let machine =
+            ({ system.Machine with
+                Sockets = sockets
+                Connections = connections
+             },
+             candidates)
+            ||> List.fold (fun machine connection ->
                 if stillReferenced connection then
-                    connections
+                    machine
                 else
-                    Map.remove connection connections
+                    UnixMachineState.forgetConnection connection machine
             )
 
         let released =
             { system with
-                Machine =
-                    { system.Machine with
-                        Sockets = sockets
-                        Connections = connections
-                    }
+                Machine = machine
             }
 
         // Each FIN's or reset's edge, raised now that the survivor's level

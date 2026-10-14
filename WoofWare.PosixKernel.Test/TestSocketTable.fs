@@ -622,6 +622,7 @@ module TestSocketTable =
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 6000us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }
@@ -1419,6 +1420,7 @@ module TestSocketTable =
                                     ConnectionId 2L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }
@@ -1497,6 +1499,7 @@ module TestSocketTable =
                                     ConnectionId 0L,
                                     {
                                         ClientAddress = loopback 1us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 2us
                                         // No socket is the client end: it has
                                         // closed.
@@ -1565,6 +1568,7 @@ module TestSocketTable =
                                 ConnectionId 0L,
                                 {
                                     ClientAddress = loopback 1us
+                                    FinsExchangedAt = None
                                     ServerAddress = loopback 2us
                                     Transfer =
                                         (TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine, closed)
@@ -1994,6 +1998,7 @@ module TestSocketTable =
                         ConnectionId 0L,
                         {
                             ClientAddress = loopback 4000us
+                            FinsExchangedAt = None
                             ServerAddress = loopback 5000us
                             Transfer = TcpTransfer.create SimulatedUnixFlavour.Darwin 146988 408300
                         }
@@ -2190,6 +2195,7 @@ module TestSocketTable =
                                         // from the listener's endpoint to the
                                         // client's.
                                         ClientAddress = loopback 5000us
+                                        FinsExchangedAt = None
                                         ServerAddress = loopback 4444us
                                         Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet kernel.Machine
                                     }

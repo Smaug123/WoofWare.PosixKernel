@@ -111,6 +111,7 @@ module TestAccept =
                     let connection =
                         {
                             ClientAddress = loopback (40000us + uint16 index)
+                            FinsExchangedAt = None
                             ServerAddress = serverAddress
                             Transfer = TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
                         }

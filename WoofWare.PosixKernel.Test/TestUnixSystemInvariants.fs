@@ -166,6 +166,7 @@ module TestUnixSystemInvariants =
                                         connection,
                                         {
                                             ClientAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 40000us
+                                            FinsExchangedAt = None
                                             ServerAddress = Ipv4Endpoint.ofParts Ipv4Address.loopback 80us
                                             // No socket is the server end: it has closed.
                                             Transfer =

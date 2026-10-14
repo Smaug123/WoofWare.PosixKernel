@@ -306,6 +306,19 @@ type UnixSystemDefect<'Thread> =
         connection : ConnectionId *
         rules : SimulatedUnixFlavour *
         flavour : SimulatedUnixFlavour
+    /// A connection records the exchange of its FINs as complete at
+    /// `recorded`, where both FINs have arrived exactly when it records an
+    /// instant, and that instant is not after the machine's clock.
+    | FinsExchangedAtDisagrees of connection : ConnectionId * recorded : int64 option
+    /// An end is in TIME_WAIT at `local`, towards `remote`, from an instant
+    /// after the machine's clock, or filed under a four-tuple not its own.
+    | TimeWaitMisrecorded of local : Ipv4Endpoint * remote : Ipv4Endpoint
+    /// An end is in TIME_WAIT on the four-tuple between `local` and `remote`,
+    /// which `connection`, no reset having reached it, occupies too: a connect
+    /// that takes a TIME_WAIT's four-tuple over ends it.
+    | TimeWaitBesideConnection of local : Ipv4Endpoint * remote : Ipv4Endpoint * connection : ConnectionId
+    /// The machine's TIME_WAIT sysctls are another flavour's.
+    | TimeWaitSysctlsNotOfFlavour of flavour : SimulatedUnixFlavour
     /// The socket `socket` is the `connectionEnd` end of `connection`, or is
     /// the listener whose accept queue holds its server end, which the
     /// connection records as closed.
@@ -1778,6 +1791,12 @@ module UnixSystem =
                     else
                         [ UnixSystemDefect.TcpTransferNotOfFlavour (connection, rulesFlavour, flavour) ]
 
+                let exchangeStamp =
+                    match TcpTransfer.exchangeComplete tcp.Transfer, tcp.FinsExchangedAt with
+                    | true, Some exchanged when exchanged <= scheduling.NanosecondsSinceBoot -> []
+                    | false, None -> []
+                    | _, recorded -> [ UnixSystemDefect.FinsExchangedAtDisagrees (connection, recorded) ]
+
                 // An orphan has no holder of either end, which
                 // `OrphanConnection` reports alone.
                 let ends =
@@ -1813,8 +1832,51 @@ module UnixSystem =
                         | _, _ -> []
                     )
 
-                broken @ ofFlavour @ ends
+                broken @ ofFlavour @ exchangeStamp @ ends
             )
+
+        // Each end in TIME_WAIT against the clock, the key it is filed under,
+        // and the connections still on the machine; and the TIME_WAIT
+        // sysctls against the flavour.
+        let timeWaitDefects =
+            let sysctls =
+                match SimulatedUnixPlatform.flavour machine.UnixPlatform, machine.TcpTimeWait with
+                | SimulatedUnixFlavour.Linux, TcpTimeWaitSysctls.Linux _
+                | SimulatedUnixFlavour.Darwin, TcpTimeWaitSysctls.Darwin _ -> []
+                | flavour, _ -> [ UnixSystemDefect.TimeWaitSysctlsNotOfFlavour flavour ]
+
+            let entries =
+                machine.TimeWaits
+                |> Map.toList
+                |> List.collect (fun ((local, remote), timeWait) ->
+                    let misrecorded =
+                        if
+                            timeWait.Local <> local
+                            || timeWait.Remote <> remote
+                            || timeWait.EnteredAt > scheduling.NanosecondsSinceBoot
+                        then
+                            [ UnixSystemDefect.TimeWaitMisrecorded (local, remote) ]
+                        else
+                            []
+
+                    let beside =
+                        machine.Connections
+                        |> Map.toList
+                        |> List.choose (fun (connection, tcp) ->
+                            if
+                                not (UnixMachineState.resetReleasedTuple tcp)
+                                && ((tcp.ClientAddress = local && tcp.ServerAddress = remote)
+                                    || (tcp.ClientAddress = remote && tcp.ServerAddress = local))
+                            then
+                                Some (UnixSystemDefect.TimeWaitBesideConnection (local, remote, connection))
+                            else
+                                None
+                        )
+
+                    misrecorded @ beside
+                )
+
+            sysctls @ entries
 
         let phaseKindMismatches =
             machine.Sockets
@@ -2569,6 +2631,7 @@ module UnixSystem =
         @ duplicateQueued
         @ connectionEndsHeldTwice
         @ transferDefects
+        @ timeWaitDefects
         @ phaseKindMismatches
         @ drainedUnderLinux
         @ connectionFreshness
@@ -3530,6 +3593,8 @@ module UnixSystem =
                     NextPipeInode = InodeNumber 1L
                     PipeDevice = UnixMachineState.defaultPipeDevice flavour
                     Connections = Map.empty
+                    TimeWaits = Map.empty
+                    TcpTimeWait = UnixMachineState.defaultTcpTimeWait flavour
                     NextConnectionId = ConnectionId 0L
                     NextEventRegistrationOrdinal = 0L
                     NextParkOrdinal = ParkOrdinal 0L

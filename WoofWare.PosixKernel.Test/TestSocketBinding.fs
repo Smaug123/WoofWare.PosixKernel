@@ -374,13 +374,17 @@ module TestSocketBinding =
 
     /// A `bind(0.0.0.0:0)` on behalf of `unboundStream`, as `bind(2)` asks.
     let private reserve (machine : UnixMachineState) : (uint16 * UnixMachineState) option =
-        UnixMachineState.allocateEphemeralPort
-            EphemeralPortUse.Reserve
-            requester
-            unboundStream
-            (binding wildcard)
-            machine
-        |> Option.map (fun (bound, machine) -> bound.Endpoint.Port, machine)
+        match
+            UnixMachineState.allocateEphemeralPort
+                0L
+                EphemeralPortUse.Reserve
+                requester
+                unboundStream
+                (binding wildcard)
+                machine
+        with
+        | Ok found -> found |> Option.map (fun (bound, machine) -> bound.Endpoint.Port, machine)
+        | Error refusal -> failwith $"the search met %A{refusal}"
 
     [<Test>]
     let ``an ephemeral port is in range, free, and a function of the kernel alone`` () : unit =
@@ -456,12 +460,13 @@ module TestSocketBinding =
         let exn =
             Assert.Throws<System.Exception> (fun () ->
                 UnixMachineState.allocateEphemeralPort
+                    0L
                     EphemeralPortUse.Reserve
                     requester
                     unboundStream
                     (fun _ -> binding wildcard 1us)
                     initialSystem.Machine
-                |> ignore<(Ipv4Binding * UnixMachineState) option>
+                |> ignore<Result<(Ipv4Binding * UnixMachineState) option, TimeWaitRefusal>>
             )
 
         exn.Message |> shouldContainText "names port 1 instead"

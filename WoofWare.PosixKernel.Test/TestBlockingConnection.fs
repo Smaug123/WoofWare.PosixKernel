@@ -1774,23 +1774,25 @@ module TestBlockingConnection =
                     // FIN, made after the peer's had arrived, has arrived,
                     // whether its socket is open or closed
                     // (`bind-held-endpoint.c`), or, on Darwin, its socket
-                    // closed under linger zero once both FINs had arrived;
-                    // and forgotten with the
-                    // connection once both sockets have gone, where a real
-                    // kernel's `TIME_WAIT` would go on holding an active
-                    // closer's, which this library does not model. The pair's
-                    // sockets carry no `SO_REUSEADDR`, so a candidate's own
-                    // lets it through on Darwin alone.
+                    // closed under linger zero once both FINs had arrived.
+                    // Once both sockets have gone, held only by an end in
+                    // TIME_WAIT: its FIN made first, and both arrived
+                    // (`docs/probes/time-wait`); the clock never moves here,
+                    // so no TIME_WAIT outlives its window. The pair's sockets
+                    // carry no `SO_REUSEADDR`, so a candidate's own lets it
+                    // through on Darwin alone.
                     for connectionEnd, endPort in [ ConnectionEnd.Client, clientPort ; ConnectionEnd.Server, port ] do
                         let ends = reference.Model.Ends
                         let own = ends.[TcpTransferReference.other connectionEnd]
 
                         let held =
-                            Set.count reference.Gone < 2
-                            && not ends.[ConnectionEnd.Client].GotReset
+                            not ends.[ConnectionEnd.Client].GotReset
                             && not ends.[ConnectionEnd.Server].GotReset
-                            && not (own.FinArrived && own.FinPassive)
                             && not (Set.contains connectionEnd reference.AbortReleased)
+                            && (if Set.count reference.Gone < 2 then
+                                    not (own.FinArrived && own.FinPassive)
+                                else
+                                    own.FinArrived && not own.FinPassive && ends.[connectionEnd].FinArrived)
 
                         for reuse in [ false ; true ] do
                             let refused = bindRefused reuse endPort system
