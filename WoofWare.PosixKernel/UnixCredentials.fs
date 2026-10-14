@@ -124,7 +124,7 @@ module UnixCredentials =
         (effective : UserBuffer)
         (saved : UserBuffer)
         ((realId, effectiveId, savedId) : 'Id * 'Id * 'Id)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetIdsAnswer<'Id>, GetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -154,7 +154,7 @@ module UnixCredentials =
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetIdsAnswer<UserId>, GetIdsRefusal>
         =
         let credentials = system.Process.Credentials
@@ -202,7 +202,7 @@ module UnixCredentials =
         (real : UserBuffer)
         (effective : UserBuffer)
         (saved : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetIdsAnswer<GroupId>, GetIdsRefusal>
         =
         let credentials = system.Process.Credentials
@@ -296,7 +296,7 @@ module UnixCredentials =
         when 'Id : equality and 'Thread : comparison and 'Handler : equality>
         (effectiveBefore : 'Id)
         (effectiveAfter : 'Id)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<unit, SetIdsRefusal>
         =
         match system.Process.CoreDumps with
@@ -309,8 +309,8 @@ module UnixCredentials =
         (real : UserId option)
         (effective : UserId option)
         (saved : UserId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
@@ -389,8 +389,8 @@ module UnixCredentials =
         (real : GroupId option)
         (effective : GroupId option)
         (saved : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetIdsRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SetIdsRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (SetIdsRefusal.NoSuchCall SimulatedUnixFlavour.Darwin)
@@ -506,8 +506,8 @@ module UnixCredentials =
     let private trySetgroupsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (size : int)
         (words : GroupListWords)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SetGroupsRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SetGroupsRefusal>
         =
         let platform = system.Machine.UnixPlatform
         let limit = SimulatedUnixPlatform.supplementaryGroupLimit platform

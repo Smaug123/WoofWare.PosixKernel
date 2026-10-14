@@ -221,7 +221,7 @@ module WakeCondition =
     /// has one: what `WakePrimitive.DeadlinePassed` waits for.
     let internal deadlinePassed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (deadline : int64 option)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match deadline with
@@ -235,7 +235,7 @@ module WakeCondition =
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : PipeId * PipeState
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -257,7 +257,7 @@ module WakeCondition =
     let private connectionOfWaiter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (primitive : WakePrimitive)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ConnectionEnd * TcpTransfer
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -287,7 +287,7 @@ module WakeCondition =
     /// Whether a close has ended the call `thread` is asleep in.
     let private endedByClose<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match
@@ -343,7 +343,7 @@ module WakeCondition =
     let private holds<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (primitive : WakePrimitive)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match primitive with
@@ -487,7 +487,7 @@ module WakeCondition =
     let internal satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (condition : WakeCondition)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Set<WakePrimitive>
         =
         let rec live (condition : WakeCondition) : Set<WakePrimitive> =

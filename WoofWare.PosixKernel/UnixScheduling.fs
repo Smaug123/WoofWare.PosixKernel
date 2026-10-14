@@ -135,7 +135,7 @@ module UnixScheduling =
     /// `runningOn` once `Entry` has admitted the process.
     let private runningOnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : CpuId option
         =
         match Map.tryFind thread system.Threads with
@@ -158,7 +158,7 @@ module UnixScheduling =
     /// `tryGetcpu` once `Entry` has admitted its caller.
     let private tryGetcpuIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetCpuAnswer, GetCpuRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with

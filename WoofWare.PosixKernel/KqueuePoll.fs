@@ -98,7 +98,7 @@ module internal KqueuePoll =
     let private reportOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int, filter : KqueueFilter as key)
         (registration : PollRegistration)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : (KqueueFilterReport * bool) option
         =
         match registration.Socket with
@@ -189,7 +189,7 @@ module internal KqueuePoll =
     /// it.
     let activeAtRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registrations : Map<int * KqueueFilter, PollRegistration>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : (int * KqueueFilter) list
         =
         registrations
@@ -215,7 +215,7 @@ module internal KqueuePoll =
         (revents : int16 list)
         (registrations : Map<int * KqueueFilter, PollRegistration>)
         (active : (int * KqueueFilter) list)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : int16 list * Map<int * KqueueFilter, PollRegistration> * (int * KqueueFilter) list
         =
         if List.length revents <> List.length entries then
@@ -264,7 +264,7 @@ module internal KqueuePoll =
     /// Loudly partial: `thread` must be asleep in a Darwin `poll`.
     let reportable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match UnixThreadTable.parkedFor thread system.Threads with

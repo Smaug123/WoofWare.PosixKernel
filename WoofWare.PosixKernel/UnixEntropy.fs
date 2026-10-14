@@ -142,8 +142,8 @@ module UnixEntropy =
         (stopsShort : int -> bool)
         (buffer : UserBuffer)
         (length : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<EntropyDraw * UnixSystem<'Thread, 'Handler>, UnixError>, TransferRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Result<EntropyDraw * ProcessView<'Thread, 'Handler>, UnixError>, TransferRefusal>
         =
         match
             UserBufferCheck.faultsBeforeOperationFor
@@ -200,8 +200,8 @@ module UnixEntropy =
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<GetRandomAnswer * UnixSystem<'Thread, 'Handler>, GetRandomRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<GetRandomAnswer * ProcessView<'Thread, 'Handler>, GetRandomRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin as flavour -> Error (GetRandomRefusal.NoSuchSyscall flavour)
@@ -282,8 +282,8 @@ module UnixEntropy =
     let private tryGetEntropyIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (length : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<GetEntropyAnswer * UnixSystem<'Thread, 'Handler>, GetEntropyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<GetEntropyAnswer * ProcessView<'Thread, 'Handler>, GetEntropyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux as flavour -> Error (GetEntropyRefusal.NoSuchSyscall flavour)

@@ -72,7 +72,7 @@ module ObjectLifetime =
     /// `pinnedInodes`, with `graph` as the filesystem the closure climbs.
     let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (graph : VirtualFileSystem)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
         let rec climb (frontier : InodeNumber list) (seen : Set<InodeNumber>) : Set<InodeNumber> =
@@ -128,7 +128,7 @@ module ObjectLifetime =
     let private freeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (graph : VirtualFileSystem)
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         // The root is excluded explicitly rather than by the binding count,
@@ -172,8 +172,8 @@ module ObjectLifetime =
     /// just dropped.
     let rec internal forgetIfUnheld<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let graph = system.Machine.FileSystem
 
@@ -215,8 +215,8 @@ module ObjectLifetime =
     let internal commitRemoving<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (removed : InodeNumber)
         (mutation : VfsMutation)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let after = VfsMutation.after mutation
 
@@ -282,8 +282,8 @@ module ObjectLifetime =
     /// docs/plans/2026-10-08-tcp-shutdown-linger).
     let internal releaseDestroyed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destroyedDescription : DestroyedDescription)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         let destroyed = destroyedDescription.Description
 
@@ -538,8 +538,8 @@ module ObjectLifetime =
     /// real kernel releases the file when the call drops its reference.
     let private releaseUnreferenced<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, DescriptionReleaseRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>
         =
         (Ok system, List.distinct descriptions)
         ||> List.fold (fun result id ->
@@ -566,8 +566,8 @@ module ObjectLifetime =
     let internal releaseUnreferencedUnrefusable<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (descriptions : OpenFileDescriptionId list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         match releaseUnreferenced descriptions system with
         | Ok released -> released

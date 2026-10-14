@@ -175,7 +175,7 @@ module UnixClock =
     /// `gettimeofday` once `Entry` has admitted its caller, which a call of
     /// another family reads the clock through as `gettimeofday` would.
     let internal gettimeofdayIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : UnixTimestamp
         =
         truncate 1000 (UnixMachineState.realtime system.Scheduling system.Machine)
@@ -192,7 +192,7 @@ module UnixClock =
     /// `tryClockGettime` once `Entry` has admitted its caller.
     let private tryClockGettimeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (clockId : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<UnixTimestamp, UnixError>, ClockGettimeRefusal>
         =
         let machine = system.Machine

@@ -607,7 +607,7 @@ module UnixDescriptor =
 
     /// `effectiveUserId` once `Entry` has admitted its caller.
     let private effectiveUserIdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : UserId
         =
         system.Process.Credentials.EffectiveUser
@@ -630,7 +630,7 @@ module UnixDescriptor =
 
     /// `effectiveGroupId` once `Entry` has admitted its caller.
     let private effectiveGroupIdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : GroupId
         =
         system.Process.Credentials.EffectiveGroup
@@ -655,7 +655,7 @@ module UnixDescriptor =
     let private tryGetgroupsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : UserBuffer)
         (size : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetGroupsAnswer, GetGroupsRefusal>
         =
         // Measured on Linux 6.18.5 and Darwin 27.0 (`getgroups.c`), in this
@@ -729,8 +729,8 @@ module UnixDescriptor =
     /// `tryDup` once `Entry` has admitted its caller.
     let private tryDupIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, DescriptorLimitRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, DescriptorLimitRefusal>
         =
         let registry = UnixSystemState.fileDescriptors system
 
@@ -786,8 +786,8 @@ module UnixDescriptor =
         (fd : int)
         (offset : int64)
         (whence : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LSeekRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, LSeekRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -1127,8 +1127,8 @@ module UnixDescriptor =
         (through : ReachedThrough)
         (inode : InodeNumber)
         (length : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixSystem<'Thread, 'Handler>, TruncationRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, TruncationRefusal>
         =
         let now = UnixMachineState.realtime system.Scheduling system.Machine
         let rule = SimulatedUnixPlatform.setIdBitsOnTruncation system.Machine.UnixPlatform
@@ -1174,8 +1174,8 @@ module UnixDescriptor =
     let private tryFtruncateIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (length : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, TruncationRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, TruncationRefusal>
         =
         // **Ahead of the descriptor**, measured on both platforms: the same
         // unknown fd is EBADF with a length of 0 and EINVAL with a length of -1,
@@ -1271,7 +1271,7 @@ module UnixDescriptor =
         (offset : int64)
         (length : int64)
         (advice : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileAdviceAnswer, PosixFadviseRefusal>
         =
         // Measured, the offset is never validated at all: a negative one, and
@@ -1375,8 +1375,8 @@ module UnixDescriptor =
         (thread : 'Thread)
         (fd : int)
         (operation : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, FLockRefusal>
         =
         // Unlike a foreign-function layer's error and open-flag encodings, these
         // are *not* values anything translates: `flock(2)` takes them verbatim,
@@ -1575,8 +1575,8 @@ module UnixDescriptor =
     /// `tryFlockAcquire` once `Entry` has admitted its caller.
     let private tryFlockAcquireIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, FLockRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, FLockRefusal>
         =
         let requester, mode =
             UnixThreadTable.expectParked
@@ -1716,7 +1716,7 @@ module UnixDescriptor =
     let private tryBytesAvailableIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<BytesAvailableAnswer, BytesAvailableRefusal>
         =
         // Measured by pipe-syscalls.c on both flavours: a descriptor that is not
@@ -1830,7 +1830,7 @@ module UnixDescriptor =
     let private tryFileCloneIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : int)
         (source : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<UnixError, FileCloneRefusal>
         =
         // Measured on Linux 6.18.5 (`copy-file-syscalls.c`, tmpfs and ext4
@@ -1960,7 +1960,7 @@ module UnixDescriptor =
     /// `terminalAttributes` once `Entry` has admitted its caller.
     let private terminalAttributesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : TerminalAttributesAnswer
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -2025,8 +2025,8 @@ module UnixDescriptor =
     /// `tryClose` once `Entry` has admitted its caller.
     let private tryCloseIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloseRefusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CloseRefusal<'Thread>>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
@@ -2741,8 +2741,8 @@ module UnixDescriptor =
     /// Store `registry` as `system`'s descriptor table and open file descriptions.
     let private withRegistry<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registry : FileDescriptorRegistry)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.withFileDescriptors registry system
 
@@ -2751,8 +2751,8 @@ module UnixDescriptor =
         (fd : int)
         (command : int)
         (argument : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FcntlRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FcntlRefusal>
         =
         let platform = system.Machine.UnixPlatform
         let flavour = SimulatedUnixPlatform.flavour platform
@@ -2938,8 +2938,8 @@ module UnixDescriptor =
         (oldFd : int)
         (newFd : int)
         (flags : DescriptorFlags)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         let registry = UnixSystemState.fileDescriptors system
         let bound = SimulatedUnixPlatform.descriptorBound system.Machine.UnixPlatform
@@ -2991,8 +2991,8 @@ module UnixDescriptor =
     let private tryDup2In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (oldFd : int)
         (newFd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup2Refusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup2Refusal<'Thread>>
         =
         duplicateOnto
             oldFd
@@ -3044,8 +3044,8 @@ module UnixDescriptor =
         (oldFd : int)
         (newFd : int)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, Dup3Refusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, Dup3Refusal<'Thread>>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (Dup3Refusal.NotProvided SimulatedUnixFlavour.Darwin)
@@ -3112,8 +3112,8 @@ module UnixDescriptor =
     let private setNonBlockingIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (isNonBlocking : bool)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : SetNonBlockingAnswer * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : SetNonBlockingAnswer * ProcessView<'Thread, 'Handler>
         =
         let bit = nonBlockingBit (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
 
@@ -3165,7 +3165,7 @@ module UnixDescriptor =
     /// `isNonBlocking` once `Entry` has admitted its caller.
     let private isNonBlockingIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool option
         =
         let bit = nonBlockingBit (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
