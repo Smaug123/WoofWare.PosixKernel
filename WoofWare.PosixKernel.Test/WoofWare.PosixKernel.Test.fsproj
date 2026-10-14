@@ -249,6 +249,7 @@
     <Compile Include="TestSimulatedMachine.fs" />
     <Compile Include="TestMultiProcess.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
+    <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeSweepMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
