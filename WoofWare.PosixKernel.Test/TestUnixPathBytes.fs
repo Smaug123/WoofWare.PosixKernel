@@ -93,11 +93,7 @@ module TestUnixPathBytes =
         let records, _ = DirectoryReading.drain fd system
 
         records
-        |> List.map (fun record ->
-            DirectoryStreamName.toByteString record.Name
-            |> UnixByteString.toBytes
-            |> List.ofSeq
-        )
+        |> List.map (fun record -> PathComponent.toByteString record.Name |> UnixByteString.toBytes |> List.ofSeq)
         |> List.sort
         |> shouldEqual (List.sort ([ [ byte '.' ] ; [ byte '.' ; byte '.' ] ] @ names))
 

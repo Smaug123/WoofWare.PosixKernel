@@ -433,45 +433,6 @@ type internal SeekFault =
     /// values the caller does not jointly control.
     | Overflow
 
-/// A name a directory stream can hand back. Neither "." nor ".." is a
-/// `FileName` — `FileNameError.Reserved` rejects both, because a directory
-/// binds neither and this library derives both from the graph — so a stream that
-/// must produce all three needs a type that can say which it produced.
-[<RequireQualifiedAccess>]
-type DirectoryStreamName =
-    /// The directory being enumerated.
-    | Dot
-    /// `DirectoryContent.Parent`, which is the *physical* parent and so is
-    /// still right after a walk crossed a symlink to get here.
-    | DotDot
-    /// A name the directory actually binds.
-    | Entry of name : DirectoryEntryName
-
-    /// The name rendered for a diagnostic; `DirectoryStreamName.toByteString`
-    /// is what `readdir(3)` puts in `d_name`.
-    override this.ToString () : string =
-        match this with
-        | DirectoryStreamName.Dot -> "."
-        | DirectoryStreamName.DotDot -> ".."
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toEscaped name
-
-[<RequireQualifiedAccess>]
-module DirectoryStreamName =
-    let private ofLiteral (name : string) : UnixByteString =
-        match UnixByteString.ofString name with
-        | Ok bytes -> bytes
-        | Error defect -> failwith $"DirectoryStreamName: %s{UnixPathText.describe defect}"
-
-    let private dot : UnixByteString = ofLiteral "."
-    let private dotDot : UnixByteString = ofLiteral ".."
-
-    /// The bytes `readdir(3)` would put in `d_name`.
-    let toByteString (name : DirectoryStreamName) : UnixByteString =
-        match name with
-        | DirectoryStreamName.Dot -> dot
-        | DirectoryStreamName.DotDot -> dotDot
-        | DirectoryStreamName.Entry name -> DirectoryEntryName.toByteString name
-
 /// How far through a directory an open stream has read.
 ///
 /// A *name*, not a position. Measured on both kernels at 3000 entries, one
@@ -590,6 +551,9 @@ module VirtualFileSystem =
     /// a mounted filesystem.
     let mountOf (inode : InodeNumber) (vfs : VirtualFileSystem) : Mount option = Map.tryFind inode vfs.Mounts
 
+    /// Every filesystem mounted in this one, by the inode of its root.
+    let internal mounts (vfs : VirtualFileSystem) : Map<InodeNumber, Mount> = vfs.Mounts
+
     /// The root of the mounted filesystem `inode` is on, or `None` if it is on
     /// the root filesystem (or is not in the graph at all).
     let mountedRootOf (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeNumber option =
@@ -625,6 +589,17 @@ module VirtualFileSystem =
     /// `tryGet` is the one that answers about identity.
     let tryGetContent (inode : InodeNumber) (vfs : VirtualFileSystem) : InodeContent option =
         Map.tryFind inode vfs.Inodes |> Option.map (fun inode -> inode.Content)
+
+    /// The inode at `inode`, which the caller, `operation`, has just reached
+    /// in this filesystem by a walk, an entry or a descriptor. Loudly partial:
+    /// an inode it does not hold is a broken graph, and `operation` is named
+    /// in the failure.
+    let internal get (operation : string) (inode : InodeNumber) (vfs : VirtualFileSystem) : Inode =
+        match Map.tryFind inode vfs.Inodes with
+        | Some found -> found
+        | None ->
+            failwith
+                $"%s{operation}: inode %O{inode} is not in the filesystem, though the caller had just reached it. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
 
     /// How many bytes a read of `count` bytes starting at `offset` transfers,
     /// from a file whose contents are `length` bytes long.
@@ -1921,7 +1896,7 @@ module VirtualFileSystem =
         (directory : InodeNumber)
         (cursor : DirectoryCursor)
         (vfs : VirtualFileSystem)
-        : (DirectoryStreamName * InodeNumber * DirectoryCursor) option
+        : (PathComponent * InodeNumber * DirectoryCursor) option
         =
         let content =
             match Map.tryFind directory vfs.Inodes with
@@ -1960,13 +1935,13 @@ module VirtualFileSystem =
         /// where this model puts the dots.
         let fromEntries (lower : DirectoryEntryName option) =
             match leastAbove lower with
-            | Some (name, inode) -> Some (DirectoryStreamName.Entry name, inode, DirectoryCursor.After name)
-            | None -> Some (DirectoryStreamName.DotDot, content.Parent, DirectoryCursor.ReturnedDotDot)
+            | Some (name, inode) -> Some (PathComponent.Name name, inode, DirectoryCursor.After name)
+            | None -> Some (PathComponent.Parent, content.Parent, DirectoryCursor.ReturnedDotDot)
 
         match cursor with
         | DirectoryCursor.Start -> fromEntries None
         | DirectoryCursor.After name -> fromEntries (Some name)
-        | DirectoryCursor.ReturnedDotDot -> Some (DirectoryStreamName.Dot, directory, DirectoryCursor.ReturnedDot)
+        | DirectoryCursor.ReturnedDotDot -> Some (PathComponent.Current, directory, DirectoryCursor.ReturnedDot)
         | DirectoryCursor.ReturnedDot -> None
 
     /// Remove an inode from the graph, which is what a kernel does when the last
@@ -2513,6 +2488,28 @@ module VirtualFileSystem =
             )
             Map.empty
 
+    /// The name the directory `parent` binds `inode` under, if it binds it:
+    /// in a well-formed graph, a directory's one name in its parent.
+    let internal nameIn
+        (parent : InodeNumber)
+        (inode : InodeNumber)
+        (vfs : VirtualFileSystem)
+        : DirectoryEntryName option
+        =
+        // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
+        // first. That matters because this runs on every `getcwd`, which a
+        // client may call for every relative path it resolves, and the copy
+        // made the cost scale with how many *siblings* the directory has,
+        // not with the depth of its path. Measured over one directory of 100,000 entries:
+        // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
+        // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
+        // measures *worse* than `Map.toList` on both counts.)
+        tryGetDirectory parent vfs
+        |> Option.bind (fun content ->
+            content.Entries
+            |> Map.tryPick (fun name target -> if target = inode then Some name else None)
+        )
+
     /// The absolute path of a directory, by walking `Parent` links to the root.
     ///
     /// Directories only: a regular file may be hard-linked under several names,
@@ -2535,22 +2532,7 @@ module VirtualFileSystem =
 
             // The name is not stored on the inode, so recover it from the
             // parent's own entries. A well-formed graph has exactly one.
-            //
-            // `Map.tryPick` walks the tree; a search over `Map.toList` copies it
-            // first. That matters because this runs on every `getcwd`, which a
-            // client may call for every relative path it resolves, and the copy
-            // made the cost scale with how many *siblings* the directory has,
-            // not with the depth of its path. Measured over one directory of 100,000 entries:
-            // `Map.toList` 2.3 ms and 6.4 MB per call, `Map.tryPick` 0.39 ms and
-            // 24 bytes. (`Map.tryFindKey`, which reads like the natural answer,
-            // measures *worse* than `Map.toList` on both counts.)
-            match
-                tryGetDirectory content.Parent vfs
-                |> Option.bind (fun parent ->
-                    parent.Entries
-                    |> Map.tryPick (fun name target -> if target = current then Some name else None)
-                )
-            with
+            match nameIn content.Parent current vfs with
             | None -> None
             | Some name -> climb content.Parent (name :: acc) (Set.add current visited)
 

@@ -50,13 +50,6 @@ module internal NewNameRules =
         (vfs : VirtualFileSystem)
         : NewNameVerdict
         =
-        let inodeOf (role : string) (inode : InodeNumber) : Inode =
-            match VirtualFileSystem.tryGet inode vfs with
-            | Some found -> found
-            | None ->
-                failwith
-                    $"NewNameRules: %s{role}, inode %O{inode}, binding \"%s{DirectoryEntryName.toEscaped name}\" in inode %O{directory}, is not in the filesystem. Run VirtualFileSystem.checkInvariants (this is a bug in this library)."
-
         let beforeWrite () : UnixError option =
             match source with
             | NewNameSource.Fresh -> None
@@ -66,12 +59,17 @@ module internal NewNameRules =
                     <> VirtualFileSystem.mountedRootOf directory vfs
                 then
                     Some UnixError.EXDEV
-                elif ProtectedFiles.refusesToLink protection credentials (inodeOf "the source" source) then
+                elif
+                    ProtectedFiles.refusesToLink
+                        protection
+                        credentials
+                        (VirtualFileSystem.get "NewNameRules: the source" source vfs)
+                then
                     Some UnixError.EPERM
                 else
                     None
             | NewNameSource.Cloned source ->
-                let cloned = inodeOf "the source" source
+                let cloned = VirtualFileSystem.get "NewNameRules: the source" source vfs
 
                 match cloned.Content with
                 | InodeContent.RegularFile (_, bits) ->
@@ -92,7 +90,7 @@ module internal NewNameRules =
             | NewNameSource.Fresh
             | NewNameSource.Cloned _ -> None
             | NewNameSource.Linked (source, _) ->
-                match (inodeOf "the source" source).Content with
+                match (VirtualFileSystem.get "NewNameRules: the source" source vfs).Content with
                 | InodeContent.Directory _ -> Some UnixError.EPERM
                 | InodeContent.RegularFile _
                 | InodeContent.Symlink _
@@ -116,7 +114,8 @@ module internal NewNameRules =
         | Some error -> NewNameVerdict.Refuse error
         | None ->
 
-        let parent = inodeOf "the directory to bind in" directory
+        let parent =
+            VirtualFileSystem.get "NewNameRules: the directory to bind in" directory vfs
 
         // Write alone: the search half of the rule is the walk's, and a
         // resolution that reached here has already passed it.

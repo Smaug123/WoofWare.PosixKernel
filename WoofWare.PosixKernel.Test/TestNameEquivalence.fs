@@ -108,11 +108,7 @@ module TestNameEquivalence =
             match DirectoryReading.openDirectory (UnixPath.parseOrFail "test" "/") system with
             | Ok fd, system -> fst (DirectoryReading.drain fd system)
             | Error error, _ -> failwith $"opening the root: %O{error}"
-            |> List.map (fun record ->
-                DirectoryStreamName.toByteString record.Name
-                |> UnixByteString.toBytes
-                |> List.ofSeq
-            )
+            |> List.map (fun record -> PathComponent.toByteString record.Name |> UnixByteString.toBytes |> List.ofSeq)
 
         names |> shouldContain nfc
         names |> shouldContain nfd
@@ -308,11 +304,7 @@ module TestNameEquivalence =
         match DirectoryReading.openDirectory (UnixPath.parseOrFail "test" ".") system with
         | Ok fd, system ->
             fst (DirectoryReading.drain fd system)
-            |> List.map (fun record ->
-                DirectoryStreamName.toByteString record.Name
-                |> UnixByteString.toBytes
-                |> List.ofSeq
-            )
+            |> List.map (fun record -> PathComponent.toByteString record.Name |> UnixByteString.toBytes |> List.ofSeq)
             |> List.filter (fun name -> name <> ascii "." && name <> ascii "..")
         | Error error, _ -> failwith $"opening the current directory: %O{error}"
 

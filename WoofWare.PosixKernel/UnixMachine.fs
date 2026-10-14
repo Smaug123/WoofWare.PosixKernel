@@ -552,21 +552,10 @@ module UnixMachineState =
     /// want, though — see `ObjectLifetime.pinnedInodes`, which adds those the
     /// *filesystem* holds on behalf of these.
     let internal heldInodes (machine : UnixMachineState) : Set<InodeNumber> =
+        // An inotify instance's watch does not keep the inode it watches: the
+        // watch goes when the inode does.
         OpenFileTable.toSeq machine.OpenFiles
-        |> Seq.choose (fun (_, description) ->
-            match description.Target with
-            | OpenFileTarget.File (inode, _)
-            | OpenFileTarget.Directory (inode, _)
-            | OpenFileTarget.CharacterDevice (inode, _, _)
-            | OpenFileTarget.Fifo (inode, _) -> Some inode
-            | OpenFileTarget.Socket _
-            | OpenFileTarget.Kqueue _
-            | OpenFileTarget.Epoll _
-            // A watch does not keep the inode it watches: the watch goes
-            // when the inode does.
-            | OpenFileTarget.Inotify _
-            | OpenFileTarget.Pipe _ -> None
-        )
+        |> Seq.choose (fun (_, description) -> OpenFileTable.inodeOf description.Target)
         |> Set.ofSeq
         |> Set.union (
             OpenFileTable.toSeqOpenedThrough machine.OpenFiles
@@ -1223,6 +1212,32 @@ module UnixMachineState =
             (bootSeconds + sinceBoot / UnixTimestamp.nanosecondsPerSecond + carry)
             (int (nanoseconds % UnixTimestamp.nanosecondsPerSecond))
 
+    /// `machine` with the pipe `pipeId`, one the process made, reporting
+    /// `status`. Loudly partial: this kernel holds no status for a pipe the
+    /// process was launched with.
+    let internal withMadePipeStatus
+        (pipeId : PipeId)
+        (status : PipeStatus)
+        (machine : UnixMachineState)
+        : UnixMachineState
+        =
+        let piped = pipe pipeId machine
+
+        match piped.Origin with
+        | PipeOrigin.Launched (endpoint, _) ->
+            failwith
+                $"UnixMachineState.withMadePipeStatus: pipe %O{pipeId} was launched as %O{endpoint}, and this kernel holds no status for it (this is a bug in the caller)."
+        | PipeOrigin.Made _ ->
+            { machine with
+                Pipes =
+                    Map.add
+                        pipeId
+                        { piped with
+                            Origin = PipeOrigin.Made status
+                        }
+                        machine.Pipes
+            }
+
     /// `machine` with the timestamps of the pipe `pipeId` passed through
     /// `touch`, if this kernel holds them: it holds none for a pipe the process
     /// was launched with, whose timestamps are the launcher's.
@@ -1232,24 +1247,15 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        let piped = pipe pipeId machine
-
-        match piped.Origin with
+        match (pipe pipeId machine).Origin with
         | PipeOrigin.Launched _ -> machine
         | PipeOrigin.Made status ->
-            { machine with
-                Pipes =
-                    Map.add
-                        pipeId
-                        { piped with
-                            Origin =
-                                PipeOrigin.Made
-                                    { status with
-                                        Times = touch status.Times
-                                    }
-                        }
-                        machine.Pipes
-            }
+            withMadePipeStatus
+                pipeId
+                { status with
+                    Times = touch status.Times
+                }
+                machine
 
     /// What a read reaching `pipeId`'s read operation, or ending a sleep on it,
     /// does to its timestamps: on Darwin, moves the read end's `st_atime` to

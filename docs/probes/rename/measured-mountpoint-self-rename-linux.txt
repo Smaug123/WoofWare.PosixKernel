@@ -1,0 +1,11 @@
+# Linux 6.18.5 aarch64, in Apple container gcc:14, 2026-10-13
+FIXTURE euid=0 stat(/) st_dev=65040 st_ino=2; stat(/dev) st_dev=6 st_ino=1; /dev is on another filesystem
+FIXTURE mountinfo: 49 46 0:6 / /dev rw,nosuid,relatime - devtmpfs none rw,size=568448k,nr_inodes=142112,mode=755
+SELF euid=0 mount point onto itself rename(/dev, /dev) 0; /dev still there: yes
+SELF euid=0 mount point onto itself, other spelling rename(/dev, //dev) 0; /dev still there: yes
+SELF euid=0 mount point to another name rename(/dev, /devx) -1 EBUSY; /dev still there: yes
+SELF euid=0 plain directory onto itself rename(/tmp/plain, /tmp/plain) 0; /tmp/plain still there: yes
+SELF euid=0 plain directory to another name rename(/tmp/plain, /tmp/plain2) 0; /tmp/plain still there: no
+SELF euid=1000 mount point onto itself rename(/dev, /dev) 0; /dev still there: yes
+SELF euid=1000 mount point to another name rename(/dev, /devx) -1 EACCES; /dev still there: yes
+SELF euid=1000 plain directory onto itself rename(/tmp/plain, /tmp/plain) 0; /tmp/plain still there: yes

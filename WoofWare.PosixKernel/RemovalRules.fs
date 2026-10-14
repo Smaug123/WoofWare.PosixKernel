@@ -170,34 +170,53 @@ module private RemovalChecks =
         (vfs : VirtualFileSystem)
         : Inode * PermissionBits
         =
-        match VirtualFileSystem.tryGet directory vfs with
-        | Some parent -> parent, Inode.permissions parent
-        | None ->
-            failwith
-                $"RemovalChecks.holding: resolution named inode %O{directory} as the directory holding \"%s{DirectoryEntryName.toEscaped name}\", but the filesystem does not contain it. Run VirtualFileSystem.checkInvariants."
+        let parent =
+            VirtualFileSystem.get "RemovalChecks.holding: the directory holding the name" directory vfs
 
-    /// Whether the *holding* directory refuses this caller the write bit it
-    /// needs to remove a name from it.
+        parent, Inode.permissions parent
+
+    /// Whether the directory `inode` refuses this caller the write bit it
+    /// needs to remove, rename or replace a name in it, or to rewrite the
+    /// ".." of a directory a rename moves.
     ///
     /// Write alone: the search half is the walk's, and a resolution that got
     /// this far has passed it. The sticky bit is a separate question, which
     /// `sticky` answers.
     ///
-    /// Partial in `directory`, which the walk has just reported as the directory
-    /// holding `name`.
-    let lacksWrite
-        (credentials : Credentials)
-        (directory : InodeNumber)
-        (name : DirectoryEntryName)
-        (vfs : VirtualFileSystem)
-        : bool
-        =
-        // The lookup is above the privilege test, so its two assertions
-        // fire for a privileged caller too. That is deliberate: both name a
-        // corrupt inode graph, and root skipping the check would leave the
-        // corruption to be found somewhere less informative.
-        let parent, permissions = holding directory name vfs
-        PermissionBits.deniedTo (Standing.toward credentials parent.Owner) AccessRequest.Write permissions
+    /// Partial in `inode`, which the caller has just obtained from a
+    /// resolution or from a directory entry, and which `role` names in the
+    /// failure.
+    let lacksWrite (role : string) (credentials : Credentials) (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
+        // The lookup is above the privilege test, so its assertion fires for
+        // a privileged caller too. That is deliberate: it names a corrupt
+        // inode graph, and root skipping the check would leave the corruption
+        // to be found somewhere less informative.
+        let entry = VirtualFileSystem.get role inode vfs
+        PermissionBits.deniedTo (Standing.toward credentials entry.Owner) AccessRequest.Write (Inode.permissions entry)
+
+    /// Whether the directory holding the final name `resolution` reached
+    /// carries the sticky bit: false for a path that ends in no name.
+    let inStickyDirectory (resolution : Resolution) (vfs : VirtualFileSystem) : bool =
+        match resolution.Target with
+        | ResolvedTarget.Entry (directory, _, _) ->
+            match VirtualFileSystem.tryGetDirectory directory vfs with
+            | Some content -> PermissionBits.toInt content.Permissions &&& PermissionBits.sticky <> 0
+            | None -> false
+        | ResolvedTarget.Directory _ -> false
+
+    /// The root of the filesystem mounted on the final name `resolution`
+    /// reached, where the directory holding that name is sticky. The sticky
+    /// rule consults the covered directory's owner, which this kernel does not
+    /// hold, rather than the mounted root's.
+    let mountPointInStickyDirectory (resolution : Resolution) (vfs : VirtualFileSystem) : InodeNumber option =
+        match resolution.Target with
+        | ResolvedTarget.Entry (_, _, Some target) when
+            (VirtualFileSystem.mountOf target vfs).IsSome
+            && inStickyDirectory resolution vfs
+            ->
+            Some target
+        | ResolvedTarget.Entry _
+        | ResolvedTarget.Directory _ -> None
 
     /// What the holding directory's sticky bit says about this caller removing,
     /// renaming or replacing `name`, which is bound to `target`.
@@ -213,12 +232,7 @@ module private RemovalChecks =
         =
         let parent, permissions = holding directory name vfs
 
-        let entry =
-            match VirtualFileSystem.tryGet target vfs with
-            | Some entry -> entry
-            | None ->
-                failwith
-                    $"RemovalChecks.sticky: the walk resolved \"%s{DirectoryEntryName.toEscaped name}\" to inode %O{target}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
+        let entry = VirtualFileSystem.get "RemovalChecks.sticky" target vfs
 
         PermissionBits.stickyRemoval
             (Standing.toward credentials parent.Owner)
@@ -228,11 +242,7 @@ module private RemovalChecks =
     /// How this caller stands towards `target`, which the walk has just
     /// reported.
     let standingTowards (credentials : Credentials) (target : InodeNumber) (vfs : VirtualFileSystem) : Standing =
-        match VirtualFileSystem.tryGet target vfs with
-        | Some entry -> Standing.toward credentials entry.Owner
-        | None ->
-            failwith
-                $"RemovalChecks.standingTowards: the walk resolved a name to inode %O{target}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
+        Standing.toward credentials (VirtualFileSystem.get "RemovalChecks.standingTowards" target vfs).Owner
 
     /// Whether Darwin's sticky rule refuses this caller removing, renaming or
     /// replacing `name`, which is bound to `target`. Darwin refuses with EACCES,
@@ -259,16 +269,13 @@ module private RemovalChecks =
     /// Throws if the supplied inode doesn't exist.
     /// </remarks>
     let isDirectory (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
-        match VirtualFileSystem.tryGetContent inode vfs with
-        | Some (InodeContent.Directory _) -> true
-        | Some (InodeContent.RegularFile _)
-        | Some (InodeContent.Socket _)
-        | Some (InodeContent.Fifo _)
-        | Some (InodeContent.CharacterDevice _)
-        | Some (InodeContent.Symlink _) -> false
-        | None ->
-            failwith
-                $"RemovalChecks.isDirectory: the walk resolved a name to inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
+        match (VirtualFileSystem.get "RemovalChecks.isDirectory" inode vfs).Content with
+        | InodeContent.Directory _ -> true
+        | InodeContent.RegularFile _
+        | InodeContent.Socket _
+        | InodeContent.Fifo _
+        | InodeContent.CharacterDevice _
+        | InodeContent.Symlink _ -> false
 
     /// <summary>
     /// Whether the directory at <c>inode</c> still holds an entry.
@@ -282,18 +289,15 @@ module private RemovalChecks =
     /// Throws if the supplied inode is a symlink or a regular file, or doesn't exist.
     /// </remarks>
     let isEmptyDirectory (inode : InodeNumber) (vfs : VirtualFileSystem) : bool =
-        match VirtualFileSystem.tryGetContent inode vfs with
-        | Some (InodeContent.Directory directory) -> Map.isEmpty directory.Entries
-        | Some (InodeContent.RegularFile _)
-        | Some (InodeContent.Socket _)
-        | Some (InodeContent.Fifo _)
-        | Some (InodeContent.CharacterDevice _)
-        | Some (InodeContent.Symlink _) ->
+        match (VirtualFileSystem.get "RemovalChecks.isEmptyDirectory" inode vfs).Content with
+        | InodeContent.Directory directory -> Map.isEmpty directory.Entries
+        | InodeContent.RegularFile _
+        | InodeContent.Socket _
+        | InodeContent.Fifo _
+        | InodeContent.CharacterDevice _
+        | InodeContent.Symlink _ ->
             failwith
                 $"RemovalChecks.isEmptyDirectory: inode %O{inode} is not a directory, so it has no entries to count. Ask isDirectory first (this is a bug in the caller of RemovalChecks.isEmptyDirectory)."
-        | None ->
-            failwith
-                $"RemovalChecks.isEmptyDirectory: the walk resolved a name to inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
 
 [<RequireQualifiedAccess>]
 module internal UnlinkRules =
@@ -348,7 +352,7 @@ module internal UnlinkRules =
                 UnlinkVerdict.Refuse UnixError.EISDIR
             else
                 UnlinkVerdict.Refuse UnixError.ENOTDIR
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             UnlinkVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials directory name target vfs = StickyRemoval.Forbidden then
             UnlinkVerdict.Refuse UnixError.EPERM
@@ -418,7 +422,7 @@ module internal UnlinkRules =
 
         if RemovalChecks.isDirectory target vfs then
             Ok (UnlinkVerdict.Refuse UnixError.EPERM)
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             Ok (UnlinkVerdict.Refuse UnixError.EACCES)
         else
 
@@ -518,32 +522,19 @@ module internal OpenDirRules =
         | Error error -> OpenDirVerdict.Refuse error
         | Ok inode ->
 
-        match VirtualFileSystem.tryGet inode vfs with
-        | None ->
-            failwith
-                $"OpenDirRules.verdict: the walk resolved to inode %O{inode}, which the filesystem does not contain. Run VirtualFileSystem.checkInvariants."
-        | Some {
-                   Content = InodeContent.RegularFile _
-               }
-        | Some {
-                   Content = InodeContent.CharacterDevice _
-               }
-        | Some {
-                   Content = InodeContent.Socket _
-               }
-        | Some {
-                   Content = InodeContent.Fifo _
-               }
-        | Some {
-                   Content = InodeContent.Symlink _
-               } ->
+        let directory = VirtualFileSystem.get "OpenDirRules.verdict" inode vfs
+
+        match directory.Content with
+        | InodeContent.RegularFile _
+        | InodeContent.CharacterDevice _
+        | InodeContent.Socket _
+        | InodeContent.Fifo _
+        | InodeContent.Symlink _ ->
             // The symlink arm is unreachable through the resolver, which
             // followed every final link and answered ENOENT for a dangling one.
             // It is the same answer either way, so there is nothing to refuse.
             OpenDirVerdict.Refuse UnixError.ENOTDIR
-        | Some ({
-                    Content = InodeContent.Directory content
-                } as directory) ->
+        | InodeContent.Directory content ->
 
         if
             PermissionBits.deniedTo (Standing.toward credentials directory.Owner) AccessRequest.Read content.Permissions
@@ -622,7 +613,7 @@ module internal RmDirRules =
         | None -> RmDirVerdict.Refuse UnixError.ENOENT
         | Some target ->
 
-        if RemovalChecks.lacksWrite credentials directory name vfs then
+        if RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             RmDirVerdict.Refuse UnixError.EACCES
         elif RemovalChecks.sticky credentials directory name target vfs = StickyRemoval.Forbidden then
             RmDirVerdict.Refuse UnixError.EPERM
@@ -693,7 +684,7 @@ module internal RmDirRules =
 
         if not (RemovalChecks.isDirectory target vfs) then
             Ok (RmDirVerdict.Refuse UnixError.ENOTDIR)
-        elif RemovalChecks.lacksWrite credentials directory name vfs then
+        elif RemovalChecks.lacksWrite "RemovalChecks: the directory holding the name" credentials directory vfs then
             Ok (RmDirVerdict.Refuse UnixError.EACCES)
         else
 
