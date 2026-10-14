@@ -1413,6 +1413,47 @@ module TestConnectedTransfer =
             | BindAnswer.Failed UnixError.EADDRINUSE when not listenerReuse -> ()
             | other -> failwith $"listener SO_REUSEADDR %b{listenerReuse}: a bind with it answered %A{other}"
 
+    /// A connection a Linux accept drops leaves its server end holding the
+    /// listener's port as an accepted socket would, one `bind(2)` or
+    /// `listen(2)` made, which Linux's search for a connect's port passes over
+    /// though it shares one connect's own implicit bind made
+    /// (`docs/probes/connect-search-holders`, rows fe and f). That the end
+    /// keeps the listener's bind bucket is inferred from Linux's source
+    /// (`__inet_inherit_port`), not measured.
+    [<Test>]
+    let ``a connection a Linux accept drops holds the listener's port against a connect's search`` () : unit =
+        let system =
+            systemOn
+                (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                 >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                SimulatedUnixPlatform.linuxX64
+
+        let listener, system = KeventWorld.listenerAt 40000us system
+        let _, system = KeventWorld.listenerAt port system
+        let client, system = KeventWorld.stream true system
+        let _, system = KeventWorld.connect client 40000us system
+
+        let system =
+            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 0xFFFFFFFFu system with
+            | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) -> system
+            | other -> failwith $"accept: %A{other}"
+
+        let system = KeventWorld.close listener system
+        assertClean system
+
+        // 40000 is the dropped server end's, bind-made; 40001 the client's,
+        // made by its connect, and shared towards another destination.
+        let searching, system = KeventWorld.stream false system
+
+        match KeventWorld.connect searching port system with
+        | SyscallAnswer.Completed 0L, system ->
+            match (UnixMachineState.socket (socketOf searching system) system.Machine).Ipv4Binding with
+            | Some binding -> binding.Endpoint.Port |> shouldEqual 40001us
+            | None -> failwith "the searching socket is unbound"
+
+            assertClean system
+        | other, _ -> failwith $"the search's connect answered %A{other}"
+
     /// `bind-late-reuse.c`'s rows (docs/plans/2026-10-08-tcp-shutdown-linger),
     /// through the syscalls on each flavour: a client's `SO_REUSEADDR` flipped
     /// once its end is in `TIME_WAIT` or `FIN_WAIT2`, the client then left
@@ -1647,7 +1688,7 @@ module TestConnectedTransfer =
 
             // An end closed under its socket.
             system
-            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false >> snd)
+            |> withTransfer (TcpTransfer.close ConnectionEnd.Client false PortHold.Connected >> snd)
             |> snd
             |> UnixSystem.checkInvariants
             |> shouldEqual

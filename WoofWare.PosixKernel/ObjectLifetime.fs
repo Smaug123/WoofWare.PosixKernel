@@ -416,10 +416,12 @@ module ObjectLifetime =
                 |> List.map (fun queued ->
                     // The server end keeps the SO_REUSEADDR its socket would
                     // have held: the listener's when the connection completed.
+                    // It holds the listener's port as an accepted socket would.
                     let wakes, transfer =
                         TcpTransfer.abort
                             ConnectionEnd.Server
                             queued.ReuseAddress
+                            PortHold.Reserved
                             (UnixMachineState.connection queued.Connection system.Machine).Transfer
 
                     queued.Connection, wakes, transfer
@@ -431,6 +433,15 @@ module ObjectLifetime =
             | SocketPhase.Established _
             | SocketPhase.EstablishedPendingReport _ ->
 
+            // How the dying socket, which holds a connection end, holds its
+            // port, which its closed end keeps.
+            let portHold () : PortHold =
+                match dying.Ipv4Binding with
+                | Some binding -> binding.PortHold
+                | None ->
+                    failwith
+                        $"ObjectLifetime.releaseDestroyed: socket %O{socketId} holds a connection end and no IPv4 binding (this is a bug in this library)."
+
             match SocketPhase.connectionEnd dying.Phase with
             | None -> Ok []
             | Some (connection, connectionEnd) when dying.Options.Linger.Enabled && dying.Options.Linger.Hundredths = 0L ->
@@ -439,7 +450,9 @@ module ObjectLifetime =
                 if TcpTransfer.abortRefused connectionEnd transfer then
                     Error (DescriptionReleaseRefusal.DarwinAbortBehindQueuedFin (socketId, connection))
                 else
-                    let wakes, transfer = TcpTransfer.abort connectionEnd dying.ReuseAddress transfer
+                    let wakes, transfer =
+                        TcpTransfer.abort connectionEnd dying.ReuseAddress (portHold ()) transfer
+
                     Ok [ connection, wakes, transfer ]
             | Some (connection, connectionEnd) ->
                 let transfer = (UnixMachineState.connection connection system.Machine).Transfer
@@ -465,7 +478,9 @@ module ObjectLifetime =
                 elif TcpTransfer.closeRefused connectionEnd transfer then
                     Error (DescriptionReleaseRefusal.DarwinCloseBehindQueuedFin (socketId, connection))
                 else
-                    let wakes, transfer = TcpTransfer.close connectionEnd dying.ReuseAddress transfer
+                    let wakes, transfer =
+                        TcpTransfer.close connectionEnd dying.ReuseAddress (portHold ()) transfer
+
                     Ok [ connection, wakes, transfer ]
 
         match closing with

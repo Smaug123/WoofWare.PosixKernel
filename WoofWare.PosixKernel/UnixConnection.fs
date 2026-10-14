@@ -270,13 +270,6 @@ type internal ConnectRefusal =
     /// the caller's length stopped short of `sin6_scope_id`, as Linux reads
     /// such a length.
     | Ipv6Destination of socket : SocketId * destination : Ipv6Endpoint
-    /// Under Darwin, the connect's implicit bind took the destination's own
-    /// port, with nothing listening there, and another socket holds that port
-    /// at some address. Darwin's implicit bind binds the wildcard before it
-    /// resolves the source, and its search would have passed the port over,
-    /// whatever `SO_REUSEADDR` says; which port it would have taken instead is
-    /// not modelled.
-    | DarwinImplicitBindHeld of binding : SocketAddress
 
 [<RequireQualifiedAccess>]
 module internal ConnectRefusal =
@@ -318,8 +311,6 @@ module internal ConnectRefusal =
             $"AF_UNSPEC on stream socket %O{socket} in %A{phase} under Linux runs tcp_disconnect, whose consequences for this phase (a connected socket's peer, a listener's queue) are unmeasured and unmodelled."
         | ConnectRefusal.Ipv6Destination (socket, destination) ->
             $"IPv6 socket %O{socket} would connect to %s{Ipv6Endpoint.toString destination}. This kernel has no IPv6 transport: an IPv6 socket reaches only IPv4 peers, through v4-mapped addresses (::ffff:a.b.c.d), with IPV6_V6ONLY off."
-        | ConnectRefusal.DarwinImplicitBindHeld binding ->
-            $"this connect's implicit bind took %s{SocketAddress.toString binding}, the destination's own port, where nothing listens, and Darwin would answer EINVAL keeping that binding. But another socket holds the port at some address, and Darwin's implicit bind, which binds the wildcard, passes over such a port whatever SO_REUSEADDR says; which port it would have taken instead is not modelled. Bind the socket before connecting, or widen the machine's EphemeralPortRange."
         | ConnectRefusal.DatagramGroupDestination (socket, destination) ->
             $"datagram socket %O{socket} would connect to %s{SocketAddress.toString destination}, a broadcast or multicast destination. This kernel models no group membership and no interface to broadcast on, so it does not record such a peer. Model multicast and broadcast before connecting to either."
 
@@ -340,7 +331,6 @@ module internal ConnectRefusal =
         | ConnectRefusal.LinuxUnspecOnPhase _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DatagramGroupDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.Ipv6Destination _ -> RefusalKind.Unmodelled
-        | ConnectRefusal.DarwinImplicitBindHeld _ -> RefusalKind.Unmodelled
 
 /// What `connect(2)`'s ladder reads out of the sockaddr it copied in, from a
 /// `struct sockaddr_in` on an IPv4 socket and a `struct sockaddr_in6` on an
@@ -567,8 +557,8 @@ module UnixConnection =
                 binding
 
         // connect(2)'s implicit bind, when the socket has no local address
-        // yet: loopback source, ephemeral port, the same conflict rule as
-        // bind(2)'s own port-0 path. The source address for a non-loopback
+        // yet: loopback source, and an ephemeral port by the connect search's
+        // rule (`PortHolderRules.connectSearchMeets`). The source address for a non-loopback
         // destination is the route's preferred source, which is unmeasured,
         // so that input is refused. `current` is the binding the source is
         // resolved from, which is the socket's own unless the connect has
@@ -839,19 +829,7 @@ module UnixConnection =
                     // 127.0.0.1:P, connecting to 127.0.0.1:P: source equals
                     // destination even though a listener matched.
                     Error (ConnectRefusal.SelfTuple (SocketAddress.Inet clientBinding.Endpoint))
-                elif
-                    system.Machine.Connections
-                    |> Map.exists (fun _ connection ->
-                        // In either orientation: a connection's endpoint
-                        // pair occupies the tuple from both ends, until a
-                        // reset releases it.
-                        not (UnixMachineState.resetReleasedTuple connection)
-                        && ((connection.ClientAddress = clientBinding.Endpoint
-                             && connection.ServerAddress = dest)
-                            || (connection.ClientAddress = dest
-                                && connection.ServerAddress = clientBinding.Endpoint))
-                    )
-                then
+                elif UnixMachineState.fourTupleOccupied socketId clientBinding.Endpoint dest system.Machine then
                     // Established tuples are unique in a real kernel; a second
                     // identical (source, destination) pair — two clients
                     // reuse-bound to one source endpoint, connecting to one
@@ -975,33 +953,9 @@ module UnixConnection =
                     selfTuple system
                 | _ ->
 
-                match flavour with
-                | SimulatedUnixFlavour.Darwin when
-                    system.Machine.Sockets
-                    |> Map.exists (fun otherId other ->
-                        otherId <> socketId
-                        && other.Kind = SocketKind.Stream
-                        // Only a bound-but-unconnected socket makes Darwin
-                        // drop the SYN. A port held by established ends
-                        // (their pcbs are keyed by the full peer tuple) or
-                        // by a refused socket answers RST — measured, both
-                        // refuse like a closed port.
-                        && (
-                            match other.Phase with
-                            | SocketPhase.Idle -> true
-                            | _ -> false
-                        )
-                        && (
-                            match other.Ipv4Binding with
-                            | Some binding ->
-                                binding.Endpoint.Port = dest.Port
-                                && Ipv4Endpoint.addressesOverlap binding.Endpoint dest
-                            | None -> false
-                        )
-                    )
-                    ->
+                if UnixMachineState.synDropped socketId dest system.Machine then
                     Error (ConnectRefusal.DarwinSynDropped (SocketAddress.Inet dest))
-                | _ ->
+                else
 
                 // The implicit bind happens before the SYN, so a refused
                 // socket has a concrete local endpoint too — measured,
@@ -1014,9 +968,10 @@ module UnixConnection =
                     // Only a socket with no port of its own gets here, one
                     // holding a port having been answered above: unbound, or
                     // under Linux one whose refused connect gave its port back.
-                    // Its implicit bind took the destination's own port. Darwin
-                    // keeps what that bind made, the wildcard at the port, from
-                    // before the source resolved to loopback.
+                    // Its implicit bind took the destination's own port, which
+                    // nothing else holds. Darwin keeps what that bind made, the
+                    // wildcard at the port, from before the source resolved to
+                    // loopback.
                     let implicitBinding =
                         { binding with
                             Endpoint =
@@ -1024,16 +979,6 @@ module UnixConnection =
                                     Address = Ipv4Address.any
                                 }
                         }
-
-                    match flavour with
-                    | SimulatedUnixFlavour.Darwin when
-                        UnixMachineState.portHeldByAnother socketId sock binding.Endpoint.Port system.Machine
-                        ->
-                        // The search judged the port for 127.0.0.1, where
-                        // Darwin's passes over a port anything holds at any
-                        // address, whatever SO_REUSEADDR says.
-                        Error (ConnectRefusal.DarwinImplicitBindHeld (SocketAddress.Inet implicitBinding.Endpoint))
-                    | _ ->
 
                     selfTuple
                         { system with
@@ -2107,14 +2052,15 @@ module UnixConnection =
         // (`QueuedConnection.ReuseAddress`, measured for the socket an accept
         // returns); that a dropped connection's end keeps it too is inferred
         // from Linux's source (`sk_clone_lock` in `tcp_create_openreq_child`),
-        // not measured.
+        // not measured. It holds the listener's port as an accepted socket
+        // would.
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
         let wakes, transfer =
             if queued.Options.Linger.Enabled && queued.Options.Linger.Hundredths = 0L then
-                TcpTransfer.abort ConnectionEnd.Server queued.ReuseAddress transfer
+                TcpTransfer.abort ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved transfer
             else
-                TcpTransfer.close ConnectionEnd.Server queued.ReuseAddress transfer
+                TcpTransfer.close ConnectionEnd.Server queued.ReuseAddress PortHold.Reserved transfer
 
         let connections =
             if List.isEmpty clients then

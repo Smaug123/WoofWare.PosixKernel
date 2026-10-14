@@ -649,20 +649,22 @@ module TestConnect =
     /// Darwin's implicit bind binds the wildcard at the port before it resolves
     /// the source, and its search passes over a port another socket holds at
     /// any address, whatever `SO_REUSEADDR` says (measured,
-    /// `docs/probes/implicit-self-connect`, rows H and Hr), though this
-    /// library's search, judging the port for 127.0.0.1, can take it. Where it
-    /// took the destination's own port, the EINVAL answer would leave the
-    /// socket holding the wildcard over that other socket's binding, so it is
-    /// refused instead.
+    /// `docs/probes/implicit-self-connect`, rows H and Hr). So where the
+    /// destination's own port is held at another address, the connect never
+    /// takes it, and is refused from the next port.
     [<Test>]
-    let ``Darwin refuses an implicit self-tuple on a port held at another address`` () : unit =
+    let ``Darwin's implicit bind passes over the destination's port held at another address`` () : unit =
         let platform = SimulatedUnixPlatform.macOsArm64
 
         for reuse in [ false ; true ] do
             // Held at an address 127.0.0.1 does not overlap; a holder that did
             // would have Darwin drop the SYN before any port is chosen.
             let system =
-                let system = systemWithOnePort platform 40000us
+                let system =
+                    systemOnWith
+                        (UnixBootImage.tryWithEphemeralPortRange (40000us, 40001us)
+                         >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+                        platform
 
                 { system with
                     Machine =
@@ -685,11 +687,14 @@ module TestConnect =
 
             let fd, system = withSocket (SocketId 1L) connecting system
 
-            match refusedBy fd (loopback 40000us) system with
-            | ConnectRefusal.DarwinImplicitBindHeld binding ->
-                binding
-                |> shouldEqual (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
-            | other -> failwith $"SO_REUSEADDR %b{reuse}: expected DarwinImplicitBindHeld, got %A{other}"
+            match connectTo fd 16u (loopback 40000us) system with
+            | SyscallAnswer.Failed UnixError.ECONNREFUSED, after ->
+                match (UnixMachineState.socket (SocketId 1L) after.Machine).Ipv4Binding with
+                | Some binding when binding.Endpoint.Port = 40001us -> ()
+                | other -> failwith $"SO_REUSEADDR %b{reuse}: the refused socket is bound at %A{other}"
+
+                UnixSystem.checkInvariants after |> shouldEqual []
+            | answer, _ -> failwith $"SO_REUSEADDR %b{reuse}: expected ECONNREFUSED from 40001, got %A{answer}"
 
     /// A socket `bind(2)` gave the wildcard at the port searches for no port,
     /// so another socket holding the port at another address, which the bind

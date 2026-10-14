@@ -117,7 +117,7 @@ module TestTcpShutdownMeasured =
                 if TcpTransfer.closeRefused e transfer then
                     refused <- true
                 else
-                    transfer <- snd (TcpTransfer.close e false transfer)
+                    transfer <- snd (TcpTransfer.close e false PortHold.Reserved transfer)
 
                 "0"
 
@@ -129,7 +129,7 @@ module TestTcpShutdownMeasured =
                 if TcpTransfer.abortRefused e transfer then
                     refused <- true
                 else
-                    transfer <- snd (TcpTransfer.abort e false transfer)
+                    transfer <- snd (TcpTransfer.abort e false PortHold.Reserved transfer)
 
                 "0"
 

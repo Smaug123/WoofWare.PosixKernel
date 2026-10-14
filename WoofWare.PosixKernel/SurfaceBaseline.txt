@@ -4149,7 +4149,6 @@ WoofWare.PosixKernel.SimulatedUnixPlatformModule.linkReadRule [static method]: W
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.linkRules [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> WoofWare.PosixKernel.LinkRules
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.linuxArm64 [static property]: [read-only] WoofWare.PosixKernel.SimulatedUnixPlatform
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.linuxX64 [static property]: [read-only] WoofWare.PosixKernel.SimulatedUnixPlatform
-WoofWare.PosixKernel.SimulatedUnixPlatformModule.listenRescreensBinding [static method]: WoofWare.PosixKernel.SimulatedUnixPlatform -> bool
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.macOsArm64 [static property]: [read-only] WoofWare.PosixKernel.SimulatedUnixPlatform
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.maximumDarwinSocketAddressLength [static property]: [read-only] int
 WoofWare.PosixKernel.SimulatedUnixPlatformModule.maximumSocketAddressSize [static property]: [read-only] int

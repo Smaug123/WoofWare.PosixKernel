@@ -170,7 +170,7 @@ module TestUnixSystemInvariants =
                                             // No socket is the server end: it has closed.
                                             Transfer =
                                                 TcpBufferSizing.newTransfer SocketDomain.Inet unlaunched.Machine
-                                                |> TcpTransfer.close ConnectionEnd.Server false
+                                                |> TcpTransfer.close ConnectionEnd.Server false PortHold.Reserved
                                                 |> snd
                                         }
                                     ]
