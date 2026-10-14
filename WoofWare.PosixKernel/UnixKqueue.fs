@@ -684,7 +684,7 @@ module UnixKqueue =
                         Deadline = deadline
                     }
 
-            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
 
         match timeout with
         | None -> park None
@@ -830,7 +830,11 @@ module UnixKqueue =
             // filter is no longer ready, and sleeps again.
             let _, swept = KqueueQueue.drain parked.Kqueue parked.MaxEvents system
             let parkedAgain = ParkedSyscall.Kevent parked
-            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain swept)
+
+            Ok (
+                KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain swept
+            )
 
     /// `finishKevent`, with a refusal answered as the `Error` rather than raised.
     let internal tryFinishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

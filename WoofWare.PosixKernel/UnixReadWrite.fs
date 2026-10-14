@@ -1444,7 +1444,10 @@ module UnixReadWrite =
                             Call = call
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked (committed ()))
+                Ok (
+                    ReadOutcome.WouldBlock (WakeCondition.ofPark parked),
+                    UnixWait.parkWaiting thread parked (committed ())
+                )
         | TcpReadAnswer.EndOfFile -> answered (ReadAnswer.Completed ImmutableArray.Empty)
         | TcpReadAnswer.Failed error -> answered (ReadAnswer.Failed (TcpError.toUnixError error))
         | TcpReadAnswer.Bytes bytes when bytes.IsEmpty -> answered (ReadAnswer.Completed bytes)
@@ -1987,7 +1990,7 @@ module UnixReadWrite =
                                 Count = count
                             }
 
-                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked asleep)
+                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked asleep)
             else
 
             match buffer with
@@ -2027,7 +2030,7 @@ module UnixReadWrite =
                             Count = count
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
         | ReadTarget.File (inode, offset) ->
 
         match readAnsweredByPosition (positionCheck platform offset count) with
@@ -2262,7 +2265,11 @@ module UnixReadWrite =
         | Ok None when nonBlockingNow reader system -> Error (ReadRefusal.ConnectionBecameNonBlocking socketId)
         | Ok None ->
             let parkedAgain = ParkedSyscall.ConnectionRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2332,7 +2339,11 @@ module UnixReadWrite =
             // Measured on both (pipe-blocking.c section A3): a reader that
             // finds the pipe empty again sleeps at the back of the queue.
             let parkedAgain = ParkedSyscall.PipeRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishInotifyRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2368,7 +2379,11 @@ module UnixReadWrite =
         | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
         | Ok None ->
             let parkedAgain = ParkedSyscall.InotifyRead parked
-            Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     let private finishReadHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -2907,7 +2922,7 @@ module UnixReadWrite =
                     ReadsSeen = reads
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.park thread parked system)
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.parkWaiting thread parked system)
 
     /// Whether the bytes a write has just put into `connectionEnd` of
     /// `connectionId` reset the connection: they reached a peer that had
@@ -2949,7 +2964,7 @@ module UnixReadWrite =
 
         let asleep =
             if not (resetByOwnBytes connectionId connectionEnd system) then
-                UnixWait.park thread parked system
+                UnixWait.parkWaiting thread parked system
             else
 
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with

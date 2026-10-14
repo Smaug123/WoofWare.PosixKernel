@@ -967,7 +967,7 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
 
     /// Finish the Linux-flavoured `poll` `thread` is parked in: see `finishPoll`.
     let private finishLinuxPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1033,7 +1033,11 @@ module UnixPoll =
             Ok (PollOutcome.Answered (reported, triggered), finished)
         else
             let parkedAgain = ParkedSyscall.Poll parked
-            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+
+            Ok (
+                PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     // Darwin's limits on how many entries one call takes (`OPEN_MAX` and
     // `FD_SETSIZE` in `poll_nocancel`), measured in `poll-darwin.c` section N.
@@ -1283,7 +1287,7 @@ module UnixPoll =
                 Machine = machine
             }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
 
     /// Finish the Darwin-flavoured `poll` `thread` is parked in: see `finishPoll`.
     let private finishDarwinPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1345,7 +1349,10 @@ module UnixPoll =
                             system.Machine
                 }
 
-            Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain), UnixWait.park thread parkedAgain system)
+            Ok (
+                PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
+                UnixWait.parkWaiting thread parkedAgain system
+            )
 
     /// `poll`, with a refusal answered as the `Error` rather than raised.
     let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1577,7 +1584,7 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.park thread parked system
+        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system
 
     /// `epollWait`, with a refusal answered as the `Error` rather than raised.
     let internal tryEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
