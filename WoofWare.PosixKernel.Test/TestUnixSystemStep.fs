@@ -529,7 +529,9 @@ module TestUnixSystemStep =
 
         WriteAdmissions.unchanged fd UserBuffer.Mapped 3UL system
         |> admitted
-        |> shouldEqual (WriteAdmission.Transfer 3)
+        |> function
+            | WriteAdmission.Transfer (3, WriteInto.File (into, _, 0L, _)) -> into |> shouldEqual fd
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``a buffer with no bytes is refused at the copy, not faulted`` () : unit =
@@ -566,7 +568,9 @@ module TestUnixSystemStep =
 
         WriteAdmissions.unchanged fd UserBuffer.Mapped 3UL system
         |> admitted
-        |> shouldEqual (WriteAdmission.Transfer 3)
+        |> function
+            | WriteAdmission.Transfer (3, WriteInto.File (into, _, 0L, _)) -> into |> shouldEqual fd
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``a write to a file lands, and advances the offset by what moved`` () : unit =
@@ -611,8 +615,7 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``write answers the descriptor questions itself`` () : unit =
-        // A caller that skipped the admission gets a kernel's answer rather than
-        // an inconsistent one, which is what lets the second call take no buffer.
+        // The whole call answers them before its copy.
         WriteOutcomes.write 7 (ImmutableArray.CreateRange [ 1uy ]) linux
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, linux))
 
@@ -623,10 +626,8 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``an empty write changes nothing, but only after the descriptor checks`` () : unit =
-        // `admitWrite` answers this case too, so the arm is unreachable for a
-        // caller that used the pair — but a caller that did not must get the
-        // same answer. Measured: a zero-length write leaves `mtime` and `ctime`
-        // where they were and does not extend the file, and
+        // Answered before the copy. Measured: a zero-length write leaves
+        // `mtime` and `ctime` where they were and does not extend the file, and
         // `VirtualFileSystem.writeFile` asserts a non-empty write for exactly
         // that reason.
         let fd, system = withOpenFile linux
@@ -655,9 +656,8 @@ module TestUnixSystemStep =
     [<Test>]
     let ``a socket with a refused connection's error is refused by both halves of the write`` () : unit =
         // What a write reports of a refused connection's error is not modelled.
-        // Both calls must refuse: the admission because a caller must not
-        // extract bytes for a write that cannot happen, and `write` because a
-        // caller that skipped the admission must not get a guess either.
+        // The admission refuses, so that a caller never extracts bytes for a
+        // write that cannot happen.
         let socketId = SocketId 0L
         let refused = SocketPhase.Refused RefusalError.Pending
 
@@ -719,7 +719,7 @@ module TestUnixSystemStep =
             |> endedBySigPipe
             |> shouldEqual true
 
-        UnixReadWrite.tryWriteBytes (Lone.leader idle) fd (ImmutableArray.CreateRange [ 1uy ]) idle
+        WriteOutcomes.writeBytes (Lone.leader idle) fd (ImmutableArray.CreateRange [ 1uy ]) idle
         |> endedBySigPipe
         |> shouldEqual true
 
@@ -752,7 +752,7 @@ module TestUnixSystemStep =
                     UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped count system
                     |> shouldEqual refused
 
-                UnixReadWrite.tryWriteBytes (Lone.leader system) fd (ImmutableArray.CreateRange [ 1uy ]) system
+                WriteOutcomes.writeBytes (Lone.leader system) fd (ImmutableArray.CreateRange [ 1uy ]) system
                 |> shouldEqual refused
 
     [<Test>]
@@ -802,13 +802,16 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than written`` () : unit =
         let fd, system = withOpenFile linux
 
-        let exn =
-            Assert.Throws<System.Exception> (fun () ->
-                WriteOutcomes.write fd Unchecked.defaultof<ImmutableArray<byte>> system
-                |> ignore<Result<WriteAnswer * UnixSystem<int, string>, WriteRefusal>>
-            )
+        match UnixReadWrite.write system.Leader fd UserBuffer.Mapped 1UL system with
+        | CallProgress.NeedsCopyIn paused ->
+            let exn =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixReadWrite.writeWithBytes Unchecked.defaultof<ImmutableArray<byte>> paused
+                    |> ignore<ProcessFate<WriteOutcome<int>, int, string>>
+                )
 
-        exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+            exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+        | other -> failwith $"expected the write to stop at its copy, got %A{other}"
 
     // ------------------------------------------------------------------- pread
 
@@ -1175,7 +1178,7 @@ module TestUnixSystemStep =
                 | Ok (_, system) -> system
                 | other -> failwith $"could not advance the offset: %A{other}"
 
-            match UnixReadWrite.tryPwriteBytes 0 fd (ImmutableArray.CreateRange [ 9uy ; 9uy ]) 3L system with
+            match WriteOutcomes.admitThenPwrite 0 fd (ImmutableArray.CreateRange [ 9uy ; 9uy ]) 3L system with
             | Ok (WriteAnswer.Completed written, after) ->
                 written |> shouldEqual 2L
 
@@ -1195,7 +1198,7 @@ module TestUnixSystemStep =
     let ``a pwrite past the end of the file extends it`` () : unit =
         let fd, system = withOpenFile linux
 
-        match UnixReadWrite.tryPwriteBytes 0 fd (ImmutableArray.CreateRange [ 7uy ]) 7L system with
+        match WriteOutcomes.admitThenPwrite 0 fd (ImmutableArray.CreateRange [ 7uy ]) 7L system with
         | Ok (WriteAnswer.Completed written, after) ->
             written |> shouldEqual 1L
 
@@ -1407,7 +1410,9 @@ module TestUnixSystemStep =
 
         UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 9L system
         |> pwriteAdmitted
-        |> shouldEqual (PWriteAdmission.Transfer 3)
+        |> function
+            | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``admitting a pwrite changes nothing`` () : unit =
@@ -1427,26 +1432,27 @@ module TestUnixSystemStep =
 
         UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 0L system
         |> pwriteAdmitted
-        |> shouldEqual (PWriteAdmission.Transfer 3)
+        |> function
+            | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()
+            | other -> failwith $"%A{other}"
 
     [<Test>]
     let ``pwrite answers the descriptor questions itself`` () : unit =
-        // A caller that skipped the admission gets a kernel's answer rather than
-        // an inconsistent one, which is what lets the second call take no buffer.
+        // The whole call answers them before its copy.
         let bytes = ImmutableArray.CreateRange [ 1uy ]
 
-        UnixReadWrite.tryPwriteBytes 0 7 bytes 0L linux
+        WriteOutcomes.admitThenPwrite 0 7 bytes 0L linux
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, linux))
 
         let fd, system = withReadOnlyFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 fd bytes 0L system
+        WriteOutcomes.admitThenPwrite 0 fd bytes 0L system
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, system))
 
         // Including the negative offset, which precedes them all.
         let good, goodSystem = withOpenFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 good bytes -1L goodSystem
+        WriteOutcomes.admitThenPwrite 0 good bytes -1L goodSystem
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EINVAL, goodSystem))
 
     [<Test>]
@@ -1457,12 +1463,12 @@ module TestUnixSystemStep =
         // measured, `pwrite(f, buf, 0, 100000)` on a five-byte file leaves it five
         // bytes long.
         for offset in [ 0L ; 100000L ] do
-            UnixReadWrite.tryPwriteBytes 0 fd ImmutableArray<byte>.Empty offset system
+            WriteOutcomes.admitThenPwrite 0 fd ImmutableArray<byte>.Empty offset system
             |> shouldEqual (Ok (WriteAnswer.Completed 0L, system))
 
         let readOnlyFd, readOnly = withReadOnlyFile linux
 
-        UnixReadWrite.tryPwriteBytes 0 readOnlyFd ImmutableArray<byte>.Empty 0L readOnly
+        WriteOutcomes.admitThenPwrite 0 readOnlyFd ImmutableArray<byte>.Empty 0L readOnly
         |> shouldEqual (Ok (WriteAnswer.Failed UnixError.EBADF, readOnly))
 
     [<Test>]
@@ -1474,7 +1480,7 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
         let bytes = ImmutableArray.CreateRange [ 1uy ]
 
-        match UnixReadWrite.tryPwriteBytes 0 fd bytes VirtualFileSystem.maxFileLength system with
+        match WriteOutcomes.admitThenPwrite 0 fd bytes VirtualFileSystem.maxFileLength system with
         | Error (PWriteRefusal.ExceedsRepresentableLength (_, offset, count)) ->
             offset |> shouldEqual VirtualFileSystem.maxFileLength
             count |> shouldEqual 1
@@ -1487,13 +1493,16 @@ module TestUnixSystemStep =
     let ``a defaulted byte array is rejected rather than pwritten`` () : unit =
         let fd, system = withOpenFile linux
 
-        let exn =
-            Assert.Throws<System.Exception> (fun () ->
-                UnixReadWrite.tryPwriteBytes 0 fd Unchecked.defaultof<ImmutableArray<byte>> 0L system
-                |> ignore<Result<WriteAnswer * UnixSystem<int, string>, PWriteRefusal>>
-            )
+        match UnixReadWrite.pwrite 0 fd UserBuffer.Mapped 1UL 0L system with
+        | CallProgress.NeedsCopyIn paused ->
+            let exn =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixReadWrite.pwriteWithBytes Unchecked.defaultof<ImmutableArray<byte>> paused
+                    |> ignore<WriteAnswer * UnixSystem<int, string>>
+                )
 
-        exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+            exn.Message |> shouldContainText "ImmutableArray<byte>.Empty"
+        | other -> failwith $"expected the pwrite to stop at its copy, got %A{other}"
 
     // ------------------------------------------------------------------- fstat
 

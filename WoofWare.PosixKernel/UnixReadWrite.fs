@@ -166,6 +166,69 @@ type WriteAnswer =
     /// libc keeps errno.
     | Failed of error : UnixError
 
+/// Where the bytes a `write` or `send` copies go, as the call decided before
+/// it read them: `UnixReadWrite.tryApplyWrite` puts every one of them there,
+/// and the call returns their count.
+[<RequireQualifiedAccess>]
+type internal WriteInto =
+    /// The file `inode`, from `offset`, the offset of the description the
+    /// descriptor `fd` names, which moves past them; the change is reported
+    /// under `through`, the name that description was opened through.
+    | File of fd : int * inode : InodeNumber * offset : int64 * through : ReachedThrough
+    /// A character device, which takes every byte and keeps none.
+    | Device
+    /// The pipe `pipe`.
+    | Pipe of pipe : PipeId
+    /// `connectionEnd` of `connection`.
+    | Connection of connection : ConnectionId * connectionEnd : ConnectionEnd
+
+/// Where a blocking `write` or `send` with room for only the first of its
+/// bytes puts those, as the call decided before it read them:
+/// `UnixReadWrite.applyWriteThenSleep` puts them there, and the call sleeps
+/// for the rest.
+[<RequireQualifiedAccess>]
+type internal WriteIntoThenSleep =
+    /// The pipe `pipe`, through its write end's description `writer`, which
+    /// the descriptor `fd` names.
+    | Pipe of pipe : PipeId * writer : OpenFileDescriptionId * fd : int
+    /// `connectionEnd` of `connection`, by `call`, through the description
+    /// `writer`, which the descriptor `fd` names.
+    | Connection of
+        connection : ConnectionId *
+        connectionEnd : ConnectionEnd *
+        call : TcpSendCall *
+        writer : OpenFileDescriptionId *
+        fd : int
+
+/// The woken `write` or `send` a thread is asleep in, and what it writes into,
+/// as `UnixReadWrite.tryAdmitFinishWrite` found them:
+/// `UnixReadWrite.tryApplyResumedWrite` puts the next of its bytes in.
+[<RequireQualifiedAccess>]
+type internal WriteResumed =
+    /// `parked`, into the pipe `pipe`, through its write end's description
+    /// `writer`, which the descriptor `fd` names.
+    | Pipe of pipe : PipeId * writer : OpenFileDescriptionId * fd : int * parked : ParkedPipeWrite
+    /// `parked`, into `connectionEnd` of `connection`, which the socket
+    /// `socket` is, through the description `writer`, which the descriptor
+    /// `fd` names.
+    | Connection of
+        socket : SocketId *
+        connection : ConnectionId *
+        connectionEnd : ConnectionEnd *
+        writer : OpenFileDescriptionId *
+        fd : int *
+        parked : ParkedConnectionWrite
+
+/// Where the bytes a `pwrite` copies go, as the call decided before it read
+/// them: `UnixReadWrite.tryApplyPWrite` puts every one of them there.
+[<RequireQualifiedAccess>]
+type internal PWriteInto =
+    /// The file `inode`, from the call's offset; the change is reported
+    /// under `through`, the name its description was opened through.
+    | File of inode : InodeNumber * through : ReachedThrough
+    /// A character device, which takes every byte and keeps none.
+    | Device
+
 /// Whether a `write` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitWrite` answers it: the step before the copy that
 /// `UnixReadWrite.write` turns into a `CallProgress`.
@@ -176,19 +239,19 @@ type internal WriteAdmission =
     /// no-op, or a non-blocking write into a pipe with no room.
     | Answered of answer : WriteAnswer
     /// The copy is reached: extract exactly `count` bytes and pass them to
-    /// `tryWriteBytes`. That is the count asked for, or one call's worth of it
-    /// if it was more (see `TransferCountLimit`), so it is never more than
-    /// `Int32.MaxValue`; or, for a non-blocking write into a pipe with room for
-    /// only part of it, the part the pipe takes, which is all the write then
-    /// answers.
-    | Transfer of count : int
+    /// `UnixReadWrite.tryApplyWrite` with `into`. That is the count asked for,
+    /// or one call's worth of it if it was more (see `TransferCountLimit`), so
+    /// it is never more than `Int32.MaxValue`; or, for a non-blocking write
+    /// into a pipe or to a connected socket with room for only part of it,
+    /// the part it takes, which is all the write then answers.
+    | Transfer of count : int * into : WriteInto
     /// A blocking write of `total` bytes into a pipe, or to a connected
     /// socket, with room for part of it: extract the first `count` of them,
     /// which the object takes now, and pass them to
-    /// `UnixReadWrite.tryWriteBytesThenSleep`, which puts them in and sleeps
-    /// for the rest. The rest is read from the caller's buffer only as room
-    /// appears, as a real kernel copies it.
-    | TransferThenSleep of count : int * total : int
+    /// `UnixReadWrite.applyWriteThenSleep` with `into`, which puts them in and
+    /// sleeps for the rest. The rest is read from the caller's buffer only as
+    /// room appears, as a real kernel copies it.
+    | TransferThenSleep of count : int * total : int * into : WriteIntoThenSleep
 
 /// Whether a blocking `write` into a pipe or to a connected socket, asleep
 /// because it had no room for the rest of it, reaches the point at which it
@@ -201,9 +264,9 @@ type internal WriteResumption =
     | Answered of answer : WriteAnswer
     /// There is room: extract the `count` bytes of the caller's buffer that
     /// start `offset` bytes in, and pass them to
-    /// `UnixReadWrite.tryFinishWriteBytes`.
+    /// `UnixReadWrite.tryApplyResumedWrite` with `into`.
     /// The bytes before `offset` are in the pipe or the connection already.
-    | Transfer of offset : int * count : int
+    | Transfer of offset : int * count : int * into : WriteResumed
 
 /// What a write that answers `EPIPE` and raises `SIGPIPE` was writing to.
 [<RequireQualifiedAccess>]
@@ -495,21 +558,23 @@ type internal PWriteAdmission =
     /// Answered without the buffer being read at all.
     | Answered of answer : WriteAnswer
     /// The copy is reached: extract exactly `count` bytes and pass them to
-    /// `tryPwriteBytes`.
-    | Transfer of count : int
+    /// `UnixReadWrite.tryApplyPWrite` with `into`.
+    | Transfer of count : int * into : PWriteInto
 
-/// Which call a `PausedWrite` is, and what it does with the bytes.
+/// Which call a `PausedWrite` is, and what it does with the bytes, as the
+/// call decided before it read them.
 [<RequireQualifiedAccess>]
 type internal PausedWriteCall =
-    /// A `write` through `fd`, which puts every byte in and returns.
-    | Write of fd : int
-    /// A blocking `write` of `total` bytes through `fd`, which puts these
-    /// bytes, the first of them, in and sleeps for the rest, or returns their
-    /// count where they reset a Linux connection.
-    | WriteThenSleep of fd : int * total : int
+    /// A `write` through `fd`, which puts every byte into `into` and
+    /// returns.
+    | Write of fd : int * into : WriteInto
+    /// A blocking `write` of `total` bytes, which puts these bytes, the first
+    /// of them, into `into` and sleeps for the rest, or returns their count
+    /// where they reset a Linux connection.
+    | WriteThenSleep of total : int * into : WriteIntoThenSleep
     /// A `write` or `send` that slept, woken with room, which puts these bytes
     /// in and returns, or sleeps again for the rest.
-    | Finish
+    | Finish of into : WriteResumed
 
 /// A `write(2)`, or a woken `write(2)` or `send(2)`, stopped where the kernel
 /// copies from the caller's buffer: `UnixReadWrite.write` and
@@ -538,16 +603,16 @@ module PausedWrite =
         =
         paused.Range
 
-/// Which call a `PausedSend` is, and what it does with the bytes.
+/// Which call a `PausedSend` is, and what it does with the bytes, as the call
+/// decided before it read them.
 [<RequireQualifiedAccess>]
 type internal PausedSendCall =
-    /// A `send` through `fd` with the raw flag word `flags`, which puts every
-    /// byte in and returns.
-    | Send of fd : int * flags : int
-    /// A blocking `send` of `total` bytes through `fd` with the raw flag word
-    /// `flags`, which puts these bytes, the first of them, in and sleeps for
-    /// the rest.
-    | SendThenSleep of fd : int * total : int * flags : int
+    /// A `send`, which puts every byte into `into` and returns.
+    | Send of into : WriteInto
+    /// A blocking `send` of `total` bytes, which puts these bytes, the first
+    /// of them, into `into` and sleeps for the rest, or returns their count
+    /// where they reset a Linux connection.
+    | SendThenSleep of total : int * into : WriteIntoThenSleep
 
 /// A `send(2)` stopped where the kernel copies from the caller's buffer:
 /// `UnixReadWrite.send` answers it, `PausedSend.copyRange` says which bytes to
@@ -588,6 +653,8 @@ type PausedPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
             Fd : int
             /// Where in the file the bytes go.
             FileOffset : int64
+            /// What they go into.
+            Into : PWriteInto
             Range : CopyRange
             /// The system as the call stood when it reached the copy, which is
             /// the one it was made in: everything a `pwrite` does before the
@@ -942,22 +1009,6 @@ module UnixReadWrite =
 
         int (min count (uint64 maxTransfer))
 
-    /// `write` and `pwrite` take the bytes their admission said to extract,
-    /// which is at most one call's worth; more is a caller that skipped the
-    /// admission.
-    let private assertOneCallsWorth
-        (syscall : string)
-        (platform : SimulatedUnixPlatform)
-        (bytes : ImmutableArray<byte>)
-        : unit
-        =
-        let maxTransfer =
-            TransferCountLimit.maxTransfer (SimulatedUnixPlatform.transferCountLimit platform)
-
-        if bytes.Length > maxTransfer then
-            failwith
-                $"UnixReadWrite.%s{syscall}: given %d{bytes.Length} bytes, more than the %d{maxTransfer} one call moves on this platform. Pass the bytes the admission said to transfer, whose count is already one call's worth (this is a bug in the caller)."
-
     /// Mark the description `id` as written through (`OpenFileStatus.Written`),
     /// under the flavour that records it, if it is still in the table.
     let private markWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1011,6 +1062,19 @@ module UnixReadWrite =
         | WriteStep.ProcessEnded _
         | WriteStep.WouldBlock _
         | WriteStep.Restarts _ -> outcome
+
+    /// `outcome`, a step of a `write` through `fd` made against `system`, with
+    /// the description `fd` names marked written if the call returns having
+    /// moved bytes (`markedAfterWrite`).
+    let internal markedThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (fd : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        (outcome : WriteStep<WriteAnswer, 'Thread, 'Handler>)
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
+        =
+        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        | Some id -> markedAfterWrite id (returnsHavingMoved 0) outcome
+        | None -> outcome
 
     /// `system` with `pipeId`'s table entry replaced by `pipe`.
     let private withPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1246,16 +1310,15 @@ module UnixReadWrite =
         | TcpSendCall.Write -> broken answer thread target system
 
     /// A write by `thread` of `count` bytes to `socketId`, a socket that is not an
-    /// end of a connection, past the buffer screen: the socket's own answer, as
-    /// `wrap` makes it the caller's. It never reads the buffer, because no such
+    /// end of a connection, past the buffer screen: the socket's own answer,
+    /// which the write gives without reading the buffer, because no such
     /// socket this kernel answers for takes bytes.
-    let private socketWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (wrap : WriteAnswer -> 'Answer)
+    let private socketWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (socketId : SocketId)
         (count : uint64)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -1335,9 +1398,14 @@ module UnixReadWrite =
             | answer, Ok system ->
 
             match answer with
-            | UnconnectedSocketWrite.Fails error -> Ok (WriteStep.Returns (wrap (WriteAnswer.Failed error), system))
+            | UnconnectedSocketWrite.Fails error ->
+                Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed error), system))
             | UnconnectedSocketWrite.Breaks ->
-                broken (wrap (WriteAnswer.Failed UnixError.EPIPE)) thread (BrokenWriteTarget.Socket socketId) system
+                broken
+                    (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EPIPE))
+                    thread
+                    (BrokenWriteTarget.Socket socketId)
+                    system
             | UnconnectedSocketWrite.DependsOnSendBuffer -> Error (WriteRefusal.SendBuffer socketId)
         | SocketPhase.EstablishedPendingReport _
         | SocketPhase.Established _ ->
@@ -3045,8 +3113,8 @@ module UnixReadWrite =
     /// What `call` by `thread`, through the descriptor `fd` and the description
     /// `descriptionId`, of `count` bytes (one call's worth) to `connectionEnd`
     /// of `connectionId`, which `socketId` is, answers before it reads the
-    /// caller's buffer, and otherwise how many bytes to extract: see
-    /// `tryAdmitWrite`.
+    /// caller's buffer, and otherwise how many bytes to extract and where they
+    /// go: see `tryAdmitWrite`.
     let private admitConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -3090,9 +3158,13 @@ module UnixReadWrite =
                 thread
                 (BrokenWriteTarget.Connection socketId)
                 (withTransfer transfer)
-        | ConnectionWriteStep.Takes (taken, transfer) -> reading (WriteAdmission.Transfer taken) transfer
+        | ConnectionWriteStep.Takes (taken, transfer) ->
+            reading (WriteAdmission.Transfer (taken, WriteInto.Connection (connectionId, connectionEnd))) transfer
         | ConnectionWriteStep.TakesThenSleeps (taken, transfer) ->
-            reading (WriteAdmission.TransferThenSleep (taken, count)) transfer
+            let into =
+                WriteIntoThenSleep.Connection (connectionId, connectionEnd, call, descriptionId, fd)
+
+            reading (WriteAdmission.TransferThenSleep (taken, count, into)) transfer
         // Nothing is copied before the write sleeps, so the buffer is not
         // looked at until there is room.
         | ConnectionWriteStep.Sleeps transfer ->
@@ -3100,107 +3172,11 @@ module UnixReadWrite =
             |> parkConnectionWrite thread call descriptionId fd buffer count 0 connectionId connectionEnd
             |> Ok
 
-    /// `call` by `thread`, through the descriptor `fd` and the description
-    /// `descriptionId`, of `bytes` to `connectionEnd` of `connectionId`, which
-    /// `socketId` is: see `write`.
-    let private writeConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (descriptionId : OpenFileDescriptionId)
-        (bytes : ImmutableArray<byte>)
-        (call : TcpSendCall)
-        (nonBlocking : bool)
-        (socketId : SocketId)
-        (connectionId : ConnectionId)
-        (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
-        =
-        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Thread, 'Handler> =
-            { system with
-                Machine = UnixMachineState.withTransfer connectionId transfer system.Machine
-            }
-
-        let returns (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
-            Ok (WriteStep.Returns (answer, system))
-
-        let prefix (taken : int) =
-            if taken = bytes.Length then
-                bytes
-            else
-                ImmutableArray.Create (bytes, 0, taken)
-
-        match
-            connectionWriteStep
-                connectionEnd
-                nonBlocking
-                bytes.Length
-                (UnixMachineState.connection connectionId system.Machine).Transfer
-        with
-        | ConnectionWriteStep.Answered (answer, transfer) -> returns answer (withTransfer transfer)
-        | ConnectionWriteStep.Broken transfer ->
-            brokenFor
-                call
-                (WriteAnswer.Failed UnixError.EPIPE)
-                thread
-                (BrokenWriteTarget.Connection socketId)
-                (withTransfer transfer)
-        | ConnectionWriteStep.Takes (taken, transfer) ->
-            system
-            |> intoConnection connectionId connectionEnd (prefix taken) transfer
-            |> returns (WriteAnswer.Completed (int64 taken))
-        | ConnectionWriteStep.TakesThenSleeps (taken, transfer) ->
-            system
-            |> intoConnection connectionId connectionEnd (prefix taken) transfer
-            |> tookPart thread call descriptionId fd bytes.Length taken connectionId connectionEnd
-            |> Ok
-        | ConnectionWriteStep.Sleeps transfer ->
-            withTransfer transfer
-            |> parkConnectionWrite
-                thread
-                call
-                descriptionId
-                fd
-                UserBuffer.Mapped
-                bytes.Length
-                0
-                connectionId
-                connectionEnd
-            |> Ok
-
-    /// `call` by `thread`, a blocking write of `total` bytes to `connectionEnd`
-    /// of `connectionId` through the descriptor `fd` and the description
-    /// `descriptionId`, given the first of them, `bytes`: see
-    /// `tryWriteBytesThenSleep`. `mismatch` fails loudly with the caller's account of
-    /// the step it came to instead.
-    let private connectionWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (descriptionId : OpenFileDescriptionId)
-        (total : int)
-        (bytes : ImmutableArray<byte>)
-        (call : TcpSendCall)
-        (nonBlocking : bool)
-        (connectionId : ConnectionId)
-        (connectionEnd : ConnectionEnd)
-        (mismatch : string -> WriteStep<WriteAnswer, 'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, 'Thread, 'Handler>
-        =
-        let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
-
-        match connectionWriteStep connectionEnd nonBlocking total transfer with
-        | ConnectionWriteStep.TakesThenSleeps (taken, transfer) when taken = bytes.Length ->
-            system
-            |> intoConnection connectionId connectionEnd bytes transfer
-            |> tookPart thread call descriptionId fd total taken connectionId connectionEnd
-        | step -> mismatch $"is not the blocking write that takes part of it and sleeps (%A{step})"
-
     /// Every answer `write(2)` by `thread` gives *without* reading the caller's
-    /// buffer, and otherwise how many bytes to extract: the step before the
-    /// copy, which `write` answers as a `CallProgress`, and which describes
-    /// each answer. The system that comes back is the one the copy, or the
-    /// answer, is made against.
+    /// buffer, and otherwise how many bytes to extract and where they go: the
+    /// step before the copy, which `write` answers as a `CallProgress`, and
+    /// which describes each answer. The system that comes back is the one the
+    /// copy, or the answer, is made against.
     let internal tryAdmitWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -3246,7 +3222,7 @@ module UnixReadWrite =
         // error rather than 0, and for a connected one a reset's error
         // (`tcp-transfer.c`, section S).
         match target with
-        | WriteTarget.Socket socketId -> socketWrite (WriteAdmission.Answered) thread socketId count system
+        | WriteTarget.Socket socketId -> socketWrite thread socketId count system
         | WriteTarget.Connection (socketId, connectionId, connectionEnd, descriptionId, nonBlocking) ->
             admitConnectionWrite
                 thread
@@ -3269,7 +3245,7 @@ module UnixReadWrite =
             | Error (DeviceRefusal.Buffer refusal) -> Error (WriteRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (WriteRefusal.SignalAtPageBoundary count)
             | Ok (Some answer) -> Ok (unchanged (WriteAdmission.Answered answer))
-            | Ok None -> Ok (unchanged (WriteAdmission.Transfer count))
+            | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device)))
         | WriteTarget.Pipe (pipeId, descriptionId, nonBlocking) ->
             // A pipe has no position, and its own write decides the zero-length
             // case, which it answers differently from a file.
@@ -3302,10 +3278,16 @@ module UnixReadWrite =
             // rest of the caller's buffer, and `write` offered this prefix takes
             // all of it and leaves the pipe as the whole would have.
             | PipeWriteStep.Takes taken ->
-                Ok (WriteStep.Returns (WriteAdmission.Transfer taken, touchedByWrite pipeId system))
+                Ok (
+                    WriteStep.Returns (
+                        WriteAdmission.Transfer (taken, WriteInto.Pipe pipeId),
+                        touchedByWrite pipeId system
+                    )
+                )
             | PipeWriteStep.TakesThenSleeps taken ->
-                Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (taken, count), system))
-        | WriteTarget.File (_, offset, _) ->
+                let into = WriteIntoThenSleep.Pipe (pipeId, descriptionId, fd)
+                Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (taken, count, into), system))
+        | WriteTarget.File (inode, offset, through) ->
 
         // Ahead of the zero-length no-op below: Darwin's EFBIG at INT64_MAX
         // answers a count of zero too, measured.
@@ -3331,170 +3313,88 @@ module UnixReadWrite =
             Ok (unchanged (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT)))
         | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped -> Ok (unchanged (WriteAdmission.Transfer count))
+        | UserBuffer.Mapped -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.File (fd, inode, offset, through))))
 
-    /// `tryWriteBytes`, without marking the description written.
-    let private writeUnmarked<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
+    /// The step after the copy of a `write` or `send` its admission said to
+    /// transfer (`WriteAdmission.Transfer`): `bytes`, exactly the ones it
+    /// named, go into `into`, and the call returns their count. `system` must
+    /// be the one the admission answered with.
+    let internal tryApplyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
+        let returns (system : UnixSystem<'Thread, 'Handler>) =
+            Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system))
 
-        UnixThreadTable.requireIssuer "UnixReadWrite.writeWithBytes" thread system.Threads
-        assertOneCallsWorth "write" system.Machine.UnixPlatform bytes
-
-        let returns (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
-            Ok (WriteStep.Returns (answer, system))
-
-        match writeTarget fd system with
-        | Error error -> returns (WriteAnswer.Failed error) system
-        | Ok (WriteTarget.Socket socketId) ->
-            // There is no buffer here to screen, so the socket's own answer is
-            // all there is, and it never takes the bytes. A `write` never
-            // reaches this: `tryAdmitWrite` answered or refused first.
-            socketWrite id thread socketId (uint64 bytes.Length) system
-        | Ok (WriteTarget.Connection (socketId, connectionId, connectionEnd, descriptionId, nonBlocking)) ->
-            writeConnection
-                thread
-                fd
-                descriptionId
-                bytes
-                TcpSendCall.Write
-                nonBlocking
-                socketId
-                connectionId
-                connectionEnd
-                system
+        match into with
         // Both devices take every byte they are given and keep none of it.
-        | Ok (WriteTarget.CharacterDevice CharacterDevice.URandom) when
-            SyscallInterruption.stopsAtPageBoundary thread bytes.Length system
-            ->
-            Error (WriteRefusal.SignalAtPageBoundary bytes.Length)
-        | Ok (WriteTarget.CharacterDevice _) -> returns (WriteAnswer.Completed (int64 bytes.Length)) system
-        | Ok (WriteTarget.Pipe (pipeId, descriptionId, nonBlocking)) ->
-            match pipeWriteStep pipeId nonBlocking bytes.Length UserBuffer.Mapped system with
-            | PipeWriteStep.Refused refusal -> Error refusal
-            | PipeWriteStep.Broken ->
-                broken (WriteAnswer.Failed UnixError.EPIPE) thread (BrokenWriteTarget.Pipe pipeId) system
-            | PipeWriteStep.Answered answer -> returns answer (touchedByWrite pipeId system)
-            | PipeWriteStep.TakesNothing answer ->
-                returns answer (touchedByWrite pipeId (leftUntaken pipeId bytes.Length system))
-            | PipeWriteStep.Sleeps ->
-                leftUntaken pipeId bytes.Length system
-                |> parkWrite thread descriptionId fd UserBuffer.Mapped bytes.Length 0
-                |> Ok
-            | PipeWriteStep.TakesThenSleeps taken ->
-                let pipe = UnixMachineState.pipe pipeId system.Machine
-                let written, buffer = PipeBuffer.write bytes pipe.Buffer
+        | WriteInto.Device -> returns system
+        | WriteInto.Connection (connectionId, connectionEnd) ->
+            let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
+            returns (intoConnection connectionId connectionEnd bytes transfer system)
+        | WriteInto.Pipe pipeId ->
+            let pipe = UnixMachineState.pipe pipeId system.Machine
 
-                if written <> taken then
-                    failwith
-                        $"UnixReadWrite.write: pipe %O{pipeId} was to take %d{taken} of %d{bytes.Length} bytes and took %d{written}; PipeBuffer.wouldTake and PipeBuffer.write disagree (this is a bug in this library)."
+            match PipeState.drainedBy pipe with
+            | Some endpoint ->
+                let buffer, filled = drainedThrough bytes pipe.Buffer
 
-                withPipe
-                    pipeId
-                    { pipe with
-                        Buffer = buffer
-                    }
-                    system
-                |> parkWrite thread descriptionId fd UserBuffer.Mapped bytes.Length written
-                |> Ok
-            | PipeWriteStep.Takes taken ->
-                let pipe = UnixMachineState.pipe pipeId system.Machine
-
-                match PipeState.drainedBy pipe with
-                | Some endpoint ->
-                    let delivered =
-                        if taken = bytes.Length then
-                            bytes
-                        else
-                            ImmutableArray.Create (bytes, 0, taken)
-
-                    let buffer, filled = drainedThrough delivered pipe.Buffer
-
-                    // Measured on Linux 6.18.5 (drained-pipe-epoll.c): an
-                    // edge-triggered `EPOLLOUT` registration on the write end
-                    // sees nothing from a write, and an edge from the reader's
-                    // drain exactly when the write had filled the pipe (65535
-                    // and 65536 bytes did; 61440 did not). The reader's wake
-                    // carries `EPOLLOUT | EPOLLWRNORM` (`pipe_read`).
-                    let openFiles =
-                        if filled then
-                            OpenFileTable.signalEpollInstances
-                                (UnixMachineState.descriptionsNamingPipeEnd pipeId PipeEnd.Write system.Machine)
-                                (Some (EpollEvents.Out ||| EpollEvents.WrNorm))
-                                system.Machine.OpenFiles
-                        else
+                // Measured on Linux 6.18.5 (drained-pipe-epoll.c): an
+                // edge-triggered `EPOLLOUT` registration on the write end
+                // sees nothing from a write, and an edge from the reader's
+                // drain exactly when the write had filled the pipe (65535
+                // and 65536 bytes did; 61440 did not). The reader's wake
+                // carries `EPOLLOUT | EPOLLWRNORM` (`pipe_read`).
+                let openFiles =
+                    if filled then
+                        OpenFileTable.signalEpollInstances
+                            (UnixMachineState.descriptionsNamingPipeEnd pipeId PipeEnd.Write system.Machine)
+                            (Some (EpollEvents.Out ||| EpollEvents.WrNorm))
                             system.Machine.OpenFiles
+                    else
+                        system.Machine.OpenFiles
 
-                    returns
-                        (WriteAnswer.Completed (int64 taken))
-                        ({ system with
-                            Machine =
-                                { system.Machine with
-                                    OpenFiles = openFiles
-                                    Pipes =
-                                        Map.add
-                                            pipeId
-                                            { pipe with
-                                                Buffer = buffer
-                                            }
-                                            system.Machine.Pipes
-                                    Delivered =
-                                        DeliveryLog.append
-                                            {
-                                                Endpoint = endpoint
-                                                Bytes = delivered
-                                            }
-                                            system.Machine.Delivered
-                                }
-                         }
-                         |> touchedByWrite pipeId)
-                | None ->
+                { system with
+                    Machine =
+                        { system.Machine with
+                            OpenFiles = openFiles
+                            Pipes =
+                                Map.add
+                                    pipeId
+                                    { pipe with
+                                        Buffer = buffer
+                                    }
+                                    system.Machine.Pipes
+                            Delivered =
+                                DeliveryLog.append
+                                    {
+                                        Endpoint = endpoint
+                                        Bytes = bytes
+                                    }
+                                    system.Machine.Delivered
+                        }
+                }
+                |> touchedByWrite pipeId
+                |> returns
+            | None ->
 
-                let written, buffer = PipeBuffer.write bytes pipe.Buffer
+            let written, buffer = PipeBuffer.write bytes pipe.Buffer
 
-                if written <> taken then
-                    failwith
-                        $"UnixReadWrite.write: pipe %O{pipeId} was to take %d{taken} of %d{bytes.Length} bytes and took %d{written}; PipeBuffer.wouldTake and PipeBuffer.write disagree (this is a bug in this library)."
+            if written <> bytes.Length then
+                failwith
+                    $"UnixReadWrite.writeWithBytes: pipe %O{pipeId} was to take all of %d{bytes.Length} bytes and took %d{written}; the write's admission and PipeBuffer.write disagree (this is a bug in this library)."
 
-                returns
-                    (WriteAnswer.Completed (int64 written))
-                    (touchedByWrite
-                        pipeId
-                        (withPipe
-                            pipeId
-                            { pipe with
-                                Buffer = buffer
-                            }
-                            system))
-        | Ok (WriteTarget.File (inode, offset, through)) ->
-
-        // Ahead of the zero-length no-op: Darwin's EFBIG at INT64_MAX answers
-        // a count of zero too, measured.
-        match writeFailedByPosition (positionCheck system.Machine.UnixPlatform offset (uint64 bytes.Length)) with
-        | Some error -> returns (WriteAnswer.Failed error) system
-        | None ->
-
-        if bytes.IsEmpty then
-            // A no-op on both platforms, and specifically one that changes
-            // nothing: measured, a zero-length write leaves `mtime` and `ctime`
-            // where they were, does not extend the file, and does not strip the
-            // set-ID bits. `tryAdmitWrite` answers this too, so a `write` never
-            // reaches the arm; it is here so that this function answers as the
-            // admission does on its own, and `VirtualFileSystem.writeFile`
-            // below asserts a non-empty write precisely because it would
-            // otherwise restamp the inode.
-            //
-            // After the descriptor checks, not before: `write(rdonlyFd, buf, 0)`
-            // is EBADF rather than 0, measured on both.
-            returns (WriteAnswer.Completed 0L) system
-        else
+            withPipe
+                pipeId
+                { pipe with
+                    Buffer = buffer
+                }
+                system
+            |> touchedByWrite pipeId
+            |> returns
+        | WriteInto.File (fd, inode, offset, through) ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -3526,31 +3426,45 @@ module UnixReadWrite =
                 Machine = UnixMachineState.commitFileSystem (ChangeNotice.Written through) mutation system.Machine
             }
 
-        returns
-            (WriteAnswer.Completed (int64 bytes.Length))
-            (UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setOffset
-                    fd
-                    (offset + int64 bytes.Length)
-                    (UnixSystemState.fileDescriptors committed))
-                committed)
+        UnixSystemState.withFileDescriptors
+            (FileDescriptorRegistry.setOffset
+                fd
+                (offset + int64 bytes.Length)
+                (UnixSystemState.fileDescriptors committed))
+            committed
+        |> returns
 
-    /// A `write` by `thread` through `fd`, given the bytes `tryAdmitWrite` said to
-    /// extract: the step `writeWithBytes` takes for a `write`. It answers the
-    /// descriptor questions itself, so it agrees with the admission on its
-    /// own.
-    let internal tryWriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The step after the copy of a blocking `write` or `send` its admission
+    /// said to transfer part of and sleep (`WriteAdmission.TransferThenSleep`):
+    /// `bytes`, exactly the first ones it named of `total`, go into `into`,
+    /// and `thread` sleeps for the rest, or the call returns their count where
+    /// they reset a Linux connection. `system` must be the one the admission
+    /// answered with.
+    let internal applyWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (fd : int)
+        (total : int)
+        (into : WriteIntoThenSleep)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
-        let outcome = writeUnmarked thread fd bytes system
+        match into with
+        | WriteIntoThenSleep.Pipe (pipeId, writer, fd) ->
+            let pipe = UnixMachineState.pipe pipeId system.Machine
 
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
-        | None -> outcome
-        | Some id -> outcome |> Result.map (markedAfterWrite id (returnsHavingMoved 0))
+            withPipe
+                pipeId
+                { pipe with
+                    Buffer = PipeBuffer.writeWith total bytes pipe.Buffer
+                }
+                system
+            |> parkWrite thread writer fd UserBuffer.Mapped total bytes.Length
+        | WriteIntoThenSleep.Connection (connectionId, connectionEnd, call, writer, fd) ->
+            let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
+
+            system
+            |> intoConnection connectionId connectionEnd bytes transfer
+            |> tookPart thread call writer fd total bytes.Length connectionId connectionEnd
 
     /// `outcome`, with the open file descriptions `held`, which the write held
     /// while it slept, released if nothing references them now: the call's
@@ -3737,10 +3651,12 @@ module UnixReadWrite =
 
         let step = connectionWriteStep connectionEnd false remaining transfer
 
+        // How much the woken write takes, and the transfer as taking it leaves
+        // it: Linux's socket marked out of space if it takes only part.
         let room =
             match step with
-            | ConnectionWriteStep.Takes (taken, _)
-            | ConnectionWriteStep.TakesThenSleeps (taken, _) -> Some taken
+            | ConnectionWriteStep.Takes (taken, after)
+            | ConnectionWriteStep.TakesThenSleeps (taken, after) -> Some (taken, after)
             | ConnectionWriteStep.Sleeps _ -> None
             | ConnectionWriteStep.Answered _
             | ConnectionWriteStep.Broken _ ->
@@ -3782,9 +3698,18 @@ module UnixReadWrite =
         | Ok false ->
 
         match room with
-        | Some taken ->
+        | Some (taken, after) ->
             match parked.Buffer with
-            | UserBuffer.Mapped -> Ok (WriteStep.Returns (WriteResumption.Transfer (parked.Written, taken), system))
+            | UserBuffer.Mapped ->
+                let into =
+                    WriteResumed.Connection (socketId, connectionId, connectionEnd, writer, fd, parked)
+
+                Ok (
+                    WriteStep.Returns (
+                        WriteResumption.Transfer (parked.Written, taken, into),
+                        withTransfer after system
+                    )
+                )
             // Only a write that had taken nothing can hold such a buffer:
             // taking bytes reads them.
             | UserBuffer.Unmapped _ -> Error (WriteRefusal.ConnectionFault socketId)
@@ -3813,36 +3738,24 @@ module UnixReadWrite =
                     (withTransfer after system)
             )
 
-    /// `tryFinishWriteBytes` of a write asleep on a connected socket.
-    let private finishConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryApplyResumedWrite` of `parked`, a write asleep on `connectionEnd` of
+    /// `connectionId`, which the socket `socketId` is, made through `writer`
+    /// and `fd`.
+    let private applyResumedConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (socketId : SocketId)
+        (connectionId : ConnectionId)
+        (connectionEnd : ConnectionEnd)
+        (writer : OpenFileDescriptionId)
+        (fd : int)
         (parked : ParkedConnectionWrite)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        let writer, fd =
-            match parked.Socket with
-            | SleepTarget.Waiting (writer, fd) -> writer, fd
-            | SleepTarget.EndedByClose socketId ->
-                failwith
-                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
-
-        let socketId, connectionId, connectionEnd =
-            parkedConnection "writeWithBytes" thread writer system
-
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
-
-        let taking, transfer =
-            match connectionWriteStep connectionEnd false (parked.Count - parked.Written) transfer with
-            | ConnectionWriteStep.Takes (taken, after)
-            | ConnectionWriteStep.TakesThenSleeps (taken, after) when taken = bytes.Length -> taken, after
-            | step ->
-                failwith
-                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write to socket %O{socketId} was given %d{bytes.Length} bytes, and a write there now comes to %A{step}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
-
         let system = intoConnection connectionId connectionEnd bytes transfer system
-        let written = parked.Written + taking
+        let written = parked.Written + bytes.Length
 
         // With more left, the room is gone, so the write sleeps again; or the
         // bytes reset the connection, and it returns under Linux and sleeps
@@ -3951,7 +3864,9 @@ module UnixReadWrite =
                 answered (WriteAnswer.Failed UnixError.EFAULT) finished
             | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
             | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-            | UserBuffer.Mapped -> Ok (WriteStep.Returns (WriteResumption.Transfer (parked.Written, taking), system))
+            | UserBuffer.Mapped ->
+                let into = WriteResumed.Pipe (pipeId, writer, fd, parked)
+                Ok (WriteStep.Returns (WriteResumption.Transfer (parked.Written, taking, into), system))
         elif parked.Written > 0 then
             afterPartWritten
                 thread
@@ -3994,8 +3909,9 @@ module UnixReadWrite =
 
     /// Every answer the `write` or `send` `thread` is asleep in gives without
     /// reading more of the caller's buffer, and otherwise which of its bytes to
-    /// extract next: the step before the copy, which `finishWrite` answers as a
-    /// `CallProgress`, and which describes each answer.
+    /// extract next and where they go: the step before the copy, which
+    /// `finishWrite` answers as a `CallProgress`, and which describes each
+    /// answer.
     let internal tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -4022,36 +3938,19 @@ module UnixReadWrite =
         )
         |> Result.map (releasedAfterWrite "UnixReadWrite.finishWrite" held)
 
-    let private finishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryApplyResumedWrite` of `parked`, a write asleep on the pipe `pipeId`,
+    /// made through `writer` and `fd`.
+    let private applyResumedPipeWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (pipeId : PipeId)
+        (writer : OpenFileDescriptionId)
+        (fd : int)
+        (parked : ParkedPipeWrite)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
-
-        match UnixThreadTable.parkedFor thread system.Threads with
-        | Some (ParkedSyscall.ConnectionWrite parked) -> finishConnectionWrite thread parked bytes system
-        | _ ->
-
-        let parked = parkedWrite "writeWithBytes" thread system
-
-        let writer, fd =
-            match parked.Writer with
-            | SleepTarget.Waiting (writer, fd) -> writer, fd
-            | SleepTarget.EndedByClose pipeId ->
-                failwith
-                    $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} has been ended by a close, so there are no bytes to give it: `finishWrite` answers such a write without a copy (this is a bug in this library)."
-
-        let pipeId = parkedPipe "writeWithBytes" thread writer PipeEnd.Write system
         let pipe = UnixMachineState.pipe pipeId system.Machine
-        let taking = PipeBuffer.resumeTakes parked.Count parked.Written pipe.Buffer
-
-        if taking = 0 || bytes.Length <> taking then
-            failwith
-                $"UnixReadWrite.writeWithBytes: thread %O{thread}'s write into pipe %O{pipeId} takes %d{taking} bytes now and was given %d{bytes.Length}, which is not the copy `finishWrite` paused at (this is a bug in this library)."
 
         let system =
             withPipe
@@ -4063,7 +3962,7 @@ module UnixReadWrite =
 
         let parked =
             { parked with
-                Written = parked.Written + taking
+                Written = parked.Written + bytes.Length
             }
 
         if parked.Written = parked.Count then
@@ -4082,84 +3981,46 @@ module UnixReadWrite =
 
             afterPartWritten thread pipeId writer fd parked nonBlocking id system
 
-    /// The `write` or `send` `thread` is asleep in, given the bytes
-    /// `tryAdmitFinishWrite` said to extract: the step `writeWithBytes` takes
-    /// for a woken call. `bytes` must be exactly those, against the system the
-    /// admission answered with.
-    let internal tryFinishWriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The step after the copy of a woken `write` or `send`, which
+    /// `tryAdmitFinishWrite` said to transfer more of
+    /// (`WriteResumption.Transfer`): `bytes`, exactly the ones it named, go
+    /// into what `into` writes to, and the call returns, or sleeps again for
+    /// the rest. `system` must be the one the admission answered with.
+    let internal tryApplyResumedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
+        (into : WriteResumed)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        let held =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some parked -> ParkedSyscall.descriptions parked
-            | None -> []
+        // What the call holds while it sleeps, which it lets go of as it
+        // returns, and the description a `write` marks written if it returns
+        // having moved bytes, as `waitingWriter` finds it: a `send` marks none.
+        let parked, marking =
+            match into with
+            | WriteResumed.Pipe (_, writer, _, parked) -> ParkedSyscall.PipeWrite parked, Some (writer, parked.Written)
+            | WriteResumed.Connection (_, _, _, writer, _, parked) ->
+                let marking =
+                    match parked.Call with
+                    | TcpSendCall.Write -> Some (writer, parked.Written)
+                    | TcpSendCall.Send _ -> None
 
-        let marking = waitingWriter thread system
+                ParkedSyscall.ConnectionWrite parked, marking
 
-        finishWriteHolding thread bytes system
+        let outcome =
+            match into with
+            | WriteResumed.Pipe (pipeId, writer, fd, parked) ->
+                applyResumedPipeWrite thread pipeId writer fd parked bytes system
+            | WriteResumed.Connection (socketId, connectionId, connectionEnd, writer, fd, parked) ->
+                applyResumedConnectionWrite thread socketId connectionId connectionEnd writer fd parked bytes system
+
+        outcome
         |> Result.map (fun outcome ->
             match marking with
             | Some (description, written) -> markedAfterWrite description (returnsHavingMoved written) outcome
             | None -> outcome
         )
-        |> Result.map (releasedAfterWrite "UnixReadWrite.writeWithBytes" held)
-
-    /// A blocking `write` of `total` bytes by `thread`, given the first of them,
-    /// which `WriteAdmission.TransferThenSleep` named: they go into the pipe or
-    /// the connection, and the call sleeps for the rest, or returns their
-    /// count where they reset a Linux connection. `bytes` must be exactly
-    /// those, against the system the admission answered with.
-    let internal tryWriteBytesThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (total : int)
-        (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
-        =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.writeWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
-
-        UnixThreadTable.requireIssuer "UnixReadWrite.writeWithBytes" thread system.Threads
-
-        let mismatch (what : string) : 'a =
-            failwith
-                $"UnixReadWrite.writeWithBytes: fd %d{fd}, given %d{bytes.Length} of %d{total} bytes, %s{what}, which is not the copy `write` paused at (this is a bug in this library)."
-
-        match writeTarget fd system with
-        | Ok (WriteTarget.Pipe (pipeId, descriptionId, nonBlocking)) ->
-            match pipeWriteStep pipeId nonBlocking total UserBuffer.Mapped system with
-            | PipeWriteStep.TakesThenSleeps taken when taken = bytes.Length ->
-                let pipe = UnixMachineState.pipe pipeId system.Machine
-
-                withPipe
-                    pipeId
-                    { pipe with
-                        Buffer = PipeBuffer.writeWith total bytes pipe.Buffer
-                    }
-                    system
-                |> parkWrite thread descriptionId fd UserBuffer.Mapped total taken
-                |> Ok
-            | step -> mismatch $"is not the blocking write that puts in part of it and sleeps (%A{step})"
-        | Ok (WriteTarget.Connection (_, connectionId, connectionEnd, descriptionId, nonBlocking)) ->
-            connectionWriteThenSleep
-                thread
-                fd
-                descriptionId
-                total
-                bytes
-                TcpSendCall.Write
-                nonBlocking
-                connectionId
-                connectionEnd
-                mismatch
-                system
-            |> Ok
-        | other -> mismatch $"names %A{other} rather than the write end of a pipe or a connected socket"
+        |> Result.map (releasedAfterWrite "UnixReadWrite.writeWithBytes" (ParkedSyscall.descriptions parked))
 
     /// A `WriteRefusal` from the connected-socket path `send` shares with
     /// `write`, as `send`'s own.
@@ -4180,6 +4041,16 @@ module UnixReadWrite =
         | WriteRefusal.SignalAtPageBoundary _ ->
             failwith
                 $"UnixReadWrite: a send to a connected socket was refused with %A{refusal}, which only a write to another object, or a woken write, gives (this is a bug in this library)."
+
+    /// `tryApplyWrite` for a `send`, whose admission names only a connected
+    /// socket, with its refusals as `send`'s own.
+    let internal tryApplySend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (into : WriteInto)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        =
+        tryApplyWrite into bytes system |> Result.mapError sendRefusalOf
 
     /// The connected socket a `send` through `fd` writes to, past the flag
     /// word and the descriptor: the description, whether the call is
@@ -4214,9 +4085,9 @@ module UnixReadWrite =
         Ok (Ok (descriptionId, description.NonBlocking || dontWait, socketId, connectionId, connectionEnd))
 
     /// Every answer `send(2)` by `thread` gives without reading the caller's
-    /// buffer, and otherwise how many bytes to extract, as `tryAdmitWrite` is
-    /// for `write`: the step before the copy, which `send` answers as a
-    /// `CallProgress`.
+    /// buffer, and otherwise how many bytes to extract and where they go, as
+    /// `tryAdmitWrite` is for `write`: the step before the copy, which `send`
+    /// answers as a `CallProgress`.
     let internal tryAdmitSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -4265,93 +4136,6 @@ module UnixReadWrite =
             connectionEnd
             system
         |> Result.mapError sendRefusalOf
-
-    /// A `send` by `thread` through `fd`, given the bytes `tryAdmitSend` said to
-    /// extract: the step `sendWithBytes` takes, as `tryWriteBytes` is for a
-    /// `write`.
-    let internal trySendBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (bytes : ImmutableArray<byte>)
-        (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
-        =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
-
-        UnixThreadTable.requireIssuer "UnixReadWrite.sendWithBytes" thread system.Threads
-        assertOneCallsWorth "send" system.Machine.UnixPlatform bytes
-
-        match SendFlags.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) flags with
-        | Error unmodelled -> Error (SendRefusal.UnmodelledFlags unmodelled)
-        | Ok flags ->
-
-        match sendTarget fd flags system with
-        | Error refusal -> Error refusal
-        | Ok (Error error) -> Ok (WriteStep.Returns (WriteAnswer.Failed error, system))
-        | Ok (Ok (descriptionId, nonBlocking, socketId, connectionId, connectionEnd)) ->
-
-        writeConnection
-            thread
-            fd
-            descriptionId
-            bytes
-            (TcpSendCall.Send flags.NoSignal)
-            nonBlocking
-            socketId
-            connectionId
-            connectionEnd
-            system
-        |> Result.mapError sendRefusalOf
-
-    /// A blocking `send` of `total` bytes by `thread`, given the first of them
-    /// that `WriteAdmission.TransferThenSleep` named, as `tryWriteBytesThenSleep`
-    /// is for `write`: they go to the connection, and the call sleeps for the
-    /// rest.
-    ///
-    /// `bytes` must be exactly the ones the admission named, and the system
-    /// and `flags` the ones it came with: anything else is a bug in this
-    /// library, and fails loudly.
-    let internal sendBytesThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (total : int)
-        (bytes : ImmutableArray<byte>)
-        (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, 'Thread, 'Handler>
-        =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.sendWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty send; pass ImmutableArray<byte>.Empty."
-
-        UnixThreadTable.requireIssuer "UnixReadWrite.sendWithBytes" thread system.Threads
-
-        let mismatch (what : string) : 'a =
-            failwith
-                $"UnixReadWrite.sendWithBytes: fd %d{fd}, given %d{bytes.Length} of %d{total} bytes and flags 0x%x{flags}, %s{what}, which is not the copy `send` paused at (this is a bug in this library)."
-
-        match SendFlags.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) flags with
-        | Error unmodelled -> mismatch $"has flags this kernel does not model (%A{unmodelled})"
-        | Ok decoded ->
-
-        match sendTarget fd decoded system with
-        | Ok (Ok (descriptionId, nonBlocking, _, connectionId, connectionEnd)) ->
-            connectionWriteThenSleep
-                thread
-                fd
-                descriptionId
-                total
-                bytes
-                (TcpSendCall.Send decoded.NoSignal)
-                nonBlocking
-                connectionId
-                connectionEnd
-                mismatch
-                system
-        | other -> mismatch $"names %A{other} rather than a connected socket"
 
     /// What a `pwrite` will write into, once every question that precedes the
     /// buffer screen has been settled.
@@ -4469,8 +4253,8 @@ module UnixReadWrite =
         | OpenFileTarget.CharacterDevice (_, device, _) -> seekable (PWriteTarget.CharacterDevice device)
 
     /// Every answer `pwrite(2)` gives without reading the caller's buffer, and
-    /// otherwise how many bytes to extract: the step before the copy, which
-    /// `pwrite` answers as a `CallProgress`. Changes nothing.
+    /// otherwise how many bytes to extract and where they go: the step before
+    /// the copy, which `pwrite` answers as a `CallProgress`. Changes nothing.
     let internal tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -4527,8 +4311,8 @@ module UnixReadWrite =
             | Error (DeviceRefusal.Buffer refusal) -> Error (PWriteRefusal.Buffer refusal)
             | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (PWriteRefusal.SignalAtPageBoundary count)
             | Ok (Some answer) -> Ok (PWriteAdmission.Answered answer)
-            | Ok None -> Ok (PWriteAdmission.Transfer count)
-        | PWriteTarget.File _ ->
+            | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device))
+        | PWriteTarget.File (inode, through) ->
 
         match buffer with
         | UserBuffer.Unmapped _ ->
@@ -4539,104 +4323,70 @@ module UnixReadWrite =
             Ok (PWriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT))
         | UserBuffer.Opaque -> Error (PWriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped -> Ok (PWriteAdmission.Transfer count)
+        | UserBuffer.Mapped -> Ok (PWriteAdmission.Transfer (count, PWriteInto.File (inode, through)))
 
-    /// `tryPwriteBytes`, without marking the description written.
-    let private pwriteUnmarked<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    /// The step after the copy of a `pwrite` through `fd` at `offset` its
+    /// admission said to transfer (`PWriteAdmission.Transfer`): `bytes`,
+    /// exactly the ones it named, go into `into`, and the call returns their
+    /// count. `system` must be the one the admission answered with.
+    let internal tryApplyPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (bytes : ImmutableArray<byte>)
         (offset : int64)
+        (into : PWriteInto)
+        (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
-        if bytes.IsDefault then
-            failwith
-                "UnixReadWrite.pwriteWithBytes: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
+        let written =
+            match into with
+            // Both devices take every byte they are given and keep none of it.
+            | PWriteInto.Device -> Ok system
+            | PWriteInto.File (inode, through) ->
 
-        UnixThreadTable.requireIssuer "UnixReadWrite.pwriteWithBytes" thread system.Threads
+            let now = UnixMachineState.realtime system.Scheduling system.Machine
 
-        assertOneCallsWorth "pwrite" system.Machine.UnixPlatform bytes
+            // A content-changing write strips a file's set-user-ID and
+            // set-group-ID bits unless the writer is root, exactly as `write`'s
+            // does: the bits follow the content changing, not which syscall
+            // changed it.
+            let rule = SimulatedUnixPlatform.setGroupIdOnWrite system.Machine.UnixPlatform
 
-        match pwriteTarget fd offset system with
-        | Error error -> Ok (WriteAnswer.Failed error, system)
-        | Ok target ->
+            match
+                VirtualFileSystem.writeFile
+                    inode
+                    offset
+                    bytes
+                    rule
+                    system.Process.Credentials
+                    now
+                    system.Machine.FileSystem
+            with
+            | Error (FileWriteRefusal.WouldExceedMaxLength (offset, count)) ->
+                Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
+            | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
+                Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
+            | Ok mutation ->
 
-        // Ahead of the zero-length no-op: Darwin's EFBIG at INT64_MAX answers
-        // a count of zero too, measured.
-        match writeFailedByPosition (positionCheck system.Machine.UnixPlatform offset (uint64 bytes.Length)) with
-        | Some error -> Ok (WriteAnswer.Failed error, system)
-        | None ->
+            // The description is left exactly where it was — the whole of
+            // what `pwrite` does differently from `write`, and measured on
+            // both flavours.
+            Ok
+                { system with
+                    Machine = UnixMachineState.commitFileSystem (ChangeNotice.Written through) mutation system.Machine
+                }
 
-        if bytes.IsEmpty then
-            // A no-op that changes nothing, and *after* the descriptor checks:
-            // measured, `pwrite(rdonlyFd, buf, 0, 0)` is EBADF rather than 0.
-            // `tryAdmitPWrite` answers this too, so a `pwrite` never reaches the
-            // arm; it is here so that this function answers as the admission
-            // does on its own, and `VirtualFileSystem.writeFile` below asserts a
-            // non-empty write precisely because it would otherwise restamp the
-            // inode.
-            Ok (WriteAnswer.Completed 0L, system)
-        else
-
-        match target with
-        // Both devices take every byte they are given and keep none of it.
-        | PWriteTarget.CharacterDevice CharacterDevice.URandom when
-            SyscallInterruption.stopsAtPageBoundary thread bytes.Length system
-            ->
-            Error (PWriteRefusal.SignalAtPageBoundary bytes.Length)
-        | PWriteTarget.CharacterDevice _ -> Ok (WriteAnswer.Completed (int64 bytes.Length), system)
-        | PWriteTarget.File (inode, through) ->
-
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
-
-        // A content-changing write strips a file's set-user-ID and set-group-ID
-        // bits unless the writer is root, exactly as `write`'s does: the bits
-        // follow the content changing, not which syscall changed it.
-        let rule = SimulatedUnixPlatform.setGroupIdOnWrite system.Machine.UnixPlatform
-
-        match
-            VirtualFileSystem.writeFile inode offset bytes rule system.Process.Credentials now system.Machine.FileSystem
-        with
-        | Error (FileWriteRefusal.WouldExceedMaxLength (offset, count)) ->
-            Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
-        | Error (FileWriteRefusal.UnmeasuredSetIdChange refusal) ->
-            Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
-        | Ok mutation ->
-
-        let machine =
-            UnixMachineState.commitFileSystem (ChangeNotice.Written through) mutation system.Machine
-
-        // The description is left exactly where it was — the whole of what
-        // `pwrite` does differently from `write`, and measured on both flavours.
-        Ok (
-            WriteAnswer.Completed (int64 bytes.Length),
-            { system with
-                Machine = machine
-            }
-        )
-
-    /// A `pwrite` by `thread` through `fd` at `offset`, given the bytes
-    /// `tryAdmitPWrite` said to extract: the step `pwriteWithBytes` takes. It
-    /// answers the descriptor questions itself, so it agrees with the
-    /// admission on its own.
-    let internal tryPwriteBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (fd : int)
-        (bytes : ImmutableArray<byte>)
-        (offset : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
-        =
         // Marked as a write is (`markedAfterWrite`): a pwrite that moved bytes
         // marks the description it was made through.
-        match
-            pwriteUnmarked thread fd bytes offset system,
-            FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-        with
-        | Ok (WriteAnswer.Completed written, system), Some id when written > 0L ->
-            Ok (WriteAnswer.Completed written, markWritten id system)
-        | result, _ -> result
+        written
+        |> Result.map (fun system ->
+            let system =
+                match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                | Some id when bytes.Length > 0 -> markWritten id system
+                | Some _
+                | None -> system
+
+            WriteAnswer.Completed (int64 bytes.Length), system
+        )
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4710,9 +4460,10 @@ module UnixReadWrite =
                 (fun admission ->
                     match admission with
                     | WriteAdmission.Answered answer -> Choice1Of2 answer
-                    | WriteAdmission.Transfer count -> Choice2Of2 (paused (PausedWriteCall.Write fd) count)
-                    | WriteAdmission.TransferThenSleep (count, total) ->
-                        Choice2Of2 (paused (PausedWriteCall.WriteThenSleep (fd, total)) count)
+                    | WriteAdmission.Transfer (count, into) ->
+                        Choice2Of2 (paused (PausedWriteCall.Write (fd, into)) count)
+                    | WriteAdmission.TransferThenSleep (count, total, into) ->
+                        Choice2Of2 (paused (PausedWriteCall.WriteThenSleep (total, into)) count)
                 )
         )
 
@@ -4792,11 +4543,11 @@ module UnixReadWrite =
                 (fun resumption ->
                     match resumption with
                     | WriteResumption.Answered answer -> Choice1Of2 answer
-                    | WriteResumption.Transfer (offset, count) ->
+                    | WriteResumption.Transfer (offset, count, into) ->
                         Choice2Of2 (fun system ->
                             {
                                 Thread = thread
-                                Call = PausedWriteCall.Finish
+                                Call = PausedWriteCall.Finish into
                                 Range =
                                     {
                                         FirstByte = offset
@@ -4885,10 +4636,19 @@ module UnixReadWrite =
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
         match paused.Call with
-        | PausedWriteCall.Write fd -> tryWriteBytes paused.Thread fd bytes paused.System
-        | PausedWriteCall.WriteThenSleep (fd, total) ->
-            tryWriteBytesThenSleep paused.Thread fd total bytes paused.System
-        | PausedWriteCall.Finish -> tryFinishWriteBytes paused.Thread bytes paused.System
+        | PausedWriteCall.Write (fd, into) ->
+            tryApplyWrite into bytes paused.System
+            |> Result.map (markedThrough fd paused.System)
+        | PausedWriteCall.WriteThenSleep (total, into) ->
+            let fd =
+                match into with
+                | WriteIntoThenSleep.Pipe (_, _, fd)
+                | WriteIntoThenSleep.Connection (_, _, _, _, fd) -> fd
+
+            applyWriteThenSleep paused.Thread total into bytes paused.System
+            |> markedThrough fd paused.System
+            |> Ok
+        | PausedWriteCall.Finish into -> tryApplyResumedWrite paused.Thread into bytes paused.System
         |> Result.map fateOf
 
     /// <summary>
@@ -4959,9 +4719,9 @@ module UnixReadWrite =
                 (fun admission ->
                     match admission with
                     | WriteAdmission.Answered answer -> Choice1Of2 answer
-                    | WriteAdmission.Transfer count -> Choice2Of2 (paused (PausedSendCall.Send (fd, flags)) count)
-                    | WriteAdmission.TransferThenSleep (count, total) ->
-                        Choice2Of2 (paused (PausedSendCall.SendThenSleep (fd, total, flags)) count)
+                    | WriteAdmission.Transfer (count, into) -> Choice2Of2 (paused (PausedSendCall.Send into) count)
+                    | WriteAdmission.TransferThenSleep (count, total, into) ->
+                        Choice2Of2 (paused (PausedSendCall.SendThenSleep (total, into)) count)
                 )
         )
 
@@ -5016,12 +4776,9 @@ module UnixReadWrite =
         CopyRange.require "UnixReadWrite.sendWithBytes" paused.Range bytes
 
         match paused.Call with
-        | PausedSendCall.Send (fd, flags) ->
-            trySendBytes paused.Thread fd bytes flags paused.System |> Result.map fateOf
-        | PausedSendCall.SendThenSleep (fd, total, flags) ->
-            sendBytesThenSleep paused.Thread fd total bytes flags paused.System
-            |> fateOf
-            |> Ok
+        | PausedSendCall.Send into -> tryApplySend into bytes paused.System |> Result.map fateOf
+        | PausedSendCall.SendThenSleep (total, into) ->
+            applyWriteThenSleep paused.Thread total into bytes paused.System |> fateOf |> Ok
 
     /// <summary>
     /// The rest of the `send` `paused` stopped: `bytes`, exactly the ones
@@ -5061,12 +4818,13 @@ module UnixReadWrite =
         |> Result.map (fun admission ->
             match admission with
             | PWriteAdmission.Answered answer -> CallProgress.Answered (answer, system)
-            | PWriteAdmission.Transfer count ->
+            | PWriteAdmission.Transfer (count, into) ->
                 CallProgress.NeedsCopyIn
                     {
                         Thread = thread
                         Fd = fd
                         FileOffset = offset
+                        Into = into
                         Range = CopyRange.fromStart count
                         System = system
                     }
@@ -5119,7 +4877,7 @@ module UnixReadWrite =
         =
         CallProgress.requirePaused "UnixReadWrite.pwriteWithBytes" "UnixReadWrite.pwrite" paused
         CopyRange.require "UnixReadWrite.pwriteWithBytes" paused.Range bytes
-        tryPwriteBytes paused.Thread paused.Fd bytes paused.FileOffset paused.System
+        tryApplyPWrite paused.Fd paused.FileOffset paused.Into bytes paused.System
 
     /// <summary>
     /// The rest of the `pwrite` `paused` stopped: `bytes`, exactly the ones

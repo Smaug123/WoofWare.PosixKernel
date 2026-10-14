@@ -2931,25 +2931,6 @@ module TestBlockingConnection =
             | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
-    /// `write` given the bytes without `admitWrite` sleeps as the pair does.
-    [<Test>]
-    let ``a write without its admission sleeps as one with it`` () : unit =
-        for platform in Machines.platforms do
-            let client, _, system = pair (systemOn platform false)
-            let bytes = ImmutableArray.CreateRange (payload 9 600000)
-
-            let viaAdmission =
-                match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
-                | Ok (WriteStep.WouldBlock (condition, after)) -> condition, after
-                | other -> failwith $"%A{other}"
-
-            let direct =
-                match UnixReadWrite.tryWriteBytes 1 client bytes system with
-                | Ok (WriteStep.WouldBlock (condition, after)) -> condition, after
-                | other -> failwith $"%A{other}"
-
-            direct |> shouldEqual viaAdmission
-
     /// `SO_SNDTIMEO` would bound a sleeping write, as `SO_RCVTIMEO` would a
     /// read (whose refusal `TestBlockingAccept` holds); a park has no deadline
     /// because neither can be set. The numbers are each flavour's
@@ -3820,6 +3801,6 @@ module TestBlockingConnection =
                 | Error (SendRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"
 
-                match UnixReadWrite.trySendBytes 0 fd (ImmutableArray.CreateRange (payload 6 10)) 0 system with
+                match WriteOutcomes.sendBytes 0 fd (ImmutableArray.CreateRange (payload 6 10)) 0 system with
                 | Error (SendRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"

@@ -369,7 +369,7 @@ module DualModeProbe =
     /// A one-byte `write` of `'x'`, as `transfer` prints it: the count, or the
     /// errno.
     let private writeByte (libc : Libc) (fd : int) : string =
-        match UnixReadWrite.tryWriteBytes 0 fd (ImmutableArray.Create<byte> (byte 'x')) libc.System with
+        match WriteOutcomes.writeBytes 0 fd (ImmutableArray.Create<byte> (byte 'x')) libc.System with
         | Result.Ok (WriteStep.Returns (answer, system))
         | Result.Ok (WriteStep.ReturnsRaising (answer, _, system)) ->
             libc.System <- system
@@ -458,7 +458,7 @@ module DualModeProbe =
             |> ignore
 
             let wrote =
-                match UnixReadWrite.tryWriteBytes 0 s (ImmutableArray.Create<byte> (byte 'x')) libc.System with
+                match WriteOutcomes.writeBytes 0 s (ImmutableArray.Create<byte> (byte 'x')) libc.System with
                 | Result.Ok (WriteStep.Returns (WriteAnswer.Completed count, system)) ->
                     libc.System <- system
                     $"%d{count}"

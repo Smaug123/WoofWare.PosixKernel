@@ -919,7 +919,7 @@ module TestFcntlMeasured =
                         | "write0 rdwr" -> Some (writeOf fd [||] system)
                         | "pwrite rdwr" ->
                             match
-                                UnixReadWrite.tryPwriteBytes
+                                WriteOutcomes.admitThenPwrite
                                     (Lone.leader system)
                                     fd
                                     (ImmutableArray.CreateRange "x"B)
@@ -1345,9 +1345,13 @@ module TestFcntlMeasured =
 
                 if not (List.isEmpty (UnixWait.wakes (Set.singleton 1) system)) then
                     match UnixReadWrite.tryAdmitFinishWrite 1 system with
-                    | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count), admitted)) ->
+                    | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
                         match
-                            UnixReadWrite.tryFinishWriteBytes 1 (ImmutableArray.Create (bytes, offset, count)) admitted
+                            UnixReadWrite.tryApplyResumedWrite
+                                1
+                                into
+                                (ImmutableArray.Create (bytes, offset, count))
+                                admitted
                         with
                         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->
                             answer <- Some $"ok %d{n}"
