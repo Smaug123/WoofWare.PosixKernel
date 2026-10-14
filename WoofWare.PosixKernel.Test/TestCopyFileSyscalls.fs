@@ -660,7 +660,7 @@ module TestCopyFileSyscalls =
 
                 let expected =
                     match
-                        UnixReadWrite.tryPwriteBytes
+                        WriteOutcomes.admitThenPwrite
                             0
                             outFd
                             (ImmutableArray.CreateRange moved)

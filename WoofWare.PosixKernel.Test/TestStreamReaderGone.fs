@@ -107,10 +107,6 @@ module TestStreamReaderGone =
 
                 let actual = WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes system
 
-                // `write` without the admission, as a caller holding the bytes
-                // may make it, answers the same.
-                UnixReadWrite.tryWriteBytes thread fd bytes system |> shouldEqual actual
-
                 if Set.contains fd gone && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
                     let raised = sigPipeFrom flavour thread
 
@@ -287,7 +283,7 @@ module TestStreamReaderGone =
 
                 let write =
                     Assert.Throws (fun () ->
-                        UnixReadWrite.tryWriteBytes 7 fd (payload 0 1) system
+                        WriteOutcomes.writeBytes 7 fd (payload 0 1) system
                         |> ignore<Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>>
                     )
 
@@ -314,7 +310,7 @@ module TestStreamReaderGone =
 
                 match
                     SimulatedUnixPlatform.flavour platform,
-                    UnixReadWrite.tryWriteBytes (Lone.leader system) 1 ImmutableArray.Empty system
+                    WriteOutcomes.writeBytes (Lone.leader system) 1 ImmutableArray.Empty system
                 with
                 | SimulatedUnixFlavour.Linux, Ok (WriteStep.Returns (WriteAnswer.Completed 0L, _))
                 | SimulatedUnixFlavour.Darwin, Error (WriteRefusal.InitProcess _) -> ()

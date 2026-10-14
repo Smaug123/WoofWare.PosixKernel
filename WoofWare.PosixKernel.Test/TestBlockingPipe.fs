@@ -2283,16 +2283,17 @@ module TestBlockingPipe =
             let system = pipeHolding platform false 0
 
             match UnixReadWrite.tryAdmitWrite sleeper 4 UserBuffer.Mapped 200000UL system with
-            | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (65536, 200000), admitted)) ->
+            | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (65536, 200000, into), admitted)) ->
                 match
-                    UnixReadWrite.tryWriteBytesThenSleep
+                    WriteOutcomes.applyWriteThenSleep
                         sleeper
                         4
                         200000
+                        into
                         (ImmutableArray.CreateRange (payload 7 65536))
                         admitted
                 with
-                | Ok (WriteStep.WouldBlock (_, asleep)) ->
+                | WriteStep.WouldBlock (_, asleep) ->
                     match UnixThreadTable.parkedFor sleeper (Lone.threads asleep) with
                     | Some (ParkedSyscall.PipeWrite parked) ->
                         (parked.Count, parked.Written) |> shouldEqual (200000, 65536)

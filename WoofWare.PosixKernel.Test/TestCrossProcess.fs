@@ -772,7 +772,7 @@ module TestCrossProcess =
         Machines.doIn
             pid
             (fun view ->
-                match UnixReadWrite.tryWriteBytes 0 fd bytes view with
+                match WriteOutcomes.writeBytes 0 fd bytes view with
                 | Ok (WriteStep.Returns (WriteAnswer.Completed written, view)) when int written = bytes.Length -> view
                 | other -> failwith $"write %d{fd} %s{text}: %A{other}"
             )

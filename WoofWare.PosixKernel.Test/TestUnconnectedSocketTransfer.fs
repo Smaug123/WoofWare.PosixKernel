@@ -484,13 +484,13 @@ module TestUnconnectedSocketTransfer =
         | Call.Write count ->
             let admitted = UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system
 
-            // `write` without the admission, as a caller holding the bytes may
-            // make it, answers the same, but only for a count the caller could
-            // hold in one call.
+            // The whole `write`, through its paused call and a step at a time,
+            // answers as its admission does, for a count the caller could hold
+            // in one call.
             let written =
                 if count <= uint64 (1 <<< 20) then
                     Some (
-                        UnixReadWrite.tryWriteBytes
+                        WriteOutcomes.writeBytes
                             1
                             fd
                             (ImmutableArray.Create<byte> (Array.zeroCreate (int count)))

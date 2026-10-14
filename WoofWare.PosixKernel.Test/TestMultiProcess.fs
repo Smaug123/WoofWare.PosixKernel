@@ -332,7 +332,7 @@ module TestMultiProcess =
 
             let write (text : string) (view : UnixSystem<int, string>) =
                 match
-                    UnixReadWrite.tryWriteBytes
+                    WriteOutcomes.writeBytes
                         0
                         1
                         (ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text))

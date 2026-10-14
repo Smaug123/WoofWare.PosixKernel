@@ -920,51 +920,6 @@ module TestConnectedTransfer =
 
             assertClean system
 
-    /// `write` given the bytes without an admission first answers as the
-    /// admission and its write do, `SIGPIPE` included: three writes of 100
-    /// bytes each way, from each state a close can leave the writer in.
-    [<Test>]
-    let ``a write that skips its admission answers a connection as one that makes it`` () : unit =
-        let summary (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) =
-            match outcome with
-            | Ok (WriteStep.Returns (answer, system)) -> (answer, None), system
-            | Ok (WriteStep.ReturnsRaising (answer, entry, system)) -> (answer, Some entry.Signal), system
-            | other -> failwith $"%A{other}"
-
-        for platform in Machines.platforms do
-            // The peer closed over unread bytes; closed cleanly; or neither.
-            for build in [ "reset" ; "fin" ; "open" ] do
-                let c, s, system = pair true (systemOn id platform)
-
-                let system =
-                    match build with
-                    | "reset" -> sentAll c 10 system |> KeventWorld.close s
-                    | "fin" -> KeventWorld.close s system
-                    | _ -> system
-
-                let thrice
-                    (write : UnixSystem<int, string> -> Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>)
-                    =
-                    ((system, []), [ 1..3 ])
-                    ||> List.fold (fun (system, seen) _ ->
-                        let answer, system = summary (write system)
-                        system, seen @ [ answer ]
-                    )
-                    |> snd
-
-                let admitted = thrice (send c 100)
-
-                let direct =
-                    thrice (fun system ->
-                        UnixReadWrite.tryWriteBytes
-                            (Lone.leader system)
-                            c
-                            (ImmutableArray.Create (payload, 0, 100))
-                            system
-                    )
-
-                (build, direct) |> shouldEqual (build, admitted)
-
     /// What a reset leaves of the survivor's binding and options, against a
     /// FIN, replayed from `reset-binding.c`'s rows for both flavours: a reset
     /// releases the survivor's port (on Linux, unless it was bound

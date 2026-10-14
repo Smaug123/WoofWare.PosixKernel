@@ -106,11 +106,14 @@ module TestPipe =
         match WriteOutcomes.admitWrite fd UserBuffer.Mapped (uint64 bytes.Length) system with
         | Error refusal -> failwith $"admitWrite refused: %A{refusal}"
         | Ok (WriteAdmission.Answered answer, system) -> answer, system
-        | Ok (WriteAdmission.Transfer count, admitted) ->
+        | Ok (WriteAdmission.Transfer (count, into), admitted) ->
             if count > bytes.Length then
                 failwith $"admitWrite asked for %d{count} of %d{bytes.Length} bytes"
 
-            match WriteOutcomes.write fd (ImmutableArray.Create (bytes, 0, count)) admitted with
+            match
+                WriteOutcomes.applyWrite fd into (ImmutableArray.Create (bytes, 0, count)) admitted
+                |> WriteOutcomes.returned
+            with
             | Error refusal -> failwith $"write refused: %A{refusal}"
             | Ok result -> result
         | Ok (WriteAdmission.TransferThenSleep _ as admission, _) -> failwith $"the write would sleep: %A{admission}"
@@ -363,19 +366,21 @@ module TestPipe =
                         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
                         | Ok (WriteStep.Restarts _) as other ->
                             failwith $"%s{where}: a write that never slept restarted: %A{other}"
-                        | Ok (WriteStep.Returns (WriteAdmission.Transfer n, admitted)) ->
+                        | Ok (WriteStep.Returns (WriteAdmission.Transfer (n, into), admitted)) ->
                             transferred <- Some n
-                            UnixReadWrite.tryWriteBytes (Lone.leader system) fd (payload reference.Offered n) admitted
-                        | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (n, total), admitted)) ->
+                            WriteOutcomes.applyWrite fd into (payload reference.Offered n) admitted
+                        | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (n, total, into), admitted)) ->
                             transferred <- Some n
                             total |> shouldEqual count
 
-                            UnixReadWrite.tryWriteBytesThenSleep
+                            WriteOutcomes.applyWriteThenSleep
                                 (Lone.leader system)
                                 fd
                                 total
+                                into
                                 (payload reference.Offered n)
                                 admitted
+                            |> Ok
                         | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer _, _, _))
                         | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep _, _, _)) as other ->
                             failwith $"%s{where}: an admission that raised a signal asked for bytes: %A{other}"
