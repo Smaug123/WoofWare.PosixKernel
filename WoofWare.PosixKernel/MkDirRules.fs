@@ -9,16 +9,6 @@ namespace WoofWare.PosixKernel
 /// </remarks>
 type MkDirRules =
     {
-        // This field is why `MkDirRules.verdict` needs no rules: the divergence
-        // is spent inside the walk, and what comes out the other side is
-        // decided identically on both platforms.
-        /// The walk `mkdir` resolves its path with. Linux's last component is a
-        /// plain dentry lookup (`filename_create`), so a trailing separator buys
-        /// nothing there and every existing final name is EEXIST; Darwin
-        /// resolves it as a lookup would, which is how `mkdir("dang/")` creates
-        /// the dangling link's *target* on that platform and answers ENOTDIR for
-        /// "f/" and ELOOP for "cyc/".
-        TrailingSeparator : TrailingSeparatorPolicy
         /// The bits `mkdir(2)` keeps from its `mode` argument before the umask
         /// is applied — which is *not* `CreatingOpenRules.ModeMask`. Linux keeps
         /// the sticky bit and drops both set-ID bits (`vfs_mkdir` masks with
@@ -67,7 +57,7 @@ module internal MkDirRules =
     /// Takes no `MkDirRules`, and that is the point: every rule below except the
     /// last is measured *identical* on both platforms, and the last reads only
     /// `bindable`. Everything else `mkdir` diverges about is spent earlier, in
-    /// the walk `MkDirRules.TrailingSeparator` selects, or later, in
+    /// the walk `SimulatedUnixPlatform.finalNameTrailingSeparator` selects, or later, in
     /// `createdPermissions`. Contrast `CreatingOpenRules.verdict`, which
     /// genuinely reads two of its fields.
     ///
@@ -108,43 +98,12 @@ module internal MkDirRules =
         (vfs : VirtualFileSystem)
         : MkDirVerdict
         =
-        match resolution.Target with
-        | ResolvedTarget.Directory _ -> MkDirVerdict.Refuse UnixError.EEXIST
-        | ResolvedTarget.Entry (directory, name, existing) ->
-
-        // Nothing can be created inside a directory whose own last name has
-        // gone. Measured on both, at 0o755 and at 0o555, so ENOENT beats the
-        // EACCES below; and `mkdir(".")` inside an orphan is still EEXIST, which
-        // is why this sits under the `Directory` arm rather than above it.
-        //
-        // Above the `existing` match because that is where a real kernel puts
-        // it: the ENOENT comes from the lookup itself failing against a dead
-        // parent. The ordering is not observable — an orphan is necessarily
-        // empty, since `rmdir` refuses a populated directory and this rule stops
-        // one ever gaining an entry.
-        if VirtualFileSystem.isOrphanedDirectory directory vfs then
-            MkDirVerdict.Refuse UnixError.ENOENT
-        else
-
-        // Write alone: the search half of the rule is the walk's, and a
-        // resolution that reached here has already passed it.
-        let parent, parentPermissions =
-            match VirtualFileSystem.tryGet directory vfs with
-            | Some parent -> parent, Inode.permissions parent
-            | None ->
-                failwith
-                    $"MkDirRules.verdict: resolution named inode %O{directory} as the directory to create \"%s{DirectoryEntryName.toEscaped name}\" in, but the filesystem does not contain it. Run VirtualFileSystem.checkInvariants."
-
-        match existing with
-        | Some _ -> MkDirVerdict.Refuse UnixError.EEXIST
-        | None ->
-
-        if PermissionBits.deniedTo (Standing.toward credentials parent.Owner) AccessRequest.Write parentPermissions then
-            MkDirVerdict.Refuse UnixError.EACCES
-        elif not (BindableEntryNames.admits bindable name) then
-            MkDirVerdict.Refuse UnixError.EILSEQ
-        else
-            MkDirVerdict.Create (directory, name, parentPermissions)
+        match
+            NewNameRules.verdict FreeNameTrailingSeparator.Binds NewNameSource.Fresh bindable credentials resolution vfs
+        with
+        | NewNameVerdict.Refuse error -> MkDirVerdict.Refuse error
+        | NewNameVerdict.Bind (directory, name, parent) ->
+            MkDirVerdict.Create (directory, name, Inode.permissions parent)
 
     /// <summary>
     /// The permission bits a directory created with this <c>mode</c> argument ends up

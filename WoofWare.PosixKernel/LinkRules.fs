@@ -18,10 +18,6 @@ type LinkRules =
         /// final position: Darwin's is `linkat(AT_SYMLINK_FOLLOW)`, Linux's
         /// `linkat(0)`.
         PlainLinkSource : SymlinkPolicy
-        /// The walk the new pathname is resolved with: Linux's ignores a
-        /// trailing separator, Darwin's resolves it, exactly as `symlink`'s do
-        /// (`SymlinkRules.TrailingSeparator`).
-        TrailingSeparator : TrailingSeparatorPolicy
         /// When a directory source is refused.
         DirectorySource : DirectorySourceRefusal
     }
@@ -71,68 +67,23 @@ module internal LinkRules =
         // Measured by `link-symlink.c` (LINKDST, LINKDEV, LINKPERM) and
         // `link-rules.c` (ORDER, DESTMORE) on Linux 6.18.5 and Darwin 27.0, and
         // the orphan's ENOENT by `at-dirfd.c`.
-        match resolution.Target with
-        | ResolvedTarget.Directory _ -> LinkVerdict.Refuse UnixError.EEXIST
-        | ResolvedTarget.Entry (directory, name, existing) ->
-
-        if VirtualFileSystem.isOrphanedDirectory directory vfs then
-            LinkVerdict.Refuse UnixError.ENOENT
-        else
-
-        match existing with
-        | Some _ -> LinkVerdict.Refuse UnixError.EEXIST
-        | None ->
-
-        if resolution.TrailingSeparatorDemanded then
-            LinkVerdict.Refuse UnixError.ENOENT
-        elif
-            VirtualFileSystem.mountedRootOf source vfs
-            <> VirtualFileSystem.mountedRootOf directory vfs
-        then
-            LinkVerdict.Refuse UnixError.EXDEV
-        else
-
-        let sourceInode, parent =
-            match VirtualFileSystem.tryGet source vfs, VirtualFileSystem.tryGet directory vfs with
-            | Some sourceInode, Some parent -> sourceInode, parent
-            | _ ->
-                failwith
-                    $"LinkRules.verdict: the source (inode %O{source}) or the directory to bind \"%s{DirectoryEntryName.toEscaped name}\" in (inode %O{directory}) is not in the filesystem. Run VirtualFileSystem.checkInvariants."
-
-        if ProtectedFiles.refusesToLink protection credentials sourceInode then
-            LinkVerdict.Refuse UnixError.EPERM
-        elif
-            PermissionBits.deniedTo
-                (Standing.toward credentials parent.Owner)
-                AccessRequest.Write
-                (Inode.permissions parent)
-        then
-            LinkVerdict.Refuse UnixError.EACCES
-        else
-
-        let directorySource =
-            match sourceInode.Content with
-            | InodeContent.Directory _ -> true
-            | InodeContent.RegularFile _
-            | InodeContent.Symlink _
-            | InodeContent.Socket _
-            | InodeContent.Fifo _
-            | InodeContent.CharacterDevice _ -> false
-
-        match rules.DirectorySource with
-        | DirectorySourceRefusal.Last when directorySource -> LinkVerdict.Refuse UnixError.EPERM
-        | DirectorySourceRefusal.BeforeDestination when directorySource ->
+        // Darwin refuses a directory source before the new pathname is
+        // copied in, so a directory reaching here is Linux's, refused last.
+        match rules.DirectorySource, VirtualFileSystem.tryGetContent source vfs with
+        | DirectorySourceRefusal.BeforeDestination, Some (InodeContent.Directory _) ->
             failwith
                 $"LinkRules.verdict: the source (inode %O{source}) is a directory, which this flavour refuses before the destination is resolved (this is a bug in the caller)."
-        | DirectorySourceRefusal.Last
-        | DirectorySourceRefusal.BeforeDestination ->
+        | DirectorySourceRefusal.BeforeDestination, _
+        | DirectorySourceRefusal.Last, _ ->
 
-        // Measured by `link-empty-path.c` (UNLINKED) on Linux 6.18.5: a file
-        // with no name left, which only Linux's `AT_EMPTY_PATH` reaches, is
-        // ENOENT only once every other check has passed.
-        if VirtualFileSystem.bindingCount source vfs = 0 then
-            LinkVerdict.Refuse UnixError.ENOENT
-        elif not (BindableEntryNames.admits bindable name) then
-            LinkVerdict.Refuse UnixError.EILSEQ
-        else
-            LinkVerdict.Create (directory, name)
+        match
+            NewNameRules.verdict
+                FreeNameTrailingSeparator.NoSuchEntry
+                (NewNameSource.Linked (source, protection))
+                bindable
+                credentials
+                resolution
+                vfs
+        with
+        | NewNameVerdict.Refuse error -> LinkVerdict.Refuse error
+        | NewNameVerdict.Bind (directory, name, _) -> LinkVerdict.Create (directory, name)
