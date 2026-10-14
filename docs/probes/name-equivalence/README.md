@@ -37,5 +37,5 @@ What the outputs say:
 
 The library models case-sensitive APFS on Darwin. It holds no Unicode tables, so
 it refuses a lookup that finds no entry under exactly the bytes looked up while
-the directory binds a name that might be equivalent; see `EntryNameMatching` for
-the rule and the three-entry table it uses.
+the directory binds a name that might be equivalent; see `NameDecomposition`, in
+`EntryNameMatching.fs`, for the rule and the three-entry table it uses.
