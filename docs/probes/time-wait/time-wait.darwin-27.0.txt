@@ -1,0 +1,33 @@
+Darwin 27.0.0 arm64
+net.inet.tcp.msl 15000
+B0 bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+B0 bind 127.0.0.1:T reuse=1 -> OK; listen -> OK
+B0 bind 0.0.0.0:T reuse=0 -> EADDRINUSE
+B0 bind 0.0.0.0:T reuse=1 -> OK; listen -> OK
+B1 bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+B1 bind 127.0.0.1:T reuse=1 -> OK; listen -> OK
+B1 bind 0.0.0.0:T reuse=0 -> EADDRINUSE
+B1 bind 0.0.0.0:T reuse=1 -> OK; listen -> OK
+S0 bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+S0 bind 127.0.0.1:T reuse=1 -> OK; listen -> OK
+S0 bind 0.0.0.0:T reuse=0 -> EADDRINUSE
+S0 bind 0.0.0.0:T reuse=1 -> OK; listen -> OK
+P bind 127.0.0.1:T -> OK
+S1 bind 127.0.0.1:T reuse=0 -> EADDRINUSE
+S1 bind 127.0.0.1:T reuse=1 -> OK; listen -> OK
+S1 bind 0.0.0.0:T reuse=0 -> EADDRINUSE
+S1 bind 0.0.0.0:T reuse=1 -> OK; listen -> OK
+P connect reuse=0 -> OK from port T+0
+Cc0x connect reuse=0 -> OK from port T+1
+Cc0y connect reuse=0 -> OK from port T+1
+Cc1x connect reuse=1 -> OK from port T+1
+Cc1y connect reuse=1 -> OK from port T+1
+Cb0x connect reuse=0 -> OK from port T+1
+Cb0y connect reuse=0 -> OK from port T+1
+Cb1x connect reuse=1 -> OK from port T+1
+Cb1y connect reuse=1 -> OK from port T+1
+Lb bind 127.0.0.1:0 reuse=0 -> OK from port T+1
+Lb bind 127.0.0.1:0 reuse=1 -> OK from port T+1
+Ll listen reuse=0 -> OK from port T+1
+Ll listen reuse=1 -> OK from port T+1
+W bind 127.0.0.1:T after 31.1 s -> OK; the last EADDRINUSE was after 30.1 s
