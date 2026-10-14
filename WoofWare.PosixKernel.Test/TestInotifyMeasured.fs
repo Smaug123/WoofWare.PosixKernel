@@ -178,14 +178,14 @@ module TestInotifyMeasured =
         | Error refusal -> failwith $"close(%d{fd}): %A{refusal}"
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names no description"
 
     /// The record the probe's filesystem change queued on the instance `fd`
     /// names, queued directly.
     let private queue (fd : int) (record : InotifyRecord) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixSystemState.mapOpenFiles
+        Lone.mapOpenFiles
             (OpenFileTable.enqueueInotify system.Machine.InotifyLimits.MaxQueuedEvents (idOf fd system) record)
             system
 
@@ -352,7 +352,7 @@ module TestInotifyMeasured =
             |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let objectOf (fd : int) =
-            FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors system)
 
         objectOf a |> shouldEqual (Some OpenFileObject.AnonymousInode)
         objectOf b |> shouldEqual (objectOf a)
@@ -506,7 +506,7 @@ module TestInotifyMeasured =
         // made under each. The first row records an `IN_OPEN` at `w/f`'s
         // watch, which no watch here asks for.
         let maskOf (wd : int) =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Inotify state) -> state.Watches.[WatchDescriptor wd].Mask.Events
             | other -> failwith $"%A{other}"
 
@@ -758,33 +758,33 @@ module TestInotifyMeasured =
 
     /// SIGUSR1 caught by a handler, restarting or not.
     let private catching (restart : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch
-                                { SignalCatch.ofHandler "h" with
-                                    Restart = restart
-                                })
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.setDisposition
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch
+                            { SignalCatch.ofHandler "h" with
+                                Restart = restart
+                            })
+                        proc.Signals
+            }
+        )
 
     let private signalThread (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome thread
-                            }
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome thread
+                        }
+                        proc.Signals
+            }
+        )
 
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
         match UnixWait.satisfied thread system with
@@ -1217,7 +1217,7 @@ module TestInotifyMeasured =
         | SyscallAnswer.Completed again, s ->
             again |> shouldEqual wd
 
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors s) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors s) with
             | Some (OpenFileTarget.Inotify state) ->
                 state.Watches.[WatchDescriptor (int wd)].Mask.Events |> shouldEqual Set.empty
             | other -> failwith $"%A{other}"
@@ -1375,7 +1375,7 @@ module TestInotifyMeasured =
         system <- s |> queue fd2 (movedFrom 1u) |> queue fd2 (movedFrom 2u)
 
         let records =
-            match FileDescriptorRegistry.tryFindTarget fd2 (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd2 (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Inotify state) -> InotifyQueue.length state.Queue
             | other -> failwith $"%A{other}"
 

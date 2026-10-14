@@ -1,0 +1,56 @@
+Darwin 27.0.0 arm64
+E1 bind 127.0.0.1:46000 -> OK; connect 127.0.0.1:46000 -> EINVAL
+E1 getsockname=127.0.0.1:46000 getpeername=ENOTCONN SO_ERROR=OK
+E2 bind 0.0.0.0:46001 -> OK; connect 127.0.0.1:46001 -> EINVAL
+E2 getsockname=0.0.0.0:46001 getpeername=ENOTCONN SO_ERROR=OK
+listener at 127.0.0.1:45123 -> OK
+  attempt 2 had port 57284; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D1 connect 127.0.0.1:57284 -> EINVAL
+D1 getsockname=0.0.0.0:57284 getpeername=ENOTCONN SO_ERROR=OK
+D1 fresh bind 127.0.0.1:57284 -> EADDRINUSE
+D1 fresh bind 0.0.0.0:57284 -> EADDRINUSE
+  attempt 2 had port 57287; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D2 connect 127.0.0.1:57287 -> EINVAL
+D2 second connect 127.0.0.1:57287 -> EINVAL
+D2 getsockname=0.0.0.0:57287 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 57290; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D3 connect 127.0.0.1:57290 -> EINVAL
+D3 connect to the listener at 127.0.0.1:45123 -> OK
+D3 getsockname=127.0.0.1:57290 getpeername=127.0.0.1:45123 SO_ERROR=OK
+  attempt 2 had port 57293; the 1 before it: OK=0 ECONNREFUSED=1 EINPROGRESS=0 other=0
+D4 connect 127.0.0.1:57293 -> EINVAL
+D4 listen -> OK
+D4 getsockname=0.0.0.0:57293 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 57296; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N1 connect 127.0.0.1:57296 -> EINVAL
+N1 poll -> 0 revents=0x0
+N1 getsockname=0.0.0.0:57296 getpeername=ENOTCONN SO_ERROR=OK
+N1 fresh bind 127.0.0.1:57296 -> EADDRINUSE
+N1 fresh bind 0.0.0.0:57296 -> EADDRINUSE
+  attempt 2 had port 57306; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N2 connect 127.0.0.1:57306 -> EINVAL
+N2 second connect 127.0.0.1:57306 -> EINVAL
+N2 getsockname=0.0.0.0:57306 getpeername=ENOTCONN SO_ERROR=OK
+  attempt 2 had port 57309; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N3 connect 127.0.0.1:57309 -> EINVAL
+N3 connect to the listener at 127.0.0.1:45123 -> EINPROGRESS
+N3 poll -> 1 revents=0x4
+N3 getsockname=127.0.0.1:57309 getpeername=127.0.0.1:45123 SO_ERROR=OK
+  attempt 2 had port 57312; the 1 before it: OK=0 ECONNREFUSED=0 EINPROGRESS=1 other=0
+N4 connect 127.0.0.1:57312 -> EINVAL
+N4 listen -> OK
+N4 getsockname=0.0.0.0:57312 getpeername=ENOTCONN SO_ERROR=OK
+H holder bind <other address>:T -> OK
+H connect 127.0.0.1:T -> ECONNREFUSED from port T-1
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+1
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+2
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+3
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+4
+H connect 127.0.0.1:T -> ECONNREFUSED from port T+5
+Hr holder bind <other address>:T -> OK
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T-1
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T+1
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T+2
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T+3
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T+4
+Hr connect 127.0.0.1:T -> ECONNREFUSED from port T+5

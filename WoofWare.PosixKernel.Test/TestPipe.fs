@@ -69,7 +69,7 @@ module TestPipe =
 
     /// The pipe descriptor `fd` names an end of.
     let private pipeOf (fd : int) (system : UnixSystem<int, string>) : PipeId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Pipe (pipeId, _)) -> pipeId
         | other -> failwith $"fd %d{fd} is %A{other}, not a pipe end"
 
@@ -91,7 +91,7 @@ module TestPipe =
         | [] -> ()
         | defects -> failwith $"%s{context}: %A{defects}"
 
-        FileDescriptorRegistry.assertInvariants context (UnixSystemState.fileDescriptors system)
+        FileDescriptorRegistry.assertInvariants context (Lone.fileDescriptors system)
         |> ignore
 
     let private payload (start : int) (count : int) : ImmutableArray<byte> =
@@ -242,12 +242,12 @@ module TestPipe =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE disposition system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+            }
+        )
 
     /// `system` with `signals` in place of its own.
     let private withSignals
@@ -255,12 +255,12 @@ module TestPipe =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = signals
+            }
+        )
 
     /// The `SIGPIPE` a write by `thread` into a pipe with no reader raises: the
     /// writing thread's own on Linux, and the process's on Darwin.
@@ -353,7 +353,7 @@ module TestPipe =
                     let mutable transferred = None
 
                     let actual : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal> =
-                        match UnixReadWrite.tryAdmitWrite system.Leader fd buffer (uint64 count) system with
+                        match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer (uint64 count) system with
                         | Error refusal -> Error refusal
                         | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) ->
                             Ok (WriteStep.Returns (answer, after))
@@ -365,13 +365,13 @@ module TestPipe =
                             failwith $"%s{where}: a write that never slept restarted: %A{other}"
                         | Ok (WriteStep.Returns (WriteAdmission.Transfer n, admitted)) ->
                             transferred <- Some n
-                            UnixReadWrite.tryWriteBytes system.Leader fd (payload reference.Offered n) admitted
+                            UnixReadWrite.tryWriteBytes (Lone.leader system) fd (payload reference.Offered n) admitted
                         | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (n, total), admitted)) ->
                             transferred <- Some n
                             total |> shouldEqual count
 
                             UnixReadWrite.tryWriteBytesThenSleep
-                                system.Leader
+                                (Lone.leader system)
                                 fd
                                 total
                                 (payload reference.Offered n)
@@ -400,7 +400,7 @@ module TestPipe =
                     // except Linux's zero-length one; it takes nothing and moves
                     // no timestamp, so all it changes is the signal state.
                     if not readerOpen && not (flavour = SimulatedUnixFlavour.Linux && count = 0) then
-                        let raised = sigPipeFrom flavour system.Leader
+                        let raised = sigPipeFrom flavour (Lone.leader system)
 
                         match sigPipe, actual with
                         | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
@@ -417,8 +417,8 @@ module TestPipe =
                           Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
                             signal |> shouldEqual raised
                             // Pending once, however many writes raised it.
-                            SignalState.pending after.Process.Signals |> shouldEqual [ raised ]
-                            withSignals system.Process.Signals after |> shouldEqual system
+                            SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
+                            withSignals (Lone.proc system).Signals after |> shouldEqual system
                             system <- after
                         | _ -> failwith $"%s{where}: expected EPIPE and SIGPIPE under %A{sigPipe}, got %A{actual}"
                     else
@@ -452,8 +452,7 @@ module TestPipe =
                         // checked here and not kept: the sequence carries on
                         // from the system it was made in.
                         let writer =
-                            FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-                            |> Option.get
+                            FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
                         let parked =
                             {
@@ -464,7 +463,7 @@ module TestPipe =
                                 ReadsSeen = reads
                             }
 
-                        UnixThreadTable.parkedFor system.Leader after.Threads
+                        UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after)
                         |> shouldEqual (Some (ParkedSyscall.PipeWrite parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeWrite parked))
@@ -510,7 +509,8 @@ module TestPipe =
                         else
                             UserBuffer.Unmapped 8UL
 
-                    let actual = UnixReadWrite.tryRead system.Leader fd buffer (uint64 count) system
+                    let actual =
+                        UnixReadWrite.tryRead (Lone.leader system) fd buffer (uint64 count) system
 
                     match Map.tryFind fd reference.Fds with
                     | None
@@ -548,15 +548,14 @@ module TestPipe =
                             {
                                 Reader =
                                     SleepTarget.Waiting (
-                                        FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-                                        |> Option.get,
+                                        FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get,
                                         fd
                                     )
                                 Buffer = buffer
                                 Count = count
                             }
 
-                        UnixThreadTable.parkedFor system.Leader after.Threads
+                        UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after)
                         |> shouldEqual (Some (ParkedSyscall.PipeRead parked))
 
                         condition |> shouldEqual (WakeCondition.ofPark (ParkedSyscall.PipeRead parked))
@@ -636,8 +635,7 @@ module TestPipe =
                     | Some (pipeEnd, _) ->
 
                     let id =
-                        FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-                        |> Option.get
+                        FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
                     let expected =
                         match pipeEnd with
@@ -1012,9 +1010,9 @@ module TestPipe =
                                         }
 
                                 let actual =
-                                    WriteOutcomes.admitThenWrite system.Leader w buffer (payload 0 count) system
+                                    WriteOutcomes.admitThenWrite (Lone.leader system) w buffer (payload 0 count) system
 
-                                let raised = sigPipeFrom flavour system.Leader
+                                let raised = sigPipeFrom flavour (Lone.leader system)
 
                                 // Every row but Linux's zero-length one raises.
                                 let raises = not (flavour = SimulatedUnixFlavour.Linux && count = 0)
@@ -1033,8 +1031,8 @@ module TestPipe =
                                     after |> shouldEqual system
                                 | true, SignalDisposition.Catch _, Ok (WriteStep.ReturnsRaising (answer, signal, after)) ->
                                     (answer, signal) |> shouldEqual (WriteAnswer.Failed UnixError.EPIPE, raised)
-                                    SignalState.pending after.Process.Signals |> shouldEqual [ raised ]
-                                    withSignals system.Process.Signals after |> shouldEqual system
+                                    SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
+                                    withSignals (Lone.proc system).Signals after |> shouldEqual system
                                 | _ -> failwith $"%s{where}: %A{actual}"
 
     [<Test>]
@@ -1042,12 +1040,12 @@ module TestPipe =
         for platform in platforms do
             let (r, w), system = pipeOrFail 0 (systemOn platform)
 
-            match UnixReadWrite.tryRead system.Leader r UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
             // A NULL buffer is not consulted before the read sleeps.
-            match UnixReadWrite.tryRead system.Leader r (UserBuffer.Unmapped 0UL) 10UL system with
+            match UnixReadWrite.tryRead (Lone.leader system) r (UserBuffer.Unmapped 0UL) 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1065,9 +1063,9 @@ module TestPipe =
         for platform in platforms do
             let (_, w), system = pipeOrFail 0 (systemOn platform)
 
-            match WriteOutcomes.admitThenWrite system.Leader w UserBuffer.Mapped (payload 0 70000) system with
+            match WriteOutcomes.admitThenWrite (Lone.leader system) w UserBuffer.Mapped (payload 0 70000) system with
             | Ok (WriteStep.WouldBlock (_, after)) ->
-                match UnixThreadTable.parkedFor system.Leader after.Threads with
+                match UnixThreadTable.parkedFor (Lone.leader system) (Lone.threads after) with
                 | Some (ParkedSyscall.PipeWrite parked) -> (parked.Count, parked.Written) |> shouldEqual (70000, 65536)
                 | other -> failwith $"%O{platform}: %A{other}"
             | other -> failwith $"%O{platform}: %A{other}"
@@ -1265,8 +1263,7 @@ module TestPipe =
 
         let level fd system =
             let id =
-                FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
             LinuxReadiness.ofDescription id system
 
@@ -1328,7 +1325,7 @@ module TestPipe =
             let system = closeOrFail w system
 
             // The dup holds the write end open: an empty read is not end of file.
-            match UnixReadWrite.tryRead system.Leader r UserBuffer.Mapped 1UL system with
+            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 1UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%A{other}"
 

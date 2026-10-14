@@ -172,7 +172,7 @@ module TestDescriptorBound =
             let system = FcntlWorld.connect client 5000us system
 
             let listener =
-                match FileDescriptorRegistry.tryFindTarget listening (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget listening (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"%s{run.Name}: descriptor %d{listening} names %A{other}, not a socket"
 
@@ -218,12 +218,12 @@ module TestDescriptorBound =
 
             let registry =
                 FileDescriptorRegistry.Unchecked.ofParts
-                    (FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system)
-                     |> Map.add bound (Map.find 3 (FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system))))
+                    (FileDescriptorRegistry.fds (Lone.fileDescriptors system)
+                     |> Map.add bound (Map.find 3 (FileDescriptorRegistry.fds (Lone.fileDescriptors system))))
                     (OpenFileTable.descriptions system.Machine.OpenFiles)
                     (OpenFileDescriptionId 1000L)
 
-            let broken = UnixSystemState.withFileDescriptors registry system
+            let broken = Lone.withFileDescriptors registry system
 
             UnixSystem.checkInvariants broken
             |> List.filter (fun defect ->

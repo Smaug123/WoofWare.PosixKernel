@@ -28,7 +28,7 @@ module TestKqueueOwner =
         }
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socket) -> socket
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -42,7 +42,7 @@ module TestKqueueOwner =
 
         let state =
             {
-                Owner = owner |> Option.defaultValue system.Process.ProcessId
+                Owner = owner |> Option.defaultValue (Lone.proc system).ProcessId
                 Drained = false
                 Registrations = Map.ofList [ (listener, KqueueFilter.Read), registration (socketOf listener system) ]
                 Active = []
@@ -50,7 +50,7 @@ module TestKqueueOwner =
 
         // The registration's ordinal, 0, is one the machine has minted.
         let system =
-            UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState id state) system
+            Lone.mapOpenFiles (OpenFileTable.setKqueueState id state) system
             |> fun system ->
                 { system with
                     Machine =
@@ -62,7 +62,7 @@ module TestKqueueOwner =
         listener, kqueue, system
 
     let private registrationsOf (kqueue : int) (system : UnixSystem<int, string>) =
-        match FileDescriptorRegistry.tryFindTarget kqueue (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget kqueue (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Kqueue state) -> state.Registrations
         | other -> failwith $"fd %d{kqueue} names %A{other}"
 
@@ -73,7 +73,7 @@ module TestKqueueOwner =
         let kqueue, system =
             KeventWorld.darwinWith (Launched.processId pid) |> KeventWorld.kqueue
 
-        match FileDescriptorRegistry.tryFindTarget kqueue (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget kqueue (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Kqueue state) -> state.Owner |> shouldEqual pid
         | other -> failwith $"fd %d{kqueue} names %A{other}"
 
@@ -88,14 +88,14 @@ module TestKqueueOwner =
             let registry =
                 match
                     FileDescriptorRegistry.dropDescriptor
-                        system.Process.ProcessId
+                        (Lone.proc system).ProcessId
                         listener
-                        (UnixSystemState.fileDescriptors system)
+                        (Lone.fileDescriptors system)
                 with
                 | Ok (registry, _) -> registry
                 | Error error -> failwith $"close: %O{error}"
 
-            let after = UnixSystemState.withFileDescriptors registry system
+            let after = Lone.withFileDescriptors registry system
             (registrationsOf kqueue after).IsEmpty |> shouldEqual purged
 
     [<Test>]
@@ -116,7 +116,7 @@ module TestKqueueOwner =
                 | Some {
                            Target = OpenFileTarget.Kqueue state
                        } ->
-                    UnixSystemState.mapOpenFiles
+                    Lone.mapOpenFiles
                         (OpenFileTable.setKqueueState
                             id
                             { state with

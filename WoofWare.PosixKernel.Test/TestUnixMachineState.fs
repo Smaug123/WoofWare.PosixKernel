@@ -29,7 +29,7 @@ module TestUnixMachineState =
             UnixSystem.initial SimulatedUnixPlatform.linuxX64
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        (UnixSystemState.withFileDescriptors registry system).Machine
+        (Lone.withFileDescriptors registry system).Machine
 
     [<Test>]
     let ``every reference a description holds keeps its inode alive`` () : unit =

@@ -99,7 +99,7 @@ module TestTransferCounts =
                     rootInode
                     (DirectoryEntryName.parseOrFail context "f")
                     (PermissionBits.parseOrFail context 0o644)
-                    (InodeOwner.ofProcess system.Process.Credentials)
+                    (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     epoch
                     content
                     system.Machine.FileSystem
@@ -112,10 +112,10 @@ module TestTransferCounts =
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd,
-        (UnixSystemState.withFileDescriptors
+        (Lone.withFileDescriptors
             (FileDescriptorRegistry.setOffset fd position registry)
             { system with
                 Machine =
@@ -125,7 +125,7 @@ module TestTransferCounts =
             })
 
     let internal positionOf (fd : int) (system : UnixSystem<int, string>) : int64 =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.File (_, offset)) -> offset
         | other -> failwith $"expected a file descriptor, got %O{other}"
 
@@ -642,13 +642,13 @@ module TestTransferCounts =
     let private socketId : SocketId = SocketId 0L
 
     let private withDescriptor (kind : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let registry = UnixSystemState.fileDescriptors system
+        let registry = Lone.fileDescriptors system
 
         let reopen (inode : InodeNumber) (mode : FileAccessMode) =
             let fd, registry =
                 FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode mode registry
 
-            fd, UnixSystemState.withFileDescriptors registry system
+            fd, Lone.withFileDescriptors registry system
 
         match kind with
         | "closed" -> 7, system
@@ -658,17 +658,17 @@ module TestTransferCounts =
             let fd, registry =
                 FileDescriptorRegistry.openDirectory (ForgedName.ofInode system rootInode) rootInode registry
 
-            fd, UnixSystemState.withFileDescriptors registry system
+            fd, Lone.withFileDescriptors registry system
         | "event queue" ->
             // The flavour's own: an epoll instance, or a kqueue.
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
             let fd, registry = create registry
 
-            fd, UnixSystemState.withFileDescriptors registry system
+            fd, Lone.withFileDescriptors registry system
         | "socket" ->
             let fd, registry = FileDescriptorRegistry.createSocket socketId registry
 
@@ -691,12 +691,12 @@ module TestTransferCounts =
                                 ]
                     }
             }
-            |> UnixSystemState.withFileDescriptors registry
+            |> Lone.withFileDescriptors registry
         | "readonly" ->
             let fd, system = withFile (ImmutableArray.CreateRange (contentOf 5)) 0L system
 
             let inode =
-                match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.File (inode, _)) -> inode
                 | other -> failwith $"expected a file, got %O{other}"
 
@@ -705,14 +705,14 @@ module TestTransferCounts =
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
-            fd, UnixSystemState.withFileDescriptors registry system
+            fd, Lone.withFileDescriptors registry system
         | "writeonly" ->
             let fd, system = withFile (ImmutableArray.CreateRange (contentOf 5)) 0L system
 
             let inode =
-                match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.File (inode, _)) -> inode
                 | other -> failwith $"expected a file, got %O{other}"
 
@@ -721,9 +721,9 @@ module TestTransferCounts =
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
-            fd, UnixSystemState.withFileDescriptors registry system
+            fd, Lone.withFileDescriptors registry system
         | other -> failwith $"no descriptor kind %s{other}"
 
     let private seen
@@ -752,18 +752,14 @@ module TestTransferCounts =
         | "write" ->
             // `SIGPIPE` ignored, so that a write raising it returns.
             let system =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals =
-                                SignalState.setDisposition
-                                    Signal.SIGPIPE
-                                    SignalDisposition.Ignore
-                                    system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                    }
+                )
 
-            match UnixReadWrite.tryAdmitWrite system.Leader fd buffer count system with
+            match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system with
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered (WriteAnswer.Failed error), signal, _)) when
                 signal.Signal = Signal.SIGPIPE
                 ->
@@ -905,12 +901,10 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (ForgedName.ofInode system rootInode)
                     rootInode
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
             let system =
-                UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setDirectoryPosition fd position registry)
-                    system
+                Lone.withFileDescriptors (FileDescriptorRegistry.setDirectoryPosition fd position registry) system
 
             match ReadOutcomes.read fd UserBuffer.Mapped count system with
             | Ok (ReadAnswer.Failed error, _) -> Seen.Errno error
@@ -981,9 +975,9 @@ module TestTransferCounts =
                 FileDescriptorRegistry.openDirectory
                     (ForgedName.ofInode system rootInode)
                     rootInode
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             match PReadUnchanged.pread fd UserBuffer.Mapped count offset system with
             | Ok (ReadAnswer.Failed error) -> Seen.Errno error

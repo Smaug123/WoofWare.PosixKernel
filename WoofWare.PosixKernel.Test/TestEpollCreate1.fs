@@ -77,13 +77,13 @@ module TestEpollCreate1 =
     let ``an epoll instance is created exactly for 0 and EPOLL_CLOEXEC, on the lowest free descriptor`` () : unit =
         // A descriptor table with holes, so "lowest free" is not "next".
         let epoll, queueSystem =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors linux)
+            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors linux)
 
         let _, withTwo = FileDescriptorRegistry.createEpoll queueSystem
 
         let holed =
-            UnixSystemState.withFileDescriptors
-                (match FileDescriptorRegistry.dropDescriptor linux.Process.ProcessId epoll withTwo with
+            Lone.withFileDescriptors
+                (match FileDescriptorRegistry.dropDescriptor (Lone.proc linux).ProcessId epoll withTwo with
                  | Ok (registry, _) -> registry
                  | Error error -> failwith $"expected the close to succeed, got %O{error}")
                 linux
@@ -95,7 +95,7 @@ module TestEpollCreate1 =
                 fd |> shouldEqual epoll
 
                 let expectedFd, expectedRegistry =
-                    FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors holed)
+                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors holed)
 
                 fd |> shouldEqual expectedFd
 
@@ -109,8 +109,7 @@ module TestEpollCreate1 =
                         }
                         expectedRegistry
 
-                after
-                |> shouldEqual (UnixSystemState.withFileDescriptors expectedRegistry holed)
+                after |> shouldEqual (Lone.withFileDescriptors expectedRegistry holed)
             | Ok (Error error) ->
                 error |> shouldEqual UnixError.EINVAL
                 (flags = 0 || flags = cloExec) |> shouldEqual false

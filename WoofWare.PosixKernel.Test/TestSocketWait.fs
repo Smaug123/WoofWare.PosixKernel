@@ -86,7 +86,7 @@ module TestSocketWait =
             }
 
         let fd, registry =
-            FileDescriptorRegistry.createSocket (SocketId 0L) (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket (SocketId 0L) (Lone.fileDescriptors system)
 
         fd,
         { system with
@@ -96,7 +96,7 @@ module TestSocketWait =
                     NextSocketId = SocketId 1L
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     /// How a wait with nothing to deliver ended up.
     [<RequireQualifiedAccess>]
@@ -114,7 +114,7 @@ module TestSocketWait =
         let system = Threads.ensure thread system
 
         let parkedOn (system : UnixSystem<int, string>) : Waited =
-            match UnixThreadTable.parkedFor thread system.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads system) with
             | Some (ParkedSyscall.EpollWait wait) -> Waited.Parked (wait.Epoll, wait.MaxEvents)
             | Some (ParkedSyscall.Kevent wait) -> Waited.Parked (wait.Kqueue, wait.MaxEvents)
             | other -> failwith $"expected a wait's park, got %A{other}"
@@ -180,9 +180,9 @@ module TestSocketWait =
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             let socketFd, system = withSocket system
 

@@ -185,8 +185,8 @@ module DualModeProbe =
 
     let private nonBlocking (libc : Libc) (fd : int) : unit =
         libc.System <-
-            UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors libc.System))
+            Lone.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors libc.System))
                 libc.System
 
     /// A non-blocking accept, as every accept in the probe is by the time the
@@ -1053,16 +1053,12 @@ module DualModeProbe =
         let nameLine = nameLine libc ports output
 
         libc.System <-
-            { libc.System with
-                Process =
-                    { libc.System.Process with
-                        Signals =
-                            SignalState.setDisposition
-                                Signal.SIGPIPE
-                                SignalDisposition.Ignore
-                                libc.System.Process.Signals
-                    }
-            }
+            libc.System
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+                }
+            )
 
         let l = listener4 libc ports inaddrLoopback
 

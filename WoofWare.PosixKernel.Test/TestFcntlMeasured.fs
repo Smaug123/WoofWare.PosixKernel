@@ -627,7 +627,7 @@ module TestFcntlMeasured =
                 system
 
             let isOpen (fd : int) (system : UnixSystem<int, string>) : string =
-                match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
                 | Some _ -> "open"
                 | None -> "closed"
 
@@ -703,7 +703,7 @@ module TestFcntlMeasured =
         | other -> failwith $"lseek(%d{fd}): %A{other}"
 
     let private readNonBlocking (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixReadWrite.tryRead system.Leader fd UserBuffer.Mapped 4UL system with
+        match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), _) -> $"ok %d{bytes.Length}"
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"%A{error}"
         | other -> failwith $"read of %d{fd}: %A{other}"
@@ -788,7 +788,7 @@ module TestFcntlMeasured =
                 let source, system = FcntlWorld.openWith reading "f" system
 
                 let flock (fd : int) (operation : int) (system : UnixSystem<int, string>) =
-                    match UnixDescriptor.tryFlock system.Leader fd operation system with
+                    match UnixDescriptor.tryFlock (Lone.leader system) fd operation system with
                     | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
                     | other -> failwith $"flock: %A{other}"
 
@@ -843,12 +843,12 @@ module TestFcntlMeasured =
 
     /// `system` with `SIGPIPE` ignored, as the probe had it.
     let private ignoringSigPipe (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     /// A write by the leader of `bytes` through `fd`, which must return.
     let private writeOf
@@ -858,7 +858,12 @@ module TestFcntlMeasured =
         : string * UnixSystem<int, string>
         =
         match
-            WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped (ImmutableArray.CreateRange bytes) system
+            WriteOutcomes.admitThenWrite
+                (Lone.leader system)
+                fd
+                UserBuffer.Mapped
+                (ImmutableArray.CreateRange bytes)
+                system
         with
         | Ok (WriteStep.Returns (answer, system))
         | Ok (WriteStep.ReturnsRaising (answer, _, system)) ->
@@ -873,7 +878,7 @@ module TestFcntlMeasured =
         (system : UnixSystem<int, string>)
         : string * UnixSystem<int, string>
         =
-        match UnixDescriptor.tryFlock system.Leader fd operation system with
+        match UnixDescriptor.tryFlock (Lone.leader system) fd operation system with
         | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
         | other -> failwith $"flock(%d{fd}, %d{operation}): %A{other}"
 
@@ -915,7 +920,7 @@ module TestFcntlMeasured =
                         | "pwrite rdwr" ->
                             match
                                 UnixReadWrite.tryPwriteBytes
-                                    system.Leader
+                                    (Lone.leader system)
                                     fd
                                     (ImmutableArray.CreateRange "x"B)
                                     3L
@@ -931,7 +936,7 @@ module TestFcntlMeasured =
                             | Ok (answer, system) -> Some (FcntlWorld.number answer, system)
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "read rdwr" ->
-                            match UnixReadWrite.tryRead system.Leader fd UserBuffer.Mapped 4UL system with
+                            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                                 Some ($"ok %d{bytes.Length}", system)
                             | other -> failwith $"read: %A{other}"
@@ -1043,7 +1048,9 @@ module TestFcntlMeasured =
                             let fd, system =
                                 FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadWrite) "f" system
 
-                            match UnixReadWrite.tryAdmitPWrite system.Leader fd UserBuffer.Mapped 1UL -1L system with
+                            match
+                                UnixReadWrite.tryAdmitPWrite (Lone.leader system) fd UserBuffer.Mapped 1UL -1L system
+                            with
                             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> fd, $"%A{error}", system
                             | other -> failwith $"admitPWrite at -1: %A{other}"
 
@@ -1194,31 +1201,29 @@ module TestFcntlMeasured =
     /// `system` with `SIGUSR1` caught, without `SA_RESTART`, as the probe had
     /// it, and `SIGPIPE` ignored.
     let private catchingSigUsr1 (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        system.Process.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                        |> SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    proc.Signals
+                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+            }
+        )
 
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome thread
-                            }
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome thread
+                        }
+                        proc.Signals
+            }
+        )
 
     /// Measured on both (`fcntl-dup.c`, WRITTEN rows): a blocking write that
     /// a signal ends once part of it is in returns that count, and on Darwin
@@ -1334,7 +1339,7 @@ module TestFcntlMeasured =
             // can, until it has put in the lot.
             while answer.IsNone do
                 system <-
-                    match UnixReadWrite.tryRead system.Leader r UserBuffer.Mapped 65536UL system with
+                    match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 65536UL system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                     | other -> failwith $"%s{run.Name}: draining: %A{other}"
 

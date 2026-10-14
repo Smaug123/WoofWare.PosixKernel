@@ -570,6 +570,7 @@ A client that holds every argument already, such as a replayer, makes the call t
 
 `UnixSystem.step (thread : 'Thread) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
 Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
+Whatever the call, `getpid` included, `thread` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise.
 Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
 
 ### Checking the tables
@@ -722,8 +723,7 @@ let ended =
     | other -> failwith $"thread 0 is still running, so expected the process to continue: %A{other}"
 
 // The client ends the process on its machine, which closes its descriptors.
-let termination, _ =
-    SimulatedMachine.ofSystem (EndedProcess.endedIn ended) |> SimulatedMachine.endProcess ended
+let termination, _ = SimulatedMachine.endLoneProcess ended
 
 printfn "the process ended: shell status %d" (ProcessTermination.shellStatus (SimulatedUnixPlatform.signalNumbering platform) termination)
 
@@ -756,6 +756,8 @@ It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate
 * `ReturnToUserOutcome.ContinueDiscarded signal`: the kernel discarded a `SIGCONT` at its default, pending while the thread blocked it, as the thread took it, and the client asks `onReturnToUser` again, since the return goes on, under a `sigsuspend`'s temporary mask if the thread is returning from one.
 
 A signal whose default terminates the process ends it where the library applies the default: at generation, when some thread can take it (from `kill`, `pthreadKill`, or a write that raises `SIGPIPE`), and otherwise when a thread that blocked it can take it, as the thread returns to user mode (from `onReturnToUser`): after a mask call or a `sigreturn` that unblocks it, or from a `sigsuspend` whose temporary mask lets it through.
+For a signal sent to the process while every thread blocked it, that thread may be any of the process's threads under Linux, whose threads all take from the process's pending set; a signal whose default stops the process is taken the same way.
+Under Darwin, which put such a signal in its leader's own set as it was sent, a thread other than the leader that unblocks it does not take it, and while it is pending so, `onReturnToUser` refuses every thread.
 Either answer is `ProcessFate.ProcessEnded` of the `EndedProcess`, killed by the signal (`ProcessTermination.Signaled`, with the core flag), and no handler runs, not even one whose frame was pushed at the same return; the client ends the process on its machine with `SimulatedMachine.endProcess`, as for an exit.
 
 A signal whose default stops the process is reported (`KillOutcome.ProcessStopped`, `ReturnToUserOutcome.ProcessStopped`) for the client to act on.
@@ -808,8 +810,7 @@ let pending =
 // default action ends the process.
 match pending |> mask 1 |> returnToUser with
 | ProcessFate.ProcessEnded ended ->
-    let termination, _ =
-        SimulatedMachine.ofSystem (EndedProcess.endedIn ended) |> SimulatedMachine.endProcess ended
+    let termination, _ = SimulatedMachine.endLoneProcess ended
 
     printfn "%A" termination
     printfn "shell status %d" (ProcessTermination.shellStatus numbering termination)
@@ -829,12 +830,13 @@ It throws `InvalidOperationException` for a thread parked in a syscall, and refu
 
 A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last thread, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
-`EndedProcess.processId` is which process it was, and `EndedProcess.endedIn` the view it ended in.
+`EndedProcess.processId` is which process it was.
 Only such a call makes one, and `SimulatedMachine.endProcess` takes nothing else.
 
 `SimulatedMachine.endProcess ended machine` ends the process on the machine: it releases what only the process's calls held, then closes every descriptor in the order each kernel measurably does (Linux drops them lowest first and releases the last let go of first; Darwin closes them highest first), as `close` closes each: sending its peers their FINs, or resets where it left bytes unread, resetting the clients left in its listeners' accept queues, whichever process holds them, and letting its locks, pipes, listeners and event queues go, and removes the process.
 It refuses where a close would: so far, the last close of a connected socket whose `SO_LINGER` would make it wait, and two Darwin closes whose outcome waits on a timer or on the peer's reads.
-A process alone on its machine is ended on the machine `SimulatedMachine.ofSystem (EndedProcess.endedIn ended)` makes of the view the process ended in.
+A client that runs one process as a `UnixSystem`, with no `SimulatedMachine`, ends it with `SimulatedMachine.endLoneProcess ended`, which answers what `endProcess` answers on the machine the process ran alone on: how it ended, and that machine without it.
+Nothing hands back a system from an `EndedProcess`, so no call can be made in a process that has ended.
 
 ## Several processes
 

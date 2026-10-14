@@ -75,9 +75,9 @@ module TestUnixSignal =
             SignalState.threadsWithFrames ended.FinalProcess.Signals |> shouldBeEmpty
 
             { ended.FinalProcess with
-                Signals = system.Process.Signals
+                Signals = (Lone.proc system).Signals
             }
-            |> shouldEqual system.Process
+            |> shouldEqual (Lone.proc system)
         | other -> failwith $"unexpected answer: %O{other}"
 
     [<Test>]
@@ -113,7 +113,7 @@ module TestUnixSignal =
 
         match UnixSignal.tryKill self 15 blocking with
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
-            SignalState.pending after.Process.Signals
+            SignalState.pending (Lone.proc after).Signals
             |> shouldEqual
                 [
                     {
@@ -197,7 +197,7 @@ module TestUnixSignal =
                 // the signal it names at the whole process.
                 let expected =
                     if signo = 0 then
-                        SignalGeneration.ProcessContinues system.Process.Signals
+                        SignalGeneration.ProcessContinues (Lone.proc system).Signals
                     else
                         match
                             SignalState.generate
@@ -207,13 +207,15 @@ module TestUnixSignal =
                                 {
                                     Signal =
                                         match
-                                            Signal.ofRawSignoUnder (SignalState.numbering system.Process.Signals) signo
+                                            Signal.ofRawSignoUnder
+                                                (SignalState.numbering (Lone.proc system).Signals)
+                                                signo
                                         with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueNone
                                 }
-                                system.Process.Signals
+                                (Lone.proc system).Signals
                         with
                         | Ok generation -> generation
                         | Error refusal -> failwith $"generating %d{signo} was refused: %O{refusal}"
@@ -221,29 +223,29 @@ module TestUnixSignal =
                 // Everything but the signals is untouched by a process that
                 // carries on or stops.
                 let survivor (after : UnixSystem<int, string>) : unit =
-                    { after with
-                        Process =
-                            { after.Process with
-                                Signals = system.Process.Signals
-                            }
-                    }
+                    after
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = (Lone.proc system).Signals
+                        }
+                    )
                     |> shouldEqual system
 
                 match outcome, expected with
                 | ProcessFate.Continues (KillOutcome.ProcessRuns, after), SignalGeneration.ProcessContinues signals ->
-                    after.Process.Signals |> shouldEqual signals
+                    (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
                 | ProcessFate.Continues (KillOutcome.ProcessStopped stoppedBy, after),
                   SignalGeneration.ProcessStopped (signal, signals) ->
                     stoppedBy |> shouldEqual signal
-                    after.Process.Signals |> shouldEqual signals
+                    (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
                 | ProcessFate.ProcessEnded ended, SignalGeneration.ProcessTerminated (signal, coreDumped) ->
                     ended.Termination
                     |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
                     EndedMachine.assertThreadsGone system ended
-                    ended.FinalProcess |> shouldEqual system.Process
+                    ended.FinalProcess |> shouldEqual (Lone.proc system)
                 | _ ->
                     failwith
                         $"kill(self, %d{signo}) under %O{flavour} answered %O{outcome}, but generating it is %O{expected}"
@@ -300,7 +302,7 @@ module TestUnixSignal =
         : UnixSystem<int, string>
         =
         let system = systemLaunchedWith (ProcessLaunch.withCoreDumps coreDumps) flavour
-        let numbering = SignalState.numbering system.Process.Signals
+        let numbering = SignalState.numbering (Lone.proc system).Signals
         let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
         let system =
@@ -318,7 +320,7 @@ module TestUnixSignal =
         match UnixSignal.tryOnReturnToUser 0 before with
         | Ok (ProcessFate.ProcessEnded ended) ->
             let onMachine, machine =
-                match SimulatedMachine.tryEndProcess ended (SimulatedMachine.ofSystem (EndedProcess.endedIn ended)) with
+                match SimulatedMachine.tryEndLoneProcess ended with
                 | Ok ended -> ended
                 | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
 
@@ -355,7 +357,7 @@ module TestUnixSignal =
             for coreDumps in [ CoreDumps.Suppressed ; CoreDumps.Written ] do
                 for signal, coreDumped in fatalSignals coreDumps do
                     let pending = pendingBehindMask flavour coreDumps signal
-                    let numbering = SignalState.numbering pending.Process.Signals
+                    let numbering = SignalState.numbering (Lone.proc pending).Signals
                     let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
                     let unblocked =
@@ -471,7 +473,7 @@ module TestUnixSignal =
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
         let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
             let mask =
-                SignalMask.ofSignals (SignalState.numbering system.Process.Signals) signals
+                SignalMask.ofSignals (SignalState.numbering (Lone.proc system).Signals) signals
 
             match UnixSignal.pthreadSigmask thread (sigBlock case.Flavour + 2) (Some mask) system with
             | Ok (_, system) -> system
@@ -488,7 +490,7 @@ module TestUnixSignal =
             ||> List.fold (fun system (signal, disposition) ->
                 match
                     UnixSignal.sigaction
-                        (Signal.toRawSignoUnder (SignalState.numbering system.Process.Signals) signal)
+                        (Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) signal)
                         (Some disposition)
                         system
                 with
@@ -508,7 +510,7 @@ module TestUnixSignal =
                 | Some system ->
 
                 let signo =
-                    Signal.toRawSignoUnder (SignalState.numbering system.Process.Signals) send.Signal
+                    Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) send.Signal
 
                 let answer =
                     match send.Target with
@@ -541,23 +543,23 @@ module TestUnixSignal =
             | None -> ()
             | Some system ->
 
-            let threads = system.Threads |> Map.keys |> Set.ofSeq
+            let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
             let decided =
                 SignalState.onReturnToUser
-                    system.Process.CoreDumps
-                    system.Leader
+                    (Lone.proc system).CoreDumps
+                    (Lone.leader system)
                     threads
                     case.Returning
-                    system.Process.Signals
+                    (Lone.proc system).Signals
 
             let withSignals (signals : SignalState<int, string>) : UnixSystem<int, string> =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals = signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals = signals
+                    }
+                )
 
             match UnixSignal.tryOnReturnToUser case.Returning system, decided with
             | Error refusal, Error expected -> refusal |> shouldEqual expected
@@ -598,14 +600,14 @@ module TestUnixSignal =
                 let final = withSignals signals
 
                 { death.FinalProcess with
-                    Signals = final.Process.Signals
+                    Signals = (Lone.proc final).Signals
                 }
-                |> shouldEqual final.Process
+                |> shouldEqual (Lone.proc final)
 
                 SignalState.pending death.FinalProcess.Signals
                 |> shouldEqual (SignalState.pending signals |> List.filter (fun entry -> entry.Target.IsNone))
 
-                match SimulatedMachine.tryEndProcess death (SimulatedMachine.ofSystem (EndedProcess.endedIn death)) with
+                match SimulatedMachine.tryEndLoneProcess death with
                 | Ok (termination, machine) ->
                     termination |> shouldEqual (EndedProcess.termination death)
                     SimulatedMachine.processIds machine |> shouldBeEmpty

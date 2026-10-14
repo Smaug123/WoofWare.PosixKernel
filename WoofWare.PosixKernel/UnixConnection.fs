@@ -247,7 +247,8 @@ type internal ConnectRefusal =
     /// Linux's retry would answer the reset's pending error, or ECONNABORTED
     /// once it is taken, and disconnect the socket; unmeasured.
     | ResetBeforeReport of socket : SocketId
-    /// The destination is the socket's own bound address with nothing
+    /// Under Linux, the destination is the socket's own address, whether
+    /// `bind(2)` gave it or the connect's own implicit bind did, with nothing
     /// listening: TCP simultaneous open, which is unmodelled.
     | SimultaneousOpen of destination : SocketAddress
     /// Darwin drops the SYN to a bound but unlistened port, and the connect
@@ -266,6 +267,13 @@ type internal ConnectRefusal =
     /// the caller's length stopped short of `sin6_scope_id`, as Linux reads
     /// such a length.
     | Ipv6Destination of socket : SocketId * destination : Ipv6Endpoint
+    /// Under Darwin, the connect's implicit bind took the destination's own
+    /// port, with nothing listening there, and another socket holds that port
+    /// at some address. Darwin's implicit bind binds the wildcard before it
+    /// resolves the source, and its search would have passed the port over,
+    /// whatever `SO_REUSEADDR` says; which port it would have taken instead is
+    /// not modelled.
+    | DarwinImplicitBindHeld of binding : SocketAddress
 
 [<RequireQualifiedAccess>]
 module internal ConnectRefusal =
@@ -300,13 +308,15 @@ module internal ConnectRefusal =
         | ConnectRefusal.ResetBeforeReport socket ->
             $"socket %O{socket}'s non-blocking connect completed, and its connection was reset before any connect reported the completion. Linux's retry finds the socket closed and answers the reset's pending error, or ECONNABORTED once an SO_ERROR read has taken it, and disconnects the socket, as for a refused connect; what that leaves of the socket's binding is unmeasured."
         | ConnectRefusal.SimultaneousOpen destination ->
-            $"destination %s{SocketAddress.toString destination} is this socket's own bound address and nothing is listening there. A real kernel can complete this as a TCP simultaneous open -- connecting the socket to itself -- which this library does not model."
+            $"destination %s{SocketAddress.toString destination} is this socket's own address, from bind(2) or from the port this connect's implicit bind took, and nothing is listening there. Linux completes this as a TCP simultaneous open -- connecting the socket to itself -- which this library does not model."
         | ConnectRefusal.DarwinSynDropped destination ->
             $"destination %s{SocketAddress.toString destination} is bound but nothing is listening there, and Darwin *drops* such a SYN rather than answering RST: the connect pends on the client's retransmission schedule (a blocking one was measured to stall into ETIMEDOUT), which this library cannot honour deterministically. Listen on the destination socket, or connect to a fully closed port."
         | ConnectRefusal.LinuxUnspecOnPhase (socket, phase) ->
             $"AF_UNSPEC on stream socket %O{socket} in %A{phase} under Linux runs tcp_disconnect, whose consequences for this phase (a connected socket's peer, a listener's queue) are unmeasured and unmodelled."
         | ConnectRefusal.Ipv6Destination (socket, destination) ->
             $"IPv6 socket %O{socket} would connect to %s{Ipv6Endpoint.toString destination}. This kernel has no IPv6 transport: an IPv6 socket reaches only IPv4 peers, through v4-mapped addresses (::ffff:a.b.c.d), with IPV6_V6ONLY off."
+        | ConnectRefusal.DarwinImplicitBindHeld binding ->
+            $"this connect's implicit bind took %s{SocketAddress.toString binding}, the destination's own port, where nothing listens, and Darwin would answer EINVAL keeping that binding. But another socket holds the port at some address, and Darwin's implicit bind, which binds the wildcard, passes over such a port whatever SO_REUSEADDR says; which port it would have taken instead is not modelled. Bind the socket before connecting, or widen the machine's EphemeralPortRange."
         | ConnectRefusal.DatagramGroupDestination (socket, destination) ->
             $"datagram socket %O{socket} would connect to %s{SocketAddress.toString destination}, a broadcast or multicast destination. This kernel models no group membership and no interface to broadcast on, so it does not record such a peer. Model multicast and broadcast before connecting to either."
 
@@ -327,6 +337,7 @@ module internal ConnectRefusal =
         | ConnectRefusal.LinuxUnspecOnPhase _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DatagramGroupDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.Ipv6Destination _ -> RefusalKind.Unmodelled
+        | ConnectRefusal.DarwinImplicitBindHeld _ -> RefusalKind.Unmodelled
 
 /// What `connect(2)`'s ladder reads out of the sockaddr it copied in, from a
 /// `struct sockaddr_in` on an IPv4 socket and a `struct sockaddr_in6` on an
@@ -852,15 +863,32 @@ module UnixConnection =
                 else
                     completed system
             | None ->
-                // The client's own endpoint with no listener behind it is
-                // TCP simultaneous open: a real kernel can complete it,
-                // connecting the socket to itself. Unmodelled.
+                // The client's own endpoint with no listener behind it: Linux
+                // completes it as a TCP simultaneous open, connecting the
+                // socket to itself, which is unmodelled; Darwin answers EINVAL
+                // and leaves the socket as it was. Measured for a source
+                // bind(2) gave and for one connect's own implicit bind gave
+                // (`docs/probes/implicit-self-connect`), which is checked
+                // below, once that bind has chosen its port.
+                let selfTuple
+                    (system : UnixSystem<'Thread, 'Handler>)
+                    : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                    =
+                    match flavour with
+                    | SimulatedUnixFlavour.Linux -> Error (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet dest))
+                    | SimulatedUnixFlavour.Darwin -> failed UnixError.EINVAL system
+
+                // A wildcard binding's source is 127.0.0.1 towards 127.0.0.1;
+                // towards any other address it is unmeasured, and the implicit
+                // bind below refuses it.
                 match sock.Ipv4Binding with
                 | Some binding when
                     binding.Endpoint.Port = dest.Port
-                    && Ipv4Endpoint.addressesOverlap binding.Endpoint dest
+                    && (binding.Endpoint.Address = dest.Address
+                        || binding.Endpoint.Address = Ipv4Address.any
+                           && dest.Address = Ipv4Address.loopback)
                     ->
-                    Error (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet dest))
+                    selfTuple system
                 | _ ->
 
                 match flavour with
@@ -897,6 +925,45 @@ module UnixConnection =
                 // refusal is pending, on both kernels.
                 match ensureBound dest system with
                 | Error refusal -> Error refusal
+                | Ok (binding, system) when binding.Endpoint = dest ->
+                    // Only an unbound socket gets here, a bound one having been
+                    // answered above: its implicit bind took the destination's
+                    // own port. Darwin keeps what that bind made, the wildcard
+                    // at the port, from before the source resolved to loopback.
+                    let implicitBinding =
+                        { binding with
+                            Endpoint =
+                                { binding.Endpoint with
+                                    Address = Ipv4Address.any
+                                }
+                        }
+
+                    match flavour with
+                    | SimulatedUnixFlavour.Darwin when
+                        UnixMachineState.portHeldByAnother socketId sock binding.Endpoint.Port system.Machine
+                        ->
+                        // The search judged the port for 127.0.0.1, where
+                        // Darwin's passes over a port anything holds at any
+                        // address, whatever SO_REUSEADDR says.
+                        Error (ConnectRefusal.DarwinImplicitBindHeld (SocketAddress.Inet implicitBinding.Endpoint))
+                    | _ ->
+
+                    selfTuple
+                        { system with
+                            Machine =
+                                { system.Machine with
+                                    Sockets =
+                                        Map.add
+                                            socketId
+                                            { sock with
+                                                Addressing =
+                                                    SocketAddressing.replaceBinding
+                                                        (Some implicitBinding)
+                                                        sock.Addressing
+                                            }
+                                            system.Machine.Sockets
+                                }
+                        }
                 | Ok (binding, system) ->
 
                 if not nonBlocking then

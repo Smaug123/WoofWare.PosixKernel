@@ -355,7 +355,12 @@ module TestInotifySelfMeasured =
                 machine
                 |> Machines.doIn
                     child
-                    (fun view -> view |> mkdir "/x" 0o755 |> writeFile "/x/a" "a" |> writeFile "/x/b" "b")
+                    (fun view ->
+                        view
+                        |> mkdir "/x" 0o755
+                        |> writeFileIn child "/x/a" "a"
+                        |> writeFileIn child "/x/b" "b"
+                    )
 
             let (instance, wa, wb), machine =
                 Machines.inProcess
@@ -374,7 +379,7 @@ module TestInotifySelfMeasured =
                     (fun view ->
                         let view =
                             (view, order)
-                            ||> Seq.fold (fun view letter -> openFd readOnly $"/x/%c{letter}" 0 view |> snd)
+                            ||> Seq.fold (fun view letter -> openFdIn child readOnly $"/x/%c{letter}" 0 view |> snd)
 
                         view |> unlink "/x/a" |> unlink "/x/b"
                     )

@@ -238,7 +238,8 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAdmission * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryAdmitWrite system.Leader fd buffer count system |> returned
+        UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system
+        |> returned
 
     /// `UnixReadWrite.tryWriteBytes` by the leader, through `returned`.
     let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -247,7 +248,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryWriteBytes system.Leader fd bytes system |> returned
+        UnixReadWrite.tryWriteBytes (Lone.leader system) fd bytes system |> returned
 
 /// `UnixReadWrite.tryAdmitWrite` for a write whose admission must change nothing:
 /// every target but a Darwin pipe, whose timestamps a write moves whatever it

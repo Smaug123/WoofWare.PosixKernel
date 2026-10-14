@@ -2267,7 +2267,9 @@ module UnixReadWrite =
         else
 
         // Measured on both (`tcp-blocking.c`, sections R-eintr and
-        // R-restart): EINTR without SA_RESTART, and on sleeping with it.
+        // R-restart): EINTR without SA_RESTART, and on sleeping with it; and
+        // so for a read whose description became non-blocking while it slept
+        // (`docs/probes/nonblocking-asleep`, row T-read).
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
@@ -2331,6 +2333,10 @@ module UnixReadWrite =
             Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), finished)
         else
 
+        // Unlike a write, a read whose description became non-blocking while
+        // it slept answers a signal as a blocking one does, on both (measured,
+        // `docs/probes/nonblocking-asleep`, row P-read): Linux's `pipe_read`
+        // returns as soon as its sleep is interrupted.
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
@@ -3669,7 +3675,10 @@ module UnixReadWrite =
             // room. Darwin's sleeper takes whichever reached it first, which is
             // refused. With no room, measured on both (sections W-partial and
             // W-empty): the count taken, under SA_RESTART or not, or with
-            // nothing taken EINTR, or a restart under SA_RESTART.
+            // nothing taken EINTR, or a restart under SA_RESTART; with nothing
+            // taken through a description made non-blocking while it slept
+            // too, unlike a Linux pipe write (`docs/probes/nonblocking-asleep`,
+            // row T-write0).
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, room with
             | SimulatedUnixFlavour.Darwin, Some _ ->
                 Error (
@@ -3854,6 +3863,22 @@ module UnixReadWrite =
                 WriteResumption.Answered
                 system
         else
+
+        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux when nonBlockingNow writer system ->
+            // Measured on Linux 6.18.5 (`docs/probes/nonblocking-asleep`, row
+            // P-write0): a write asleep with nothing in, whose description
+            // became non-blocking while it slept, answered EAGAIN to a signal,
+            // under SA_RESTART or not, where Darwin's answered EINTR. Linux's
+            // `pipe_write` looks at O_NONBLOCK before it looks for a signal, so
+            // the handlers' flags never come into it. Woken without one, it
+            // sleeps on (pipe-blocking.c section N3).
+            match SyscallInterruption.interrupts thread system with
+            | Error refusal -> Error (WriteRefusal.Interruption refusal)
+            | Ok true -> answered (WriteAnswer.Failed UnixError.EAGAIN) finished
+            | Ok false -> Ok (parkWrite thread writer fd parked.Buffer parked.Count parked.Written system)
+        | SimulatedUnixFlavour.Linux
+        | SimulatedUnixFlavour.Darwin ->
 
         // Measured on both (pipe-blocking.c section D): a write asleep with
         // nothing in returned EINTR without SA_RESTART and slept on with it.

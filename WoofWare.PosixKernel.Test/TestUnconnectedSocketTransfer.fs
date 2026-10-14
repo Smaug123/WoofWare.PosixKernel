@@ -308,7 +308,7 @@ module TestUnconnectedSocketTransfer =
             |> connectTo (loopbackAt 9us) SimulatedUnixPlatform.internetAddressFamily
 
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"not a socket: %A{other}"
 
@@ -336,7 +336,7 @@ module TestUnconnectedSocketTransfer =
         |> Option.map _.Endpoint
         |> shouldEqual (Some (loopbackAt 0us))
 
-        match UnixReadWrite.tryAdmitWrite system.Leader fd UserBuffer.Mapped 1UL system with
+        match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
         | Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EDESTADDRREQ), after)) ->
             let low, high = system.Machine.EphemeralPortRange
 
@@ -361,16 +361,16 @@ module TestUnconnectedSocketTransfer =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.spawn 1
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.setDisposition
-                            Signal.SIGPIPE
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.setDisposition
+                        Signal.SIGPIPE
+                        (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
+                        proc.Signals
+            }
+        )
 
     let private loopbackAnyPort : Ipv4Endpoint =
         Ipv4Endpoint.ofParts Ipv4Address.loopback 0us
@@ -437,7 +437,7 @@ module TestUnconnectedSocketTransfer =
         : bool
         =
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors before) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors before) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
@@ -511,7 +511,7 @@ module TestUnconnectedSocketTransfer =
                   Seen.FailedRaisingSigPipe seen ->
                     error = seen
                     && signal = sigPipeAtWorker
-                    && SignalState.pending after.Process.Signals = [ sigPipeAtWorker ]
+                    && SignalState.pending (Lone.proc after).Signals = [ sigPipeAtWorker ]
                 | Error (WriteRefusal.SendBuffer _), Seen.Failed UnixError.ENOTCONN
                 | Error (WriteRefusal.SendBuffer _), Seen.Failed UnixError.EMSGSIZE ->
                     row.Flavour = SimulatedUnixFlavour.Linux

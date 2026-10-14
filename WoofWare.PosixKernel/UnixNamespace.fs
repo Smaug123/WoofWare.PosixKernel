@@ -2405,13 +2405,13 @@ module UnixNamespace =
                 <> PathWalk.pausedMountedRoot destinationParent
             then
                 Error (PathFailure.Errno UnixError.EXDEV)
-            else if
 
-                // Then either path naming no final component, "/", "." or "..", is
-                // EBUSY, still before either final name is looked up: measured
-                // (`renameat-rules.c`, ORDER), `rename("nx", ".")` and
-                // `rename(<300 bytes>, "/")` are EBUSY, not the source's ENOENT
-                // and ENAMETOOLONG.
+            // Then either path naming no final component, "/", "." or "..", is
+            // EBUSY, still before either final name is looked up: measured
+            // (`renameat-rules.c`, ORDER), `rename("nx", ".")` and
+            // `rename(<300 bytes>, "/")` are EBUSY, not the source's ENOENT
+            // and ENAMETOOLONG.
+            else if
                 PathWalk.pausedNamesNoFinal sourceParent
                 || PathWalk.pausedNamesNoFinal destinationParent
             then
