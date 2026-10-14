@@ -1322,7 +1322,12 @@ module UnixNamespace =
 
         // The inode to read, and what the call answers if it is not a link.
         let (target : Result<Result<InodeNumber, UnixError>, ReadLinkRefusal>), (notALink : UnixError) =
-            match AtPathTarget.classify (SimulatedUnixPlatform.readlinkEmptyPath system.Machine.UnixPlatform) directory path with
+            match
+                AtPathTarget.classify
+                    (SimulatedUnixPlatform.readlinkEmptyPath system.Machine.UnixPlatform)
+                    directory
+                    path
+            with
             | AtPathTarget.Descriptor fd ->
                 // Measured (`readlinkat-empty-path.c`, and `at-dirfd.c`'s
                 // eventq rows): a pipe, a socket or an epoll instance is
