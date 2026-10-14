@@ -81,7 +81,7 @@ module TestFifoOpenPark =
             // A real sleeping open holds a description no descriptor names. One
             // that a descriptor names, closed under the park, comes to the same.
             let opener =
-                match FileDescriptorRegistry.tryFindId 0 (UnixSystemState.fileDescriptors awake) with
+                match FileDescriptorRegistry.tryFindId 0 (Lone.fileDescriptors awake) with
                 | Some id -> id
                 | None -> failwith "fd 0 names no description"
 

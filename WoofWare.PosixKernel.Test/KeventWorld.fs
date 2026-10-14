@@ -30,12 +30,16 @@ module KeventWorld =
         Ipv4Endpoint.ofParts Ipv4Address.loopback port
 
     let withRegistry (registry : FileDescriptorRegistry) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
-    let idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+    /// The open file description the process `pid`'s descriptor `fd` names.
+    let idOfIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
+        match FileDescriptorRegistry.tryFindId fd (Proc.fileDescriptors pid system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names no description"
+
+    /// `idOfIn` the only process on the machine.
+    let idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId = idOfIn (Lone.pid system) fd system
 
     let kqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixKqueue.tryKqueue system with
@@ -89,14 +93,24 @@ module KeventWorld =
         | Ok answered -> answered
         | Error refusal -> failwith $"connecting fd %d{fd} to port %d{port}: %s{ConnectRefusal.describe refusal}"
 
-    /// A connect of `fd` to `port`, made by the process's leader.
+    /// A connect of `fd` to `port`, made by the leader of the process `pid`.
+    let connectIn
+        (pid : ProcessId)
+        (fd : int)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        connectAs (Proc.leader pid system) fd port system
+
+    /// `connectIn` the only process on the machine.
     let connect
         (fd : int)
         (port : uint16)
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        connectAs system.Leader fd port system
+        connectIn (Lone.pid system) fd port system
 
     /// A new non-blocking socket connecting to `port`, as the probe's `client`
     /// makes, connected by `thread`, which must be awake.
@@ -105,9 +119,13 @@ module KeventWorld =
         let _, system = connectAs thread fd port system
         fd, system
 
-    /// `clientAs` the process's leader.
+    /// `clientAs` the leader of the process `pid`.
+    let clientIn (pid : ProcessId) (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        clientAs (Proc.leader pid system) port system
+
+    /// `clientIn` the only process on the machine.
     let client (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        clientAs system.Leader port system
+        clientIn (Lone.pid system) port system
 
     /// Accept one connection through `fd`, which must hold one.
     let accept (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
@@ -191,7 +209,7 @@ module KeventWorld =
 
     /// The registrations and the queue of the kqueue `kq` names.
     let stateOf (kq : int) (system : UnixSystem<int, string>) : KqueueState =
-        match FileDescriptorRegistry.tryFindTarget kq (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget kq (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Kqueue state) -> state
         | other -> failwith $"fd %d{kq} names %A{other}, not a kqueue"
 

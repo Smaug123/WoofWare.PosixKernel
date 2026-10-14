@@ -104,7 +104,7 @@ module internal GetIdsRefusal =
     let kind (refusal : GetIdsRefusal) : RefusalKind =
         match refusal with
         | GetIdsRefusal.NoSuchCall _ -> RefusalKind.NotOnPlatform
-        | GetIdsRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetIdsRefusal.Buffer refusal -> BufferRefusal.kind refusal
 
 /// The calls by which a process reads and changes who it is: `getresuid(2)`,
 /// `getresgid(2)`, `setresuid(2)`, `setresgid(2)` and `setgroups(2)`.

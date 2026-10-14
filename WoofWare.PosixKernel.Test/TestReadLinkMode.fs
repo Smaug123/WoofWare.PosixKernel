@@ -158,7 +158,7 @@ module TestReadLinkMode =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials caller) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let vfs = VirtualFileSystem.empty epoch rootOwner
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch rootOwner
 
         let cellInode, vfs =
             match
@@ -180,12 +180,13 @@ module TestReadLinkMode =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = cellInode
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = cellInode
+            }
+        )
+        |> Lone.restand
 
     let private readOnly : OpenFlags =
         {

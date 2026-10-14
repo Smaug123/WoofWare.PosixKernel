@@ -951,20 +951,20 @@ module TestBlockingConnection =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> fun system -> (threads, system) ||> List.foldBack Threads.ensure
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        system.Process.Signals
-                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                        |> SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch
-                                { SignalCatch.ofHandler "h" with
-                                    Restart = restart
-                                })
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    proc.Signals
+                    |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                    |> SignalState.setDisposition
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch
+                            { SignalCatch.ofHandler "h" with
+                                Restart = restart
+                            })
+            }
+        )
 
     /// A connected pair on `system`, both ends blocking: the connecting
     /// socket's descriptor, then the accepted one's.
@@ -983,7 +983,7 @@ module TestBlockingConnection =
         client, server, system
 
     let private connectionOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase with
             | Some (connection, _) -> connection
@@ -991,7 +991,7 @@ module TestBlockingConnection =
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -1562,18 +1562,18 @@ module TestBlockingConnection =
                         }
                 | BlockingConnectionOp.Signal thread ->
                     system <-
-                        { system with
-                            Process =
-                                { system.Process with
-                                    Signals =
-                                        SignalState.enqueue
-                                            {
-                                                Signal = Signal.SIGUSR1
-                                                Target = ValueSome thread
-                                            }
-                                            system.Process.Signals
-                                }
-                        }
+                        system
+                        |> Lone.mapProc (fun proc ->
+                            { proc with
+                                Signals =
+                                    SignalState.enqueue
+                                        {
+                                            Signal = Signal.SIGUSR1
+                                            Target = ValueSome thread
+                                        }
+                                        proc.Signals
+                            }
+                        )
 
                     reference <-
                         { reference with
@@ -1590,7 +1590,7 @@ module TestBlockingConnection =
                         asleep
                         |> Seq.map (fun thread ->
                             let (ParkOrdinal.ParkOrdinal ordinal) =
-                                (UnixThreadTable.parkOf thread system.Threads |> Option.get).Ordinal
+                                (UnixThreadTable.parkOf thread (Lone.threads system) |> Option.get).Ordinal
 
                             thread, ordinal
                         )
@@ -1735,7 +1735,7 @@ module TestBlockingConnection =
                             )
 
                         let actual =
-                            UnixThreadTable.parkedFor thread system.Threads
+                            UnixThreadTable.parkedFor thread (Lone.threads system)
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.ConnectionRead read -> 0, read.Count, 0, $"%A{read.Call}"
@@ -1800,7 +1800,7 @@ module TestBlockingConnection =
                     // `send`, and never on Linux.
                     for KeyValue (fd, connectionEnd) in reference.Fds do
                         let written =
-                            match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+                            match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
                             | Some (_, description) -> description.Status.Written
                             | None -> failwith $"%s{where}: fd %d{fd} names no description"
 
@@ -2000,18 +2000,18 @@ module TestBlockingConnection =
         libraryFinishWrite thread bytes system
 
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome thread
-                            }
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome thread
+                        }
+                        proc.Signals
+            }
+        )
 
     /// The connection's bytes in the client's send buffer, still to reach the
     /// server's receive buffer.
@@ -2031,7 +2031,7 @@ module TestBlockingConnection =
         let connection = connectionOf fd system
 
         let connectionEnd =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
                 SocketPhase.connectionEnd (UnixMachineState.socket socketId system.Machine).Phase
                 |> Option.get
@@ -2077,7 +2077,7 @@ module TestBlockingConnection =
                 match UnixReadWrite.tryFinishRead 1 system with
                 | Ok (ReadOutcome.Answered answer, after) ->
                     answer |> shouldEqual expected
-                    UnixThreadTable.parkOf 1 after.Threads |> shouldEqual None
+                    UnixThreadTable.parkOf 1 (Lone.threads after) |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
 
                     // Measured: after the reset's error, end of file.
@@ -2101,7 +2101,7 @@ module TestBlockingConnection =
                 match UnixReadWrite.tryFinishRead 1 system with
                 | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
                 | Ok (ReadOutcome.Restarts, after) when restart ->
-                    UnixThreadTable.parkOf 1 after.Threads |> shouldEqual None
+                    UnixThreadTable.parkOf 1 (Lone.threads after) |> shouldEqual None
                 | other -> failwith $"%O{platform} restart %b{restart}: the read came to %A{other}"
 
                 // The server's end full, so a write by it takes nothing.
@@ -2128,7 +2128,7 @@ module TestBlockingConnection =
                 match finishedWrite 2 (payload 2 1000) system with
                 | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EINTR, _)) when not restart -> ()
                 | Ok (WriteStep.Restarts after) when restart ->
-                    UnixThreadTable.parkOf 2 after.Threads |> shouldEqual None
+                    UnixThreadTable.parkOf 2 (Lone.threads after) |> shouldEqual None
                 | other -> failwith $"%O{platform} restart %b{restart}: the write came to %A{other}"
 
     /// A signal the sleeping thread blocks neither wakes a sleeping transfer nor
@@ -2137,7 +2137,7 @@ module TestBlockingConnection =
     [<Test>]
     let ``a signal the thread blocks leaves a sleeping transfer asleep, and pending`` () : unit =
         for platform in Machines.platforms do
-            let numbering = SignalState.numbering (systemOn platform false).Process.Signals
+            let numbering = SignalState.numbering (Lone.proc (systemOn platform false)).Signals
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let sigBlock =
@@ -2256,7 +2256,7 @@ module TestBlockingConnection =
                             sendCapacity - queued + flow.ReceiveCapacity - ByteQueue.length flow.Receiving
 
                         let remaining =
-                            match UnixThreadTable.parkedFor 1 system.Threads with
+                            match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                             | Some (ParkedSyscall.ConnectionWrite write) -> write.Count - write.Written
                             | other -> failwith $"%A{other}"
 
@@ -2326,7 +2326,7 @@ module TestBlockingConnection =
                 let system = asleepWriting 1 client (payload 3 600000) system
 
                 let taken =
-                    match UnixThreadTable.parkedFor 1 system.Threads with
+                    match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                     | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                     | other -> failwith $"%A{other}"
 
@@ -2351,7 +2351,7 @@ module TestBlockingConnection =
             let system = asleepWriting 1 client bytes system
 
             let taken =
-                match UnixThreadTable.parkedFor 1 system.Threads with
+                match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                 | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                 | other -> failwith $"%A{other}"
 
@@ -2418,7 +2418,7 @@ module TestBlockingConnection =
                 let system = asleepWriting 1 client bytes system
 
                 let taken =
-                    match UnixThreadTable.parkedFor 1 system.Threads with
+                    match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                     | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                     | other -> failwith $"%A{other}"
 
@@ -2530,7 +2530,7 @@ module TestBlockingConnection =
                     let system = asleepWriting 1 client bytes system
 
                     let taken =
-                        match UnixThreadTable.parkedFor 1 system.Threads with
+                        match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                         | Some (ParkedSyscall.ConnectionWrite write) -> write.Written
                         | other -> failwith $"%s{where}: %A{other}"
 
@@ -2841,7 +2841,7 @@ module TestBlockingConnection =
         let socket = socketOf client system
 
         let description =
-            FileDescriptorRegistry.tryFindId client (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindId client (Lone.fileDescriptors system)
             |> Option.get
 
         let system =
@@ -2952,7 +2952,7 @@ module TestBlockingConnection =
             let level = SimulatedUnixPlatform.socketOptionLevel platform
 
             let socketId =
-                match FileDescriptorRegistry.tryFindTarget client (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget client (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"%A{other}"
 
@@ -2965,7 +2965,7 @@ module TestBlockingConnection =
         let client, _, system = pair (systemOn SimulatedUnixPlatform.linuxX64 false)
 
         let description =
-            FileDescriptorRegistry.tryFindId client (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindId client (Lone.fileDescriptors system)
             |> Option.get
 
         let readBy (call : TcpReceiveCall) (count : int) (target : SleepTarget<SocketId>) =
@@ -3011,14 +3011,13 @@ module TestBlockingConnection =
 
         // A park on stdout, a pipe, which is no connection.
         let stdout =
-            FileDescriptorRegistry.tryFindId 1 (UnixSystemState.fileDescriptors system)
-            |> Option.get
+            FileDescriptorRegistry.tryFindId 1 (Lone.fileDescriptors system) |> Option.get
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 5 (SleepTarget.Waiting (stdout, 1))) system)
         |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferOnNonConnection (1, stdout) ]
 
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget client (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget client (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"%A{other}"
 
@@ -3030,11 +3029,11 @@ module TestBlockingConnection =
         let client, server, system = pair (systemOn SimulatedUnixPlatform.macOsArm64 false)
 
         let description =
-            FileDescriptorRegistry.tryFindId client (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindId client (Lone.fileDescriptors system)
             |> Option.get
 
         let serverDescription =
-            FileDescriptorRegistry.tryFindId server (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindId server (Lone.fileDescriptors system)
             |> Option.get
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 5 (SleepTarget.Waiting (description, server))) system)
@@ -3051,7 +3050,7 @@ module TestBlockingConnection =
 
     /// A read asleep in one process wakes for bytes another process writes,
     /// and a write asleep in one for room another's read makes, through
-    /// `SimulatedMachine.wakes`; each finishes in its own process's view.
+    /// `Machines.wakes`; each finishes in its own process's view.
     [<Test>]
     let ``transfers asleep in one process wake for another's`` () : unit =
         for platform in Machines.platforms do
@@ -3065,7 +3064,7 @@ module TestBlockingConnection =
                     (fun view ->
                         let fd, view = KeventWorld.stream false view
 
-                        match KeventWorld.connect fd port view with
+                        match KeventWorld.connectIn a fd port view with
                         | SyscallAnswer.Completed 0L, view -> fd, view
                         | other, _ -> failwith $"connect: %A{other}"
                     )
@@ -3076,11 +3075,11 @@ module TestBlockingConnection =
 
             let machine = Machines.doIn a (asleepReading 1 client 4096) machine
             let asleep = Map.ofList [ a, Set.singleton 1 ]
-            SimulatedMachine.wakes asleep machine |> shouldEqual []
+            Machines.wakes asleep machine |> shouldEqual []
 
             let machine = Machines.doIn b (fun view -> wrote accepted 100 view |> snd) machine
             Machines.assertClean machine
-            SimulatedMachine.wakes asleep machine |> List.map fst |> shouldEqual [ a, 1 ]
+            Machines.wakes asleep machine |> List.map fst |> shouldEqual [ a, 1 ]
 
             let answer, machine =
                 Machines.inProcess
@@ -3099,13 +3098,13 @@ module TestBlockingConnection =
             let bytes = payload 10 600000
             let machine = Machines.doIn a (asleepWriting 2 client bytes) machine
             let asleep = Map.ofList [ a, Set.singleton 2 ]
-            SimulatedMachine.wakes asleep machine |> shouldEqual []
+            Machines.wakes asleep machine |> shouldEqual []
 
             let rec untilWoken (reads : int) (machine : SimulatedMachine<int, string>) =
                 if reads > 1000 then
                     failwith "the writer never woke"
 
-                match SimulatedMachine.wakes asleep machine with
+                match Machines.wakes asleep machine with
                 | [] -> untilWoken (reads + 1) (Machines.doIn b (fun view -> readNow accepted 4096 view |> snd) machine)
                 | woken -> woken |> List.map fst, machine
 
@@ -3246,7 +3245,7 @@ module TestBlockingConnection =
         written |> shouldBeGreaterThan 0L
         let system = asleepWriting 1 client (payload 12 1000) system
 
-        match UnixThreadTable.parkedFor 1 system.Threads with
+        match UnixThreadTable.parkedFor 1 (Lone.threads system) with
         | Some (ParkedSyscall.ConnectionWrite write) -> write.Written |> shouldEqual 0
         | other -> failwith $"%A{other}"
 
@@ -3275,7 +3274,7 @@ module TestBlockingConnection =
         let room = toServer.SendCapacity + toServer.ReceiveCapacity
         let system = asleepWriting 1 client (payload 13 (room + 100)) system
 
-        match UnixThreadTable.parkedFor 1 system.Threads with
+        match UnixThreadTable.parkedFor 1 (Lone.threads system) with
         | Some (ParkedSyscall.ConnectionWrite write) -> write.Count - write.Written |> shouldEqual 100
         | other -> failwith $"%A{other}"
 
@@ -3403,7 +3402,7 @@ module TestBlockingConnection =
                 | ReadOutcome.WouldBlock _, system -> system
                 | other -> failwith $"%O{platform}: the peek came to %A{other}"
 
-            match UnixThreadTable.parkedFor 1 system.Threads with
+            match UnixThreadTable.parkedFor 1 (Lone.threads system) with
             | Some (ParkedSyscall.ConnectionRead read) -> read.Call |> shouldEqual TcpReceiveCall.Peek
             | other -> failwith $"%O{platform}: parked as %A{other}"
 
@@ -3599,7 +3598,7 @@ module TestBlockingConnection =
                     finished system
                 | other -> failwith $"%O{platform}: the send came to %A{other}"
 
-            match FileDescriptorRegistry.tryFindWithId client (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId client (Lone.fileDescriptors system) with
             | Some (_, description) -> description.NonBlocking |> shouldEqual false
             | None -> failwith "the client's descriptor has gone"
 
@@ -3654,7 +3653,7 @@ module TestBlockingConnection =
                         | other -> failwith $"%s{where}: %A{other}"
 
                     let written =
-                        match UnixThreadTable.parkedFor 1 system.Threads with
+                        match UnixThreadTable.parkedFor 1 (Lone.threads system) with
                         | Some (ParkedSyscall.ConnectionWrite write) ->
                             write.Call |> shouldEqual (TcpSendCall.Send noSignal)
                             write.Written
@@ -3686,7 +3685,7 @@ module TestBlockingConnection =
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
 
             let marked (fd : int) (system : UnixSystem<int, string>) : bool =
-                match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
                 | Some (_, description) -> description.Status.Written
                 | None -> failwith $"fd %d{fd} names no description"
 
@@ -3728,7 +3727,7 @@ module TestBlockingConnection =
 
             let system = KeventWorld.close client system
 
-            match FileDescriptorRegistry.tryFindWithId copy (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId copy (Lone.fileDescriptors system) with
             | Some (_, description) -> description.Status.Written |> shouldEqual (call = TcpSendCall.Write)
             | None -> failwith "the copy names no description"
 

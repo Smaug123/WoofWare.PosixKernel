@@ -77,7 +77,7 @@ module TestUnixSystemInvariants =
             SocketPhase.DatagramPeer (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.loopback 80us))
 
         let forged =
-            (UnixSystemState.withFileDescriptors
+            (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
@@ -128,7 +128,7 @@ module TestUnixSystemInvariants =
         let connection = ConnectionId 2L
 
         let forged =
-            (UnixSystemState.withFileDescriptors
+            (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
                     (Map.ofList [ 3, OpenFileDescriptionId 0L ])
                     (Map.ofList
@@ -210,7 +210,7 @@ module TestUnixSystemInvariants =
             }
 
         let forged =
-            (UnixSystemState.withFileDescriptors
+            (Lone.withFileDescriptors
                 (FileDescriptorRegistry.Unchecked.ofParts
                     (Map.ofList [ 4, queueId ])
                     (Map.ofList
@@ -289,13 +289,13 @@ module TestUnixSystemInvariants =
     let ``a current directory that is a regular file is a defect`` () : unit =
         let file = inodeOf "/outer/file"
 
-        { standing with
-            Process =
-                { standing.Process with
-                    CurrentDirectoryInode = file
-                }
-        }
-        |> Launched.restand
+        standing
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = file
+            }
+        )
+        |> Lone.restand
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.CurrentDirectoryIsNotADirectory file ]
 
@@ -307,13 +307,13 @@ module TestUnixSystemInvariants =
         // would leave a checker that special-cased `Some` passing.
         let absent = VirtualFileSystem.nextInode standing.Machine.FileSystem
 
-        { standing with
-            Process =
-                { standing.Process with
-                    CurrentDirectoryInode = absent
-                }
-        }
-        |> Launched.restand
+        standing
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = absent
+            }
+        )
+        |> Lone.restand
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.CurrentDirectoryIsNotADirectory absent ]
 
@@ -347,23 +347,22 @@ module TestUnixSystemInvariants =
     /// it, gone from the descriptor table but for the description itself.
     let private stdinUnnamed (system : UnixSystem<int, string>) : OpenFileDescriptionId * UnixSystem<int, string> =
         let stdin =
-            FileDescriptorRegistry.tryFindId 0 (UnixSystemState.fileDescriptors system)
-            |> Option.get
+            FileDescriptorRegistry.tryFindId 0 (Lone.fileDescriptors system) |> Option.get
 
         // Held while the descriptor goes, so that the description survives
         // it, and let go of afterwards, so that nothing references it.
         let registry =
             match
                 FileDescriptorRegistry.dropDescriptor
-                    system.Process.ProcessId
+                    (Lone.proc system).ProcessId
                     0
-                    (UnixSystemState.fileDescriptors system
+                    (Lone.fileDescriptors system
                      |> FileDescriptorRegistry.mapOpenFiles (OpenFileTable.hold stdin))
             with
             | Ok (registry, None) -> FileDescriptorRegistry.mapOpenFiles (OpenFileTable.releaseHold stdin) registry
             | other -> failwith $"expected the description to survive, got %A{other}"
 
-        stdin, UnixSystemState.withFileDescriptors registry system
+        stdin, Lone.withFileDescriptors registry system
 
     [<Test>]
     let ``a description nothing references is a defect, and one a parked call holds is not`` () : unit =
@@ -420,7 +419,7 @@ module TestUnixSystemInvariants =
     let ``a thread parked in an epoll_wait on a description that is not an epoll instance is a defect`` () : unit =
         // stdout, which every system holds and which is not an epoll instance.
         let stdoutDescription, target =
-            match FileDescriptorRegistry.tryFindWithId 1 (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId 1 (Lone.fileDescriptors system) with
             | Some (id, description) -> id, description.Target
             | None -> failwith "the fixture has no stdout"
 
@@ -445,7 +444,7 @@ module TestUnixSystemInvariants =
     /// `system` with threads 1 and 2 parked on stdout's description, in that order.
     let private twoParked : UnixSystem<int, string> =
         let stdoutDescription =
-            match FileDescriptorRegistry.tryFindWithId 1 (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId 1 (Lone.fileDescriptors system) with
             | Some (id, _) -> id
             | None -> failwith "the fixture has no stdout"
 
@@ -465,23 +464,23 @@ module TestUnixSystemInvariants =
     /// `system` with thread `name`'s park stamped `ordinal`, as only a record copy past
     /// `UnixWait.park` could.
     let private forgeOrdinal (name : int) (ordinal : ParkOrdinal) (system : UnixSystem<int, string>) =
-        let thread = UnixThreadTable.get name system.Threads
+        let thread = UnixThreadTable.get name (Lone.threads system)
 
-        { system with
-            Threads =
-                system.Threads
-                |> Map.add
-                    name
-                    { thread with
-                        Parked =
-                            thread.Parked
-                            |> Option.map (fun park ->
-                                { park with
-                                    Ordinal = ordinal
-                                }
-                            )
-                    }
-        }
+        system
+        |> Lone.mapThreads (fun threads ->
+            threads
+            |> Map.add
+                name
+                { thread with
+                    Parked =
+                        thread.Parked
+                        |> Option.map (fun park ->
+                            { park with
+                                Ordinal = ordinal
+                            }
+                        )
+                }
+        )
 
     [<Test>]
     let ``parks minted by UnixWait are sound`` () : unit =
@@ -489,7 +488,8 @@ module TestUnixSystemInvariants =
 
     [<Test>]
     let ``two parks stamped with one ordinal are a defect`` () : unit =
-        let first = (UnixThreadTable.parkOf 1 twoParked.Threads |> Option.get).Ordinal
+        let first =
+            (UnixThreadTable.parkOf 1 (Lone.threads twoParked) |> Option.get).Ordinal
 
         forgeOrdinal 2 first twoParked
         |> UnixSystem.checkInvariants
@@ -509,7 +509,7 @@ module TestUnixSystemInvariants =
     [<Test>]
     let ``a thread parked on a live epoll instance or file is sound`` () : unit =
         let queueFd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
         let queueId =
             match FileDescriptorRegistry.tryFindWithId queueFd registry with
@@ -521,7 +521,7 @@ module TestUnixSystemInvariants =
             | Some (id, _) -> id
             | None -> failwith "the fixture has no stdout"
 
-        let queueSystem = UnixSystemState.withFileDescriptors registry system
+        let queueSystem = Lone.withFileDescriptors registry system
 
         queueSystem
         |> withThread (
@@ -572,7 +572,7 @@ module TestUnixSystemInvariants =
         let (SocketId raw) = socketId
 
         let _, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         socketId,
         { system with
@@ -582,7 +582,7 @@ module TestUnixSystemInvariants =
                     NextSocketId = SocketId (raw + 1L)
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     let private boundAt (port : uint16) : Ipv4Binding option =
         Some
@@ -769,12 +769,12 @@ module TestUnixSystemInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = signals
+            }
+        )
 
     [<Test>]
     let ``handler frames for a thread the table does not hold are a defect`` () : unit =
@@ -924,9 +924,8 @@ module TestUnixSystemInvariants =
     let ``a leader that is not a thread is a defect`` () : unit =
         let system = spawned SimulatedUnixPlatform.linuxX64
 
-        { system with
-            Leader = 7
-        }
+        system
+        |> Lone.withLeader 7
         |> UnixSystem.checkInvariants
         |> shouldEqual [ UnixSystemDefect.LeaderWithoutThread 7 ]
 
@@ -934,17 +933,17 @@ module TestUnixSystemInvariants =
     let ``two threads with one thread ID are a defect`` () : unit =
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
             let system = spawned platform
-            let leader = UnixThreadTable.get 0 system.Threads
+            let leader = UnixThreadTable.get 0 (Lone.threads system)
 
-            { system with
-                Threads =
-                    Map.add
-                        1
-                        { UnixThreadTable.get 1 system.Threads with
-                            OsThreadId = leader.OsThreadId
-                        }
-                        system.Threads
-            }
+            system
+            |> Lone.mapThreads (fun threads ->
+                Map.add
+                    1
+                    { UnixThreadTable.get 1 threads with
+                        OsThreadId = leader.OsThreadId
+                    }
+                    threads
+            )
             |> UnixSystem.checkInvariants
             |> shouldEqual
                 [
@@ -952,7 +951,7 @@ module TestUnixSystemInvariants =
                     // Thread 1's own ID, which the allocator still records, is
                     // held by no thread now.
                     UnixSystemDefect.LiveThreadIdsMismatch (
-                        Set.singleton (UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Threads)),
+                        Set.singleton (UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads system))),
                         Set.empty
                     )
                 ]
@@ -960,12 +959,12 @@ module TestUnixSystemInvariants =
     [<Test>]
     let ``on Linux a leader whose thread ID is not the process ID is a defect, and on Darwin it is not`` () : unit =
         let moved (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            { system with
-                Process =
-                    { system.Process with
-                        ProcessId = ProcessId.parseOrFail "test" 17
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    ProcessId = ProcessId.parseOrFail "test" 17
+                }
+            )
 
         let linux = spawned SimulatedUnixPlatform.linuxX64
 
@@ -975,7 +974,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.LeaderThreadIdNotProcessId (
                     0,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 0 linux.Threads),
+                    UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads linux)),
                     ProcessId.parseOrFail "test" 17
                 )
             ]
@@ -1001,11 +1000,12 @@ module TestUnixSystemInvariants =
                 (UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
                  |> Launched.leaderThreadId id
                  |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                    .Threads
+                |> Lone.threads
                 |> UnixThreadTable.get 0
                 |> UnixThreadState.osThreadId
 
-            let replaced = UnixThreadState.osThreadId (UnixThreadTable.get 1 linux.Threads)
+            let replaced =
+                UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads linux))
 
             foreign,
             { linux with
@@ -1019,14 +1019,15 @@ module TestUnixSystemInvariants =
                                 Live = linux.Machine.ThreadIds.Live |> Set.remove replaced |> Set.add foreign
                             }
                     }
-                Threads =
-                    Map.add
-                        1
-                        { UnixThreadTable.get 1 linux.Threads with
-                            OsThreadId = foreign
-                        }
-                        linux.Threads
             }
+            |> Lone.mapThreads (fun threads ->
+                Map.add
+                    1
+                    { UnixThreadTable.get 1 threads with
+                        OsThreadId = foreign
+                    }
+                    threads
+            )
 
         let _, below = withDarwinId 4194303UL
         UnixSystem.checkInvariants below |> shouldEqual []
@@ -1060,7 +1061,7 @@ module TestUnixSystemInvariants =
             [
                 UnixSystemDefect.OsThreadIdNotMintable (
                     1,
-                    UnixThreadState.osThreadId (UnixThreadTable.get 1 darwin.Threads),
+                    UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads darwin)),
                     behind
                 )
             ]

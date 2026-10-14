@@ -160,7 +160,47 @@ module TestDirectoryDescription =
     /// Names drawn from a small alphabet, including bytes above 0x7F, so that
     /// a generated directory really does exercise ordering by bytes.
     let private nameGen : Gen<string> =
-        Gen.elements [ "a" ; "b" ; "c" ; "A" ; "Z" ; "aa" ; "ab" ; "é" ; "中" ]
+        Gen.elements [ "a" ; "b" ; "c" ; "A" ; "Z" ; "aa" ; "ab" ; "é" ; "中" ; "éa" ; "bé" ; "a中b" ]
+
+    let private isAscii (c : char) : bool = int c < 0x80
+
+    /// Whether a directory of `platform`'s holding `other` can bind `name` as
+    /// well. Darwin refuses to bind a name beyond ASCII beside another unless
+    /// their ASCII ends tell them apart: their longest ASCII suffixes differ,
+    /// or neither's longest ASCII prefix begins the other's
+    /// (`TestNameEquivalence`). So "é" and "中" might be two spellings of one
+    /// name as far as the library can tell, while "é" and "éa" are two.
+    let private admitsBeside (platform : SimulatedUnixPlatform) (other : string) (name : string) : bool =
+        let ends (name : string) : (string * string) option =
+            if Seq.forall isAscii name then
+                None
+            else
+                Some (
+                    String (name |> Seq.takeWhile isAscii |> Array.ofSeq),
+                    String (name |> Seq.rev |> Seq.takeWhile isAscii |> Seq.rev |> Array.ofSeq)
+                )
+
+        match SimulatedUnixPlatform.flavour platform, ends other, ends name with
+        | SimulatedUnixFlavour.Linux, _, _ -> true
+        | SimulatedUnixFlavour.Darwin, Some (otherLeading, otherTrailing), Some (leading, trailing) ->
+            other = name
+            || otherTrailing <> trailing
+            || not (
+                leading.StartsWith (otherLeading, StringComparison.Ordinal)
+                || otherLeading.StartsWith (leading, StringComparison.Ordinal)
+            )
+        | SimulatedUnixFlavour.Darwin, _, _ -> true
+
+    /// Whether a directory of `platform`'s holding `names` can bind `name` as
+    /// well.
+    let private admits (platform : SimulatedUnixPlatform) (names : string seq) (name : string) : bool =
+        names |> Seq.forall (fun other -> admitsBeside platform other name)
+
+    /// `names` without each name a directory of `platform`'s holding those
+    /// before it would refuse.
+    let private holdable (platform : SimulatedUnixPlatform) (names : string list) : string list =
+        (([] : string list), names)
+        ||> List.fold (fun held name -> if admits platform held name then held @ [ name ] else held)
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 200
 
@@ -168,10 +208,18 @@ module TestDirectoryDescription =
 
     [<Test>]
     let ``a scan yields every name once, then dot-dot and dot, each with the inode stat reports`` () : unit =
-        let property (platform : SimulatedUnixPlatform) (names : string list) : unit =
-            let names = List.distinct names
+        let property
+            (cover : SimulatedUnixFlavour -> unit)
+            (platform : SimulatedUnixPlatform)
+            (names : string list)
+            : unit
+            =
+            let names = List.distinct names |> holdable platform
             let fd, system = withDirectory platform names
             let records, system = drain fd system
+
+            if (names |> List.filter (Seq.exists (isAscii >> not)) |> List.length) > 1 then
+                cover (SimulatedUnixPlatform.flavour platform)
 
             records
             |> List.map (fun r -> text r.Name)
@@ -194,12 +242,15 @@ module TestDirectoryDescription =
 
                 record.Kind |> shouldEqual expectedKind
 
-        Check.One (
-            config,
-            Prop.forAll
+        let coverage =
+            CoverageSample.check
+                config
                 (Arb.fromGen (Gen.zip (Gen.elements platforms) (Gen.listOf nameGen)))
-                (fun (p, n) -> property p n)
-        )
+                (fun cover (p, n) -> property cover p n)
+
+        // Darwin's directories hold several names beyond ASCII, as long as
+        // their ASCII ends tell them apart.
+        coverage.Count SimulatedUnixFlavour.Darwin |> shouldBeGreaterThan 20
 
     [<Test>]
     let ``a subdirectory is reported as a directory`` () : unit =
@@ -285,7 +336,7 @@ module TestDirectoryDescription =
         // `lseek(0)` rewinds it. Mutations are interleaved because the
         // position is a name, and a name can be deleted from under it.
         let property (platform : SimulatedUnixPlatform) (initial : string list) (steps : DirectoryScriptStep list) =
-            let initial = List.distinct initial
+            let initial = List.distinct initial |> holdable platform
             let a, system = withDirectory platform initial
             let aDup, system = dup a system
             let b, system = openAt directoryReading "d" system
@@ -324,7 +375,7 @@ module TestDirectoryDescription =
                     names, positionA, positionB, system
                 | DirectoryScriptStep.RewindA -> names, OraclePosition.Start, positionB, rewind aDup system
                 | DirectoryScriptStep.RewindB -> names, positionA, OraclePosition.Start, rewind b system
-                | DirectoryScriptStep.Create name when not (Set.contains name names) ->
+                | DirectoryScriptStep.Create name when not (Set.contains name names) && admits platform names name ->
                     Set.add name names, positionA, positionB, createFile $"d/%s{name}" system
                 | DirectoryScriptStep.Unlink name when Set.contains name names ->
                     Set.remove name names, positionA, positionB, unlink $"d/%s{name}" system
@@ -477,7 +528,7 @@ module TestDirectoryDescription =
         // Measured one call at a time on a fresh description, after a partial
         // read and after a full one (directory-descriptors.c, `REMOVED` rows).
         let property (platform : SimulatedUnixPlatform) (names : string list) (readFirst : int) : unit =
-            let names = List.distinct names
+            let names = List.distinct names |> holdable platform
             let fd, system = withDirectory platform names
 
             let system =
@@ -553,9 +604,9 @@ module TestDirectoryDescription =
                 NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system
 
             let epoll, registry =
-                FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             let expect (fd : int) (linux : UnixError) (darwin : UnixError) =
                 let expected =
@@ -680,11 +731,11 @@ module TestDirectoryDescription =
         : UnixSystem<int, string>
         =
         let id =
-            match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
             | Some (id, _) -> id
             | None -> failwith $"fd %d{fd} is not live"
 
-        UnixSystemState.withFileDescriptors
+        Lone.withFileDescriptors
             (FileDescriptorRegistry.Unchecked.mapDescription
                 id
                 (fun d ->
@@ -692,7 +743,7 @@ module TestDirectoryDescription =
                         Target = target
                     }
                 )
-                (UnixSystemState.fileDescriptors system))
+                (Lone.fileDescriptors system))
             system
 
     [<Test>]

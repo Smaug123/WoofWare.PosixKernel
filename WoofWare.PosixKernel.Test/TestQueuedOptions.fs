@@ -217,7 +217,7 @@ module TestQueuedOptions =
 
         match UnixConnection.tryAccept 1 listener UserBuffer.Mapped UInt32.MaxValue system with
         | Error refusal ->
-            match FileDescriptorRegistry.tryFindTarget listener (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socket) -> Error (refusal, socket)
             | other -> failwith $"the listener's fd %d{listener} names %A{other}"
         | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, system) ->

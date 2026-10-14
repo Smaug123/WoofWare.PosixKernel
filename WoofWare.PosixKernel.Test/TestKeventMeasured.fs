@@ -784,7 +784,7 @@ module TestKeventMeasured =
                             (ForgedName.ofInode system (InodeNumber 1L))
                             (InodeNumber 1L)
                             FileAccessMode.ReadWrite
-                            (UnixSystemState.fileDescriptors system)
+                            (Lone.fileDescriptors system)
 
                     fd, KeventWorld.withRegistry registry system
                 )
@@ -795,7 +795,7 @@ module TestKeventMeasured =
                         FileDescriptorRegistry.openDirectory
                             (ForgedName.ofInode system (InodeNumber 1L))
                             (InodeNumber 1L)
-                            (UnixSystemState.fileDescriptors system)
+                            (Lone.fileDescriptors system)
 
                     fd, KeventWorld.withRegistry registry system
                 )

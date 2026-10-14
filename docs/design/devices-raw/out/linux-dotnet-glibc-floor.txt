@@ -1,0 +1,32 @@
+## aarch64 /usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.12
+# libSystem.Native.so
+  highest required: GLIBC_2.17
+  import: open64 (GLIBC_2.17)
+  import: read (GLIBC_2.17)
+  import: time (GLIBC_2.17)
+  import: srand48 (GLIBC_2.17)
+  import: lrand48 (GLIBC_2.17)
+# libcoreclr.so
+  highest required: GLIBC_2.27
+  import: open64 (GLIBC_2.17)
+  import: read (GLIBC_2.17)
+  import: time (GLIBC_2.17)
+  import: srand48 (GLIBC_2.17)
+  import: lrand48 (GLIBC_2.17)
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39
+## x86_64 /usr/share/dotnet/shared/Microsoft.NETCore.App/10.0.12
+# libSystem.Native.so
+  highest required: GLIBC_2.16
+  import: open64 (GLIBC_2.2.5)
+  import: read (GLIBC_2.2.5)
+  import: time (GLIBC_2.2.5)
+  import: srand48 (GLIBC_2.2.5)
+  import: lrand48 (GLIBC_2.2.5)
+# libcoreclr.so
+  highest required: GLIBC_2.27
+  import: open64 (GLIBC_2.2.5)
+  import: read (GLIBC_2.2.5)
+  import: time (GLIBC_2.2.5)
+  import: srand48 (GLIBC_2.2.5)
+  import: lrand48 (GLIBC_2.2.5)
+ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39

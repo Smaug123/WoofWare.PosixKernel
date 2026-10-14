@@ -144,7 +144,7 @@ module TestStateQueries =
     [<Test>]
     let ``environment is empty until set, and then exactly what was set`` () : unit =
         for platform in platforms do
-            UnixProcessState.environment (initialOn platform).Process |> shouldEqual []
+            UnixProcessState.environment (Lone.proc (initialOn platform)) |> shouldEqual []
 
         let property (entries : UnixByteString list) : unit =
             imageOn SimulatedUnixPlatform.linuxX64
@@ -153,14 +153,14 @@ module TestStateQueries =
                     UnixSystem.pipedStandardStreams
                     0
                     (CpuId 0))
-            |> fun system -> UnixProcessState.environment system.Process
+            |> fun system -> UnixProcessState.environment (Lone.proc system)
             |> shouldEqual entries
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen (Gen.listOf entryGen |> Gen.resize 6)) property)
 
     [<Test>]
     let ``processPath is the default until set, and then what was set`` () : unit =
-        UnixProcessState.processPath (initialOn SimulatedUnixPlatform.linuxX64).Process
+        UnixProcessState.processPath (Lone.proc (initialOn SimulatedUnixPlatform.linuxX64))
         |> shouldEqual UnixSystem.defaultProcessPath
 
         for path in [ None ; Some (AbsoluteUnixPath.parseOrFail context "/bin/app") ] do
@@ -170,13 +170,13 @@ module TestStateQueries =
                     UnixSystem.pipedStandardStreams
                     0
                     (CpuId 0))
-            |> fun system -> UnixProcessState.processPath system.Process
+            |> fun system -> UnixProcessState.processPath (Lone.proc system)
             |> shouldEqual path
 
     [<Test>]
     let ``signals is the process's own, read under its platform's numbering`` () : unit =
         for platform in platforms do
-            UnixProcessState.signals (initialOn platform).Process
+            UnixProcessState.signals (Lone.proc (initialOn platform))
             |> SignalState.numbering
             |> shouldEqual (SimulatedUnixPlatform.signalNumbering platform)
 
@@ -185,7 +185,8 @@ module TestStateQueries =
         for platform in platforms do
             let system = initialOn platform
 
-            UnixThreadState.park (UnixThreadTable.get 0 system.Threads) |> shouldEqual None
+            UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
+            |> shouldEqual None
 
             let system =
                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
@@ -197,8 +198,8 @@ module TestStateQueries =
                 | Ok (ReadOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"expected a read of the empty pipe to sleep, got %A{other}"
 
-            let park = UnixThreadState.park (UnixThreadTable.get 0 system.Threads)
-            park |> shouldEqual (UnixThreadTable.parkOf 0 system.Threads)
+            let park = UnixThreadState.park (UnixThreadTable.get 0 (Lone.threads system))
+            park |> shouldEqual (UnixThreadTable.parkOf 0 (Lone.threads system))
 
             match park |> Option.map (fun park -> park.Syscall) with
             | Some (ParkedSyscall.PipeRead _) -> ()
@@ -226,8 +227,8 @@ module TestStateQueries =
                         (CpuId 0))
                 |> UnixSystem.advanceClock 1_234L
 
-            UnixSystem.leader system |> shouldEqual system.Leader
-            UnixSystem.threads system |> shouldEqual system.Threads
+            UnixSystem.leader system |> shouldEqual (Lone.leader system)
+            UnixSystem.threads system |> shouldEqual (Lone.threads system)
             UnixSystem.platform system |> shouldEqual platform
             UnixSystem.processorCount system |> shouldEqual 3
             UnixSystem.environment system |> shouldEqual [ entry ]
@@ -235,7 +236,7 @@ module TestStateQueries =
             UnixSystem.nanosecondsSinceBoot system |> shouldEqual 1_234L
 
             UnixSystem.signals system
-            |> shouldEqual (UnixProcessState.signals system.Process)
+            |> shouldEqual (UnixProcessState.signals (Lone.proc system))
 
             UnixSystem.delivered system
             |> shouldEqual (UnixMachineState.delivered system.Machine)
@@ -243,7 +244,7 @@ module TestStateQueries =
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do
                 UnixSystem.descriptorTarget fd system
-                |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system))
+                |> shouldEqual (FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system))
 
             UnixSystem.descriptorTarget 3 system |> shouldEqual None
 

@@ -166,7 +166,7 @@ module TestProtectedFiles =
 
     /// One inode of each kind, owned by `by`, read off a hand-built filesystem.
     let private inodesOwnedBy (by : InodeOwner) : (string * Inode) list =
-        let vfs = VirtualFileSystem.empty epoch by
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         let root = VirtualFileSystem.root vfs
 
         let vfs =
@@ -463,12 +463,13 @@ module TestProtectedFiles =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private answerText (answer : SyscallAnswer) : string =
         match answer with
@@ -527,7 +528,7 @@ module TestProtectedFiles =
     /// a directory holding `x`, `/c` in which anyone may create, and `/v` for
     /// root's links into the directory under test.
     let private scaffold : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u)
         |> directory "/t" 0u 0o755
         |> file "/t/file" 0u 0o644
         |> directory "/t/dir" 0u 0o755
@@ -596,7 +597,7 @@ module TestProtectedFiles =
                     system
             )
             "readlink", readlinkText
-            "access", accessText (UnixPathResolution.tryAccessEager (bytes "/s/lf") 4 system)
+            "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
             "access-nofollow", accessText (UnixPathResolution.tryFaccessatEager -100 (bytes "/s/lf") 0 0x100 system)
             "chown",
             UnixPathResolution.tryChown (PathArg.ofPath (path "/s/lf")) None None system
@@ -693,7 +694,7 @@ module TestProtectedFiles =
                 let actual =
                     Map.ofList
                         [
-                            "access", UnixPathResolution.tryAccessEager (bytes "/ids/lf") 4 system |> ok |> answerText
+                            "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
                             UnixPathResolution.tryFaccessatEager -100 (bytes "/ids/lf") 4 0x200 system
                             |> ok

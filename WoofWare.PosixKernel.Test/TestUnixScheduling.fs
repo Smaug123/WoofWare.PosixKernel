@@ -174,9 +174,7 @@ module TestUnixScheduling =
         let cpu = CpuId (cpu % world.Count)
 
         match
-            SimulatedMachine.tryLaunch
-                (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu)
-                world.Machine
+            Machines.tryLaunch (Launched.launch world.Platform UnixSystem.pipedStandardStreams 0 cpu) world.Machine
         with
         | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         | Ok (pid, machine) ->
@@ -212,7 +210,7 @@ module TestUnixScheduling =
         {
             Platform = platform
             Count = count
-            Machine = SimulatedMachine.ofSystem system |> withPipe pid
+            Machine = Machines.ofSystem system |> withPipe pid
             Live =
                 [
                     {
@@ -256,7 +254,7 @@ module TestUnixScheduling =
         }
 
     let private endOn (ended : EndedProcess<int, string>) (machine : SimulatedMachine<int, string>) =
-        match SimulatedMachine.tryEndProcess ended machine with
+        match Machines.tryEndProcess ended machine with
         | Ok (_, machine) -> machine
         | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
 
@@ -399,7 +397,7 @@ module TestUnixScheduling =
                     |> List.map (fun (pid, threads) -> pid, threads |> List.map (fun live -> live.Name) |> Set.ofList)
                     |> Map.ofList
 
-                let woken = SimulatedMachine.wakes asleep machine |> List.map fst |> Set.ofList
+                let woken = Machines.wakes asleep machine |> List.map fst |> Set.ofList
 
                 { world with
                     Machine = machine
@@ -469,7 +467,7 @@ module TestUnixScheduling =
                 match UnixThreadLifecycle.tryExitThread thread.Name 0 (viewOf thread.Pid world) with
                 | Ok (ProcessFate.Continues ((), view)) ->
                     { world with
-                        Machine = SimulatedMachine.unfocus view world.Machine
+                        Machine = Machines.unfocus view world.Machine
                         Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
                         Events = Event.Exited thread.Serial :: world.Events
                     }
@@ -507,7 +505,7 @@ module TestUnixScheduling =
                 if answered <> running then
                     failwith $"runningOn %A{answered}: %s{context}"
 
-            (UnixThreadTable.get thread.Name view.Threads).Cpu
+            (UnixThreadTable.get thread.Name (Proc.threads thread.Pid view)).Cpu
             |> shouldEqual (cpuOracle thread.Serial world.Events)
 
             let parked = thread.Asleep || thread.Woken
@@ -642,7 +640,7 @@ module TestUnixScheduling =
                 getcpu pid machine |> shouldEqual true
                 getcpu other machine |> shouldEqual false
                 // The displaced thread keeps the processor as its own.
-                (UnixThreadTable.get 0 (Machines.viewOf other machine).Threads).Cpu
+                (UnixThreadTable.get 0 (Proc.threads other (Machines.viewOf other machine))).Cpu
                 |> shouldEqual (CpuId 0)
 
                 Machines.assertClean machine
@@ -662,7 +660,7 @@ module TestUnixScheduling =
             |> UnixScheduling.dispatch 0 (CpuId 1)
 
         system.Scheduling.Occupants
-        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 system.Threads).OsThreadId ])
+        |> shouldEqual (Map.ofList [ CpuId 1, (UnixThreadTable.get 0 (Lone.threads system)).OsThreadId ])
 
         UnixScheduling.runningOn 0 system |> shouldEqual (Some (CpuId 1))
         UnixScheduling.runningOn 1 system |> shouldEqual None
@@ -706,7 +704,7 @@ module TestUnixScheduling =
         }
 
     let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
-        (UnixThreadTable.get thread (Machines.viewOf pid machine).Threads).OsThreadId
+        (UnixThreadTable.get thread (Proc.threads pid (Machines.viewOf pid machine))).OsThreadId
 
     [<Test>]
     let ``checkInvariants reports an occupied processor the machine does not have`` () : unit =
@@ -722,7 +720,7 @@ module TestUnixScheduling =
         let leader = threadIdOf pid 0 machine
         let forged = withOccupants [ CpuId 2, leader ] machine
 
-        let defects = SimulatedMachine.checkInvariants forged
+        let defects = Machines.checkInvariants forged
 
         defects
         |> List.contains (
@@ -743,7 +741,7 @@ module TestUnixScheduling =
 
         // The thread ID of a thread that has exited.
         let nobody, machine =
-            let machine = Machines.doIn first (Threads.spawn 1) machine
+            let machine = Machines.doIn first (Threads.spawnIn first 1) machine
             let nobody = threadIdOf first 1 machine
 
             let exited =
@@ -763,7 +761,7 @@ module TestUnixScheduling =
         let forged = withOccupants [ CpuId 0, nobody ] machine
         let defect = UnixSystemDefect.OccupantWithoutThread (CpuId 0, nobody)
 
-        SimulatedMachine.checkInvariants forged
+        Machines.checkInvariants forged
         |> shouldEqual [ SimulatedMachineDefect.Machine defect ]
 
         UnixSystem.checkInvariants (Machines.viewOf first forged)
@@ -772,7 +770,7 @@ module TestUnixScheduling =
         // Another process's running thread is no defect in a view that cannot
         // see that process's threads.
         let shared = withOccupants [ CpuId 0, secondLeader ] machine
-        SimulatedMachine.checkInvariants shared |> shouldEqual []
+        Machines.checkInvariants shared |> shouldEqual []
         UnixSystem.checkInvariants (Machines.viewOf first shared) |> shouldEqual []
         UnixSystem.checkInvariants (Machines.viewOf second shared) |> shouldEqual []
 
@@ -790,7 +788,7 @@ module TestUnixScheduling =
         // The leader was created on processor 0.
         let forged = withOccupants [ CpuId 1, threadIdOf pid 0 machine ] machine
 
-        SimulatedMachine.checkInvariants forged
+        Machines.checkInvariants forged
         |> shouldEqual
             [
                 SimulatedMachineDefect.Machine (UnixSystemDefect.OccupantOnAnotherCpu (0, CpuId 1, CpuId 0))

@@ -1,0 +1,113 @@
+#	Linux 6.18.5 aarch64
+#fs	f_type=0x1021994
+L	exact	c3a9	c3a9	stat=same	excl=EEXIST	names=c3a9
+L	another letter	c3a9	c3a8	stat=ENOENT	excl=OK	names=c3a8,c3a9
+L	another case	41	61	stat=ENOENT	excl=OK	names=41,61
+L	another case, non-ASCII	c389	c3a9	stat=ENOENT	excl=OK	names=c389,c3a9
+L	NFC then NFD	c3a9	65cc81	stat=ENOENT	excl=OK	names=65cc81,c3a9
+L	NFD then NFC	65cc81	c3a9	stat=ENOENT	excl=OK	names=65cc81,c3a9
+L	NFC then NFD, within a name	636166c3a92e747874	63616665cc812e747874	stat=ENOENT	excl=OK	names=63616665cc812e747874,636166c3a92e747874
+L	mark order	61cc81cca7	61cca7cc81	stat=ENOENT	excl=OK	names=61cc81cca7,61cca7cc81
+L	Hangul syllable then jamo	eab080	e18480e185a1	stat=ENOENT	excl=OK	names=e18480e185a1,eab080
+L	Hangul jamo then syllable	e18480e185a1	eab080	stat=ENOENT	excl=OK	names=e18480e185a1,eab080
+L	K then KELVIN SIGN	4b	e284aa	stat=ENOENT	excl=OK	names=4b,e284aa
+L	KELVIN SIGN then K	e284aa	4b	stat=ENOENT	excl=OK	names=4b,e284aa
+L	KELVIN SIGN then k	e284aa	6b	stat=ENOENT	excl=OK	names=6b,e284aa
+L	k then KELVIN SIGN	6b	e284aa	stat=ENOENT	excl=OK	names=6b,e284aa
+L	; then GREEK QUESTION MARK	3b	cdbe	stat=ENOENT	excl=OK	names=3b,cdbe
+L	GREEK QUESTION MARK then ;	cdbe	3b	stat=ENOENT	excl=OK	names=3b,cdbe
+L	` then GREEK VARIA	60	e1bfaf	stat=ENOENT	excl=OK	names=60,e1bfaf
+L	GREEK VARIA then `	e1bfaf	60	stat=ENOENT	excl=OK	names=60,e1bfaf
+L	aKb then a KELVIN SIGN b	614b62	61e284aa62	stat=ENOENT	excl=OK	names=614b62,61e284aa62
+L	OHM SIGN then OMEGA	e284a6	cea9	stat=ENOENT	excl=OK	names=cea9,e284a6
+L	OMEGA then OHM SIGN	cea9	e284a6	stat=ENOENT	excl=OK	names=cea9,e284a6
+L	ANGSTROM SIGN then A RING	e284ab	c385	stat=ENOENT	excl=OK	names=c385,e284ab
+L	A RING then A + RING	c385	41cc8a	stat=ENOENT	excl=OK	names=41cc8a,c385
+L	CJK COMPATIBILITY IDEOGRAPH-F900 then U+8C48	efa480	e8b188	stat=ENOENT	excl=OK	names=e8b188,efa480
+L	fi ligature then fi	efac81	6669	stat=ENOENT	excl=OK	names=6669,efac81
+L	fi then fi ligature	6669	efac81	stat=ENOENT	excl=OK	names=6669,efac81
+L	fullwidth A then A	efbca1	41	stat=ENOENT	excl=OK	names=41,efbca1
+L	A then fullwidth A	41	efbca1	stat=ENOENT	excl=OK	names=41,efbca1
+L	vulgar half then 1 fraction-slash 2	c2bd	31e2818432	stat=ENOENT	excl=OK	names=31e2818432,c2bd
+L	NFC e-acute then Latin-1 e-acute	c3a9	e9	stat=ENOENT	excl=OK	names=c3a9,e9
+L	emoji then its CESU-8	f09f9880	eda0bdedb880	stat=ENOENT	excl=OK	names=eda0bdedb880,f09f9880
+L	e then an overlong e	65	c1a5	stat=ENOENT	excl=OK	names=65,c1a5
+B	Latin-1 e-acute	e9	create=OK
+B	CESU-8 emoji	eda0bdedb880	create=OK
+B	overlong e	c1a5	create=OK
+I	NFC directory through NFD	c3a9	65cc81	stat(second/x)=ENOENT
+I	K directory through KELVIN SIGN	4b	e284aa	stat(second/x)=ENOENT
+O	mkdir	c3a9	65cc81	mkdir(second)=OK	names=65cc81=new,737263=src,c3a9=first
+O	link	c3a9	65cc81	link(src,second)=OK	names=65cc81=src,737263=src,c3a9=first
+O	symlink	c3a9	65cc81	symlink(t,second)=OK	names=65cc81=new,737263=src,c3a9=first
+O	unlink	c3a9	65cc81	unlink(second)=ENOENT	names=737263=src,c3a9=first
+O	rmdir	c3a9	65cc81	rmdir(second)=ENOENT	names=737263=src,c3a9=first
+O	chdir	c3a9	65cc81	chdir(second)=ENOENT	names=737263=src,c3a9=first
+O	open O_CREAT	c3a9	65cc81	open(second,O_CREAT)=OK	opened=other	names=65cc81=new,737263=src,c3a9=first
+O	rename onto	c3a9	65cc81	rename(src,second)=OK	names=65cc81=src,c3a9=first
+O	rename from	c3a9	65cc81	rename(second,moved)=ENOENT	names=737263=src,c3a9=first
+O	rename to its other spelling	c3a9	65cc81	rename(first,second)=OK	names=65cc81=first,737263=src
+O	rename to its other spelling	65cc81	c3a9	rename(first,second)=OK	names=737263=src,c3a9=first
+O	rename a directory to its other spelling	c3a9	65cc81	rename(firstdir,second)=OK	names=65cc81=first,737263=src
+O	rename to its other spelling	4b	e284aa	rename(first,second)=OK	names=737263=src,e284aa=first
+O	rename to its other spelling	e284aa	4b	rename(first,second)=OK	names=4b=first,737263=src
+O	rename to another case	41	61	rename(first,second)=OK	names=61=first,737263=src
+O	unlink	4b	e284aa	unlink(second)=ENOENT	names=4b=first,737263=src
+O	link	4b	e284aa	link(src,second)=OK	names=4b=first,737263=src,e284aa=src
+=====
+#	Linux 6.18.5 aarch64
+#fs	f_type=0xef53
+L	exact	c3a9	c3a9	stat=same	excl=EEXIST	names=c3a9
+L	another letter	c3a9	c3a8	stat=ENOENT	excl=OK	names=c3a8,c3a9
+L	another case	41	61	stat=ENOENT	excl=OK	names=41,61
+L	another case, non-ASCII	c389	c3a9	stat=ENOENT	excl=OK	names=c389,c3a9
+L	NFC then NFD	c3a9	65cc81	stat=ENOENT	excl=OK	names=65cc81,c3a9
+L	NFD then NFC	65cc81	c3a9	stat=ENOENT	excl=OK	names=65cc81,c3a9
+L	NFC then NFD, within a name	636166c3a92e747874	63616665cc812e747874	stat=ENOENT	excl=OK	names=63616665cc812e747874,636166c3a92e747874
+L	mark order	61cc81cca7	61cca7cc81	stat=ENOENT	excl=OK	names=61cc81cca7,61cca7cc81
+L	Hangul syllable then jamo	eab080	e18480e185a1	stat=ENOENT	excl=OK	names=e18480e185a1,eab080
+L	Hangul jamo then syllable	e18480e185a1	eab080	stat=ENOENT	excl=OK	names=e18480e185a1,eab080
+L	K then KELVIN SIGN	4b	e284aa	stat=ENOENT	excl=OK	names=4b,e284aa
+L	KELVIN SIGN then K	e284aa	4b	stat=ENOENT	excl=OK	names=4b,e284aa
+L	KELVIN SIGN then k	e284aa	6b	stat=ENOENT	excl=OK	names=6b,e284aa
+L	k then KELVIN SIGN	6b	e284aa	stat=ENOENT	excl=OK	names=6b,e284aa
+L	; then GREEK QUESTION MARK	3b	cdbe	stat=ENOENT	excl=OK	names=3b,cdbe
+L	GREEK QUESTION MARK then ;	cdbe	3b	stat=ENOENT	excl=OK	names=3b,cdbe
+L	` then GREEK VARIA	60	e1bfaf	stat=ENOENT	excl=OK	names=60,e1bfaf
+L	GREEK VARIA then `	e1bfaf	60	stat=ENOENT	excl=OK	names=60,e1bfaf
+L	aKb then a KELVIN SIGN b	614b62	61e284aa62	stat=ENOENT	excl=OK	names=614b62,61e284aa62
+L	OHM SIGN then OMEGA	e284a6	cea9	stat=ENOENT	excl=OK	names=cea9,e284a6
+L	OMEGA then OHM SIGN	cea9	e284a6	stat=ENOENT	excl=OK	names=cea9,e284a6
+L	ANGSTROM SIGN then A RING	e284ab	c385	stat=ENOENT	excl=OK	names=c385,e284ab
+L	A RING then A + RING	c385	41cc8a	stat=ENOENT	excl=OK	names=41cc8a,c385
+L	CJK COMPATIBILITY IDEOGRAPH-F900 then U+8C48	efa480	e8b188	stat=ENOENT	excl=OK	names=e8b188,efa480
+L	fi ligature then fi	efac81	6669	stat=ENOENT	excl=OK	names=6669,efac81
+L	fi then fi ligature	6669	efac81	stat=ENOENT	excl=OK	names=6669,efac81
+L	fullwidth A then A	efbca1	41	stat=ENOENT	excl=OK	names=41,efbca1
+L	A then fullwidth A	41	efbca1	stat=ENOENT	excl=OK	names=41,efbca1
+L	vulgar half then 1 fraction-slash 2	c2bd	31e2818432	stat=ENOENT	excl=OK	names=31e2818432,c2bd
+L	NFC e-acute then Latin-1 e-acute	c3a9	e9	stat=ENOENT	excl=OK	names=c3a9,e9
+L	emoji then its CESU-8	f09f9880	eda0bdedb880	stat=ENOENT	excl=OK	names=eda0bdedb880,f09f9880
+L	e then an overlong e	65	c1a5	stat=ENOENT	excl=OK	names=65,c1a5
+B	Latin-1 e-acute	e9	create=OK
+B	CESU-8 emoji	eda0bdedb880	create=OK
+B	overlong e	c1a5	create=OK
+I	NFC directory through NFD	c3a9	65cc81	stat(second/x)=ENOENT
+I	K directory through KELVIN SIGN	4b	e284aa	stat(second/x)=ENOENT
+O	mkdir	c3a9	65cc81	mkdir(second)=OK	names=65cc81=new,737263=src,c3a9=first
+O	link	c3a9	65cc81	link(src,second)=OK	names=65cc81=src,737263=src,c3a9=first
+O	symlink	c3a9	65cc81	symlink(t,second)=OK	names=65cc81=new,737263=src,c3a9=first
+O	unlink	c3a9	65cc81	unlink(second)=ENOENT	names=737263=src,c3a9=first
+O	rmdir	c3a9	65cc81	rmdir(second)=ENOENT	names=737263=src,c3a9=first
+O	chdir	c3a9	65cc81	chdir(second)=ENOENT	names=737263=src,c3a9=first
+O	open O_CREAT	c3a9	65cc81	open(second,O_CREAT)=OK	opened=other	names=65cc81=new,737263=src,c3a9=first
+O	rename onto	c3a9	65cc81	rename(src,second)=OK	names=65cc81=src,c3a9=first
+O	rename from	c3a9	65cc81	rename(second,moved)=ENOENT	names=737263=src,c3a9=first
+O	rename to its other spelling	c3a9	65cc81	rename(first,second)=OK	names=65cc81=first,737263=src
+O	rename to its other spelling	65cc81	c3a9	rename(first,second)=OK	names=737263=src,c3a9=first
+O	rename a directory to its other spelling	c3a9	65cc81	rename(firstdir,second)=OK	names=65cc81=first,737263=src
+O	rename to its other spelling	4b	e284aa	rename(first,second)=OK	names=737263=src,e284aa=first
+O	rename to its other spelling	e284aa	4b	rename(first,second)=OK	names=4b=first,737263=src
+O	rename to another case	41	61	rename(first,second)=OK	names=61=first,737263=src
+O	unlink	4b	e284aa	unlink(second)=ENOENT	names=4b=first,737263=src
+O	link	4b	e284aa	link(src,second)=OK	names=4b=first,737263=src,e284aa=src

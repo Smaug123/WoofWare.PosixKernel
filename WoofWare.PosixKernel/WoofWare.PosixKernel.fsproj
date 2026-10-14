@@ -35,6 +35,7 @@
         <Compile Include="PathLimits.fs" />
         <Compile Include="BindableEntryNames.fs" />
         <Compile Include="Inode.fs" />
+        <Compile Include="EntryNameMatching.fs" />
         <Compile Include="ProtectedFiles.fs" />
         <Compile Include="FileSystemSeed.fs" />
         <Compile Include="FsChange.fs" />

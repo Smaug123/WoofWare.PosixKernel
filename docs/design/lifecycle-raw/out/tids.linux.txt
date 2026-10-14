@@ -1,0 +1,31 @@
+# kernel: Linux 6.18.5 aarch64
+leader	pid	8
+leader	tid	8
+leader	tid_equals_pid	1
+concurrent	0	9	delta_from_leader=1
+concurrent	1	10	delta_from_leader=2
+concurrent	2	11	delta_from_leader=3
+concurrent	3	12	delta_from_leader=4
+concurrent	4	13	delta_from_leader=5
+concurrent	5	14	delta_from_leader=6
+concurrent	6	15	delta_from_leader=7
+concurrent	7	16	delta_from_leader=8
+sequential	0	17	delta_from_previous=0
+sequential	1	18	delta_from_previous=1
+sequential	2	19	delta_from_previous=1
+sequential	3	20	delta_from_previous=1
+sequential	4	21	delta_from_previous=1
+sequential	5	22	delta_from_previous=1
+sequential	6	23	delta_from_previous=1
+sequential	7	24	delta_from_previous=1
+fork_between	thread_before	25
+fork_between	child_pid	26
+fork_between	thread_after	27
+width	leader_high_word	0
+reuse	rounds	20000
+reuse	first	28
+reuse	min	28
+reuse	max	20027
+reuse	backwards_steps	0
+reuse	first_id_seen_again	0
+reuse	leader_id_seen_again	0

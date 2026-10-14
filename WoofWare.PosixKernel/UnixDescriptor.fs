@@ -462,7 +462,7 @@ module internal BytesAvailableRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : BytesAvailableRefusal) : RefusalKind =
         match refusal with
-        | BytesAvailableRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | BytesAvailableRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | BytesAvailableRefusal.UnmodelledTarget _ -> RefusalKind.Unmodelled
 
 /// What `tcgetattr(3)` answered, which is also what `isatty(3)` answers: it is
@@ -511,7 +511,7 @@ module internal GetGroupsRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetGroupsRefusal) : RefusalKind =
         match refusal with
-        | GetGroupsRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | GetGroupsRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetGroupsRefusal.UnmeasuredGroupList _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer an `ioctl(2)` of `FICLONE`.
@@ -2271,43 +2271,42 @@ module UnixDescriptor =
         // before the close returns, so the signal's disposition is the one it
         // has now, whatever it is by the time the write's thread finishes.
         let signalled =
-            (Ok system.Process.Signals, endedCalls)
-            ||> List.fold (fun signals (thread, ended) ->
-                match signals, ended with
+            (Ok ended, endedCalls)
+            ||> List.fold (fun signalled (thread, endedCall) ->
+                match signalled, endedCall with
                 | Error refusal, _ -> Error refusal
-                | Ok signals,
+                | Ok signalled,
                   ParkedSyscall.PipeWrite {
                                               Writer = SleepTarget.EndedByClose _
                                           } ->
-                    if ProcessId.toInt32 system.Process.ProcessId = 1 then
+                    if ProcessSignal.isInit signalled then
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.InitProcess))
                     else
 
                     match
-                        SignalState.generate
-                            system.Process.CoreDumps
-                            system.Leader
-                            (threads |> Map.keys |> Set.ofSeq)
+                        ProcessSignal.generate
                             {
                                 Signal = Signal.SIGPIPE
                                 Target = ValueNone
                             }
-                            signals
+                            signalled
                     with
-                    | Ok (SignalGeneration.ProcessContinues signals) -> Ok signals
-                    | Ok (SignalGeneration.ProcessTerminated _) ->
+                    | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
+                    | Ok (ProcessFate.ProcessEnded _) ->
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess))
-                    | Ok (SignalGeneration.ProcessStopped (signal, _)) ->
+                    | Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
                         failwith
                             $"UnixDescriptor.close: generating %O{signal} for a pipe write the close ended stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
                     | Error refusal ->
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.Receiver refusal))
-                | Ok signals, _ -> Ok signals
+                | Ok signalled, _ -> Ok signalled
             )
 
         match signalled with
         | Error refusal -> Error refusal
-        | Ok signals ->
+        | Ok signalled ->
+
+        let signals = signalled.Process.Signals
 
         // Measured on Darwin 27.0.0 (`fcntl-dup.c`, WRITTEN rows): an ended
         // write that had moved bytes returns having written, which marks the

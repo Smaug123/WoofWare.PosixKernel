@@ -1,0 +1,6 @@
+# kernel: Linux 6.18.5 aarch64
+round	0	bytes_received	335872	of	1048576	status	0x300
+round	1	bytes_received	352256	of	1048576	status	0x300
+round	2	bytes_received	348160	of	1048576	status	0x300
+round	3	bytes_received	339968	of	1048576	status	0x300
+round	4	bytes_received	360448	of	1048576	status	0x300

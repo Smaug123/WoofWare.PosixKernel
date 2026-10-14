@@ -1,0 +1,16 @@
+Linux 6.18.5 aarch64
+  range read back: [42000, 42000]
+L1 blocking range [42000, 42000] connect 127.0.0.1:42000 -> OK
+L1 getsockname=127.0.0.1:42000 getpeername=127.0.0.1:42000 SO_ERROR=OK
+  range read back: [42002, 42002]
+L2 non-blocking range [42002, 42002] connect 127.0.0.1:42002 -> EINPROGRESS
+L2 poll -> 1 revents=0x4
+L2 getsockname=127.0.0.1:42002 getpeername=127.0.0.1:42002 SO_ERROR=OK
+L2 second connect -> OK
+  range read back: [42005, 42005]
+L0 blocking range [42005, 42005] connect 127.0.0.1:42004 -> ECONNREFUSED
+L0 getsockname=0.0.0.0:42005 getpeername=ENOTCONN SO_ERROR=OK
+E1 bind 127.0.0.1:46000 -> OK; connect 127.0.0.1:46000 -> OK
+E1 getsockname=127.0.0.1:46000 getpeername=127.0.0.1:46000 SO_ERROR=OK
+E2 bind 0.0.0.0:46001 -> OK; connect 127.0.0.1:46001 -> OK
+E2 getsockname=127.0.0.1:46001 getpeername=127.0.0.1:46001 SO_ERROR=OK

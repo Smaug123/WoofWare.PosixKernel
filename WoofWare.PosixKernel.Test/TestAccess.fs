@@ -106,7 +106,8 @@ module TestAccess =
             InodeContent.Directory
                 {
                     Entries = Map.empty
-                    Parent = VirtualFileSystem.root (VirtualFileSystem.empty epoch (owner 0u 0u))
+                    Parent =
+                        VirtualFileSystem.root (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u))
                     Permissions = bits
                 }
         | Kind.Link -> InodeContent.Symlink (SymlinkTarget.parseOrFail context "target", bits)
@@ -450,12 +451,13 @@ module TestAccess =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = inodeAt vfs cwd
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = inodeAt vfs cwd
+            }
+        )
+        |> Lone.restand
 
     /// What an `access`-family call answered, as the probe printed it.
     let private answered (result : Result<SyscallAnswer, AccessRefusal>) : string =
@@ -545,7 +547,7 @@ module TestAccess =
     /// directory of 1001's holding a 0666 file.
     let private credentialTree : VirtualFileSystem =
         let mutable vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/creds" (owner 0u 0u) 0o755
 
         for bits in sweptModes do
@@ -591,7 +593,7 @@ module TestAccess =
                                 if effective || kind = Kind.Link then
                                     UnixPathResolution.tryFaccessatEager linuxAtFdCwd (bytes target) amode flags system
                                 else
-                                    UnixPathResolution.tryAccessEager (bytes target) amode system
+                                    Eager.tryAccess (bytes target) amode system
 
                             // Compared as values rather than through `answered`,
                             // whose rendering of an errno costs more than the
@@ -631,7 +633,7 @@ module TestAccess =
             let target = bytes "walk_owner_0700/f"
 
             (label,
-             UnixPathResolution.tryAccessEager target 0 system |> answered,
+             Eager.tryAccess target 0 system |> answered,
              UnixPathResolution.tryFaccessatEager linuxAtFdCwd target 0 0x200 system
              |> answered)
             |> shouldEqual (label, viaAccess, viaEAccess)
@@ -647,7 +649,7 @@ module TestAccess =
         // OWN-SWEEP: uid 501's own file and directory, through access and
         // AT_EACCESS alike.
         let mutable vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/own" (owner 501u 20u) 0o755
 
         for bits in sweptModes do
@@ -672,7 +674,7 @@ module TestAccess =
                         else
                             grantedAnswer
 
-                    let viaAccess = UnixPathResolution.tryAccessEager (bytes target) amode system
+                    let viaAccess = Eager.tryAccess (bytes target) amode system
 
                     let viaEAccess =
                         UnixPathResolution.tryFaccessatEager darwinAtFdCwd (bytes target) amode 0x10 system
@@ -684,7 +686,7 @@ module TestAccess =
     [<Test>]
     let ``Darwin refuses root's execute question on a non-directory, and answers the rest`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/t" (owner 0u 0u) 0o755
             |> file "/t/f" (owner 501u 20u) 0o755
             |> directory "/t/d" (owner 501u 20u) 0o000
@@ -693,7 +695,7 @@ module TestAccess =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 Owners.root "/t" vfs
         let rootStanding = Standing.toward Owners.root (owner 501u 20u)
 
-        UnixPathResolution.tryAccessEager (bytes "f") 1 system
+        Eager.tryAccess (bytes "f") 1 system
         |> shouldEqual (
             Error (
                 AccessRefusal.UnmeasuredExecution (
@@ -705,7 +707,7 @@ module TestAccess =
 
         // Through a link it is the target that is asked about; of the link
         // itself, it is the link.
-        UnixPathResolution.tryAccessEager (bytes "l") 5 system
+        Eager.tryAccess (bytes "l") 5 system
         |> shouldEqual (
             Error (
                 AccessRefusal.UnmeasuredExecution (
@@ -727,47 +729,41 @@ module TestAccess =
 
         // Search is not execution: root searching a directory is the same
         // question every path walk asks.
-        UnixPathResolution.tryAccessEager (bytes "d") 1 system
-        |> answered
-        |> shouldEqual "ok"
+        Eager.tryAccess (bytes "d") 1 system |> answered |> shouldEqual "ok"
         // The path is resolved before the question is refused.
-        UnixPathResolution.tryAccessEager (bytes "nx") 1 system
-        |> answered
-        |> shouldEqual "ENOENT"
+        Eager.tryAccess (bytes "nx") 1 system |> answered |> shouldEqual "ENOENT"
 
     [<Test>]
     let ``Darwin's extended rights are refused once the path resolves, and its other high bits ignored`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 501u 20u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 501u 20u)
             |> file "/f" (owner 501u 20u) 0o777
             |> file "/z" (owner 501u 20u) 0o000
 
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 "/" vfs
 
         // ORDER: bit 9 and bit 21 against a path that does not resolve.
-        UnixPathResolution.tryAccessEager (bytes "/nx") (1 <<< 9) system
+        Eager.tryAccess (bytes "/nx") (1 <<< 9) system
         |> answered
         |> shouldEqual "ENOENT"
 
-        UnixPathResolution.tryAccessEager (bytes "/nx") (1 <<< 21) system
+        Eager.tryAccess (bytes "/nx") (1 <<< 21) system
         |> answered
         |> shouldEqual "ENOENT"
 
-        UnixPathResolution.tryAccessEager (bytes "f/x") (1 <<< 21) system
+        Eager.tryAccess (bytes "f/x") (1 <<< 21) system
         |> answered
         |> shouldEqual "ENOTDIR"
 
         for bit in 9..21 do
-            UnixPathResolution.tryAccessEager (bytes "f") ((1 <<< bit) ||| 4) system
+            Eager.tryAccess (bytes "f") ((1 <<< bit) ||| 4) system
             |> shouldEqual (Error (AccessRefusal.ExtendedRights (inodeAt vfs "/f", 1 <<< bit)))
 
         // MODE-BIT and IGNORED-SWEEP: the rest change nothing.
         for bit in List.append [ 3..8 ] [ 22..31 ] do
-            UnixPathResolution.tryAccessEager (bytes "z") (1 <<< bit) system
-            |> answered
-            |> shouldEqual "ok"
+            Eager.tryAccess (bytes "z") (1 <<< bit) system |> answered |> shouldEqual "ok"
 
-            UnixPathResolution.tryAccessEager (bytes "z") ((1 <<< bit) ||| 4) system
+            Eager.tryAccess (bytes "z") ((1 <<< bit) ||| 4) system
             |> answered
             |> shouldEqual "EACCES"
 
@@ -778,7 +774,7 @@ module TestAccess =
                 SimulatedUnixPlatform.macOsArm64
                 u501
                 "/"
-                (VirtualFileSystem.empty epoch (owner 501u 20u)
+                (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 501u 20u)
                  |> file "/f" (owner 501u 20u) 0o777)
 
         for flag in [ 0x800 ; 0x2000 ; 0x8000 ] do
@@ -790,7 +786,7 @@ module TestAccess =
     /// `pd` as the probe built it: a 0644 file, a 0755 directory, and links to
     /// each, a dangling one and a cyclic one, all the caller's.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/pd" by 0o755
         |> file "/pd/f" by 0o644
         |> directory "/pd/sub" by 0o755
@@ -846,8 +842,8 @@ module TestAccess =
                 let label = if p = longName then "<299 a>" else p
 
                 (label,
-                 UnixPathResolution.tryAccessEager (bytes p) 0 system |> answered,
-                 UnixPathResolution.tryAccessEager (bytes p) 2 system |> answered,
+                 Eager.tryAccess (bytes p) 0 system |> answered,
+                 Eager.tryAccess (bytes p) 2 system |> answered,
                  UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 0 noFollow system
                  |> answered,
                  UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) 2 noFollow system
@@ -859,7 +855,7 @@ module TestAccess =
         // CRED-SWEEP's symlink rows: a link's mode is 0777 on Linux, so every
         // standing is granted every question, root's execute included.
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> symlink "/l" (owner 1001u 2000u) "nx"
 
         for credentials in [ Owners.root ; Credentials.ofIds (uid 1000u) (gid 1000u) [] ] do
@@ -874,7 +870,7 @@ module TestAccess =
 
     /// The probe's base: a 0777 file and a 0000 file of the caller's.
     let private screenTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/b" by 0o755
         |> file "/b/screen_f" by 0o777
         |> file "/b/screen_z" by 0o000
@@ -993,16 +989,16 @@ module TestAccess =
         let null' = PathArgumentBytes.Unreadable
 
         [
-            UnixPathResolution.tryAccessEager nx 8 linux |> answered
+            Eager.tryAccess nx 8 linux |> answered
             row linux -100 nx 8 0
             row linux -100 nx 0 0x40000000
             row linux -100 f 8 0x40000000
             row linux 12345 (bytes "screen_f") 8 0
             row linux 12345 (bytes "screen_f") 0 0x40000000
             row linux 12345 (bytes "nx") 0 0
-            UnixPathResolution.tryAccessEager (bytes "") 8 linux |> answered
-            UnixPathResolution.tryAccessEager null' 8 linux |> answered
-            UnixPathResolution.tryAccessEager null' 0 linux |> answered
+            Eager.tryAccess (bytes "") 8 linux |> answered
+            Eager.tryAccess null' 8 linux |> answered
+            Eager.tryAccess null' 0 linux |> answered
             row linux -100 null' 0 0
             row linux -100 null' 8 0
             row linux -100 null' 0 0x40000000
@@ -1056,16 +1052,16 @@ module TestAccess =
         let darwinTooLong = tooLong SimulatedUnixPlatform.macOsArm64
 
         [
-            UnixPathResolution.tryAccessEager nx 8 darwin |> answered
+            Eager.tryAccess nx 8 darwin |> answered
             row darwin -2 nx 8 0
             row darwin -2 nx 0 0x40000000
             row darwin -2 f 8 0x40000000
             row darwin 12345 (bytes "screen_f") 8 0
             row darwin 12345 (bytes "screen_f") 0 0x40000000
             row darwin 12345 (bytes "nx") 0 0
-            UnixPathResolution.tryAccessEager (bytes "") 8 darwin |> answered
-            UnixPathResolution.tryAccessEager null' 8 darwin |> answered
-            UnixPathResolution.tryAccessEager null' 0 darwin |> answered
+            Eager.tryAccess (bytes "") 8 darwin |> answered
+            Eager.tryAccess null' 8 darwin |> answered
+            Eager.tryAccess null' 0 darwin |> answered
             row darwin -2 null' 0 0
             row darwin -2 null' 8 0
             row darwin -2 null' 0 0x40000000
@@ -1112,7 +1108,7 @@ module TestAccess =
         let by = owner 1000u 1000u
 
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/x" (owner 0u 0u) 0o755
             |> directory "/x/here" by 0o500
 
@@ -1175,7 +1171,7 @@ module TestAccess =
             let system =
                 systemOn platform credentials "/pd" (pathTree (InodeOwner.ofProcess credentials))
 
-            UnixPathResolution.tryAccessEager (bytes p) amode system
+            Eager.tryAccess (bytes p) amode system
             |> shouldEqual (UnixPathResolution.tryFaccessatEager atFdCwd (bytes p) amode 0 system)
 
         let paths =

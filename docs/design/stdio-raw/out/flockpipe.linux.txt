@@ -1,0 +1,2 @@
+# kernel: Linux 6.18.5 aarch64
+LOCK_EX read end -> 0 errno 0; same pipe's write end -> -1 errno 11; another pipe -> 0 errno 0

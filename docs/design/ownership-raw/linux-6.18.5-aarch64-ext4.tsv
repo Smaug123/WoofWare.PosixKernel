@@ -1,0 +1,380 @@
+# ownership-probe: uid=0 euid=0 gid=0 egid=0 base=/tmp/own wheel=
+GETGROUPS	egid=1000 rgid=1000	getgroups(0)=1	list=[2000]	getgroups(1) with more=-2 ok	NGROUPS_MAX=65536
+GETGROUPS	egid=1000 rgid=1000	getgroups(0)=0	list=[]	getgroups(1) with more=-2 ok	NGROUPS_MAX=65536
+GETGROUPS	egid=1000 rgid=1000	getgroups(0)=2	list=[1000,2000]	getgroups(1) with more=-1 EINVAL	NGROUPS_MAX=65536
+UMASK	inherited	0022
+UMASK	set 0xfff	reads back 0777
+UMASK	set 0xffff	reads back 0777
+UMASK	set 0xffffffff	reads back 0777
+UMASK	set 0x212	reads back 0022
+UMASK	set 0x800	reads back 0000
+UMASK-MASK	open	mode 07777 at umask 0 gives 7777
+UMASK-SWEEP	open	rows=3078	mismatches=0	rule: mode & 7777 & ~(umask & 0777)
+UMASK-MASK	mkdir	mode 07777 at umask 0 gives 1777
+UMASK-SWEEP	mkdir	rows=3078	mismatches=0	rule: mode & 1777 & ~(umask & 0777)
+UMASK-MASK	mkfifo	mode 07777 at umask 0 gives 7777
+UMASK-SWEEP	mkfifo	rows=3078	mismatches=0	rule: mode & 7777 & ~(umask & 0777)
+SWEEP	owner u1000 (file 1000:3000)	file	modes=512	mismatches=0
+SWEEP	owner u1000 (file 1000:3000)	dir	modes=512	mismatches=0
+SWEEP	group-primary u1000 (file 1001:1000)	file	modes=512	mismatches=0
+SWEEP	group-primary u1000 (file 1001:1000)	dir	modes=512	mismatches=0
+SWEEP	group-supplementary u1000 (file 1001:2000)	file	modes=512	mismatches=0
+SWEEP	group-supplementary u1000 (file 1001:2000)	dir	modes=512	mismatches=0
+SWEEP	other u1000 (file 1001:3000)	file	modes=512	mismatches=0
+SWEEP	other u1000 (file 1001:3000)	dir	modes=512	mismatches=0
+SWEEP	root (file 1001:3000)	file	modes=512	mismatches=0
+SWEEP	root (file 1001:3000)	dir	modes=512	mismatches=0
+PARENT	pA_g2000_0777_by0	caller=u1000(g1000;groups 1000,2000)	uid=0 gid=2000 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by0	open0666	ok	uid=1000 gid=1000 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by0	open02775	ok	uid=1000 gid=1000 mode=2775
+CREATE	/tmp/own/pA_g2000_0777_by0	open02765	ok	uid=1000 gid=1000 mode=2765
+CREATE	/tmp/own/pA_g2000_0777_by0	open06775	ok	uid=1000 gid=1000 mode=6775
+CREATE	/tmp/own/pA_g2000_0777_by0	mkdir0777	ok	uid=1000 gid=1000 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by0	mkdir02777	ok	uid=1000 gid=1000 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by0	mkfifo0666	ok	uid=1000 gid=1000 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by0	mkfifo02775	ok	uid=1000 gid=1000 mode=2775
+PARENT	pB_g2000_02777_by0	caller=u1000(g1000;groups 1000,2000)	uid=0 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by0	open0666	ok	uid=1000 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by0	open02775	ok	uid=1000 gid=2000 mode=2775
+CREATE	/tmp/own/pB_g2000_02777_by0	open02765	ok	uid=1000 gid=2000 mode=2765
+CREATE	/tmp/own/pB_g2000_02777_by0	open06775	ok	uid=1000 gid=2000 mode=6775
+CREATE	/tmp/own/pB_g2000_02777_by0	mkdir0777	ok	uid=1000 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by0	mkdir02777	ok	uid=1000 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by0	mkfifo0666	ok	uid=1000 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by0	mkfifo02775	ok	uid=1000 gid=2000 mode=2775
+PARENT	pC_g3000_02777_by0	caller=u1000(g1000;groups 1000,2000)	uid=0 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by0	open0666	ok	uid=1000 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by0	open02775	ok	uid=1000 gid=3000 mode=0775
+CREATE	/tmp/own/pC_g3000_02777_by0	open02765	ok	uid=1000 gid=3000 mode=2765
+CREATE	/tmp/own/pC_g3000_02777_by0	open06775	ok	uid=1000 gid=3000 mode=4775
+CREATE	/tmp/own/pC_g3000_02777_by0	mkdir0777	ok	uid=1000 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by0	mkdir02777	ok	uid=1000 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by0	mkfifo0666	ok	uid=1000 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by0	mkfifo02775	ok	uid=1000 gid=3000 mode=0775
+PARENT	pD_g3000_0777_by0	caller=u1000(g1000;groups 1000,2000)	uid=0 gid=3000 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by0	open0666	ok	uid=1000 gid=1000 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by0	open02775	ok	uid=1000 gid=1000 mode=2775
+CREATE	/tmp/own/pD_g3000_0777_by0	open02765	ok	uid=1000 gid=1000 mode=2765
+CREATE	/tmp/own/pD_g3000_0777_by0	open06775	ok	uid=1000 gid=1000 mode=6775
+CREATE	/tmp/own/pD_g3000_0777_by0	mkdir0777	ok	uid=1000 gid=1000 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by0	mkdir02777	ok	uid=1000 gid=1000 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by0	mkfifo0666	ok	uid=1000 gid=1000 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by0	mkfifo02775	ok	uid=1000 gid=1000 mode=2775
+PARENT	pA_g2000_0777_by1	caller=r1000/e1001(rg1000/eg1001;groups 1000)	uid=0 gid=2000 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by1	open0666	ok	uid=1001 gid=1001 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by1	open02775	ok	uid=1001 gid=1001 mode=2775
+CREATE	/tmp/own/pA_g2000_0777_by1	open02765	ok	uid=1001 gid=1001 mode=2765
+CREATE	/tmp/own/pA_g2000_0777_by1	open06775	ok	uid=1001 gid=1001 mode=6775
+CREATE	/tmp/own/pA_g2000_0777_by1	mkdir0777	ok	uid=1001 gid=1001 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by1	mkdir02777	ok	uid=1001 gid=1001 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by1	mkfifo0666	ok	uid=1001 gid=1001 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by1	mkfifo02775	ok	uid=1001 gid=1001 mode=2775
+PARENT	pB_g2000_02777_by1	caller=r1000/e1001(rg1000/eg1001;groups 1000)	uid=0 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by1	open0666	ok	uid=1001 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by1	open02775	ok	uid=1001 gid=2000 mode=0775
+CREATE	/tmp/own/pB_g2000_02777_by1	open02765	ok	uid=1001 gid=2000 mode=2765
+CREATE	/tmp/own/pB_g2000_02777_by1	open06775	ok	uid=1001 gid=2000 mode=4775
+CREATE	/tmp/own/pB_g2000_02777_by1	mkdir0777	ok	uid=1001 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by1	mkdir02777	ok	uid=1001 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by1	mkfifo0666	ok	uid=1001 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by1	mkfifo02775	ok	uid=1001 gid=2000 mode=0775
+PARENT	pC_g3000_02777_by1	caller=r1000/e1001(rg1000/eg1001;groups 1000)	uid=0 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by1	open0666	ok	uid=1001 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by1	open02775	ok	uid=1001 gid=3000 mode=0775
+CREATE	/tmp/own/pC_g3000_02777_by1	open02765	ok	uid=1001 gid=3000 mode=2765
+CREATE	/tmp/own/pC_g3000_02777_by1	open06775	ok	uid=1001 gid=3000 mode=4775
+CREATE	/tmp/own/pC_g3000_02777_by1	mkdir0777	ok	uid=1001 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by1	mkdir02777	ok	uid=1001 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by1	mkfifo0666	ok	uid=1001 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by1	mkfifo02775	ok	uid=1001 gid=3000 mode=0775
+PARENT	pD_g3000_0777_by1	caller=r1000/e1001(rg1000/eg1001;groups 1000)	uid=0 gid=3000 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by1	open0666	ok	uid=1001 gid=1001 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by1	open02775	ok	uid=1001 gid=1001 mode=2775
+CREATE	/tmp/own/pD_g3000_0777_by1	open02765	ok	uid=1001 gid=1001 mode=2765
+CREATE	/tmp/own/pD_g3000_0777_by1	open06775	ok	uid=1001 gid=1001 mode=6775
+CREATE	/tmp/own/pD_g3000_0777_by1	mkdir0777	ok	uid=1001 gid=1001 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by1	mkdir02777	ok	uid=1001 gid=1001 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by1	mkfifo0666	ok	uid=1001 gid=1001 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by1	mkfifo02775	ok	uid=1001 gid=1001 mode=2775
+PARENT	pA_g2000_0777_by2	caller=root	uid=0 gid=2000 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by2	open0666	ok	uid=0 gid=0 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by2	open02775	ok	uid=0 gid=0 mode=2775
+CREATE	/tmp/own/pA_g2000_0777_by2	open02765	ok	uid=0 gid=0 mode=2765
+CREATE	/tmp/own/pA_g2000_0777_by2	open06775	ok	uid=0 gid=0 mode=6775
+CREATE	/tmp/own/pA_g2000_0777_by2	mkdir0777	ok	uid=0 gid=0 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by2	mkdir02777	ok	uid=0 gid=0 mode=0777
+CREATE	/tmp/own/pA_g2000_0777_by2	mkfifo0666	ok	uid=0 gid=0 mode=0666
+CREATE	/tmp/own/pA_g2000_0777_by2	mkfifo02775	ok	uid=0 gid=0 mode=2775
+PARENT	pB_g2000_02777_by2	caller=root	uid=0 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by2	open0666	ok	uid=0 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by2	open02775	ok	uid=0 gid=2000 mode=2775
+CREATE	/tmp/own/pB_g2000_02777_by2	open02765	ok	uid=0 gid=2000 mode=2765
+CREATE	/tmp/own/pB_g2000_02777_by2	open06775	ok	uid=0 gid=2000 mode=6775
+CREATE	/tmp/own/pB_g2000_02777_by2	mkdir0777	ok	uid=0 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by2	mkdir02777	ok	uid=0 gid=2000 mode=2777
+CREATE	/tmp/own/pB_g2000_02777_by2	mkfifo0666	ok	uid=0 gid=2000 mode=0666
+CREATE	/tmp/own/pB_g2000_02777_by2	mkfifo02775	ok	uid=0 gid=2000 mode=2775
+PARENT	pC_g3000_02777_by2	caller=root	uid=0 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by2	open0666	ok	uid=0 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by2	open02775	ok	uid=0 gid=3000 mode=2775
+CREATE	/tmp/own/pC_g3000_02777_by2	open02765	ok	uid=0 gid=3000 mode=2765
+CREATE	/tmp/own/pC_g3000_02777_by2	open06775	ok	uid=0 gid=3000 mode=6775
+CREATE	/tmp/own/pC_g3000_02777_by2	mkdir0777	ok	uid=0 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by2	mkdir02777	ok	uid=0 gid=3000 mode=2777
+CREATE	/tmp/own/pC_g3000_02777_by2	mkfifo0666	ok	uid=0 gid=3000 mode=0666
+CREATE	/tmp/own/pC_g3000_02777_by2	mkfifo02775	ok	uid=0 gid=3000 mode=2775
+PARENT	pD_g3000_0777_by2	caller=root	uid=0 gid=3000 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by2	open0666	ok	uid=0 gid=0 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by2	open02775	ok	uid=0 gid=0 mode=2775
+CREATE	/tmp/own/pD_g3000_0777_by2	open02765	ok	uid=0 gid=0 mode=2765
+CREATE	/tmp/own/pD_g3000_0777_by2	open06775	ok	uid=0 gid=0 mode=6775
+CREATE	/tmp/own/pD_g3000_0777_by2	mkdir0777	ok	uid=0 gid=0 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by2	mkdir02777	ok	uid=0 gid=0 mode=0777
+CREATE	/tmp/own/pD_g3000_0777_by2	mkfifo0666	ok	uid=0 gid=0 mode=0666
+CREATE	/tmp/own/pD_g3000_0777_by2	mkfifo02775	ok	uid=0 gid=0 mode=2775
+ACCESS	/tmp/own/acc_root_0600	ruid=1000 euid=0 rgid=1000 egid=1000	access(R_OK)=EACCES	faccessat(AT_EACCESS,R_OK)=ok	open(O_RDONLY)=ok
+ACCESS	/tmp/own/acc_root_0600	ruid=0 euid=1000 rgid=1000 egid=1000	access(R_OK)=ok	faccessat(AT_EACCESS,R_OK)=EACCES	open(O_RDONLY)=EACCES
+ACCESS	/tmp/own/acc_u1001_g2000_0060	ruid=1000 euid=1000 rgid=2000 egid=1000	access(R_OK)=ok	faccessat(AT_EACCESS,R_OK)=EACCES	open(O_RDONLY)=EACCES
+ACCESS	/tmp/own/acc_u1001_g2000_0060	ruid=1000 euid=1000 rgid=1000 egid=2000	access(R_OK)=EACCES	faccessat(AT_EACCESS,R_OK)=ok	open(O_RDONLY)=ok
+ACCESS	/tmp/own/acc_u1001_g2000_0060	ruid=1000 euid=1000 rgid=1000 egid=1000	access(R_OK)=ok	faccessat(AT_EACCESS,R_OK)=ok	open(O_RDONLY)=ok
+ACCESS-X	/tmp/own/accx_file_0644	ruid=0 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0644	ruid=0 euid=1000	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0644	ruid=1000 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0100	ruid=0 euid=0	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0100	ruid=0 euid=1000	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0100	ruid=1000 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0010	ruid=0 euid=0	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0010	ruid=0 euid=1000	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0010	ruid=1000 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0001	ruid=0 euid=0	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0001	ruid=0 euid=1000	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0001	ruid=1000 euid=0	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_file_0000	ruid=0 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0000	ruid=0 euid=1000	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_file_0000	ruid=1000 euid=0	access(X_OK)=EACCES
+ACCESS-X	/tmp/own/accx_dir_0000	ruid=0 euid=0	access(X_OK)=ok
+ACCESS-X	/tmp/own/accx_dir_0000	ruid=0 euid=1000	access(X_OK)=ok
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	unlink(f: other's file)	EPERM
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	unlink(g: caller's file)	ok
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	rename(f -> f2)	EPERM
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	rename(g -> f: replace other's)	EPERM
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	rmdir(sub: other's dir)	EPERM
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	rename(sub -> sub2)	EPERM
+STICKY	S_root_01777	u1000(g1000;groups 1000,2000)	rename(g -> outside)	EACCES
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	unlink(f: other's file)	ok
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	unlink(g: caller's file)	EPERM
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	rename(f -> f2)	ok
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	rename(g -> f: replace other's)	EPERM
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	rmdir(sub: other's dir)	ok
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	rename(sub -> sub2)	ok
+STICKY	S_root_01777	u1001(g1001;groups 1001,2000)	rename(g -> outside)	EPERM
+STICKY	S_root_01777	root	unlink(f: other's file)	ok
+STICKY	S_root_01777	root	unlink(g: caller's file)	ok
+STICKY	S_root_01777	root	rename(f -> f2)	ok
+STICKY	S_root_01777	root	rename(g -> f: replace other's)	ok
+STICKY	S_root_01777	root	rmdir(sub: other's dir)	ok
+STICKY	S_root_01777	root	rename(sub -> sub2)	ok
+STICKY	S_root_01777	root	rename(g -> outside)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	unlink(f: other's file)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	unlink(g: caller's file)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	rename(f -> f2)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	rename(g -> f: replace other's)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	rmdir(sub: other's dir)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	rename(sub -> sub2)	ok
+STICKY	S_u1000_01777	u1000(g1000;groups 1000,2000)	rename(g -> outside)	EACCES
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	unlink(f: other's file)	ok
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	unlink(g: caller's file)	EPERM
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	rename(f -> f2)	ok
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	rename(g -> f: replace other's)	EPERM
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	rmdir(sub: other's dir)	ok
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	rename(sub -> sub2)	ok
+STICKY	S_u1000_01777	u1001(g1001;groups 1001,2000)	rename(g -> outside)	EPERM
+STICKY	S_u1000_01777	root	unlink(f: other's file)	ok
+STICKY	S_u1000_01777	root	unlink(g: caller's file)	ok
+STICKY	S_u1000_01777	root	rename(f -> f2)	ok
+STICKY	S_u1000_01777	root	rename(g -> f: replace other's)	ok
+STICKY	S_u1000_01777	root	rmdir(sub: other's dir)	ok
+STICKY	S_u1000_01777	root	rename(sub -> sub2)	ok
+STICKY	S_u1000_01777	root	rename(g -> outside)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	unlink(f: other's file)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	unlink(g: caller's file)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	rename(f -> f2)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	rename(g -> f: replace other's)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	rmdir(sub: other's dir)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	rename(sub -> sub2)	ok
+STICKY	N_root_0777	u1000(g1000;groups 1000,2000)	rename(g -> outside)	EACCES
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	unlink(f: other's file)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	unlink(g: caller's file)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	rename(f -> f2)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	rename(g -> f: replace other's)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	rmdir(sub: other's dir)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	rename(sub -> sub2)	ok
+STICKY	N_root_0777	u1001(g1001;groups 1001,2000)	rename(g -> outside)	EACCES
+STICKY	N_root_0777	root	unlink(f: other's file)	ok
+STICKY	N_root_0777	root	unlink(g: caller's file)	ok
+STICKY	N_root_0777	root	rename(f -> f2)	ok
+STICKY	N_root_0777	root	rename(g -> f: replace other's)	ok
+STICKY	N_root_0777	root	rmdir(sub: other's dir)	ok
+STICKY	N_root_0777	root	rename(sub -> sub2)	ok
+STICKY	N_root_0777	root	rename(g -> outside)	ok
+WRITE-SGID	write(1 byte)	nonowner writer in file's group	ok	before[uid=1001 gid=2000 mode=2666]	after[uid=1001 gid=2000 mode=2666]
+WRITE-SGID	write(1 byte)	nonowner writer not in file's group	ok	before[uid=1001 gid=3000 mode=2666]	after[uid=1001 gid=3000 mode=0666]
+WRITE-SGID	write(1 byte)	nonowner writer not in group, g+x	ok	before[uid=1001 gid=3000 mode=2676]	after[uid=1001 gid=3000 mode=0676]
+WRITE-SGID	write(1 byte)	owner writer not in file's group	ok	before[uid=1000 gid=3000 mode=2666]	after[uid=1000 gid=3000 mode=0666]
+WRITE-SGID	write(1 byte)	owner writer in file's group	ok	before[uid=1000 gid=1000 mode=2666]	after[uid=1000 gid=1000 mode=2666]
+WRITE-SGID	write(1 byte)	nonowner writer, setuid	ok	before[uid=1001 gid=3000 mode=4666]	after[uid=1001 gid=3000 mode=0666]
+WRITE-SGID	write(1 byte)	root writer not in file's group	ok	before[uid=1001 gid=3000 mode=2666]	after[uid=1001 gid=3000 mode=2666]
+WRITE-SGID	ftruncate(0)	nonowner writer in file's group	ok	before[uid=1001 gid=2000 mode=2666]	after[uid=1001 gid=2000 mode=2666]
+WRITE-SGID	ftruncate(0)	nonowner writer not in file's group	ok	before[uid=1001 gid=3000 mode=2666]	after[uid=1001 gid=3000 mode=0666]
+WRITE-SGID	ftruncate(0)	nonowner writer not in group, g+x	ok	before[uid=1001 gid=3000 mode=2676]	after[uid=1001 gid=3000 mode=0676]
+WRITE-SGID	ftruncate(0)	owner writer not in file's group	ok	before[uid=1000 gid=3000 mode=2666]	after[uid=1000 gid=3000 mode=0666]
+WRITE-SGID	ftruncate(0)	owner writer in file's group	ok	before[uid=1000 gid=1000 mode=2666]	after[uid=1000 gid=1000 mode=2666]
+WRITE-SGID	ftruncate(0)	nonowner writer, setuid	ok	before[uid=1001 gid=3000 mode=4666]	after[uid=1001 gid=3000 mode=0666]
+WRITE-SGID	ftruncate(0)	root writer not in file's group	ok	before[uid=1001 gid=3000 mode=2666]	after[uid=1001 gid=3000 mode=2666]
+PROTECTED	symlinks=0 regular=0	W_root_01777	u1000	follow link owned by 1001	ok
+PROTECTED	symlinks=0 regular=0	W_root_01777	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=0 regular=0	W_root_01777	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=0 regular=0	W_root_01777	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=0 regular=0	W_root_01777	u1000	open other's file O_WRONLY|O_CREAT	ok
+PROTECTED	symlinks=0 regular=0	W_root_01775_g1000	u1000	follow link owned by 1001	ok
+PROTECTED	symlinks=0 regular=0	W_root_01775_g1000	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=0 regular=0	W_root_01775_g1000	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=0 regular=0	W_root_01775_g1000	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=0 regular=0	W_root_01775_g1000	u1000	open other's file O_WRONLY|O_CREAT	ok
+PROTECTED	symlinks=1 regular=1	W_root_01777	u1000	follow link owned by 1001	EACCES
+PROTECTED	symlinks=1 regular=1	W_root_01777	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=1 regular=1	W_root_01777	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=1 regular=1	W_root_01777	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=1 regular=1	W_root_01777	u1000	open other's file O_WRONLY|O_CREAT	EACCES
+PROTECTED	symlinks=1 regular=1	W_root_01775_g1000	u1000	follow link owned by 1001	ok
+PROTECTED	symlinks=1 regular=1	W_root_01775_g1000	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=1 regular=1	W_root_01775_g1000	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=1 regular=1	W_root_01775_g1000	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=1 regular=1	W_root_01775_g1000	u1000	open other's file O_WRONLY|O_CREAT	ok
+PROTECTED	symlinks=1 regular=2	W_root_01777	u1000	follow link owned by 1001	EACCES
+PROTECTED	symlinks=1 regular=2	W_root_01777	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=1 regular=2	W_root_01777	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=1 regular=2	W_root_01777	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=1 regular=2	W_root_01777	u1000	open other's file O_WRONLY|O_CREAT	EACCES
+PROTECTED	symlinks=1 regular=2	W_root_01775_g1000	u1000	follow link owned by 1001	ok
+PROTECTED	symlinks=1 regular=2	W_root_01775_g1000	u1000	follow link owned by root (dir owner)	ok
+PROTECTED	symlinks=1 regular=2	W_root_01775_g1000	u1000	follow link owned by caller	ok
+PROTECTED	symlinks=1 regular=2	W_root_01775_g1000	u1000	open other's file O_WRONLY	ok
+PROTECTED	symlinks=1 regular=2	W_root_01775_g1000	u1000	open other's file O_WRONLY|O_CREAT	EACCES
+CHOWN	owner u1000	file	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=0755]
+CHOWN	owner u1000	file	chown(1000,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=0755]
+CHOWN	owner u1000	file	chown(-1,1000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=0755]
+CHOWN	owner u1000	file	chown(-1,2000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=2000 mode=0755]
+CHOWN	owner u1000	file	chown(-1,3000)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	file	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	file	chown(1000,2000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=2000 mode=0755]
+CHOWN	nonowner u1001	file	chown(-1,-1)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	nonowner u1001	file	chown(-1,2000)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	nonowner u1001	file	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	root	file	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=0755]
+CHOWN	root	file	chown(1001,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1001 gid=1000 mode=0755]
+CHOWN	root	file	chown(-1,3000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=3000 mode=0755]
+CHOWN	root	file	chown(1000,1000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=0755]
+CHOWN	owner u1000	file	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=2745]
+CHOWN	owner u1000	file	chown(1000,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=2745]
+CHOWN	owner u1000	file	chown(-1,1000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=2745]
+CHOWN	owner u1000	file	chown(-1,2000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=2000 mode=2745]
+CHOWN	owner u1000	file	chown(-1,3000)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	file	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	file	chown(1000,2000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=2000 mode=2745]
+CHOWN	nonowner u1001	file	chown(-1,-1)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	nonowner u1001	file	chown(-1,2000)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	nonowner u1001	file	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	root	file	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=2745]
+CHOWN	root	file	chown(1001,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1001 gid=1000 mode=2745]
+CHOWN	root	file	chown(-1,3000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=3000 mode=2745]
+CHOWN	root	file	chown(1000,1000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=2745]
+CHOWN	owner u1000	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(1000,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(-1,1000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(-1,2000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=2000 mode=6755]
+CHOWN	owner u1000	dir	chown(-1,3000)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(1000,2000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=2000 mode=6755]
+CHOWN	nonowner u1001	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	nonowner u1001	dir	chown(-1,2000)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	nonowner u1001	dir	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	root	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	root	dir	chown(1001,-1)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1001 gid=1000 mode=6755]
+CHOWN	root	dir	chown(-1,3000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=3000 mode=6755]
+CHOWN	root	dir	chown(1000,1000)	ok	before[uid=1000 gid=1000 mode=6755]	after[uid=1000 gid=1000 mode=6755]
+CHOWN	owner u1000	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	dir	chown(1000,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	dir	chown(-1,1000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	dir	chown(-1,2000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=2000 mode=6745]
+CHOWN	owner u1000	dir	chown(-1,3000)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	dir	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	owner u1000	dir	chown(1000,2000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=2000 mode=6745]
+CHOWN	nonowner u1001	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	nonowner u1001	dir	chown(-1,2000)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	nonowner u1001	dir	chown(1001,-1)	EPERM	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	root	dir	chown(-1,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHOWN	root	dir	chown(1001,-1)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1001 gid=1000 mode=6745]
+CHOWN	root	dir	chown(-1,3000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=3000 mode=6745]
+CHOWN	root	dir	chown(1000,1000)	ok	before[uid=1000 gid=1000 mode=6745]	after[uid=1000 gid=1000 mode=6745]
+CHMOD	owner u1000, file group = egid	file	chmod(2755)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=2755]
+CHMOD	owner u1000, file group = supplementary	file	chmod(2755)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=2755]
+CHMOD	owner u1000, file group not a member	file	chmod(2755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=0755]
+CHMOD	nonowner u1001	file	chmod(2755)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(2755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=2755]
+CHMOD	owner u1000, file group = egid	file	chmod(2745)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=2745]
+CHMOD	owner u1000, file group = supplementary	file	chmod(2745)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=2745]
+CHMOD	owner u1000, file group not a member	file	chmod(2745)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=0745]
+CHMOD	nonowner u1001	file	chmod(2745)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(2745)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=2745]
+CHMOD	owner u1000, file group = egid	file	chmod(6755)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=6755]
+CHMOD	owner u1000, file group = supplementary	file	chmod(6755)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=6755]
+CHMOD	owner u1000, file group not a member	file	chmod(6755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	nonowner u1001	file	chmod(6755)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(6755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=6755]
+CHMOD	owner u1000, file group = egid	file	chmod(4755)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=4755]
+CHMOD	owner u1000, file group = supplementary	file	chmod(4755)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=4755]
+CHMOD	owner u1000, file group not a member	file	chmod(4755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	nonowner u1001	file	chmod(4755)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(4755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	owner u1000, file group = egid	file	chmod(1644)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=1644]
+CHMOD	owner u1000, file group = supplementary	file	chmod(1644)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=1644]
+CHMOD	owner u1000, file group not a member	file	chmod(1644)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=1644]
+CHMOD	nonowner u1001	file	chmod(1644)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(1644)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=1644]
+CHMOD	owner u1000, file group = egid	file	chmod(1755)	ok	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=1755]
+CHMOD	owner u1000, file group = supplementary	file	chmod(1755)	ok	before[uid=1000 gid=2000 mode=0600]	after[uid=1000 gid=2000 mode=1755]
+CHMOD	owner u1000, file group not a member	file	chmod(1755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=1755]
+CHMOD	nonowner u1001	file	chmod(1755)	EPERM	before[uid=1000 gid=1000 mode=0600]	after[uid=1000 gid=1000 mode=0600]
+CHMOD	root, file group not root's	file	chmod(1755)	ok	before[uid=1000 gid=3000 mode=0600]	after[uid=1000 gid=3000 mode=1755]
+CHMOD	owner u1000, file group = egid	dir	chmod(2755)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=2755]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(2755)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=2755]
+CHMOD	owner u1000, file group not a member	dir	chmod(2755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=0755]
+CHMOD	nonowner u1001	dir	chmod(2755)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(2755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=2755]
+CHMOD	owner u1000, file group = egid	dir	chmod(2745)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=2745]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(2745)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=2745]
+CHMOD	owner u1000, file group not a member	dir	chmod(2745)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=0745]
+CHMOD	nonowner u1001	dir	chmod(2745)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(2745)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=2745]
+CHMOD	owner u1000, file group = egid	dir	chmod(6755)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=6755]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(6755)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=6755]
+CHMOD	owner u1000, file group not a member	dir	chmod(6755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	nonowner u1001	dir	chmod(6755)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(6755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=6755]
+CHMOD	owner u1000, file group = egid	dir	chmod(4755)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=4755]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(4755)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=4755]
+CHMOD	owner u1000, file group not a member	dir	chmod(4755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	nonowner u1001	dir	chmod(4755)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(4755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=4755]
+CHMOD	owner u1000, file group = egid	dir	chmod(1644)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=1644]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(1644)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=1644]
+CHMOD	owner u1000, file group not a member	dir	chmod(1644)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=1644]
+CHMOD	nonowner u1001	dir	chmod(1644)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(1644)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=1644]
+CHMOD	owner u1000, file group = egid	dir	chmod(1755)	ok	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=1755]
+CHMOD	owner u1000, file group = supplementary	dir	chmod(1755)	ok	before[uid=1000 gid=2000 mode=0700]	after[uid=1000 gid=2000 mode=1755]
+CHMOD	owner u1000, file group not a member	dir	chmod(1755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=1755]
+CHMOD	nonowner u1001	dir	chmod(1755)	EPERM	before[uid=1000 gid=1000 mode=0700]	after[uid=1000 gid=1000 mode=0700]
+CHMOD	root, file group not root's	dir	chmod(1755)	ok	before[uid=1000 gid=3000 mode=0700]	after[uid=1000 gid=3000 mode=1755]
+# done

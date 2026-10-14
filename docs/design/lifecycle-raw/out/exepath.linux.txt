@@ -1,0 +1,29 @@
+# kernel: Linux 6.18.5 aarch64
+/probe/exepath.c: In function 'main':
+/probe/exepath.c:91:41: warning: '%s' directive output may be truncated writing up to 4095 bytes into a region of size between 4090 and 12281 [-Wformat-truncation=]
+   91 |     snprintf(cmd, sizeof cmd, "cp '%s' '%s'", self, copy);
+      |                                         ^~          ~~~~
+/probe/exepath.c:91:5: note: 'snprintf' output between 9 and 12295 bytes into a destination of size 12288
+   91 |     snprintf(cmd, sizeof cmd, "cp '%s' '%s'", self, copy);
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+stage2	cwd	"/tmp/exepathDTXSdf"	argv0="argv0-is-not-the-path"
+initial	readlink(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-copy"
+initial	realpath(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-copy"
+initial	AT_EXECFN	"./exe-copy"
+initial	realpath(AT_EXECFN)	"/tmp/exepathDTXSdf/exe-copy"
+initial	open(/proc/self/exe)	ok st_nlink=1
+after_rename	readlink(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-renamed"
+after_rename	realpath(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-renamed"
+after_rename	AT_EXECFN	"./exe-copy"
+after_rename	realpath(AT_EXECFN)	No such file or directory
+after_rename	open(/proc/self/exe)	ok st_nlink=1
+after_unlink	readlink(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-renamed (deleted)"
+after_unlink	realpath(/proc/self/exe)	No such file or directory
+after_unlink	AT_EXECFN	"./exe-copy"
+after_unlink	realpath(AT_EXECFN)	No such file or directory
+after_unlink	open(/proc/self/exe)	ok st_nlink=0
+after_new_file_at_original_name	readlink(/proc/self/exe)	"/tmp/exepathDTXSdf/exe-renamed (deleted)"
+after_new_file_at_original_name	realpath(/proc/self/exe)	No such file or directory
+after_new_file_at_original_name	AT_EXECFN	"./exe-copy"
+after_new_file_at_original_name	realpath(AT_EXECFN)	"/tmp/exepathDTXSdf/exe-copy"
+after_new_file_at_original_name	open(/proc/self/exe)	ok st_nlink=0

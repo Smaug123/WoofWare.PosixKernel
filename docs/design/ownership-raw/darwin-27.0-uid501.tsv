@@ -1,0 +1,140 @@
+# ownership-probe: uid=501 euid=501 gid=20 egid=20 base=/private/tmp/own-probe.8BZEDi wheel=/private/tmp/own-wheel.QYTr1N
+GETGROUPS	egid=20 rgid=20	getgroups(0)=5	list=[20,12,61,100,701]	getgroups(1) with more=-1 EINVAL	NGROUPS_MAX=16
+UMASK	inherited	0022
+UMASK	set 0xfff	reads back 7777
+UMASK	set 0xffff	reads back 7777
+UMASK	set 0xffffffff	reads back 7777
+UMASK	set 0x212	reads back 1022
+UMASK	set 0x800	reads back 4000
+UMASK-MASK	open	mode 07777 at umask 0 gives 0777
+UMASK-SWEEP	open	rows=3078	mismatches=0	rule: mode & 0777 & ~(umask & 0777)
+UMASK-MASK	mkdir	mode 07777 at umask 0 gives 0777
+UMASK-SWEEP	mkdir	rows=3078	mismatches=0	rule: mode & 0777 & ~(umask & 0777)
+UMASK-MASK	mkfifo	mode 07777 at umask 0 gives 7777
+UMASK-MISMATCH	mkfifo	u=7777	mode=7777	got=0000	want=7000
+UMASK-MISMATCH	mkfifo	u=7777	mode=2775	got=0000	want=2000
+UMASK-MISMATCH	mkfifo	u=7777	mode=4775	got=0000	want=4000
+UMASK-MISMATCH	mkfifo	u=7777	mode=1777	got=0000	want=1000
+UMASK-SWEEP	mkfifo	rows=3078	mismatches=4	rule: mode & 7777 & ~(umask & 0777)
+SWEEP	owner (own file)	file	modes=512	mismatches=0
+SWEEP	owner (own file)	dir	modes=512	mismatches=0
+PARENT	pA_egid_0777	chown=ok chmod=ok	uid=501 gid=20 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	open0666	ok	uid=501 gid=20 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	open02775	ok	uid=501 gid=20 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	open02765	ok	uid=501 gid=20 mode=0765
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	open06775	ok	uid=501 gid=20 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	mkdir0777	ok	uid=501 gid=20 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	mkdir02777	ok	uid=501 gid=20 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	mkfifo0666	ok	uid=501 gid=20 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pA_egid_0777	mkfifo02775	ok	uid=501 gid=20 mode=2775
+PARENT	pB_supp12_0777	chown=ok chmod=ok	uid=501 gid=12 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	open0666	ok	uid=501 gid=12 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	open02775	ok	uid=501 gid=12 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	open02765	ok	uid=501 gid=12 mode=0765
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	open06775	ok	uid=501 gid=12 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	mkdir0777	ok	uid=501 gid=12 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	mkdir02777	ok	uid=501 gid=12 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	mkfifo0666	ok	uid=501 gid=12 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pB_supp12_0777	mkfifo02775	ok	uid=501 gid=12 mode=2775
+PARENT	pC_supp12_02777	chown=ok chmod=ok	uid=501 gid=12 mode=2777
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	open0666	ok	uid=501 gid=12 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	open02775	ok	uid=501 gid=12 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	open02765	ok	uid=501 gid=12 mode=0765
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	open06775	ok	uid=501 gid=12 mode=0775
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	mkdir0777	ok	uid=501 gid=12 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	mkdir02777	ok	uid=501 gid=12 mode=0777
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	mkfifo0666	ok	uid=501 gid=12 mode=0666
+CREATE	/private/tmp/own-probe.8BZEDi/pC_supp12_02777	mkfifo02775	ok	uid=501 gid=12 mode=2775
+PARENT	pW_wheel_0777	chown=ok chmod=ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	open0666	ok	uid=501 gid=0 mode=0666
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	open02775	ok	uid=501 gid=0 mode=0775
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	open02765	ok	uid=501 gid=0 mode=0765
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	open06775	ok	uid=501 gid=0 mode=0775
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	mkdir0777	ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	mkdir02777	ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	mkfifo0666	ok	uid=501 gid=0 mode=0666
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_0777	mkfifo02775	EPERM	stat:ENOENT
+PARENT	pW_wheel_02777	chown=ok chmod=ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	open0666	ok	uid=501 gid=0 mode=0666
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	open02775	ok	uid=501 gid=0 mode=0775
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	open02765	ok	uid=501 gid=0 mode=0765
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	open06775	ok	uid=501 gid=0 mode=0775
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	mkdir0777	ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	mkdir02777	ok	uid=501 gid=0 mode=0777
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	mkfifo0666	ok	uid=501 gid=0 mode=0666
+CREATE	/private/tmp/own-wheel.QYTr1N/pW_wheel_02777	mkfifo02775	EPERM	stat:ENOENT
+OTHERS	/private/var/db/searchparty	uid=0 gid=20 mode=0774	stat(dir/nx)=ENOENT	opendir=EPERM	access R=EPERM W=EPERM X=ok
+OTHERS	/var/root	uid=0 gid=0 mode=0750	stat(dir/nx)=EACCES	opendir=EACCES	access R=EACCES W=EACCES X=EACCES
+OTHERS	/Library	uid=0 gid=0 mode=0755	stat(dir/nx)=ENOENT	opendir=ok	access R=ok W=EACCES X=ok
+OTHERS	/private/var/db/com.apple.countryd	uid=0 gid=20 mode=0555	stat(dir/nx)=ENOENT	opendir=ok	access R=ok W=EACCES X=ok
+OTHERS	/private/var/folders/29/cynlhtlj02g2ts_66w4snc3c0000gq/C	uid=503 gid=20 mode=0700	stat(dir/nx)=EACCES	access X=EACCES
+OTHERS	/etc/master.passwd	uid=0 gid=0 mode=0600	open R=EACCES W=EACCES	access R=EACCES W=EACCES
+OTHERS	/etc/hosts	uid=0 gid=0 mode=0644	open R=ok W=EACCES	access R=ok W=EACCES
+OTHERS	mkdir(/Library/x)	EACCES
+CHOWN	owner	file	chown(-1,-1)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	file	chown(501,-1)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=0755]
+CHOWN	owner	file	chown(-1,20)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=0755]
+CHOWN	owner	file	chown(-1,12)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=12 mode=0755]
+CHOWN	owner	file	chown(-1,0)	EPERM	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	file	chown(0,-1)	EPERM	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	file	chown(501,12)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=12 mode=0755]
+CHOWN	owner	file	chown(-1,-1)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	file	chown(501,-1)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=0745]
+CHOWN	owner	file	chown(-1,20)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=0745]
+CHOWN	owner	file	chown(-1,12)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=12 mode=0745]
+CHOWN	owner	file	chown(-1,0)	EPERM	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	file	chown(0,-1)	EPERM	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	file	chown(501,12)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=12 mode=0745]
+CHOWN	owner	dir	chown(-1,-1)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	dir	chown(501,-1)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=0755]
+CHOWN	owner	dir	chown(-1,20)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=0755]
+CHOWN	owner	dir	chown(-1,12)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=12 mode=0755]
+CHOWN	owner	dir	chown(-1,0)	EPERM	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	dir	chown(0,-1)	EPERM	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=20 mode=6755]
+CHOWN	owner	dir	chown(501,12)	ok	before[uid=501 gid=20 mode=6755]	after[uid=501 gid=12 mode=0755]
+CHOWN	owner	dir	chown(-1,-1)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	dir	chown(501,-1)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=0745]
+CHOWN	owner	dir	chown(-1,20)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=0745]
+CHOWN	owner	dir	chown(-1,12)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=12 mode=0745]
+CHOWN	owner	dir	chown(-1,0)	EPERM	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	dir	chown(0,-1)	EPERM	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=20 mode=6745]
+CHOWN	owner	dir	chown(501,12)	ok	before[uid=501 gid=20 mode=6745]	after[uid=501 gid=12 mode=0745]
+CHOWN	nonowner	/etc/hosts	chown(-1,-1)=ok	chown(-1,egid)=EPERM	before[uid=0 gid=0 mode=0644]	after[uid=0 gid=0 mode=0644]
+CHMOD	owner, file group = egid	file	chmod(2755)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=2755]
+CHMOD	owner, file group = supplementary 12	file	chmod(2755)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=2755]
+CHMOD	owner, file group wheel (not a member)	file	chmod(2755)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=0755]
+CHMOD	owner, file group = egid	file	chmod(2745)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=2745]
+CHMOD	owner, file group = supplementary 12	file	chmod(2745)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=2745]
+CHMOD	owner, file group wheel (not a member)	file	chmod(2745)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=0745]
+CHMOD	owner, file group = egid	file	chmod(6755)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=6755]
+CHMOD	owner, file group = supplementary 12	file	chmod(6755)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=6755]
+CHMOD	owner, file group wheel (not a member)	file	chmod(6755)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=4755]
+CHMOD	owner, file group = egid	file	chmod(4755)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=4755]
+CHMOD	owner, file group = supplementary 12	file	chmod(4755)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=4755]
+CHMOD	owner, file group wheel (not a member)	file	chmod(4755)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=4755]
+CHMOD	owner, file group = egid	file	chmod(1644)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=1644]
+CHMOD	owner, file group = supplementary 12	file	chmod(1644)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=1644]
+CHMOD	owner, file group wheel (not a member)	file	chmod(1644)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=1644]
+CHMOD	owner, file group = egid	file	chmod(1755)	ok	before[uid=501 gid=20 mode=0600]	after[uid=501 gid=20 mode=1755]
+CHMOD	owner, file group = supplementary 12	file	chmod(1755)	ok	before[uid=501 gid=12 mode=0600]	after[uid=501 gid=12 mode=1755]
+CHMOD	owner, file group wheel (not a member)	file	chmod(1755)	ok	before[uid=501 gid=0 mode=0600]	after[uid=501 gid=0 mode=1755]
+CHMOD	owner, file group = egid	dir	chmod(2755)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=2755]
+CHMOD	owner, file group = supplementary 12	dir	chmod(2755)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=2755]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(2755)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=0755]
+CHMOD	owner, file group = egid	dir	chmod(2745)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=2745]
+CHMOD	owner, file group = supplementary 12	dir	chmod(2745)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=2745]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(2745)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=0745]
+CHMOD	owner, file group = egid	dir	chmod(6755)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=6755]
+CHMOD	owner, file group = supplementary 12	dir	chmod(6755)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=6755]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(6755)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=4755]
+CHMOD	owner, file group = egid	dir	chmod(4755)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=4755]
+CHMOD	owner, file group = supplementary 12	dir	chmod(4755)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=4755]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(4755)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=4755]
+CHMOD	owner, file group = egid	dir	chmod(1644)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=1644]
+CHMOD	owner, file group = supplementary 12	dir	chmod(1644)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=1644]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(1644)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=1644]
+CHMOD	owner, file group = egid	dir	chmod(1755)	ok	before[uid=501 gid=20 mode=0700]	after[uid=501 gid=20 mode=1755]
+CHMOD	owner, file group = supplementary 12	dir	chmod(1755)	ok	before[uid=501 gid=12 mode=0700]	after[uid=501 gid=12 mode=1755]
+CHMOD	owner, file group wheel (not a member)	dir	chmod(1755)	ok	before[uid=501 gid=0 mode=0700]	after[uid=501 gid=0 mode=1755]
+CHMOD	nonowner	/etc/hosts	chmod(current mode 0644)	EPERM
+# done

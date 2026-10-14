@@ -1,0 +1,49 @@
+# kernel: Darwin 27.0.0 arm64
+write to a pipe whose reader is closed, SIG_DFL
+  child died of signal 13
+write to a pipe whose reader is closed, SIG_IGN
+  main thread, 1 byte                          write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+  then 0 bytes                                 write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+  then bad pointer, 10 bytes                   write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+write to a pipe whose reader is closed, handler
+  main thread, 1 byte                          write -> -1 errno 32; handler ran 1 time(s), before return 1; SIGPIPE pending 0
+  then 0 bytes                                 write -> -1 errno 32; handler ran 2 time(s), before return 1; SIGPIPE pending 0
+  then bad pointer, 10 bytes                   write -> -1 errno 32; handler ran 3 time(s), before return 1; SIGPIPE pending 0
+same, SIGPIPE blocked, SIG_DFL
+  SIGPIPE blocked, 1 byte                      write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 1
+  child died of signal 13
+same, SIGPIPE blocked, SIG_IGN
+  SIGPIPE blocked, 1 byte                      write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+  after unblocking                             write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+same, SIGPIPE blocked, handler
+  SIGPIPE blocked, 1 byte                      write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 1
+  after unblocking                             write -> -1 errno 32; handler ran 1 time(s), before return 0; SIGPIPE pending 0
+same, non-blocking and full, SIG_DFL
+  child died of signal 13
+same, non-blocking and full, SIG_IGN
+  full non-blocking pipe, reader then closed   write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+same, non-blocking and full, handler
+  full non-blocking pipe, reader then closed   write -> -1 errno 32; handler ran 1 time(s), before return 1; SIGPIPE pending 0
+same, from a worker thread, SIG_DFL
+  child died of signal 13
+same, from a worker thread, SIG_IGN
+  worker thread, 1 byte                        write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+same, from a worker thread, handler
+  worker thread, 1 byte                        write -> -1 errno 32; handler ran 1 time(s), before return 0; SIGPIPE pending 0
+  handler ran on the main thread
+reader leaves mid-write, SIG_DFL
+  child died of signal 13
+reader leaves mid-write, SIG_IGN
+  blocking 200000 bytes; reader takes 1000, closes write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+reader leaves mid-write, handler
+  blocking 200000 bytes; reader takes 1000, closes write -> -1 errno 32; handler ran 1 time(s), before return 1; SIGPIPE pending 0
+Darwin per-descriptor no-SIGPIPE, SIG_DFL
+  F_SETNOSIGPIPE -> 0, F_GETNOSIGPIPE -> 1
+  F_SETNOSIGPIPE, 1 byte                       write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+Darwin per-descriptor no-SIGPIPE, SIG_IGN
+  F_SETNOSIGPIPE -> 0, F_GETNOSIGPIPE -> 1
+  F_SETNOSIGPIPE, 1 byte                       write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+Darwin per-descriptor no-SIGPIPE, handler
+  F_SETNOSIGPIPE -> 0, F_GETNOSIGPIPE -> 1
+  F_SETNOSIGPIPE, 1 byte                       write -> -1 errno 32; handler ran 0 time(s), before return -1; SIGPIPE pending 0
+read end, 3 bytes then writer closed: reads of 2 -> 2 1 0

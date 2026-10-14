@@ -77,16 +77,15 @@ module internal SockOptCalls =
             UnixSocket.trySetsockoptBytes fd level optionName value optionLength supplied system
 
         let actual =
-            match UnixSocket.trySetsockopt fd level optionName value optionLength system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered answer) -> Ok answer
-            | Ok (CallProgress.NeedsCopyIn paused) ->
+            UnixSocket.trySetsockopt fd level optionName value optionLength system
+            |> CallProgress.resumeWith (fun paused ->
                 let range = PausedSetSockOpt.copyRange paused
 
                 if range.FirstByte <> 0 || range.ByteCount <= 0 then
                     failwith $"setsockopt asked for %A{range}"
 
                 UnixSocket.trySetsockoptWithValue (contents range.ByteCount) paused
+            )
 
         agreeing "setsockopt" expected actual
 
@@ -113,9 +112,7 @@ module internal SockOptCalls =
             UnixSocket.tryGetsockoptLength fd level optionName value length read system
 
         let actual =
-            match UnixSocket.tryGetsockopt fd level optionName value length system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered answer) -> Ok answer
-            | Ok (CallProgress.NeedsCopyIn paused) -> UnixSocket.tryGetsockoptWithLength cell paused
+            UnixSocket.tryGetsockopt fd level optionName value length system
+            |> CallProgress.resumeWith (UnixSocket.tryGetsockoptWithLength cell)
 
         agreeing "getsockopt" expected actual

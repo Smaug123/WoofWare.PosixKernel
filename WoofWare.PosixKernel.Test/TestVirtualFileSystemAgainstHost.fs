@@ -467,7 +467,8 @@ module TestVirtualFileSystemAgainstHost =
         UnixTimestamp.createOrFail "test" 1_700_000_000L 0
 
     let private buildModel () : VirtualFileSystem =
-        let mutable vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let mutable vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
 
         let resolveDirectory (relative : string) : InodeNumber =
             match
@@ -827,13 +828,15 @@ module TestVirtualFileSystemAgainstHost =
 
                         let vfs =
                             GraphMutators.createSymlink
-                                (VirtualFileSystem.root (VirtualFileSystem.empty buildTime Owners.linuxDefault))
+                                (VirtualFileSystem.root (
+                                    VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+                                ))
                                 (DirectoryEntryName.parseOrFail "test" linkName)
                                 SymlinkModes.linux
                                 Owners.linuxDefault
                                 buildTime
                                 (SymlinkTarget.parseOrFail "test" targetText)
-                                (VirtualFileSystem.empty buildTime Owners.linuxDefault)
+                                (VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault)
                             |> function
                                 | Ok (_, vfs) -> vfs
                                 | Error error -> failwith $"building the model link: %O{error}"
@@ -893,12 +896,13 @@ module TestVirtualFileSystemAgainstHost =
                     { system.Machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-                Process =
-                    { system.Process with
-                        CurrentDirectoryInode = VirtualFileSystem.root vfs
-                    }
             }
-            |> Launched.restand
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = VirtualFileSystem.root vfs
+                }
+            )
+            |> Lone.restand
 
         match
             UnixNamespace.tryReadlink
@@ -2489,7 +2493,8 @@ module TestVirtualFileSystemAgainstHost =
                 failwith $"could not create symlink %s{name} -> %s{target}: errno %d{errno ()}"
 
     let private buildRenameModel () : VirtualFileSystem =
-        let mutable vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let mutable vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
 
         let directoryOf (relative : string) : InodeNumber =
             match
@@ -2820,12 +2825,13 @@ module TestVirtualFileSystemAgainstHost =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private compareRenameRefusal (source : string) (destination : string) : RenameRefusal * RenameRefusal =
         let unique = Guid.NewGuid().ToString "N"
@@ -2848,9 +2854,7 @@ module TestVirtualFileSystemAgainstHost =
             let modelSaid =
                 let bytes (path : string) = PathArg.ofText path
 
-                match
-                    UnixNamespace.tryRenameEager (bytes source) (bytes destination) (renameModelSystem (buildModel ()))
-                with
+                match Eager.tryRename (bytes source) (bytes destination) (renameModelSystem (buildModel ())) with
                 | Ok (SyscallAnswer.Completed 0L, _) -> RenameRefusal.Succeeded
                 | Ok (SyscallAnswer.Failed error, _) -> RenameRefusal.Refused (hostErrno error)
                 | other -> failwith $"the model answered %A{other}, which no row here expects"
@@ -3145,12 +3149,13 @@ module TestVirtualFileSystemAgainstHost =
                     { system.Machine with
                         CommittedFileSystem = CommittedFileSystem.initial vfs
                     }
-                Process =
-                    { system.Process with
-                        CurrentDirectoryInode = VirtualFileSystem.root vfs
-                    }
             }
-            |> Launched.restand
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = VirtualFileSystem.root vfs
+                }
+            )
+            |> Lone.restand
 
         match Answered.chdir (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
         | SyscallAnswer.Completed 0L, moved ->

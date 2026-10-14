@@ -80,14 +80,14 @@ module TestCallHolds =
         // A process whose pipe writes end at once: no `SIGPIPE` to refuse a
         // close that ends one.
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            system.Process.Signals
-                            |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                }
+            )
 
         let system =
             match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
@@ -96,17 +96,16 @@ module TestCallHolds =
 
         match SimulatedUnixPlatform.flavour platform with
         | SimulatedUnixFlavour.Linux ->
-            let _, registry =
-                FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-            UnixSystemState.withFileDescriptors registry system
+            Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->
             match UnixKqueue.tryKqueue system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"kqueue: %A{refusal}"
 
     let private fds (system : UnixSystem<int, string>) : (int * OpenFileDescriptionId * OpenFileTarget) list =
-        let registry = UnixSystemState.fileDescriptors system
+        let registry = Lone.fileDescriptors system
 
         FileDescriptorRegistry.fds registry
         |> Map.toList
@@ -284,7 +283,7 @@ module TestCallHolds =
         =
         match parked with
         | ParkedSyscall.KqueuePoll poll ->
-            match UnixThreadTable.parkedFor thread system.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads system) with
             | Some (ParkedSyscall.KqueuePoll existing) ->
                 UnixWait.park
                     thread
@@ -297,7 +296,7 @@ module TestCallHolds =
                 let queue, machine =
                     UnixMachineState.addPollQueue
                         {
-                            Owner = system.Process.ProcessId
+                            Owner = (Lone.proc system).ProcessId
                             Registrations = Map.empty
                             Active = []
                         }
@@ -359,13 +358,13 @@ module TestCallHolds =
         let model =
             {
                 Holds = Map.empty
-                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (UnixThreadTable.get 0 initial.Threads) ]
+                Tids = Map.ofList [ 0, UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads initial)) ]
             }
 
         agree "initial" model initial
 
         let step ((system, model) : UnixSystem<int, string> * Model) (op : Op) =
-            let live = system.Threads |> Map.keys |> List.ofSeq
+            let live = Lone.threads system |> Map.keys |> List.ofSeq
             let liveThread (i : int) = live.[i % live.Length]
 
             let system, model =
@@ -376,7 +375,7 @@ module TestCallHolds =
                     match shapeOf shape a b system with
                     | None -> system, model
                     | Some (parked, held) ->
-                        match UnixThreadTable.parkedFor thread system.Threads with
+                        match UnixThreadTable.parkedFor thread (Lone.threads system) with
                         | Some existing when kindOf existing <> kindOf parked -> system, model
                         | existing ->
                             if existing.IsSome then
@@ -401,7 +400,7 @@ module TestCallHolds =
                 | Op.Unpark t ->
                     let thread = liveThread t
 
-                    match UnixThreadTable.parkedFor thread system.Threads with
+                    match UnixThreadTable.parkedFor thread (Lone.threads system) with
                     | None -> system, model
                     | Some parked ->
                         // As a finishing call does: the park goes, then whatever it
@@ -439,7 +438,7 @@ module TestCallHolds =
                                 else
                                     model.Holds
                                     |> Map.map (fun thread held ->
-                                        match UnixThreadTable.parkedFor thread system.Threads with
+                                        match UnixThreadTable.parkedFor thread (Lone.threads system) with
                                         | Some (ParkedSyscall.PipeRead {
                                                                            Reader = SleepTarget.Waiting (_, entered)
                                                                        })
@@ -475,13 +474,13 @@ module TestCallHolds =
                 | Op.Spawn c ->
                     let child = threadNames.[c % threadNames.Length]
 
-                    if Map.containsKey child system.Threads then
+                    if Map.containsKey child (Lone.threads system) then
                         system, model
                     else
 
-                    let parent = system.Leader
+                    let parent = Lone.leader system
 
-                    if (UnixThreadTable.parkedFor parent system.Threads).IsSome then
+                    if (UnixThreadTable.parkedFor parent (Lone.threads system)).IsSome then
                         system, model
                     else
 
@@ -501,7 +500,7 @@ module TestCallHolds =
                 | Op.Exit t ->
                     let thread = liveThread t
 
-                    if thread = system.Leader then
+                    if thread = Lone.leader system then
                         system, model
                     else
 
@@ -518,7 +517,7 @@ module TestCallHolds =
                 | Op.ExitGroup t ->
                     let thread = liveThread t
 
-                    if (UnixThreadTable.parkedFor thread system.Threads).IsSome then
+                    if (UnixThreadTable.parkedFor thread (Lone.threads system)).IsSome then
                         system, model
                     else
 
@@ -597,9 +596,8 @@ module TestCallHolds =
                 let rewritten =
                     let rec toward (system : UnixSystem<int, string>) =
                         match OpenFileTable.holdCount id system.Machine.OpenFiles with
-                        | Some n when n < forged -> toward (UnixSystemState.mapOpenFiles (OpenFileTable.hold id) system)
-                        | Some n when n > forged ->
-                            toward (UnixSystemState.mapOpenFiles (OpenFileTable.releaseHold id) system)
+                        | Some n when n < forged -> toward (Lone.mapOpenFiles (OpenFileTable.hold id) system)
+                        | Some n when n > forged -> toward (Lone.mapOpenFiles (OpenFileTable.releaseHold id) system)
                         | _ -> system
 
                     toward system
@@ -641,7 +639,7 @@ module TestCallHolds =
         =
         for platform in platforms do
             let system = world platform |> Threads.spawn 1 |> Threads.spawn 2
-            let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 system.Threads)
+            let one = UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads system))
 
             // Thread 1's ID freed behind its back: the allocator could hand it out again.
             let freed =
@@ -656,10 +654,7 @@ module TestCallHolds =
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.empty, Set.singleton one) ]
 
             // Thread 1 gone without its ID: the allocator never hands it out again.
-            let leaked =
-                { system with
-                    Threads = Map.remove 1 system.Threads
-                }
+            let leaked = system |> Lone.mapThreads (Map.remove 1)
 
             UnixSystem.checkInvariants leaked
             |> shouldEqual [ UnixSystemDefect.LiveThreadIdsMismatch (Set.singleton one, Set.empty) ]

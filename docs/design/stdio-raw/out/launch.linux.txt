@@ -1,0 +1,74 @@
+# kernel: Linux 6.18.5 aarch64
+### harness-like: stdin pipe (writer gone), stdout pipe, stderr a *named* FIFO (sh has no anonymous third pipe)
+fd 0: accmode 0 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x10
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x4
+fd 2: accmode 1 nonblock 0 append 0 cloexec 0 | FIFO mode 010644 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x4
+O_NONBLOCK set via 0 shows on:
+O_NONBLOCK set via 1 shows on:
+O_NONBLOCK set via 2 shows on:
+non-blocking read(0, 16) -> 0 errno 0
+write(0, 0 bytes) -> -1 errno 9
+tcgetattr(0) -> -1 errno 25
+first open() gets fd 4
+### stdin pipe holding 'abc', writer gone
+fd 0: accmode 0 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x11
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x4
+fd 2: accmode 1 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+O_NONBLOCK set via 0 shows on:
+O_NONBLOCK set via 1 shows on:
+O_NONBLOCK set via 2 shows on:
+non-blocking read(0, 16) -> 3 errno 0
+write(0, 0 bytes) -> -1 errno 9
+tcgetattr(0) -> -1 errno 25
+first open() gets fd 4
+### stdin /dev/null, 2>&1 into one pipe
+fd 0: accmode 0 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x4
+fd 2: accmode 1 nonblock 0 append 0 cloexec 0 | FIFO mode 010600 size 0 rdev 0 | isatty 0 (errno 25) | lseek -1 (errno 29) | poll 0x4
+O_NONBLOCK set via 0 shows on:
+O_NONBLOCK set via 1 shows on: 2
+O_NONBLOCK set via 2 shows on: 1
+non-blocking read(0, 16) -> 0 errno 0
+write(0, 0 bytes) -> -1 errno 9
+tcgetattr(0) -> -1 errno 25
+first open() gets fd 4
+### stdin a regular file
+fd 0: accmode 0 nonblock 0 append 0 cloexec 0 | REG mode 0100644 size 3 rdev 0 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 2: accmode 1 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+O_NONBLOCK set via 0 shows on:
+O_NONBLOCK set via 1 shows on: 2
+O_NONBLOCK set via 2 shows on: 1
+non-blocking read(0, 16) -> 3 errno 0
+write(0, 0 bytes) -> -1 errno 9
+tcgetattr(0) -> -1 errno 25
+first open() gets fd 4
+### stdin closed
+fd 0: not open (errno 9)
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 2: accmode 1 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+O_NONBLOCK set via 1 shows on: 2
+O_NONBLOCK set via 2 shows on: 1
+first open() gets fd 0
+### stdout a regular file (O_TRUNC), stderr appended to one
+fd 0: accmode 0 nonblock 0 append 0 cloexec 0 | CHR mode 020666 size 0 rdev 0x103 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 1: accmode 1 nonblock 0 append 0 cloexec 0 | REG mode 0100644 size 0 rdev 0 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+fd 2: accmode 1 nonblock 0 append 1 cloexec 0 | REG mode 0100644 size 0 rdev 0 | isatty 0 (errno 25) | lseek 0 (errno 0) | poll 0x5
+O_NONBLOCK set via 0 shows on:
+O_NONBLOCK set via 1 shows on:
+O_NONBLOCK set via 2 shows on:
+non-blocking read(0, 16) -> 0 errno 0
+write(0, 0 bytes) -> -1 errno 9
+tcgetattr(0) -> -1 errno 25
+first open() gets fd 4
+### all three a fresh terminal (forkpty)
+fd 0: accmode 2 nonblock 0 append 0 cloexec 0 | CHR mode 020620 size 0 rdev 0x8800 | isatty 1 (errno 0) | lseek -1 (errno 29) | poll 0x4
+fd 1: accmode 2 nonblock 0 append 0 cloexec 0 | CHR mode 020620 size 0 rdev 0x8800 | isatty 1 (errno 0) | lseek -1 (errno 29) | poll 0x4
+fd 2: accmode 2 nonblock 0 append 0 cloexec 0 | CHR mode 020620 size 0 rdev 0x8800 | isatty 1 (errno 0) | lseek -1 (errno 29) | poll 0x4
+O_NONBLOCK set via 0 shows on: 1 2
+O_NONBLOCK set via 1 shows on: 0 2
+O_NONBLOCK set via 2 shows on: 0 1
+non-blocking read(0, 16) -> -1 errno 11
+write(0, 0 bytes) -> 0 errno 0
+tcgetattr(0) -> 0 errno 0
+first open() gets fd 6

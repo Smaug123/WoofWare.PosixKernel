@@ -1,0 +1,47 @@
+# kernel: Darwin 27.0.0 arm64
+=== main_pthread_exit_then_worker_returns
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=2928670 leader_tid=2928669 getpid=60262
+worker	kill(getpid(),0)=0
+worker	proc_pidinfo(TASKINFO) ret=96 pti_threadnum=1
+worker	proc_pidinfo(LISTTHREADS) count=1
+worker	kill(getpid(),SIGUSR1)=0 receiver=2928670 (self=2928670)
+atexit	run in tid=2928670
+parent	status=0x0 exited(0)
+=== main_pthread_exit_then_worker_exit5
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=2928684 leader_tid=2928683 getpid=60264
+worker	kill(getpid(),0)=0
+worker	proc_pidinfo(TASKINFO) ret=96 pti_threadnum=1
+worker	proc_pidinfo(LISTTHREADS) count=1
+worker	kill(getpid(),SIGUSR1)=0 receiver=2928684 (self=2928684)
+atexit	run in tid=2928684
+parent	status=0x500 exited(5)
+=== main_pthread_exit_then_worker_pexit
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	tid=2928698 leader_tid=2928697 getpid=60266
+worker	kill(getpid(),0)=0
+worker	proc_pidinfo(TASKINFO) ret=96 pti_threadnum=1
+worker	proc_pidinfo(LISTTHREADS) count=1
+worker	kill(getpid(),SIGUSR1)=0 receiver=2928698 (self=2928698)
+atexit	run in tid=2928698
+parent	status=0x0 exited(0)
+=== worker_exit9_main_blocked
+parent	waitpid(WNOHANG) at 100ms returned the pid (already dead)
+worker	about to end the process, how=0
+atexit	run in tid=2928725
+parent	status=0x900 exited(9)
+=== worker__exit9_main_blocked
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	about to end the process, how=1
+parent	status=0x900 exited(9)
+=== worker_exit_atexit_race
+parent	waitpid(WNOHANG) at 100ms returned 0 (still running)
+worker	about to end the process, how=2
+atexit_slow	ticks advanced during handler by 190
+atexit	run in tid=2928784
+parent	status=0x400 exited(4)
+=== single_pthread_exit
+parent	waitpid(WNOHANG) at 100ms returned the pid (already dead)
+atexit	run in tid=2928829
+parent	status=0x0 exited(0)

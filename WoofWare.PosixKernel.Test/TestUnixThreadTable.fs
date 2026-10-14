@@ -24,7 +24,7 @@ module TestUnixThreadTable =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private withThread (name : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.trySpawn system.Leader name (CpuId cpu) system with
+        match UnixThreadLifecycle.trySpawn (Lone.leader system) name (CpuId cpu) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{name} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{name} was refused: %s{SpawnRefusal.describe refusal}"
@@ -34,7 +34,7 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``a spawned thread is readable`` () : unit =
-        let threads = (initial |> withThread 7 3).Threads
+        let threads = (Lone.threads (initial |> withThread 7 3))
 
         UnixThreadState.cpu (UnixThreadTable.get 7 threads) |> shouldEqual (CpuId 3)
         idOf 7 threads |> shouldEqual 4243UL
@@ -83,7 +83,7 @@ module TestUnixThreadTable =
                     Syscall = ParkedSyscall.EpollWait wait
                     Ordinal = ParkOrdinal 0L
                 }
-                system.Threads
+                (Lone.threads system)
 
         UnixThreadTable.parkedFor 7 parked
         |> shouldEqual (Some (ParkedSyscall.EpollWait wait))
@@ -97,21 +97,21 @@ module TestUnixThreadTable =
 
     [<Test>]
     let ``reconcile is silent when the table matches`` () : unit =
-        let threads = (initial |> withThread 1 0 |> withThread 2 1).Threads
+        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([], [])
 
     [<Test>]
     let ``reconcile reports a live thread the table has no entry for`` () : unit =
-        let threads = (initial |> withThread 1 0).Threads
+        let threads = (Lone.threads (initial |> withThread 1 0))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [])
 
     [<Test>]
     let ``reconcile reports an entry no live thread claims`` () : unit =
-        let threads = (initial |> withThread 1 0 |> withThread 2 1).Threads
+        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 2 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ]) threads
         |> shouldEqual ([], [ 2 ])
@@ -120,7 +120,7 @@ module TestUnixThreadTable =
     let ``reconcile reports both directions at once`` () : unit =
         // The row that separates "reports both" from "reports whichever it
         // happens to check first".
-        let threads = (initial |> withThread 1 0 |> withThread 3 1).Threads
+        let threads = (Lone.threads (initial |> withThread 1 0 |> withThread 3 1))
 
         UnixThreadTable.reconcile (Set.ofList [ 0 ; 1 ; 2 ]) threads
         |> shouldEqual ([ 2 ], [ 3 ])

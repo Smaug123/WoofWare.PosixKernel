@@ -1,5 +1,5 @@
 // What a reserved `select(2)` park must be able to hold, measured on both
-// flavours. Design note: pawprint-kernel-design/select-park-options.md.
+// flavours. Design note: docs/design/select-park-options.md.
 //
 // Build and run:
 //   Darwin: cc -Wall -o /tmp/sp select-park.c -lpthread && /tmp/sp

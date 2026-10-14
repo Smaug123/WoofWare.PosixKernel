@@ -159,7 +159,7 @@ module internal ReadLinkRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadLinkRefusal) : RefusalKind =
         match refusal with
-        | ReadLinkRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | ReadLinkRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
         | ReadLinkRefusal.UnmeasuredLinkRead (_, inner) -> LinkReadRefusal.kind inner
 
@@ -2357,11 +2357,7 @@ module UnixNamespace =
         (paused : PausedRename<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
-        match box paused with
-        | null ->
-            failwith
-                "UnixNamespace.renameWithDestination: this paused rename is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixNamespace.renameat or rename instead."
-        | _ ->
+        CallProgress.requirePaused "UnixNamespace.renameWithDestination" "UnixNamespace.renameat or rename" paused
 
         let system = paused.System
         let rules = paused.Rules
@@ -2405,13 +2401,13 @@ module UnixNamespace =
                 <> PathWalk.pausedMountedRoot destinationParent
             then
                 Error (PathFailure.Errno UnixError.EXDEV)
-            else if
 
-                // Then either path naming no final component, "/", "." or "..", is
-                // EBUSY, still before either final name is looked up: measured
-                // (`renameat-rules.c`, ORDER), `rename("nx", ".")` and
-                // `rename(<300 bytes>, "/")` are EBUSY, not the source's ENOENT
-                // and ENAMETOOLONG.
+            // Then either path naming no final component, "/", "." or "..", is
+            // EBUSY, still before either final name is looked up: measured
+            // (`renameat-rules.c`, ORDER), `rename("nx", ".")` and
+            // `rename(<300 bytes>, "/")` are EBUSY, not the source's ENOENT
+            // and ENAMETOOLONG.
+            else if
                 PathWalk.pausedNamesNoFinal sourceParent
                 || PathWalk.pausedNamesNoFinal destinationParent
             then
@@ -2582,34 +2578,6 @@ module UnixNamespace =
         tryRenameWithDestination destination paused
         |> Refusal.orRaise "UnixNamespace.renameWithDestination" RenameRefusal.kind RenameRefusal.describe
 
-    /// `renameat(2)` given both pathnames up front: `tryRenameat`, then
-    /// `tryRenameWithDestination` of `newpath` if the call reaches its copy.
-    let internal tryRenameatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (olddirfd : int)
-        (oldpath : PathArgumentBytes)
-        (newdirfd : int)
-        (newpath : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
-        =
-        match tryRenameat olddirfd oldpath newdirfd system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryRenameWithDestination newpath paused
-
-    /// `rename(2)` given both pathnames up front, as `tryRenameatEager` is
-    /// `renameat(2)`.
-    let internal tryRenameEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (source : PathArgumentBytes)
-        (destination : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
-        =
-        match tryRename source system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryRenameWithDestination destination paused
-
     /// `cloneFile`, with a refusal answered as the `Error` rather than raised.
     let internal tryCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
@@ -2689,11 +2657,7 @@ module UnixNamespace =
         // an existing destination. "f/" and "f/x" for a regular `f` are
         // ENOTDIR, a link to a file clones the file, and a dangling or cyclic
         // link is ENOENT or ELOOP.
-        match box paused with
-        | null ->
-            failwith
-                "UnixNamespace.cloneFileWithSource: this paused clonefile is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixNamespace.cloneFile instead."
-        | _ ->
+        CallProgress.requirePaused "UnixNamespace.cloneFileWithSource" "UnixNamespace.cloneFile" paused
 
         let system = paused.System
 
@@ -2771,11 +2735,7 @@ module UnixNamespace =
         // no part; atime, mtime and birth time are the source's to the
         // nanosecond, ctime is now; the parent's mtime and ctime move and its
         // atime does not; the source's times do not move.
-        match box paused with
-        | null ->
-            failwith
-                "UnixNamespace.cloneFileWithDestination: this paused clonefile is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixNamespace.cloneFileWithSource instead."
-        | _ ->
+        CallProgress.requirePaused "UnixNamespace.cloneFileWithDestination" "UnixNamespace.cloneFileWithSource" paused
 
         let system = paused.System
         let failed (error : UnixError) = Ok (SyscallAnswer.Failed error, system)
@@ -2930,15 +2890,11 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
         =
-        match tryCloneFile flags system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) ->
-
-        match tryCloneFileWithSource source paused with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryCloneFileWithDestination destination paused
+        tryCloneFile flags system
+        |> CallProgress.resumeWith (fun paused ->
+            tryCloneFileWithSource source paused
+            |> CallProgress.resumeWith (tryCloneFileWithDestination destination)
+        )
 
     let private symlinkTargetFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
@@ -3011,11 +2967,7 @@ module UnixNamespace =
         (paused : PausedSymlink<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
-        match box paused with
-        | null ->
-            failwith
-                "UnixNamespace.symlinkWithPath: this paused symlink is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixNamespace.symlinkat or symlink instead."
-        | _ -> ()
+        CallProgress.requirePaused "UnixNamespace.symlinkWithPath" "UnixNamespace.symlinkat or symlink" paused
 
         let system = paused.System
         let rules = SimulatedUnixPlatform.symlinkRules system.Machine.UnixPlatform
@@ -3102,21 +3054,8 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
-        match symlinkat target dirfd system with
-        | CallProgress.Answered answered -> Ok answered
-        | CallProgress.NeedsCopyIn paused -> trySymlinkWithPath path paused
-
-    /// `symlink(2)` given both pathnames up front, as `trySymlinkatEager` is
-    /// `symlinkat(2)`.
-    let internal trySymlinkEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (target : PathArgumentBytes)
-        (path : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
-        =
-        match symlink target system with
-        | CallProgress.Answered answered -> Ok answered
-        | CallProgress.NeedsCopyIn paused -> trySymlinkWithPath path paused
+        Ok (symlinkat target dirfd system)
+        |> CallProgress.resumeWith (trySymlinkWithPath path)
 
     let private linkSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (arguments : LinkArguments)
@@ -3312,11 +3251,7 @@ module UnixNamespace =
         (paused : PausedLink<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
-        match box paused with
-        | null ->
-            failwith
-                "UnixNamespace.linkWithDestination: this paused link is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from UnixNamespace.linkat or link instead."
-        | _ -> ()
+        CallProgress.requirePaused "UnixNamespace.linkWithDestination" "UnixNamespace.linkat or link" paused
 
         let system = paused.System
 
@@ -3393,20 +3328,5 @@ module UnixNamespace =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
-        match tryLinkat olddirfd oldpath newdirfd flags system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryLinkWithDestination newpath paused
-
-    /// `link(2)` given both pathnames up front, as `tryLinkatEager` is
-    /// `linkat(2)`.
-    let internal tryLinkEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (oldpath : PathArgumentBytes)
-        (newpath : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
-        =
-        match tryLink oldpath system with
-        | Error refusal -> Error refusal
-        | Ok (CallProgress.Answered answered) -> Ok answered
-        | Ok (CallProgress.NeedsCopyIn paused) -> tryLinkWithDestination newpath paused
+        tryLinkat olddirfd oldpath newdirfd flags system
+        |> CallProgress.resumeWith (tryLinkWithDestination newpath)

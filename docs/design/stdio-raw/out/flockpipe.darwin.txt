@@ -1,0 +1,2 @@
+# kernel: Darwin 27.0.0 arm64
+LOCK_EX read end -> -1 errno 45; same pipe's write end -> -1 errno 45; another pipe -> -1 errno 45

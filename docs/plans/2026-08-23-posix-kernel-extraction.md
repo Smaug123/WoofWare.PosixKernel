@@ -4118,8 +4118,8 @@ check are gone; a check that the client passed exactly the copy's bytes takes it
 for the same reason. The client reads every admitted byte rather than only the fields,
 because both kernels copy them all and a fault anywhere in them is EFAULT; where PawPrint
 cannot decide that its storage holds that many, it refuses. The options and the
-measurements behind them (`sockaddr-decoding.c`) are in Patrick's
-`pawprint-kernel-design/sockaddr-decoding-options.md`, option A.
+measurements behind them (`sockaddr-decoding.c`) are in
+`docs/design/sockaddr-decoding-options.md`, option A.
 
 `SockaddrFamilyField.reachedBy` is the one arithmetic that both the kernel's copy rule
 and the shim's own field screen need, so it lives in the library and PawPrint's

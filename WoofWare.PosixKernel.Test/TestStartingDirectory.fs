@@ -202,7 +202,7 @@ module TestStartingDirectory =
         | "moved" ->
             let fd, system = opened "d" system
 
-            match UnixNamespace.tryRenameEager (PathArg.ofText "d") (PathArg.ofText "d-moved") system with
+            match Eager.tryRename (PathArg.ofText "d") (PathArg.ofText "d-moved") system with
             | Ok answer -> Some (fd, completed "rename(d, d-moved)" answer)
             | Error refusal -> failwith $"%s{context}: rename was refused: %s{RenameRefusal.describe refusal}"
         | "locked" ->
@@ -1141,7 +1141,7 @@ module TestStartingDirectory =
                         failwith $"%s{context}: the new directory's parent %O{content.Parent} is not in the filesystem"
                 | other -> failwith $"%s{context}: mkdir made something other than a directory: %A{other}"
 
-            let egid = after.Process.Credentials.EffectiveGroup
+            let egid = (Lone.proc after).Credentials.EffectiveGroup
 
             let group =
                 if made.Owner.Group = parent.Owner.Group then
@@ -1786,8 +1786,8 @@ module TestStartingDirectory =
 
                         let actual =
                             match side with
-                            | "old" -> UnixNamespace.tryRenameatEager dirfd p atFdCwd (PathArg.ofText "renamed") system
-                            | _ -> UnixNamespace.tryRenameatEager atFdCwd (PathArg.ofText "f2") dirfd p system
+                            | "old" -> Eager.tryRenameat dirfd p atFdCwd (PathArg.ofText "renamed") system
+                            | _ -> Eager.tryRenameat atFdCwd (PathArg.ofText "f2") dirfd p system
                             |> renderedRenameAt
 
                         if actual <> expected then
@@ -1841,7 +1841,7 @@ module TestStartingDirectory =
                     let newdirfd, newpath = side newState false
 
                     let actual =
-                        UnixNamespace.tryRenameatEager olddirfd oldpath newdirfd newpath (boot envelope)
+                        Eager.tryRenameat olddirfd oldpath newdirfd newpath (boot envelope)
                         |> renderedRenameAt
 
                     if actual <> expected then
@@ -1962,7 +1962,7 @@ module TestStartingDirectory =
             | Error fault -> failwith $"%s{context}: could not build renameat-rules.c's cell: %A{fault}"
 
         // The probe made `g` with link(2), after `f`.
-        UnixNamespace.tryLinkEager (PathArg.ofText "/c/w/d/f") (PathArg.ofText "/c/w/d/g") system
+        Eager.tryLink (PathArg.ofText "/c/w/d/f") (PathArg.ofText "/c/w/d/g") system
         |> function
             | Ok answer -> completed "link(d/f, d/g)" answer
             | Error refusal -> failwith $"%s{context}: link was refused: %s{LinkRefusal.describe refusal}"
@@ -2148,7 +2148,7 @@ module TestStartingDirectory =
                         let newdirfd, system = descriptor nfd system
 
                         let actual =
-                            UnixNamespace.tryRenameatEager olddirfd (pathOf old) newdirfd (pathOf newPath) system
+                            Eager.tryRenameat olddirfd (pathOf old) newdirfd (pathOf newPath) system
                             |> renderedRename system
 
                         if actual <> at then
@@ -2158,10 +2158,7 @@ module TestStartingDirectory =
                         let system = renameAtCell envelope (if cwd = "." then "/c/w" else "/c/w/" + cwd)
 
                         let actual =
-                            UnixNamespace.tryRenameEager
-                                (pathOf (field "pold=" pold))
-                                (pathOf (field "pnew=" pnew))
-                                system
+                            Eager.tryRename (pathOf (field "pold=" pold)) (pathOf (field "pnew=" pnew)) system
                             |> renderedRename system
 
                         if actual <> plain then
@@ -2187,12 +2184,7 @@ module TestStartingDirectory =
                     let firstDone, system =
                         match first with
                         | "rename" ->
-                            UnixNamespace.tryRenameatEager
-                                fd
-                                (PathArg.ofText "../sub")
-                                fd
-                                (PathArg.ofText "../sub2")
-                                before
+                            Eager.tryRenameat fd (PathArg.ofText "../sub") fd (PathArg.ofText "../sub2") before
                             |> firstAnswer
                         | _ ->
                             UnixNamespace.tryUnlinkat fd (PathArg.ofText "../sub") (atRemoveDir flavour) before
@@ -2201,7 +2193,7 @@ module TestStartingDirectory =
                     let actual =
                         firstDone
                         + ";"
-                        + (UnixNamespace.tryRenameatEager fd old fd newPath system |> renderedRename before)
+                        + (Eager.tryRenameat fd old fd newPath system |> renderedRename before)
 
                     if actual <> at then
                         yield
@@ -2213,14 +2205,12 @@ module TestStartingDirectory =
                     let firstDone, system =
                         match first with
                         | "rename" ->
-                            UnixNamespace.tryRenameEager (PathArg.ofText "../sub") (PathArg.ofText "../sub2") before
+                            Eager.tryRename (PathArg.ofText "../sub") (PathArg.ofText "../sub2") before
                             |> firstAnswer
                         | _ -> UnixNamespace.tryRmdir (PathArg.ofText "../sub") before |> firstAnswer
 
                     let actual =
-                        firstDone
-                        + ";"
-                        + (UnixNamespace.tryRenameEager old newPath system |> renderedRename before)
+                        firstDone + ";" + (Eager.tryRename old newPath system |> renderedRename before)
 
                     if actual <> plain then
                         yield
@@ -2311,7 +2301,7 @@ module TestStartingDirectory =
                     let newdirfd, newpath, system = side newKind false system
 
                     let actual =
-                        UnixNamespace.tryRenameatEager olddirfd oldpath newdirfd newpath system
+                        Eager.tryRenameat olddirfd oldpath newdirfd newpath system
                         |> renderedRename system
 
                     if actual <> expected then
@@ -2362,7 +2352,7 @@ module TestStartingDirectory =
                     let expected = field "at=" at
 
                     let actual =
-                        UnixNamespace.tryRenameatEager
+                        Eager.tryRenameat
                             (dirfd ofd)
                             (PathArg.ofText (field "old=" old))
                             (dirfd ("ofd=" + field "nfd=" nfd))
@@ -2779,13 +2769,13 @@ module TestStartingDirectory =
             | Ok inode -> inode
             | Error failure -> failwith $"%s{context}: %s{cwd} does not resolve: %A{failure}"
 
-        { system with
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = inode
-                }
-        }
-        |> Launched.restand
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = inode
+            }
+        )
+        |> Lone.restand
 
     let private walkPaths : Gen<UnixPath> =
         let pathComponent =
@@ -2861,7 +2851,7 @@ module TestStartingDirectory =
             let limits = SimulatedUnixPlatform.pathLimits platform
             let vfs = system.Machine.FileSystem
             let protection = system.Machine.ProtectedFiles.Symlinks
-            let start = system.Process.CurrentDirectoryInode
+            let start = (Lone.proc system).CurrentDirectoryInode
 
             UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
             |> shouldEqual (PathWalk.resolveFull limits credentials protection start policy trailing path vfs)
@@ -2891,14 +2881,14 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             let inCwd = walkSystem platform credentials cwd
 
@@ -2950,24 +2940,24 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             // The tree was built by root, so its unowned entries are root's:
             // compare with stat from the same tree, by the same caller.
             let heldInCwd =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                    }
+                )
 
             UnixPathResolution.tryFstatat fd argument flags atRoot
             |> shouldEqual (
@@ -3008,22 +2998,22 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let atRoot =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                    }
+                )
+                |> Lone.restand
 
             let heldInCwd =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                    }
+                )
 
             UnixNamespace.tryReadlinkat fd argument UserBuffer.Mapped 64 atRoot
             |> shouldEqual (UnixNamespace.tryReadlink argument UserBuffer.Mapped 64 heldInCwd)
@@ -3087,22 +3077,21 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
-                |> Launched.restand
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
+                |> Lone.restand
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) =
                 match result with
-                | Ok (answer, system) ->
-                    Ok (answer, system.Machine.FileSystem, (UnixSystemState.fileDescriptors system))
+                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem, (Lone.fileDescriptors system))
                 | Error refusal -> Error refusal
 
             OpenOutcomes.openat fd argument flags 0o644 atRoot
@@ -3149,16 +3138,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, PathRefusal>) =
                 match result with
@@ -3216,16 +3205,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, MkNodRefusal>) =
                 match result with
@@ -3290,16 +3279,16 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, UnlinkAtRefusal>) =
                 match result with
@@ -3350,8 +3339,8 @@ module TestStartingDirectory =
 
             let inCwd = walkSystem platform credentials cwd
 
-            UnixNamespace.tryRenameatEager (atFdCwd flavour) (argument path) (atFdCwd flavour) (argument newPath) inCwd
-            |> shouldEqual (UnixNamespace.tryRenameEager (argument path) (argument newPath) inCwd)
+            Eager.tryRenameat (atFdCwd flavour) (argument path) (atFdCwd flavour) (argument newPath) inCwd
+            |> shouldEqual (Eager.tryRename (argument path) (argument newPath) inCwd)
 
             // Opened as root, as the descriptor properties above do: one
             // descriptor on the current directory, and one on `newDirectory`.
@@ -3366,16 +3355,16 @@ module TestStartingDirectory =
             let newFd, held = openedAsRoot newDirectory held
 
             let withCaller (cwdInode : InodeNumber) =
-                { held with
-                    Process =
-                        { held.Process with
-                            Credentials = credentials
-                            CurrentDirectoryInode = cwdInode
-                        }
-                }
+                held
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Credentials = credentials
+                        CurrentDirectoryInode = cwdInode
+                    }
+                )
 
             let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
-            let heldInCwd = withCaller held.Process.CurrentDirectoryInode
+            let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, RenameRefusal>) =
                 match result with
@@ -3384,21 +3373,15 @@ module TestStartingDirectory =
 
             // The same descriptor on both sides is rename from its directory
             // as the current one.
-            UnixNamespace.tryRenameatEager oldFd (argument path) oldFd (argument newPath) atRoot
+            Eager.tryRenameat oldFd (argument path) oldFd (argument newPath) atRoot
             |> outcome
-            |> shouldEqual (
-                UnixNamespace.tryRenameEager (argument path) (argument newPath) heldInCwd
-                |> outcome
-            )
+            |> shouldEqual (Eager.tryRename (argument path) (argument newPath) heldInCwd |> outcome)
 
             // Two descriptors are rename with each path written from its own
             // descriptor's directory, in the very same system.
-            UnixNamespace.tryRenameatEager oldFd (argument path) newFd (argument newPath) atRoot
+            Eager.tryRenameat oldFd (argument path) newFd (argument newPath) atRoot
             |> shouldEqual (
-                UnixNamespace.tryRenameEager
-                    (argument (writtenFrom cwd path))
-                    (argument (writtenFrom newDirectory newPath))
-                    atRoot
+                Eager.tryRename (argument (writtenFrom cwd path)) (argument (writtenFrom newDirectory newPath)) atRoot
             )
 
         Check.One (config, Prop.forAll (Arb.fromGen renameCase) property)
@@ -3433,15 +3416,17 @@ module TestStartingDirectory =
             | other -> failwith $"%s{context}: open(%s{cwd}) did not open: %O{other}"
 
         let withCaller (cwdInode : InodeNumber) =
-            { held with
-                Process =
-                    { held.Process with
-                        Credentials = credentials
-                        CurrentDirectoryInode = cwdInode
-                    }
-            }
+            held
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Credentials = credentials
+                    CurrentDirectoryInode = cwdInode
+                }
+            )
 
-        fd, withCaller (VirtualFileSystem.root held.Machine.FileSystem), withCaller held.Process.CurrentDirectoryInode
+        fd,
+        withCaller (VirtualFileSystem.root held.Machine.FileSystem),
+        withCaller (Lone.proc held).CurrentDirectoryInode
 
     [<Test>]
     let ``chmod is fchmodat from AT_FDCWD, and fchmodat from a descriptor on a directory is fchmodat from that directory``
@@ -3659,12 +3644,12 @@ module TestStartingDirectory =
                 | other -> failwith $"%s{context}: open(%s{path}) did not open: %O{other}"
 
         fd,
-        { system with
-            Process =
-                { system.Process with
-                    Credentials = credentials
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = credentials
+            }
+        )
 
     [<Test>]
     let ``Linux's utimensat of a null pathname is AT_EMPTY_PATH's of the empty one, from any descriptor`` () : unit =

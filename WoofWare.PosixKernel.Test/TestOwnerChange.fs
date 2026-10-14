@@ -777,12 +777,13 @@ module TestOwnerChange =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
         match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
@@ -836,7 +837,7 @@ module TestOwnerChange =
     /// `/t` holding a file and a directory owned by `by`, as the probe
     /// prepared each row.
     let private tree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
         |> directory "/t" (owner 0u 0u) 0o755
         |> file "/t/f" by 0o600
         |> directory "/t/d" by 0o700
@@ -972,7 +973,7 @@ module TestOwnerChange =
     /// link to itself, an unsearchable directory holding a file, and a file
     /// root owns, everything else owned by `by`.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/p" by 0o755
         |> file "/p/f" by 0o600
         |> directory "/p/d" by 0o700
@@ -1134,7 +1135,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private opened
         (p : string)
@@ -1147,7 +1148,7 @@ module TestOwnerChange =
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -1156,7 +1157,7 @@ module TestOwnerChange =
             FileDescriptorRegistry.openDirectory
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -1286,9 +1287,9 @@ module TestOwnerChange =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-            let fd, registry = create (UnixSystemState.fileDescriptors system)
+            let fd, registry = create (Lone.fileDescriptors system)
 
             fd, withDescriptors registry system
 
@@ -1327,7 +1328,7 @@ module TestOwnerChange =
                 let fd, withSocket = NewSocket.create domain kind protocol linux
 
                 let socket =
-                    match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors withSocket) with
+                    match FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors withSocket) with
                     | Some (OpenFileObject.Socket socket) -> socket
                     | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
@@ -1425,7 +1426,7 @@ module TestOwnerChange =
     /// The pipe `fd` names given the bits `bits`, nothing else moving.
     let private withPipeBits (fd : int) (bits : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let pipeId =
-            match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors system) with
             | Some (OpenFileObject.Pipe pipeId) -> pipeId
             | other -> failwith $"fd %d{fd} is not a pipe: %A{other}"
 
@@ -1552,22 +1553,22 @@ module TestOwnerChange =
 
         let memberGroup = Some (gid 2000u)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
+        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0)) system
         |> answered
         |> shouldEqual (chownAnswer "/p/lf" None memberGroup system)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
+        UnixSystem.tryStep 0 (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/lf"), None, memberGroup, 0x100)) system
         |> answered
         |> shouldEqual (lchownAnswer "/p/lf" None memberGroup system)
 
         UnixSystem.tryStep
-            1
+            0
             (Syscall.FChOwnAt (-100, PathArg.ofPath (path "/p/theirs"), Some (uid 1002u), None, 0))
             system
         |> answered
         |> shouldEqual (chownAnswer "/p/theirs" (Some (uid 1002u)) None system)
 
-        UnixSystem.tryStep 1 (Syscall.FChOwn (fd, None, memberGroup)) withFd
+        UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, memberGroup)) withFd
         |> answered
         |> shouldEqual (fchownAnswer fd None memberGroup withFd)
 
@@ -1583,7 +1584,7 @@ module TestOwnerChange =
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0)
                 Syscall.FChOwnAt (-2, PathArg.ofPath (path "/t/f"), None, None, 0x20)
             ] do
-            match UnixSystem.tryStep 1 call darwin with
+            match UnixSystem.tryStep 0 call darwin with
             | Error (SyscallRefusal.FChOwnAt refusal) ->
                 Error refusal
                 |> shouldEqual (
@@ -1593,7 +1594,7 @@ module TestOwnerChange =
                 )
             | other -> failwith $"step %A{call} as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 1 (Syscall.FChOwn (fd, None, None)) withFd with
+        match UnixSystem.tryStep 0 (Syscall.FChOwn (fd, None, None)) withFd with
         | Error (SyscallRefusal.FChOwn refusal) ->
             Error refusal
             |> shouldEqual (UnixPathResolution.tryFchown fd None None withFd |> Result.map ignore)

@@ -166,13 +166,14 @@ module TestUmask =
             let last = List.last expected
 
             after
-            |> shouldEqual
-                { before with
-                    Process =
-                        { before.Process with
-                            Umask = mode last
-                        }
-                }
+            |> shouldEqual (
+                before
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Umask = mode last
+                    }
+                )
+            )
 
             UnixSystem.checkInvariants after |> shouldEqual []
 
@@ -220,7 +221,7 @@ module TestUmask =
                         UnixSystem.initial<int, string> platform
                         |> Launched.bootWith (Launched.umask (mode bits)) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-                    system.Process.Umask |> shouldEqual (mode bits)
+                    (Lone.proc system).Umask |> shouldEqual (mode bits)
                     UnixSystem.checkInvariants system |> shouldEqual []
                 else
                     Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -243,12 +244,12 @@ module TestUmask =
                 let system = fresh platform
 
                 let forged =
-                    { system with
-                        Process =
-                            { system.Process with
-                                Umask = mode bits
-                            }
-                    }
+                    system
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Umask = mode bits
+                        }
+                    )
 
                 let expected =
                     if bits &&& ~~~(measuredWidth platform) = 0 then

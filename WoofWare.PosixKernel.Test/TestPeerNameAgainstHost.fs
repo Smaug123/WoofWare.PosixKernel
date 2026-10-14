@@ -369,7 +369,7 @@ module TestPeerNameAgainstHost =
     // --------------------------------------------------------------- model
 
     let private modelName (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
             | Some binding -> binding.Endpoint

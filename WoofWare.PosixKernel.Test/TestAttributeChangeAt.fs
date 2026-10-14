@@ -199,12 +199,12 @@ module TestAttributeChangeAt =
     /// `system` with the caller's credentials, as the probe's child had once it
     /// dropped.
     let private dropped (caller : Caller) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Credentials = caller.Credentials
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = caller.Credentials
+            }
+        )
 
     /// The permission bits `stat` (or `lstat`, under `NoFollowFinal`) reports
     /// for `path`, or `None` where it fails.
@@ -391,7 +391,7 @@ module TestAttributeChangeAt =
         let made (system : UnixSystem<int, string>) (name : string) =
             match subject with
             | Subject.Link ->
-                match UnixNamespace.trySymlinkEager (PathArg.ofText "f") (PathArg.ofText name) system with
+                match Eager.trySymlink (PathArg.ofText "f") (PathArg.ofText name) system with
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"%s{context}: symlink(f, %s{name}): %A{other}"
             | Subject.File ->
@@ -777,7 +777,7 @@ module TestAttributeChangeAt =
             | "moved" ->
                 let fd, system = opened "d" system
 
-                match UnixNamespace.tryRenameEager (PathArg.ofText "d") (PathArg.ofText "d-moved") system with
+                match Eager.tryRename (PathArg.ofText "d") (PathArg.ofText "d-moved") system with
                 | Ok answer -> Some (fd, completed "rename(d, d-moved)" answer)
                 | Error refusal -> failwith $"%s{context}: rename: %s{RenameRefusal.describe refusal}"
             | "theirs" -> Some (opened "tf" system)

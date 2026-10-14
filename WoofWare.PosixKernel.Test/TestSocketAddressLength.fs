@@ -100,7 +100,7 @@ module TestSocketAddressLength =
         | other -> failwith $"connecting a client: %A{other}"
 
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match (UnixMachineState.socket socketId system.Machine).Phase with
             | SocketPhase.Listening listenState -> ListenState.connections listenState
@@ -228,7 +228,7 @@ module TestSocketAddressLength =
                 let listenerFd, system = withListener platform
                 let clientFd, system = connectClient system
                 let client = localAddress clientFd system
-                let fdsBefore = FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system)
+                let fdsBefore = FileDescriptorRegistry.fds (Lone.fileDescriptors system)
 
                 let destinations =
                     if isLinux platform && int word < 0 then
@@ -245,8 +245,7 @@ module TestSocketAddressLength =
                         ->
                         queueOf listenerFd after |> shouldEqual []
 
-                        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors after)
-                        |> shouldEqual fdsBefore
+                        FileDescriptorRegistry.fds (Lone.fileDescriptors after) |> shouldEqual fdsBefore
 
                         UnixSystem.checkInvariants after |> shouldEqual []
 
@@ -383,16 +382,16 @@ module TestSocketAddressLength =
 
             UnixSystem.checkInvariants dropped |> shouldEqual []
 
-            FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors dropped)
-            |> shouldEqual (FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors acceptedThenClosed))
+            FileDescriptorRegistry.fds (Lone.fileDescriptors dropped)
+            |> shouldEqual (FileDescriptorRegistry.fds (Lone.fileDescriptors acceptedThenClosed))
 
             OpenFileTable.descriptions dropped.Machine.OpenFiles
             |> shouldEqual (OpenFileTable.descriptions acceptedThenClosed.Machine.OpenFiles)
 
             // The socket identity and the description identity the accept
             // minted are the only differences.
-            (UnixSystemState.withFileDescriptors
-                ((UnixSystemState.fileDescriptors dropped))
+            (Lone.withFileDescriptors
+                ((Lone.fileDescriptors dropped))
                 { acceptedThenClosed with
                     Machine =
                         { acceptedThenClosed.Machine with
@@ -424,7 +423,7 @@ module TestSocketAddressLength =
                 match UnixConnection.tryFinishAccept 1 system, isLinux platform && int word < 0 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
                     queueOf listenerFd after |> shouldEqual []
-                    UnixThreadTable.parkedFor 1 after.Threads |> shouldEqual None
+                    UnixThreadTable.parkedFor 1 (Lone.threads after) |> shouldEqual None
                     UnixSystem.checkInvariants after |> shouldEqual []
                 | Ok (AcceptOutcome.Accepted _, _), false -> ()
                 | other, _ -> failwith $"%O{platform} 0x%08x{word}: got %A{other}"
@@ -467,16 +466,16 @@ module TestSocketAddressLength =
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
             let createEventQueue =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
             let queueFd, registry = createEventQueue registry
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             everyLength (fun word ->
                 for fd in [ 0 ; fileFd ; queueFd ] do
@@ -532,7 +531,7 @@ module TestSocketAddressLength =
                     NewSocket.create domain kind SocketProtocol.Default (systemOn platform)
 
                 let socketId =
-                    match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                     | Some (OpenFileTarget.Socket socketId) -> socketId
                     | other -> failwith $"%A{other}"
 

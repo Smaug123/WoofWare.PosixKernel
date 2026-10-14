@@ -13,6 +13,8 @@
     <Compile Include="CoverageSample.fs" />
     <Compile Include="GraphMutators.fs" />
     <Compile Include="Configured.fs" />
+    <Compile Include="Proc.fs" />
+    <Compile Include="Lone.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />
@@ -30,6 +32,7 @@
     <Compile Include="PathText.fs" />
     <Compile Include="OpenFlagWords.fs" />
     <Compile Include="Answered.fs" />
+    <Compile Include="Eager.fs" />
     <Compile Include="PReadUnchanged.fs" />
     <Compile Include="DirectoryReading.fs" />
     <Compile Include="Owners.fs" />
@@ -132,6 +135,7 @@
     <Compile Include="TestUnixByteString.fs" />
     <Compile Include="TestUnixPath.fs" />
     <Compile Include="TestUnixPathBytes.fs" />
+    <Compile Include="TestNameEquivalence.fs" />
     <Compile Include="TestAbsoluteUnixPath.fs" />
     <Compile Include="TestFileSystemSeed.fs" />
     <Compile Include="TestFileDescriptorRegistry.fs" />
@@ -208,6 +212,7 @@
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
+    <Compile Include="TestImplicitSelfConnectMeasured.fs" />
     <Compile Include="TestSocketAddressLength.fs" />
     <Compile Include="TestSockaddrDecoding.fs" />
     <Compile Include="SocketLadder.fs" />
@@ -245,6 +250,7 @@
     <Compile Include="TestSimulatedMachine.fs" />
     <Compile Include="TestMultiProcess.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
+    <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeSweepMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
@@ -263,6 +269,7 @@
     <Compile Include="TestSuppliedPipe.fs" />
     <Compile Include="TestBlockingPipe.fs" />
     <Compile Include="TestBlockingConnection.fs" />
+    <Compile Include="TestNonBlockingAsleepMeasured.fs" />
     <Compile Include="TestReceiveSendMeasured.fs" />
     <Compile Include="TestStreamReaderGone.fs" />
     <Compile Include="TestPipeAgainstHost.fs" />
@@ -285,6 +292,11 @@
          `SignalState` to them. -->
     <EmbeddedResource Include="signalOrder\*.txt" />
     <EmbeddedResource Include="signalReceiver\*.txt" />
+    <!-- What a signal sent to the process, which every thread blocked, did
+         once a thread unblocked it, measured per flavour by
+         docs/probes/non-leader-unblock. `TestSignalReceiver` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
@@ -305,6 +317,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- What a pipe or TCP transfer asleep when its description was made
+         non-blocking answered to a signal, measured per flavour by
+         docs/probes/nonblocking-asleep. `TestNonBlockingAsleepMeasured`
+         replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\nonblocking-asleep\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.nonblocking-asleep.darwin.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- The package's README, which `TestReadme` holds to the library: every name
          it gives resolves, every signature it shows is the function's, and every
          code block runs and prints what the README says it prints. -->
@@ -321,8 +342,19 @@
          sockaddr-dgram-connect.c, embedded from beside them.
          `TestConnectLadderMeasured`, `TestBindLadderMeasured` and
          `TestConnectDestinationMeasured` replay every row. -->
+    <!-- What connect(2) answered when its source was its own destination, measured
+         per flavour by docs/probes/implicit-self-connect.
+         `TestImplicitSelfConnectMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\implicit-self-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.implicit-self-connect.darwin.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\dual-mode\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.dual-mode.darwin.txt" />
+    <!-- What a lookup, a creation and a rename answer when they spell a bound
+         name another way, measured by docs/probes/name-equivalence/name-equivalence.c
+         on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.
+         `TestNameEquivalence` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\name-equivalence\measured-darwin-27.0-apfs-case-sensitive.txt" LogicalName="WoofWare.PosixKernel.Test.name-equivalence.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\name-equivalence\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.name-equivalence.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-decoding.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-decoding.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-decoding.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-decoding.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\sockaddr-connect-ladder.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.sockaddr-connect-ladder.linux.txt" />

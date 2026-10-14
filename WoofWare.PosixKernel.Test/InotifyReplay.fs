@@ -162,7 +162,7 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask system with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
         | Ok answered -> answered
         | Error refusal ->
             failwith
@@ -209,6 +209,20 @@ module internal InotifyReplay =
             Directory = false
         }
 
+    /// An open of `path` by the leader of the process `pid`.
+    let openAnswerIn
+        (pid : ProcessId)
+        (flags : OpenFlags)
+        (path : string)
+        (mode : int)
+        (system : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        match OpenFlagWords.openPathIn pid flags (PathArg.ofText path) mode system with
+        | Ok answered -> answered
+        | Error refusal -> failwith $"open(%s{path}) refused: %s{OpenRefusal.describe refusal}"
+
+    /// `openAnswerIn` the only process on the machine.
     let openAnswer
         (flags : OpenFlags)
         (path : string)
@@ -216,10 +230,23 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match OpenFlagWords.openPath flags (PathArg.ofText path) mode system with
-        | Ok answered -> answered
-        | Error refusal -> failwith $"open(%s{path}) refused: %s{OpenRefusal.describe refusal}"
+        openAnswerIn (Lone.pid system) flags path mode system
 
+    /// The descriptor an open of `path` by the leader of the process `pid`
+    /// answered, which must not fail.
+    let openFdIn
+        (pid : ProcessId)
+        (flags : OpenFlags)
+        (path : string)
+        (mode : int)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match openAnswerIn pid flags path mode system with
+        | SyscallAnswer.Completed fd, system -> int fd, system
+        | SyscallAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
+
+    /// `openFdIn` the only process on the machine.
     let openFd
         (flags : OpenFlags)
         (path : string)
@@ -227,9 +254,7 @@ module internal InotifyReplay =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match openAnswer flags path mode system with
-        | SyscallAnswer.Completed fd, system -> int fd, system
-        | SyscallAnswer.Failed error, _ -> failwith $"open(%s{path}): %O{error}"
+        openFdIn (Lone.pid system) flags path mode system
 
     let write (fd : int) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let bytes = ImmutableArray.CreateRange (Encoding.ASCII.GetBytes text)
@@ -331,12 +356,22 @@ module internal InotifyReplay =
             )
 
     /// The probe's `writeFile`: `open(O_WRONLY|O_CREAT|O_TRUNC, 0644)`, a
-    /// write of `text`, and a close.
-    let writeFile (path : string) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    /// write of `text`, and a close, by the process `pid`.
+    let writeFileIn
+        (pid : ProcessId)
+        (path : string)
+        (text : string)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
         let fd, system =
-            openFd (openFlags FileAccessMode.WriteOnly true false true) path 0o644 system
+            openFdIn pid (openFlags FileAccessMode.WriteOnly true false true) path 0o644 system
 
         system |> write fd text |> close fd
+
+    /// `writeFileIn` the only process on the machine.
+    let writeFile (path : string) (text : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        writeFileIn (Lone.pid system) path text system
 
     let chmod (path : string) (mode : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         UnixPathResolution.tryChmod (PathArg.ofText path) mode system
@@ -386,15 +421,15 @@ module internal InotifyReplay =
         |> completed $"unlink(%s{path})"
 
     let link (existing : string) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryLinkEager (PathArg.ofText existing) (PathArg.ofText path) system
+        Eager.tryLink (PathArg.ofText existing) (PathArg.ofText path) system
         |> completed $"link(%s{existing}, %s{path})"
 
     let symlinkAt (target : string) (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.trySymlinkEager (PathArg.ofText target) (PathArg.ofText path) system
+        Eager.trySymlink (PathArg.ofText target) (PathArg.ofText path) system
         |> completed $"symlink(%s{target}, %s{path})"
 
     let rename (source : string) (destination : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixNamespace.tryRenameEager (PathArg.ofText source) (PathArg.ofText destination) system
+        Eager.tryRename (PathArg.ofText source) (PathArg.ofText destination) system
         |> completed $"rename(%s{source}, %s{destination})"
 
     let chdir (path : string) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

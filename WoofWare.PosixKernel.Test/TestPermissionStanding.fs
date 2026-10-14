@@ -535,12 +535,13 @@ module TestPermissionStanding =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private path (p : string) : UnixPath = UnixPath.parseOrFail context p
 
@@ -578,7 +579,7 @@ module TestPermissionStanding =
             | Call.Unlink p -> sticky (UnixNamespace.tryUnlink (PathArg.ofPath (path p)) system)
             | Call.RmDir p -> sticky (UnixNamespace.tryRmdir (PathArg.ofPath (path p)) system)
             | Call.Rename (source, destination) ->
-                match UnixNamespace.tryRenameEager (argument source) (argument destination) system with
+                match Eager.tryRename (argument source) (argument destination) system with
                 | Ok answer -> Ok answer
                 | Error (RenameRefusal.Sticky refusal) -> Error refusal
                 | Error other ->
@@ -617,7 +618,7 @@ module TestPermissionStanding =
         let u1000 = owner 1000u 1000u
         let u1001 = owner 1001u 1001u
 
-        VirtualFileSystem.empty epoch root
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch root
         |> directory "/S" root 0o1777
         |> file "/S/f" u1001 0o666
         |> hardLink "/S/f" "/S/fl"
@@ -742,7 +743,7 @@ module TestPermissionStanding =
         let staff = owner 501u 20u
         let wheel = owner 501u 0u
 
-        VirtualFileSystem.empty epoch root
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch root
         |> directory "/tmp" root 0o1777
         |> file "/tmp/root" root 0o644
         |> hardLink "/tmp/root" "/tmp/L1"
@@ -923,7 +924,7 @@ module TestPermissionStanding =
                 // whole graph, so one graph holding every row would make the
                 // sweep quadratic.
                 let system =
-                    VirtualFileSystem.empty epoch (owner 0u 0u)
+                    VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
                     |> file "/f" objectOwner bits
                     |> directory "/d" objectOwner bits
                     |> file "/d/kid" objectOwner 0o666
@@ -981,7 +982,7 @@ module TestPermissionStanding =
         // 20, 12, 61, 100 and 701. (`opendir` of the 0774 directory answered
         // EPERM from a sandbox, which is not a permission rule and is not a row.)
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/staff0774" (owner 0u 20u) 0o774
             |> directory "/wheel0750" (owner 0u 0u) 0o750
             |> directory "/wheel0755" (owner 0u 0u) 0o755
@@ -1052,7 +1053,7 @@ module TestPermissionStanding =
         let caller = Credentials.ofIds (uid 1000u) (gid 1000u) [ gid 1000u ; gid 2000u ]
 
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> file "/outside" (owner 1001u 3000u) 0o2666
             |> file "/inside" (owner 1001u 2000u) 0o2666
 
@@ -1097,7 +1098,7 @@ module TestPermissionStanding =
         // uid 501 is in group 20 but does not own the file: a set-ID file
         // changed by a non-owner has not been measured on Darwin.
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> file "/f" (owner 1001u 20u) 0o4666
 
         let system = systemOn SimulatedUnixPlatform.macOsArm64 darwinCaller vfs
@@ -1137,7 +1138,7 @@ module TestPermissionStanding =
             |> shouldEqual (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated))
         | Ok (answer, _) -> failwith $"ftruncate answered %A{answer}"
 
-        match UnixSystem.tryStep 1 (Syscall.FTruncate (fd, 0L)) opened with
+        match UnixSystem.tryStep 0 (Syscall.FTruncate (fd, 0L)) opened with
         | Error refusal ->
             refusal
             |> shouldEqual (SyscallRefusal.FTruncate (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated)))
@@ -1156,7 +1157,7 @@ module TestPermissionStanding =
         // Without a set-ID bit there is nothing to strip, and the same calls
         // are answered.
         let plain =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> file "/f" (owner 1001u 20u) 0o666
             |> systemOn SimulatedUnixPlatform.macOsArm64 darwinCaller
 
@@ -1181,7 +1182,7 @@ module TestPermissionStanding =
 
         // Darwin's AT_FDCWD, with no flags for unlink and AT_REMOVEDIR for
         // rmdir.
-        UnixSystem.tryStep 1 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0)) system
+        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0)) system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1199,7 +1200,7 @@ module TestPermissionStanding =
             )
         )
 
-        UnixSystem.tryStep 1 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80)) system
+        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80)) system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1235,7 +1236,7 @@ module TestPermissionStanding =
 
         for label, parentGroup, parentBits, credentials in parents do
             let vfs =
-                VirtualFileSystem.empty epoch (owner 0u 0u)
+                VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
                 |> directory "/p" (owner 0u parentGroup) parentBits
 
             let standing = Standing.toward credentials (owner 0u parentGroup)
@@ -1270,7 +1271,7 @@ module TestPermissionStanding =
     let private groupTree (bits : int) (movedBits : int) : UnixSystem<int, string> =
         let theirs = owner 1001u 2000u
 
-        VirtualFileSystem.empty epoch (owner 0u 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
         |> directory "/d" theirs bits
         |> file "/d/f" theirs 0o666
         |> file "/d/kid" theirs 0o666
@@ -1292,7 +1293,7 @@ module TestPermissionStanding =
             | SyscallAnswer.Failed error -> failwith $"expected success or EACCES, got %O{error}"
 
         let renamed (source : string) (destination : string) (system : UnixSystem<int, string>) : bool =
-            UnixNamespace.tryRenameEager (argument source) (argument destination) system
+            Eager.tryRename (argument source) (argument destination) system
             |> ok
             |> succeeds
 
@@ -1394,9 +1395,7 @@ module TestPermissionStanding =
                     "/w/k", "/d/e"
                     "/w/k", "/d/f"
                 ] do
-                yield
-                    UnixNamespace.tryRenameEager (argument source) (argument destination) system
-                    |> refused
+                yield Eager.tryRename (argument source) (argument destination) system |> refused
         ]
         |> List.choose id
 
@@ -1437,7 +1436,7 @@ module TestPermissionStanding =
                 let searchable (bits : int) : int = bits ||| 0o111
 
                 return
-                    VirtualFileSystem.empty epoch (owner 0u 0u)
+                    VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
                     |> directory "/d" owners.[0] (searchable modes.[0])
                     |> file "/d/f" owners.[1] modes.[1]
                     |> file "/d/g" owners.[2] modes.[2]

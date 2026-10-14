@@ -183,7 +183,7 @@ module TestDeviceDescriptors =
             let fd, opened = openWith flags (pathOf device) system
             assertSound opened
 
-            match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors opened) with
+            match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors opened) with
             | Some description ->
                 match description.Target with
                 | OpenFileTarget.CharacterDevice (_, opened, _) -> opened |> shouldEqual device
@@ -243,7 +243,7 @@ module TestDeviceDescriptors =
             | other -> failwith $"chmod as root: %A{other}"
 
         // Root then gives up its privilege for the default user's IDs.
-        let unprivileged = Become.fully booted.Process.Credentials narrowed
+        let unprivileged = Become.fully (Lone.proc booted).Credentials narrowed
 
         for access in
             [
@@ -266,7 +266,7 @@ module TestDeviceDescriptors =
             | other -> failwith $"stat %s{path}: %A{other}"
 
         let withRegistry (registry : FileDescriptorRegistry) =
-            UnixSystemState.withFileDescriptors registry booted
+            Lone.withFileDescriptors registry booted
 
         let urandom = inodeOf "/dev/urandom"
         let file = inodeOf "/f"
@@ -278,18 +278,18 @@ module TestDeviceDescriptors =
                     urandom
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors booted)
+                    (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openCharacterDevice
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors booted)
+                    (Lone.fileDescriptors booted)
                 FileDescriptorRegistry.openFile
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors booted)
+                    (Lone.fileDescriptors booted)
             ] do
             match UnixSystem.checkInvariants (withRegistry (snd registry)) with
             | [ UnixSystemDefect.DescriptionKindMismatch _ ] -> ()
@@ -300,7 +300,7 @@ module TestDeviceDescriptors =
             urandom
             CharacterDevice.URandom
             FileAccessMode.ReadOnly
-            (UnixSystemState.fileDescriptors booted)
+            (Lone.fileDescriptors booted)
         |> snd
         |> withRegistry
         |> assertSound
@@ -322,9 +322,9 @@ module TestDeviceDescriptors =
                     urandom
                     device
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors booted)
+                    (Lone.fileDescriptors booted)
 
-            let system = UnixSystemState.withFileDescriptors registry booted
+            let system = Lone.withFileDescriptors registry booted
 
             let description =
                 match FileDescriptorRegistry.tryFindId fd registry with
@@ -1053,9 +1053,9 @@ module TestDeviceDescriptors =
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
             let queueFd, registry =
-                FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             for op in [ 1 ; 2 ; 3 ] do
                 match UnixPoll.tryEpollCtl queueFd op fd (EpollEventArgument.Readable (1u, 42UL)) system with

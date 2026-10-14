@@ -1,0 +1,6 @@
+# kernel: Darwin 27.0.0 arm64
+round	0	bytes_received	352256	of	1048576	status	0x300
+round	1	bytes_received	356352	of	1048576	status	0x300
+round	2	bytes_received	348160	of	1048576	status	0x300
+round	3	bytes_received	348160	of	1048576	status	0x300
+round	4	bytes_received	348160	of	1048576	status	0x300

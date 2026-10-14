@@ -275,12 +275,13 @@ module TestModeChange =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
         match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
@@ -346,7 +347,7 @@ module TestModeChange =
     /// `/t` holding a 0600 file and a 0700 directory owned by `by`, as the probe
     /// prepared each row.
     let private tree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
         |> directory "/t" (owner 0u 0u) 0o755
         |> file "/t/f" by 0o600
         |> directory "/t/d" by 0o700
@@ -439,7 +440,7 @@ module TestModeChange =
     /// `/p` holding a file, a directory, links to each, a dangling link, a link
     /// to itself, and an unsearchable directory holding a file.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/p" by 0o755
         |> file "/p/f" by 0o600
         |> directory "/p/d" by 0o700
@@ -498,7 +499,7 @@ module TestModeChange =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private opened
         (p : string)
@@ -511,7 +512,7 @@ module TestModeChange =
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
                 access
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -520,7 +521,7 @@ module TestModeChange =
             FileDescriptorRegistry.openDirectory
                 (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
                 (inodeAt system.Machine.FileSystem p)
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
 
@@ -583,7 +584,7 @@ module TestModeChange =
     [<Test>]
     let ``fchmod of someone else's file is EPERM, however it was opened`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> file "/rootfile" (owner 0u 0u) 0o644
 
         for platform, credentials in
@@ -623,9 +624,9 @@ module TestModeChange =
             let create =
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-            let fd, registry = create (UnixSystemState.fileDescriptors system)
+            let fd, registry = create (Lone.fileDescriptors system)
 
             fd, withDescriptors registry system
 
@@ -661,7 +662,7 @@ module TestModeChange =
             let fd, withSocket = NewSocket.create domain kind protocol linux
 
             let socket =
-                match FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors withSocket) with
+                match FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors withSocket) with
                 | Some (OpenFileObject.Socket socket) -> socket
                 | other -> failwith $"fd %d{fd} is not a socket: %A{other}"
 
@@ -824,15 +825,15 @@ module TestModeChange =
 
         // A success, so the comparison covers the state the call moves, and a
         // failure.
-        UnixSystem.tryStep 1 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0)) system
+        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0)) system
         |> answered
         |> shouldEqual (chmodAnswer "/p/lf" 0o640 system)
 
-        UnixSystem.tryStep 1 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0)) system
+        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0)) system
         |> answered
         |> shouldEqual (chmodAnswer "/p/dang" 0o640 system)
 
-        UnixSystem.tryStep 1 (Syscall.FChMod (fd, 0o604)) withFd
+        UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o604)) withFd
         |> answered
         |> shouldEqual (fchmodAnswer fd 0o604 withFd)
 
@@ -842,7 +843,7 @@ module TestModeChange =
 
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly darwin
 
-        match UnixSystem.tryStep 1 (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0)) darwin with
+        match UnixSystem.tryStep 0 (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0)) darwin with
         | Error (SyscallRefusal.FChModAt refusal) ->
             Error refusal
             |> shouldEqual (
@@ -852,7 +853,7 @@ module TestModeChange =
             )
         | other -> failwith $"step chmod as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 1 (Syscall.FChMod (fd, 0o644)) withFd with
+        match UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o644)) withFd with
         | Error (SyscallRefusal.FChMod refusal) ->
             Error refusal
             |> shouldEqual (UnixPathResolution.tryFchmod fd 0o644 withFd |> Result.map ignore)

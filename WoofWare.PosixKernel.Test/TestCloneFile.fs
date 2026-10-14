@@ -113,7 +113,7 @@ module TestCloneFile =
     /// The probe's error tree, every inode the caller's.
     let private tree : VirtualFileSystem =
         let vfs =
-            VirtualFileSystem.empty epoch mine
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
             |> file "/f" mine 0o644 "hello"
             |> file "/g" mine 0o644 "other"
             |> directory "/d" mine 0o755
@@ -159,12 +159,13 @@ module TestCloneFile =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private systemOn
         (platform : SimulatedUnixPlatform)
@@ -321,7 +322,7 @@ module TestCloneFile =
 
                 if settable then
                     let vfs =
-                        VirtualFileSystem.empty epoch mine
+                        VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
                         |> directory "/m" (owner 501u directoryGroup) 0o755
                         |> file "/m/msrc" (owner 501u sourceGroup) bits "x"
 
@@ -353,7 +354,7 @@ module TestCloneFile =
 
         for sourceGroup, directoryGroup in [ 20u, 0u ; 0u, 20u ; 20u, 20u ] do
             let vfs =
-                VirtualFileSystem.empty epoch mine
+                VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
                 |> directory "/w" (owner 0u directoryGroup) 0o777
 
             // Born at `sourceTimes.Birth`, then given its access and
@@ -423,7 +424,7 @@ module TestCloneFile =
             systemOn
                 SimulatedUnixPlatform.linuxX64
                 Owners.linuxDefaultCaller
-                (VirtualFileSystem.empty epoch Owners.linuxDefault)
+                (VirtualFileSystem.empty EntryNameMatching.Bytes epoch Owners.linuxDefault)
 
         clone "f" "new" 0x4 linux
         |> Result.map fst
@@ -446,7 +447,9 @@ module TestCloneFile =
         // Special bits on a source the caller does not own, or S_ISGID on one
         // whose group it is not in: unmeasured.
         for by, bits in [ owner 0u 0u, 0o4644 ; owner 0u 0u, 0o1644 ; owner 501u 0u, 0o2644 ] do
-            let vfs = VirtualFileSystem.empty epoch mine |> file "/s" by bits "x"
+            let vfs =
+                VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
+                |> file "/s" by bits "x"
 
             match clone "s" "c" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs) with
             | Error (CloneFileRefusal.UnmeasuredSpecialBits _) -> ()
@@ -454,7 +457,9 @@ module TestCloneFile =
 
         // Without special bits, someone else's readable file clones as the
         // probe's /etc/hosts row did.
-        let vfs = VirtualFileSystem.empty epoch mine |> file "/s" (owner 0u 0u) 0o644 "x"
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch mine
+            |> file "/s" (owner 0u 0u) 0o644 "x"
 
         match clone "s" "c" 0x4 (systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs) with
         | Ok (SyscallAnswer.Completed 0L, after) ->
@@ -470,13 +475,13 @@ module TestCloneFile =
         let system =
             let s = systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs
 
-            { s with
-                Process =
-                    { s.Process with
-                        CurrentDirectoryInode = inodeAt vfs "/orph"
-                    }
-            }
-            |> Launched.restand
+            s
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = inodeAt vfs "/orph"
+                }
+            )
+            |> Lone.restand
 
         let system =
             match UnixNamespace.tryRmdir (PathArg.ofPath (UnixPath.parseOrFail context "/orph")) system with

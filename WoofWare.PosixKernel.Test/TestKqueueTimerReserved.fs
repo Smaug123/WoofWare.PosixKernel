@@ -64,10 +64,10 @@ module TestKqueueTimerReserved =
 
     /// Every kqueue a descriptor of `system` names.
     let private kqueues (system : UnixSystem<int, string>) : KqueueState list =
-        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system)
+        FileDescriptorRegistry.fds (Lone.fileDescriptors system)
         |> Map.toList
         |> List.choose (fun (fd, _) ->
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Kqueue state) -> Some state
             | _ -> None
         )

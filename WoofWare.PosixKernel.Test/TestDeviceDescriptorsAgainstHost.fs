@@ -311,9 +311,9 @@ module TestDeviceDescriptorsAgainstHost =
                  finally
                      hostClose epoll |> ignore<int>),
                 (let queueFd, registry =
-                    FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+                    FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-                 let system = UnixSystemState.withFileDescriptors registry system
+                 let system = Lone.withFileDescriptors registry system
 
                  match UnixPoll.tryEpollCtl queueFd 1 fd (EpollEventArgument.Readable (1u, 0UL)) system with
                  | Ok (EpollCtlAnswer.Changed, _) -> Ok 0L

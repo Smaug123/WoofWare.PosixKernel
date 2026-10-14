@@ -110,9 +110,7 @@ module TestLinkCount =
         | LinkCountStep.RemoveDirectory path ->
             held, Answered.rmdir (rooted path) system |> completed $"rmdir %s{path}" |> snd
         | LinkCountStep.Rename (source, destination) ->
-            match
-                UnixNamespace.tryRenameEager (PathArg.ofText $"/%s{source}") (PathArg.ofText $"/%s{destination}") system
-            with
+            match Eager.tryRename (PathArg.ofText $"/%s{source}") (PathArg.ofText $"/%s{destination}") system with
             | Ok result -> held, result |> completed $"rename %s{source} %s{destination}" |> snd
             | Error refusal -> failwith $"rename %s{source} %s{destination} was refused: %A{refusal}"
         | LinkCountStep.Hold path ->
@@ -286,7 +284,7 @@ module TestLinkCount =
             DirectoryEntryName.parseOrFail context s
 
         let now = UnixTimestamp.createOrFail context 1_700_000_000L 0
-        let vfs = VirtualFileSystem.empty now Owners.linuxDefault
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes now Owners.linuxDefault
         let root = VirtualFileSystem.root vfs
 
         let ok (result : Result<'a, UnixError>) : 'a =
@@ -349,7 +347,7 @@ module TestLinkCount =
     /// subdirectories, and the directory's inode.
     let private wideDirectory (count : int) : InodeNumber * VirtualFileSystem =
         let now = UnixTimestamp.createOrFail context 1_700_000_000L 0
-        let vfs = VirtualFileSystem.empty now Owners.linuxDefault
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes now Owners.linuxDefault
 
         let created (result : Result<InodeNumber * VirtualFileSystem, UnixError>) =
             match result with

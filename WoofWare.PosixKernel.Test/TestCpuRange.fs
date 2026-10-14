@@ -86,7 +86,7 @@ module TestCpuRange =
             match spawned, inRange count cpu with
             | Ok (Ok (SpawnAnswer.Spawned _, after)), true ->
                 cover Side.Inside
-                (UnixThreadTable.get 1 after.Threads).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 1 (Lone.threads after)).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants after |> shouldEqual []
             | Error message, false ->
                 cover Side.Outside
@@ -105,7 +105,7 @@ module TestCpuRange =
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
                 cover Side.Inside
-                (UnixThreadTable.get 0 system.Threads).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 0 (Lone.threads system)).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
@@ -118,18 +118,18 @@ module TestCpuRange =
     [<Test>]
     let ``launch refuses exactly a leader on a processor the machine does not have`` () : unit =
         let property (cover : Side -> unit) (platform : SimulatedUnixPlatform, count : int, cpu : int) : unit =
-            let machine = SimulatedMachine.ofSystem (systemWith platform count)
+            let machine = Machines.ofSystem (systemWith platform count)
 
             let launch = Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId cpu)
 
-            match SimulatedMachine.tryLaunch launch machine, inRange count cpu with
+            match Machines.tryLaunch launch machine, inRange count cpu with
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixThreadTable.get 0 (Machines.viewOf pid after).Threads).Cpu
+                (UnixThreadTable.get 0 (Proc.threads pid (Machines.viewOf pid after))).Cpu
                 |> shouldEqual (CpuId cpu)
 
-                SimulatedMachine.checkInvariants after |> shouldEqual []
+                Machines.checkInvariants after |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
 
@@ -143,15 +143,15 @@ module TestCpuRange =
     /// `system` with thread `thread`'s processor overwritten with `cpu`, as no
     /// public route can do.
     let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Threads =
-                system.Threads
-                |> Map.add
-                    thread
-                    { UnixThreadTable.get thread system.Threads with
-                        Cpu = CpuId cpu
-                    }
-        }
+        system
+        |> Lone.mapThreads (fun threads ->
+            threads
+            |> Map.add
+                thread
+                { UnixThreadTable.get thread threads with
+                    Cpu = CpuId cpu
+                }
+        )
 
     [<Test>]
     let ``checkInvariants reports exactly a thread on a processor the machine does not have`` () : unit =
@@ -159,7 +159,7 @@ module TestCpuRange =
             let system = systemWith platform count |> Threads.spawn 1 |> forgeCpu 1 cpu
 
             let machine =
-                SimulatedMachine.ofSystem (systemWith platform count)
+                Machines.ofSystem (systemWith platform count)
                 |> Machines.inProcess
                     UnixSystem.defaultProcessId
                     (fun view -> (), Threads.spawn 1 view |> forgeCpu 1 cpu)
@@ -168,13 +168,13 @@ module TestCpuRange =
             if inRange count cpu then
                 cover Side.Inside
                 UnixSystem.checkInvariants system |> shouldEqual []
-                SimulatedMachine.checkInvariants machine |> shouldEqual []
+                Machines.checkInvariants machine |> shouldEqual []
             else
                 cover Side.Outside
                 let defect = UnixSystemDefect.CpuBeyondMachine (1, CpuId cpu, count)
                 UnixSystem.checkInvariants system |> shouldEqual [ defect ]
 
-                SimulatedMachine.checkInvariants machine
+                Machines.checkInvariants machine
                 |> shouldEqual [ SimulatedMachineDefect.View (UnixSystem.defaultProcessId, defect) ]
 
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
