@@ -177,10 +177,12 @@ type CharacterDevice =
 /// Carries only the metadata whose shape depends on which kind of thing this inode is.
 /// Metadata whose shape is the same for all inodes lives on <c>Inode</c> instead.
 ///
-/// The emulated filesystem is case-sensitive and normalisation-preserving,
-/// because names are compared byte for byte.
-/// This is more like a standard Linux filesystem than APFS, although it's not <i>wrong</i>
-/// from the point of view of the kernel.
+/// The emulated filesystem is case-sensitive and normalisation-preserving:
+/// a directory binds a name under exactly the bytes it was created with.
+/// On Linux, a lookup reaches only the entry bound under exactly the bytes looked up.
+/// On Darwin, as on APFS, a lookup reaches the entry bound under any canonically
+/// equivalent Unicode spelling of them; this library holds no Unicode tables, so
+/// a call whose answer that equivalence could change throws <c>UnmodelledException</c>.
 /// </remarks>
 [<RequireQualifiedAccess>]
 type InodeContent =

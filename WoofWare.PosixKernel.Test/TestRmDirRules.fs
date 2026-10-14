@@ -60,7 +60,9 @@ module TestRmDirRules =
     /// `FinalNavigation` observable: with Darwin's `Demand` walk, "lcur/" lands
     /// on `Current` and "lpar/" on `Parent`, and the two earn different errnos.
     let private tree : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let dir (parent : InodeNumber) (n : string) (bits : PermissionBits) (vfs : VirtualFileSystem) =

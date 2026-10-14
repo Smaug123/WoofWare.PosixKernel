@@ -90,7 +90,7 @@ module internal ReadRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadRefusal) : RefusalKind =
         match refusal with
-        | ReadRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | ReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | ReadRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
@@ -124,7 +124,7 @@ module internal PReadRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PReadRefusal) : RefusalKind =
         match refusal with
-        | PReadRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | PReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
@@ -322,7 +322,7 @@ module internal WriteRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : WriteRefusal) : RefusalKind =
         match refusal with
-        | WriteRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | WriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | WriteRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
         | WriteRefusal.ConnectionBecameNonBlocking _ -> RefusalKind.Unmodelled
         | WriteRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
@@ -377,7 +377,7 @@ module internal ReceiveRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReceiveRefusal) : RefusalKind =
         match refusal with
-        | ReceiveRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | ReceiveRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReceiveRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | ReceiveRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
@@ -430,7 +430,7 @@ module internal SendRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SendRefusal) : RefusalKind =
         match refusal with
-        | SendRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | SendRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SendRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | SendRefusal.UnmeasuredCount _ -> RefusalKind.Unmodelled
         | SendRefusal.UnmodelledSocketPhase _ -> RefusalKind.Unmodelled
@@ -642,7 +642,7 @@ module internal PWriteRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PWriteRefusal) : RefusalKind =
         match refusal with
-        | PWriteRefusal.Buffer _ -> RefusalKind.Unmodelled
+        | PWriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PWriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | PWriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | PWriteRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
@@ -1198,7 +1198,7 @@ module UnixReadWrite =
         // `SignalState.generate`). A Linux stream socket with no peer raises it
         // as a pipe does (socket-unconnected-transfer.c: on the writing thread,
         // before the write returned); no Darwin socket with no peer raises it.
-        if ProcessId.toInt32 system.Process.ProcessId = 1 then
+        if ProcessSignal.isInit system then
             Error (WriteRefusal.InitProcess target)
         else
 
@@ -1213,34 +1213,12 @@ module UnixReadWrite =
                 Target = receiver
             }
 
-        let generation =
-            SignalState.generate
-                system.Process.CoreDumps
-                system.Leader
-                (system.Threads |> Map.keys |> Set.ofSeq)
-                entry
-                system.Process.Signals
-
-        match generation with
+        match ProcessSignal.generate entry system with
         | Error refusal -> Error (WriteRefusal.SignalReceiver (target, refusal))
-        | Ok (SignalGeneration.ProcessContinues signals) ->
-            Ok (
-                WriteStep.ReturnsRaising (
-                    answer,
-                    entry,
-                    { system with
-                        Process =
-                            { system.Process with
-                                Signals = signals
-                            }
-                    }
-                )
-            )
-        | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
-            |> WriteStep.ProcessEnded
-            |> Ok
-        | Ok (SignalGeneration.ProcessStopped (signal, _)) ->
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+            Ok (WriteStep.ReturnsRaising (answer, entry, system))
+        | Ok (ProcessFate.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
             failwith
                 $"UnixReadWrite: generating %O{signal} for a write into %s{BrokenWriteTarget.describe target} stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
 
@@ -2289,7 +2267,9 @@ module UnixReadWrite =
         else
 
         // Measured on both (`tcp-blocking.c`, sections R-eintr and
-        // R-restart): EINTR without SA_RESTART, and on sleeping with it.
+        // R-restart): EINTR without SA_RESTART, and on sleeping with it; and
+        // so for a read whose description became non-blocking while it slept
+        // (`docs/probes/nonblocking-asleep`, row T-read).
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
@@ -2353,6 +2333,10 @@ module UnixReadWrite =
             Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), finished)
         else
 
+        // Unlike a write, a read whose description became non-blocking while
+        // it slept answers a signal as a blocking one does, on both (measured,
+        // `docs/probes/nonblocking-asleep`, row P-read): Linux's `pipe_read`
+        // returns as soon as its sleep is interrupted.
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
         | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
@@ -3691,7 +3675,10 @@ module UnixReadWrite =
             // room. Darwin's sleeper takes whichever reached it first, which is
             // refused. With no room, measured on both (sections W-partial and
             // W-empty): the count taken, under SA_RESTART or not, or with
-            // nothing taken EINTR, or a restart under SA_RESTART.
+            // nothing taken EINTR, or a restart under SA_RESTART; with nothing
+            // taken through a description made non-blocking while it slept
+            // too, unlike a Linux pipe write (`docs/probes/nonblocking-asleep`,
+            // row T-write0).
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, room with
             | SimulatedUnixFlavour.Darwin, Some _ ->
                 Error (
@@ -3876,6 +3863,22 @@ module UnixReadWrite =
                 WriteResumption.Answered
                 system
         else
+
+        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        | SimulatedUnixFlavour.Linux when nonBlockingNow writer system ->
+            // Measured on Linux 6.18.5 (`docs/probes/nonblocking-asleep`, row
+            // P-write0): a write asleep with nothing in, whose description
+            // became non-blocking while it slept, answered EAGAIN to a signal,
+            // under SA_RESTART or not, where Darwin's answered EINTR. Linux's
+            // `pipe_write` looks at O_NONBLOCK before it looks for a signal, so
+            // the handlers' flags never come into it. Woken without one, it
+            // sleeps on (pipe-blocking.c section N3).
+            match SyscallInterruption.interrupts thread system with
+            | Error refusal -> Error (WriteRefusal.Interruption refusal)
+            | Ok true -> answered (WriteAnswer.Failed UnixError.EAGAIN) finished
+            | Ok false -> Ok (parkWrite thread writer fd parked.Buffer parked.Count parked.Written system)
+        | SimulatedUnixFlavour.Linux
+        | SimulatedUnixFlavour.Darwin ->
 
         // Measured on both (pipe-blocking.c section D): a write asleep with
         // nothing in returned EINTR without SA_RESTART and slept on with it.
@@ -4595,11 +4598,7 @@ module UnixReadWrite =
             {
                 Thread = thread
                 Call = call
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = count
-                    }
+                Range = CopyRange.fromStart count
                 System = system
             }
 
@@ -4780,6 +4779,7 @@ module UnixReadWrite =
         (paused : PausedWrite<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.writeWithBytes" "UnixReadWrite.write or finishWrite" paused
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
 
         match paused.Call with
@@ -4843,11 +4843,7 @@ module UnixReadWrite =
             {
                 Thread = thread
                 Call = call
-                Range =
-                    {
-                        FirstByte = 0
-                        ByteCount = count
-                    }
+                Range = CopyRange.fromStart count
                 System = system
             }
 
@@ -4911,6 +4907,7 @@ module UnixReadWrite =
         (paused : PausedSend<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.sendWithBytes" "UnixReadWrite.send" paused
         CopyRange.require "UnixReadWrite.sendWithBytes" paused.Range bytes
 
         match paused.Call with
@@ -4963,11 +4960,7 @@ module UnixReadWrite =
                         Thread = thread
                         Fd = fd
                         FileOffset = offset
-                        Range =
-                            {
-                                FirstByte = 0
-                                ByteCount = count
-                            }
+                        Range = CopyRange.fromStart count
                         System = system
                     }
         )
@@ -5017,6 +5010,7 @@ module UnixReadWrite =
         (paused : PausedPWrite<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
+        CallProgress.requirePaused "UnixReadWrite.pwriteWithBytes" "UnixReadWrite.pwrite" paused
         CopyRange.require "UnixReadWrite.pwriteWithBytes" paused.Range bytes
         tryPwriteBytes paused.Thread paused.Fd bytes paused.FileOffset paused.System
 

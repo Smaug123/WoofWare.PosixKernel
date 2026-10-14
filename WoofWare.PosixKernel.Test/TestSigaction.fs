@@ -403,7 +403,7 @@ module TestSigaction =
                                 | other -> failwith $"%O{flavour} %d{signo}: generating it answered %A{other}"
 
                             let isPending (system : UnixSystem<int, string>) : bool =
-                                SignalState.pending system.Process.Signals
+                                SignalState.pending (Lone.proc system).Signals
                                 |> List.exists (fun entry -> entry.Signal = signal)
 
                             isPending generated |> shouldEqual true

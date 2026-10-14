@@ -88,15 +88,14 @@ module TestPosixFadvise =
                 (ForgedName.ofInode system (inodeOf system path))
                 (inodeOf system path)
                 mode
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
-        fd, UnixSystemState.withFileDescriptors registry system
+        fd, Lone.withFileDescriptors registry system
 
     let private withEpoll (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-        fd, UnixSystemState.withFileDescriptors registry system
+        fd, Lone.withFileDescriptors registry system
 
     let private socket (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system

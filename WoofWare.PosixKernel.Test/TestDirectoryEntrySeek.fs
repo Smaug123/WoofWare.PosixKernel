@@ -498,7 +498,9 @@ module TestDirectoryEntrySeek =
                 reap record streams stream.Directory vfs, streams
 
     let private runHistory (record : Reached -> unit) (ops : Op list) : unit =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         assertAgrees "on the empty filesystem" Set.empty vfs
 
         ops
@@ -540,7 +542,9 @@ module TestDirectoryEntrySeek =
 
     /// The root, holding "a" and "b".
     let private twoNames () : VirtualFileSystem =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let create (n : string) (vfs : VirtualFileSystem) : VirtualFileSystem =
@@ -615,6 +619,7 @@ module TestDirectoryEntrySeek =
 
         let forged =
             VirtualFileSystem.Unchecked.ofParts
+                EntryNameMatching.Bytes
                 (VirtualFileSystem.inodes vfs)
                 (VirtualFileSystem.root vfs)
                 (VirtualFileSystem.nextInode vfs)

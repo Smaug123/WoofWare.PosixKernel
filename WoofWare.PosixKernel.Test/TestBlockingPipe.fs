@@ -511,6 +511,10 @@ module TestBlockingPipe =
             elif signalled || (givesUp && written > 0) then
                 if written > 0 then
                     Seen.Wrote (int64 written), answered thread r
+                // Linux's write looks at O_NONBLOCK before it looks for a
+                // signal (`docs/probes/nonblocking-asleep`, row P-write0).
+                elif r.Linux && r.NonBlocking.[description] then
+                    Seen.Failed UnixError.EAGAIN, answered thread r
                 else
                     interrupted r, answered thread r
             elif givesUp then
@@ -656,11 +660,32 @@ module TestBlockingPipe =
             BlockingPipeOp.Finish 0
         ]
 
+    /// A pipe filled by one write, then a 1-byte write through fd 1 that
+    /// sleeps having put nothing in; fd 1's description made non-blocking; a
+    /// signal to the sleeper; and its finish, which on Linux answers EAGAIN.
+    /// Threads are named by index as in `interruptedWrite`.
+    let private nonBlockingInterruptedWrite : BlockingPipeOp list =
+        [
+            BlockingPipeOp.Write (0, 1, 65536, true)
+            BlockingPipeOp.Write (0, 1, 1, true)
+            BlockingPipeOp.SetNonBlocking (1, true)
+            BlockingPipeOp.Signal 0
+            BlockingPipeOp.Wake
+            BlockingPipeOp.Finish 0
+        ]
+
     /// Openings that reach what a random run reaches only now and then: a
     /// write's finish with the count already in, which needs a signal to a
-    /// writer asleep with part of its payload in the buffer.
+    /// writer asleep with part of its payload in the buffer; and the finish
+    /// of a write with nothing in, signalled once its description has become
+    /// non-blocking.
     let private openingGen : Gen<BlockingPipeOp list> =
-        Gen.frequency [ 7, Gen.constant [] ; 1, Gen.constant interruptedWrite ]
+        Gen.frequency
+            [
+                7, Gen.constant []
+                1, Gen.constant interruptedWrite
+                1, Gen.constant nonBlockingInterruptedWrite
+            ]
 
     /// The label the test below covers for a call that came to `seen`.
     let private label (flavour : string) (what : string) (seen : Seen) : string =
@@ -700,20 +725,20 @@ module TestBlockingPipe =
                 ||> List.fold (fun system thread -> Threads.spawn thread system)
 
             let bare =
-                { bare with
-                    Process =
-                        { bare.Process with
-                            Signals =
-                                bare.Process.Signals
-                                |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                                |> SignalState.setDisposition
-                                    Signal.SIGUSR1
-                                    (SignalDisposition.Catch
-                                        { SignalCatch.ofHandler "h" with
-                                            Restart = restart
-                                        })
-                        }
-                }
+                bare
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals =
+                            proc.Signals
+                            |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                            |> SignalState.setDisposition
+                                Signal.SIGUSR1
+                                (SignalDisposition.Catch
+                                    { SignalCatch.ofHandler "h" with
+                                        Restart = restart
+                                    })
+                    }
+                )
 
             let mutable system =
                 match UnixPipe.tryPipe2 0 UserBuffer.Mapped bare with
@@ -721,7 +746,7 @@ module TestBlockingPipe =
                 | other -> failwith $"pipe2: %A{other}"
 
             let pipeId =
-                match FileDescriptorRegistry.tryFindTarget 0 (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget 0 (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Pipe (pipeId, PipeEnd.Read)) -> pipeId
                 | other -> failwith $"fd 0 is %A{other}"
 
@@ -729,7 +754,7 @@ module TestBlockingPipe =
             let libraryDescription : Map<int, OpenFileDescriptionId> =
                 [ 0 ; 1 ]
                 |> List.map (fun fd ->
-                    match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
                     | Some id -> fd, id
                     | None -> failwith $"fd %d{fd} names no description"
                 )
@@ -1051,18 +1076,18 @@ module TestBlockingPipe =
                             }
                 | BlockingPipeOp.Signal thread ->
                     system <-
-                        { system with
-                            Process =
-                                { system.Process with
-                                    Signals =
-                                        SignalState.enqueue
-                                            {
-                                                Signal = Signal.SIGUSR1
-                                                Target = ValueSome thread
-                                            }
-                                            system.Process.Signals
-                                }
-                        }
+                        system
+                        |> Lone.mapProc (fun proc ->
+                            { proc with
+                                Signals =
+                                    SignalState.enqueue
+                                        {
+                                            Signal = Signal.SIGUSR1
+                                            Target = ValueSome thread
+                                        }
+                                        proc.Signals
+                            }
+                        )
 
                     reference <-
                         { reference with
@@ -1164,7 +1189,7 @@ module TestBlockingPipe =
                             )
 
                         let actual =
-                            UnixThreadTable.parkedFor thread system.Threads
+                            UnixThreadTable.parkedFor thread (Lone.threads system)
                             |> Option.map (fun parked ->
                                 match parked with
                                 | ParkedSyscall.PipeRead read -> 0, read.Count, 0
@@ -1265,6 +1290,10 @@ module TestBlockingPipe =
                 "Linux wake: fewer than could proceed"
                 "Darwin finish read: refused"
                 "Darwin finish write: refused"
+                // A write with nothing in, signalled once its description has
+                // become non-blocking (`nonBlockingInterruptedWrite`).
+                "Linux finish write: EAGAIN"
+                "Darwin finish write: EINTR"
                 "Darwin close: ends a read"
                 "Darwin close: ends a write"
                 "Darwin close: ends a transfer, one through a dup sleeping on"
@@ -1302,20 +1331,20 @@ module TestBlockingPipe =
             |> Threads.spawn sleeper
 
         let system =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            system.Process.Signals
-                            |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
-                            |> SignalState.setDisposition
-                                Signal.SIGUSR1
-                                (SignalDisposition.Catch
-                                    { SignalCatch.ofHandler "h" with
-                                        Restart = restart
-                                    })
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore
+                        |> SignalState.setDisposition
+                            Signal.SIGUSR1
+                            (SignalDisposition.Catch
+                                { SignalCatch.ofHandler "h" with
+                                    Restart = restart
+                                })
+                }
+            )
 
         let system =
             match UnixPipe.tryPipe2 0 UserBuffer.Mapped system with
@@ -1331,7 +1360,7 @@ module TestBlockingPipe =
             else
                 match
                     WriteOutcomes.admitThenWrite
-                        system.Leader
+                        (Lone.leader system)
                         4
                         UserBuffer.Mapped
                         (ImmutableArray.CreateRange (payload 99 (min remaining 4096)))
@@ -1362,7 +1391,7 @@ module TestBlockingPipe =
     let private leaderWrites (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match
             WriteOutcomes.admitThenWrite
-                system.Leader
+                (Lone.leader system)
                 4
                 UserBuffer.Mapped
                 (ImmutableArray.CreateRange (payload 3 count))
@@ -1377,18 +1406,18 @@ module TestBlockingPipe =
         | other -> failwith $"closing %d{fd}: %A{other}"
 
     let private signalled (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome sleeper
-                            }
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome sleeper
+                        }
+                        proc.Signals
+            }
+        )
 
     /// The sleeper's call, finished.
     let private finished (payloadOfWrite : byte list option) (system : UnixSystem<int, string>) : Seen =
@@ -1678,7 +1707,7 @@ module TestBlockingPipe =
     let private leaderWriteAnswer (count : int) (fd : int) (system : UnixSystem<int, string>) =
         match
             WriteOutcomes.admitThenWrite
-                system.Leader
+                (Lone.leader system)
                 fd
                 UserBuffer.Mapped
                 (ImmutableArray.CreateRange (payload 5 count))
@@ -1702,8 +1731,7 @@ module TestBlockingPipe =
             let system = pipeHolding SimulatedUnixPlatform.linuxX64 false 0 |> readerAsleep
 
             let reader =
-                FileDescriptorRegistry.tryFindId 3 (UnixSystemState.fileDescriptors system)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors system) |> Option.get
 
             let system =
                 if dupKept then
@@ -1755,8 +1783,7 @@ module TestBlockingPipe =
                 pipeHolding SimulatedUnixPlatform.linuxX64 false 65536 |> writerAsleep 1
 
             let writer =
-                FileDescriptorRegistry.tryFindId 4 (UnixSystemState.fileDescriptors system)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId 4 (Lone.fileDescriptors system) |> Option.get
 
             let system =
                 if dupKept then
@@ -1830,8 +1857,7 @@ module TestBlockingPipe =
                 |> readerAsleepThrough 2 3
 
             let reader =
-                FileDescriptorRegistry.tryFindId 3 (UnixSystemState.fileDescriptors system)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors system) |> Option.get
 
             let duplicate, system = if keepDup then dupped 3 system else -1, system
             let system = closed 3 system
@@ -1867,8 +1893,7 @@ module TestBlockingPipe =
                 let system = pipeHolding platform false prefill |> writerAsleep count
 
                 let writer =
-                    FileDescriptorRegistry.tryFindId 4 (UnixSystemState.fileDescriptors system)
-                    |> Option.get
+                    FileDescriptorRegistry.tryFindId 4 (Lone.fileDescriptors system) |> Option.get
 
                 let duplicate, system = if keepDup then dupped 4 system else -1, system
                 let system = closed 4 system
@@ -1897,7 +1922,7 @@ module TestBlockingPipe =
                 UnixSystem.checkInvariants system |> shouldEqual []
 
                 let pipe =
-                    match FileDescriptorRegistry.tryFindTarget 3 (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindTarget 3 (Lone.fileDescriptors system) with
                     | Some (OpenFileTarget.Pipe (pipeId, _)) -> UnixMachineState.pipe pipeId system.Machine
                     | other -> failwith $"%A{other}"
 
@@ -1930,8 +1955,7 @@ module TestBlockingPipe =
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
         let reader =
-            FileDescriptorRegistry.tryFindId 3 (UnixSystemState.fileDescriptors system)
-            |> Option.get
+            FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors system) |> Option.get
 
         WakeCondition.satisfied sleeper condition system |> shouldEqual Set.empty
 
@@ -1966,8 +1990,7 @@ module TestBlockingPipe =
                 | other -> failwith $"expected the read to sleep, got %A{other}"
 
             let reader =
-                FileDescriptorRegistry.tryFindId 3 (UnixSystemState.fileDescriptors asleep)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId 3 (Lone.fileDescriptors asleep) |> Option.get
 
             UnixWait.satisfied sleeper asleep |> shouldEqual (Some Set.empty)
             UnixWait.satisfied 99 asleep |> shouldEqual None
@@ -2059,8 +2082,7 @@ module TestBlockingPipe =
 
         let refused (fd : int) (system : UnixSystem<int, string>) =
             let description =
-                FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
-                |> Option.get
+                FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
             match UnixDescriptor.tryClose fd system with
             | Error (CloseRefusal.DarwinWokenTransfer (refusedOn, thread)) ->
@@ -2103,23 +2125,23 @@ module TestBlockingPipe =
     [<Test>]
     let ``Darwin: the close raises an ended write's SIGPIPE under the disposition it has then`` () : unit =
         let withSigpipe (disposition : SignalDisposition<string>) (system : UnixSystem<int, string>) =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals = SignalState.setDisposition Signal.SIGPIPE disposition system.Process.Signals
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+                }
+            )
 
         let asleep () =
             pipeHolding SimulatedUnixPlatform.macOsArm64 false 65536 |> writerAsleep 1
 
         // Ignored at the close, and the default by the finish: discarded.
         let system = asleep () |> closed 4 |> withSigpipe SignalDisposition.Default
-        SignalState.pending system.Process.Signals |> shouldEqual []
+        SignalState.pending (Lone.proc system).Signals |> shouldEqual []
 
         match libraryFinishWrite sleeper (payload 7 1) system with
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, _, after)) ->
-            SignalState.pending after.Process.Signals |> shouldEqual []
+            SignalState.pending (Lone.proc after).Signals |> shouldEqual []
         | other -> failwith $"expected EPIPE, the process carrying on, got %A{other}"
 
         // Caught: pending for the process from the close on.
@@ -2128,7 +2150,7 @@ module TestBlockingPipe =
             |> withSigpipe (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
             |> closed 4
 
-        SignalState.pending system.Process.Signals
+        SignalState.pending (Lone.proc system).Signals
         |> List.map (fun pending -> pending.Signal, pending.Target)
         |> shouldEqual [ Signal.SIGPIPE, ValueNone ]
 
@@ -2271,7 +2293,7 @@ module TestBlockingPipe =
                         admitted
                 with
                 | Ok (WriteStep.WouldBlock (_, asleep)) ->
-                    match UnixThreadTable.parkedFor sleeper asleep.Threads with
+                    match UnixThreadTable.parkedFor sleeper (Lone.threads asleep) with
                     | Some (ParkedSyscall.PipeWrite parked) ->
                         (parked.Count, parked.Written) |> shouldEqual (200000, 65536)
                     | other -> failwith $"%O{platform}: %A{other}"
@@ -2284,21 +2306,21 @@ module TestBlockingPipe =
         // SA_RESTART, so handlers that disagree about it do not matter; one
         // with nothing in is where they would.
         let bothSignals (system : UnixSystem<int, string>) =
-            { system with
-                Process =
-                    { system.Process with
-                        Signals =
-                            system.Process.Signals
-                            |> SignalState.setDisposition
-                                Signal.SIGUSR2
-                                (SignalDisposition.Catch (SignalCatch.ofHandler "h2"))
-                            |> SignalState.enqueue
-                                {
-                                    Signal = Signal.SIGUSR2
-                                    Target = ValueSome sleeper
-                                }
-                    }
-            }
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        proc.Signals
+                        |> SignalState.setDisposition
+                            Signal.SIGUSR2
+                            (SignalDisposition.Catch (SignalCatch.ofHandler "h2"))
+                        |> SignalState.enqueue
+                            {
+                                Signal = Signal.SIGUSR2
+                                Target = ValueSome sleeper
+                            }
+                }
+            )
             |> signalled
 
         for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do

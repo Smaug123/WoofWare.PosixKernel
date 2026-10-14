@@ -125,7 +125,7 @@ module TestLaunchedStreams =
         (system : UnixSystem<int, string>)
         : Result<WriteAnswer * UnixSystem<int, string>, WriteRefusal option>
         =
-        match WriteOutcomes.admitThenWrite system.Leader fd UserBuffer.Mapped bytes system with
+        match WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system with
         | Error refusal -> Error (Some refusal)
         | Ok (WriteStep.Returns (answer, after))
         | Ok (WriteStep.ReturnsRaising (answer, _, after)) -> Ok (answer, after)
@@ -277,12 +277,12 @@ module TestLaunchedStreams =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     /// What the launched streams answer, or `None` where the system refused or
     /// the call would sleep, and the system afterwards.
@@ -299,7 +299,7 @@ module TestLaunchedStreams =
             | Ok (WriteAnswer.Failed error, after) -> Some (Answer.WriteFailed error, after)
             | Error _ -> None
         | Op.Read (fd, count) ->
-            match UnixReadWrite.tryRead system.Leader fd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped (uint64 count) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 Some (Answer.ReadBytes bytes.Length, after)
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Some (Answer.ReadFailed error, after)
@@ -321,7 +321,7 @@ module TestLaunchedStreams =
             let answer, after = UnixDescriptor.setNonBlocking fd value system
             Some (Answer.NonBlocking answer, after)
         | Op.Poll fd ->
-            match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
             | None -> Some (Answer.Level 0u, system)
             | Some id -> Some (Answer.Level (LinuxReadiness.ofDescription id system), system)
         | Op.Pipe2 ->
@@ -426,7 +426,7 @@ module TestLaunchedStreams =
             | other -> failwith $"%A{other}"
 
         let queueId =
-            match FileDescriptorRegistry.tryFindId epoll (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindId epoll (Lone.fileDescriptors system) with
             | Some id -> id
             | None -> failwith "the epoll instance is not open"
 
@@ -497,7 +497,7 @@ module TestLaunchedStreams =
         | other -> failwith $"%A{other}"
 
     let private pipeOf (fd : int) (system : UnixSystem<int, string>) : PipeId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Pipe (pipeId, _)) -> pipeId
         | other -> failwith $"fd %d{fd} is %A{other}, not a pipe end"
 

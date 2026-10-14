@@ -1493,12 +1493,12 @@ module TestShutdownAgainstHost =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.ensure 1
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     let private kernelClose (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixDescriptor.tryClose fd system with
@@ -1514,13 +1514,13 @@ module TestShutdownAgainstHost =
         | other -> failwith $"bind: %A{other}"
 
     let private kernelSocketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     /// The port a socket the kernel made is bound to.
     let private kernelPortOf (fd : int) (system : UnixSystem<int, string>) : int =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
             | Some binding -> int binding.Endpoint.Port
@@ -1618,7 +1618,7 @@ module TestShutdownAgainstHost =
         member this.WriteAnswer (e : ConnectionEnd) (count : int) : Result<int, string> =
             let bytes = ImmutableArray.Create (payload, 0, count)
 
-            match WriteOutcomes.admitThenWrite system.Leader (this.Fd e) UserBuffer.Mapped bytes system with
+            match WriteOutcomes.admitThenWrite (Lone.leader system) (this.Fd e) UserBuffer.Mapped bytes system with
             | Ok (WriteStep.Returns (WriteAnswer.Completed written, after)) ->
                 system <- after
                 Ok (int written)
@@ -1739,7 +1739,7 @@ module TestShutdownAgainstHost =
                 let revents, after =
                     match
                         UnixPoll.tryPoll
-                            system.Leader
+                            (Lone.leader system)
                             [
                                 {
                                     Fd = fd
@@ -1761,7 +1761,7 @@ module TestShutdownAgainstHost =
                         // what one would report is the socket's level, as
                         // asked for, with ERR and HUP, which are never masked.
                         let description =
-                            match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                            match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
                             | Some description -> description
                             | None -> failwith $"fd %d{fd} names no description"
 
@@ -1779,7 +1779,7 @@ module TestShutdownAgainstHost =
                         let events, s =
                             match
                                 UnixKqueue.tryKevent
-                                    s.Leader
+                                    (Lone.leader s)
                                     kq
                                     2
                                     changes
@@ -1859,7 +1859,7 @@ module TestShutdownAgainstHost =
                     let s =
                         match
                             UnixKqueue.tryKevent
-                                s.Leader
+                                (Lone.leader s)
                                 kq
                                 changes.Length
                                 changes
@@ -1884,7 +1884,7 @@ module TestShutdownAgainstHost =
 
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    match UnixPoll.tryEpollWait system.Leader port 4 UserBuffer.Mapped 0 system with
+                    match UnixPoll.tryEpollWait (Lone.leader system) port 4 UserBuffer.Mapped 0 system with
                     | Ok (EpollWaitOutcome.Answered events, after) ->
                         system <- after
 
@@ -1899,7 +1899,7 @@ module TestShutdownAgainstHost =
                 | SimulatedUnixFlavour.Darwin ->
                     match
                         UnixKqueue.tryKevent
-                            system.Leader
+                            (Lone.leader system)
                             port
                             0
                             []

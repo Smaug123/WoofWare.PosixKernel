@@ -625,7 +625,7 @@ module TestFsChange =
                                 + String.concat "\n" disagreements
                             )
                 )
-                (VirtualFileSystem.empty buildTime Owners.linuxDefault)
+                (VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault)
             |> ignore<VirtualFileSystem>
 
         let coverage = CoverageSample.check config (Arb.fromGen opsGen) property
@@ -659,7 +659,9 @@ module TestFsChange =
     /// The root with a directory `d`, a file `f` and an empty directory `e`,
     /// and `f` hard-linked into `d` as `h`.
     let private fixture : VirtualFileSystem * InodeNumber * InodeNumber * InodeNumber * InodeNumber =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let d, vfs =

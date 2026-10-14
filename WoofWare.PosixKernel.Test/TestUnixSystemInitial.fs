@@ -160,7 +160,7 @@ module TestUnixSystemInitial =
         system.Machine.EphemeralPortRange |> shouldEqual (uint16 low, uint16 high)
         system.Machine.NextEphemeralPort |> shouldEqual (uint16 low)
 
-        system.Process.Credentials
+        (Lone.proc system).Credentials
         |> shouldEqual (
             Credentials.ofIds (UserId.parseOrFail "test" (uint32 uid)) (GroupId.parseOrFail "test" (uint32 gid)) []
         )
@@ -243,7 +243,7 @@ module TestUnixSystemInitial =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        system.Process.CurrentDirectoryInode
+        (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (VirtualFileSystem.root system.Machine.FileSystem)
 
         UnixPathResolution.currentDirectoryPath system
@@ -274,7 +274,7 @@ module TestUnixSystemInitial =
                 1, PipeEnd.Write, ClientEnd.Draining
                 2, PipeEnd.Write, ClientEnd.Draining
             ] do
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Pipe (pipeId, actualEnd)) ->
                 actualEnd |> shouldEqual pipeEnd
 
@@ -282,7 +282,7 @@ module TestUnixSystemInitial =
                 |> shouldEqual (PipeOrigin.Launched (ExternalEndpoint (UnixSystem.processId system, fd), client))
             | other -> failwith $"fd %d{fd} is %A{other}, not the %O{pipeEnd} end of a launched pipe"
 
-        FileDescriptorRegistry.tryFind 3 (UnixSystemState.fileDescriptors system)
+        FileDescriptorRegistry.tryFind 3 (Lone.fileDescriptors system)
         |> shouldEqual None
 
         system.Machine.Pipes |> Map.count |> shouldEqual 3
@@ -318,7 +318,7 @@ module TestUnixSystemInitial =
             let system : UnixSystem<int, string> =
                 UnixSystem.initial platform |> (Launched.boot launch 0 (CpuId 0))
 
-            let registry = UnixSystemState.fileDescriptors system
+            let registry = Lone.fileDescriptors system
 
             FileDescriptorRegistry.fds registry
             |> Map.keys

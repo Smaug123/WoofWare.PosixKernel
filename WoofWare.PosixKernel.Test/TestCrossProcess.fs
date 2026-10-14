@@ -115,7 +115,7 @@ module TestCrossProcess =
         // the listener has in the other, so an activation that read the
         // registration's descriptor in the connecting process's table would
         // find the connecting socket instead.
-        let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         client |> shouldEqual listener
         Machines.assertClean machine
 
@@ -133,7 +133,7 @@ module TestCrossProcess =
 
         let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
 
-        let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
         let (accepted, kq), machine =
             Machines.inProcess
@@ -179,7 +179,7 @@ module TestCrossProcess =
         let machine = Machines.doIn a (KeventWorld.close own) machine
         Machines.assertClean machine
 
-        let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
         reported b kq 4 machine
         |> fst
@@ -242,7 +242,7 @@ module TestCrossProcess =
 
         UnixWait.wakes (Set.singleton 1) (Machines.viewOf b machine) |> shouldEqual []
 
-        let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         client |> shouldEqual listener
         Machines.assertClean machine
 
@@ -260,7 +260,7 @@ module TestCrossProcess =
 
         let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
 
-        let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
         let machine = sleepInPoll b 1 [ entry accepted pollIn ] machine
 
@@ -285,7 +285,7 @@ module TestCrossProcess =
         let own, machine = Machines.inProcess a (KeventWorld.stream true) machine
         own |> shouldEqual listener
         let machine = Machines.doIn a (KeventWorld.close own) machine
-        let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         finishPoll b 1 machine
@@ -305,7 +305,7 @@ module TestCrossProcess =
             |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
-        SimulatedMachine.wakes asleep machine
+        Machines.wakes asleep machine
 
     /// `thread` of `pid` accepts on the blocking listener `listener`, which holds
     /// nothing, and sleeps.
@@ -352,10 +352,10 @@ module TestCrossProcess =
             Machines.assertClean machine
             woken [ b, 1 ] machine |> shouldEqual []
 
-            let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+            let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
             Machines.assertClean machine
 
-            let listenerId = KeventWorld.idOf listener (Machines.viewOf b machine)
+            let listenerId = KeventWorld.idOfIn b listener (Machines.viewOf b machine)
 
             woken [ b, 1 ] machine
             |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.AcceptQueueNonEmpty listenerId) ]
@@ -408,10 +408,10 @@ module TestCrossProcess =
 
         woken [ b, 1 ] machine |> shouldEqual []
 
-        let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
-        let epollId = KeventWorld.idOf epoll (Machines.viewOf b machine)
+        let epollId = KeventWorld.idOfIn b epoll (Machines.viewOf b machine)
 
         woken [ b, 1 ] machine
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.EpollEventDeliverable epollId) ]
@@ -437,7 +437,7 @@ module TestCrossProcess =
 
         let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
 
-        let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
 
         let epoll, machine =
             Machines.inProcess
@@ -523,10 +523,10 @@ module TestCrossProcess =
 
         woken [ b, 1 ] machine |> shouldEqual []
 
-        let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
-        let kqueueId = KeventWorld.idOf kq (Machines.viewOf b machine)
+        let kqueueId = KeventWorld.idOfIn b kq (Machines.viewOf b machine)
 
         woken [ b, 1 ] machine
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.KqueueEventDeliverable kqueueId) ]
@@ -556,9 +556,10 @@ module TestCrossProcess =
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
 
-            let openShared (view : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+            let openShared (pid : ProcessId) (view : UnixSystem<int, string>) : int * UnixSystem<int, string> =
                 match
-                    OpenFlagWords.openPath
+                    OpenFlagWords.openPathIn
+                        pid
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -582,8 +583,8 @@ module TestCrossProcess =
                 | Ok answered -> answered
                 | Error refusal -> failwith $"flock: %A{refusal}"
 
-            let held, machine = Machines.inProcess a openShared machine
-            let waiting, machine = Machines.inProcess b openShared machine
+            let held, machine = Machines.inProcess a (openShared a) machine
+            let waiting, machine = Machines.inProcess b (openShared b) machine
 
             let outcome, machine = Machines.inProcess a (flock 1 held lockEx) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
@@ -600,7 +601,7 @@ module TestCrossProcess =
             let outcome, machine = Machines.inProcess a (flock 1 held lockUn) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
 
-            let waitingId = KeventWorld.idOf waiting (Machines.viewOf b machine)
+            let waitingId = KeventWorld.idOfIn b waiting (Machines.viewOf b machine)
 
             woken [ b, 1 ] machine
             |> shouldEqual
@@ -645,8 +646,8 @@ module TestCrossProcess =
             woken asleep machine |> shouldEqual []
 
             // One connection to each, made by the other process's third thread.
-            let _, machine = Machines.inProcess a (KeventWorld.client 8081us) machine
-            let _, machine = Machines.inProcess b (KeventWorld.client 8080us) machine
+            let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8081us) machine
+            let _, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
             Machines.assertClean machine
 
             // Park order, not process order; and of b's two accepters on one
@@ -677,7 +678,7 @@ module TestCrossProcess =
         : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
         =
         let ended = UnixThreadLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
-        SimulatedMachine.tryEndProcess ended machine
+        Machines.tryEndProcess ended machine
 
     let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
         match exitIn pid 0 machine with
@@ -698,12 +699,11 @@ module TestCrossProcess =
             let stale = Machines.viewOf a machine
             let machine = exitedOk a machine
 
-            SimulatedMachine.processIds machine |> shouldEqual (Set.singleton b)
-            SimulatedMachine.focus a machine |> shouldEqual None
+            Machines.processIds machine |> shouldEqual (Set.singleton b)
+            Machines.focus a machine |> shouldEqual None
             Machines.assertClean machine
 
-            let error =
-                Assert.Throws<exn> (fun () -> SimulatedMachine.unfocus stale machine |> ignore)
+            let error = Assert.Throws<exn> (fun () -> Machines.unfocus stale machine |> ignore)
 
             error.Message |> shouldContainText "no process on the machine has ID"
 
@@ -719,10 +719,40 @@ module TestCrossProcess =
         let ended = UnixThreadLifecycle.exitGroup 0 0 stale
 
         let error =
-            Assert.Throws<exn> (fun () -> SimulatedMachine.tryEndProcess ended machine |> ignore)
+            Assert.Throws<exn> (fun () -> Machines.tryEndProcess ended machine |> ignore)
 
         error.Message
         |> shouldContainText "was not focused from the machine as it stands"
+
+    [<Test>]
+    let ``a process alone on its machine ends on the machine it ran on, leaving no process`` () : unit =
+        for platform in Machines.platforms do
+            let pids, machine = Machines.ofCount platform 1
+            let view = Machines.viewOf pids.[0] machine
+            let ended = UnixThreadLifecycle.exitGroup 0 3 view
+
+            match Machines.tryEndLoneProcess ended with
+            | Ok (termination, after) ->
+                termination |> shouldEqual (EndedProcess.termination ended)
+                Machines.processIds after |> shouldBeEmpty
+                Machines.assertClean after
+
+                // What `endProcess` answers on the machine the view was of.
+                match Machines.tryEndProcess ended machine with
+                | Ok expected -> (termination, after) |> shouldEqual expected
+                | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"endLoneProcess: %s{ProcessEndRefusal.describe refusal}"
+
+    [<Test>]
+    let ``a process that ended beside others is not ended as a lone one`` () : unit =
+        let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
+        let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf pids.[0] machine)
+
+        let error =
+            Assert.Throws<exn> (fun () -> Machines.tryEndLoneProcess ended |> ignore)
+
+        error.Message |> shouldContainText "SimulatedMachine.endLoneProcess"
+        error.Message |> shouldContainText "is not alone on its machine"
 
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
     let private deliveries (machine : SimulatedMachine<int, string>) : (ExternalEndpoint * byte list) list =
@@ -796,7 +826,7 @@ module TestCrossProcess =
                 let listener, machine = Machines.inProcess b (KeventWorld.listenerAt 8080us) machine
 
                 let connect (target : int) (machine : SimulatedMachine<int, string>) =
-                    let client, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+                    let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
                     let machine = Machines.doIn a (dup2 client target) machine
                     let accepted, machine = Machines.inProcess b (KeventWorld.accept listener) machine
                     accepted, machine
@@ -907,9 +937,10 @@ module TestCrossProcess =
             let a, b = pids.[0], pids.[1]
             let lockEx = 2
 
-            let openLocked (view : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+            let openLocked (pid : ProcessId) (view : UnixSystem<int, string>) : int * UnixSystem<int, string> =
                 match
-                    OpenFlagWords.openPath
+                    OpenFlagWords.openPathIn
+                        pid
                         {
                             Access = FileAccessMode.ReadWrite
                             Create = true
@@ -928,7 +959,7 @@ module TestCrossProcess =
                 | Ok (SyscallAnswer.Completed fd, view) -> int fd, view
                 | other -> failwith $"open: %A{other}"
 
-            let held, machine = Machines.inProcess a openLocked machine
+            let held, machine = Machines.inProcess a (openLocked a) machine
 
             let machine =
                 Machines.doIn
@@ -959,7 +990,7 @@ module TestCrossProcess =
                     )
                     machine
 
-            let waiting, machine = Machines.inProcess b openLocked machine
+            let waiting, machine = Machines.inProcess b (openLocked b) machine
 
             let machine =
                 Machines.doIn
@@ -1009,7 +1040,7 @@ module TestCrossProcess =
                     (fun view ->
                         let fd, view = KeventWorld.stream false view
 
-                        match KeventWorld.connect fd 8080us view with
+                        match KeventWorld.connectIn b fd 8080us view with
                         | SyscallAnswer.Completed 0L, view -> fd, view
                         | other, _ -> failwith $"connect: %A{other}"
                     )
@@ -1026,7 +1057,7 @@ module TestCrossProcess =
                     machine
 
             // A non-blocking client, registered edge-triggered and polled.
-            let watched, machine = Machines.inProcess b (KeventWorld.client 8080us) machine
+            let watched, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
 
             let queue, machine =
                 Machines.inProcess
@@ -1188,7 +1219,7 @@ module TestCrossProcess =
                             let connected, view = KeventWorld.stream false view
 
                             let view =
-                                match KeventWorld.connect connected 8081us view with
+                                match KeventWorld.connectIn child connected 8081us view with
                                 | SyscallAnswer.Completed 0L, view -> view
                                 | other, _ -> failwith $"connect: %A{other}"
 
@@ -1200,7 +1231,8 @@ module TestCrossProcess =
                 let c, machine =
                     Machines.inProcess parent (KeventWorld.accept parentListener) machine
 
-                let q, machine = Machines.inProcess parent (KeventWorld.client 8080us) machine
+                let q, machine =
+                    Machines.inProcess parent (KeventWorld.clientIn parent 8080us) machine
 
                 let queue, machine =
                     Machines.inProcess
@@ -1301,7 +1333,7 @@ module TestCrossProcess =
                         a
                         (fun view ->
                             let listener, view = KeventWorld.listenerAt 8080us view
-                            let client, view = KeventWorld.client 8080us view
+                            let client, view = KeventWorld.clientIn a 8080us view
 
                             if listenerHigher then
                                 dup2 listener 9 view
@@ -1332,7 +1364,7 @@ module TestCrossProcess =
         let machine =
             Machines.doIn a (fun view -> Answered.chdir (PathArg.ofText "/d") view |> snd) machine
 
-        let standing = (Machines.viewOf a machine).Process.CurrentDirectoryInode
+        let standing = (Proc.state a (Machines.viewOf a machine)).CurrentDirectoryInode
 
         let machine =
             Machines.doIn b (fun view -> Answered.rmdir (UnixPath.parseOrFail "test" "/d") view |> snd) machine
@@ -1359,7 +1391,7 @@ module TestCrossProcess =
                     pids.[0]
                     (fun view ->
                         let listener, view = KeventWorld.listenerAt 8080us view
-                        let client, view = KeventWorld.client 8080us view
+                        let client, view = KeventWorld.clientIn pids.[0] 8080us view
                         let _, view = KeventWorld.accept listener view
                         ignore client
                         view
@@ -1368,8 +1400,8 @@ module TestCrossProcess =
 
             match exitIn pids.[0] 3 machine with
             | Ok (_, machine) ->
-                SimulatedMachine.processIds machine |> shouldEqual Set.empty
-                SimulatedMachine.checkInvariants machine |> shouldEqual []
+                Machines.processIds machine |> shouldEqual Set.empty
+                Machines.checkInvariants machine |> shouldEqual []
                 OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
                 machine.Machine.Sockets |> shouldEqual Map.empty
                 machine.Machine.Connections |> shouldEqual Map.empty
@@ -1390,7 +1422,7 @@ module TestCrossProcess =
         let shared = 9
 
         let machine =
-            let listenerId = KeventWorld.idOf listener (Machines.viewOf a machine)
+            let listenerId = KeventWorld.idOfIn a listener (Machines.viewOf a machine)
 
             let named (pid : ProcessId) =
                 FileDescriptorRegistry.fds (UnixSystem.fileDescriptors (Machines.viewOf pid machine))
@@ -1416,17 +1448,17 @@ module TestCrossProcess =
                             FileDescriptorRegistry.Unchecked.setDescriptorCount id (inA + inB) registry
                         )
 
-                    UnixSystemState.withFileDescriptors forged view
+                    Proc.withFileDescriptors b forged view
                 )
                 machine
 
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
         // a's accepter parks first, then b's, on the one listener; then a
         // connection is queued.
         let machine = machine |> sleepInAccept a 1 listener |> sleepInAccept b 1 shared
-        let _, machine = Machines.inProcess b (KeventWorld.client 8080us) machine
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        let _, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
+        Machines.checkInvariants machine |> shouldEqual []
 
         woken [ a, 1 ; b, 1 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
 
@@ -1446,7 +1478,8 @@ module TestCrossProcess =
                     b
                     (fun view ->
                         match
-                            OpenFlagWords.openPath
+                            OpenFlagWords.openPathIn
+                                b
                                 {
                                     Access = FileAccessMode.ReadWrite
                                     Create = true
@@ -1547,7 +1580,7 @@ module TestCrossProcess =
             | Ok (WriteStep.ProcessEnded ended) -> ended
             | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
-        match SimulatedMachine.tryEndProcess ended machine with
+        match Machines.tryEndProcess ended machine with
         | Ok (_, machine) ->
             Machines.assertClean machine
             machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
@@ -1562,7 +1595,7 @@ module TestCrossProcess =
 
         let machine = sleepInAccept a 1 listener machine
         let machine = Machines.doIn a (KeventWorld.close listener) machine
-        let _, machine = Machines.inProcess a (KeventWorld.client 8080us) machine
+        let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         let machine = exitedOk a machine
@@ -1584,7 +1617,7 @@ module TestCrossProcess =
             | Ok (Ok created) -> created
             | other -> failwith $"inotify_init1: %A{other}"
 
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask view with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask view with
         | Ok (SyscallAnswer.Completed _, view) -> fd, view
         | other -> failwith $"inotify_add_watch(%s{path}): %A{other}"
 
@@ -1594,10 +1627,12 @@ module TestCrossProcess =
         | Ok (BytesAvailableAnswer.Reported count) -> count
         | other -> failwith $"FIONREAD on %d{fd}: %A{other}"
 
-    /// `open(path, O_WRONLY|O_CREAT|O_EXCL)` and its close, in `view`.
-    let private create (path : string) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
+    /// `open(path, O_WRONLY|O_CREAT|O_EXCL)` and its close, by the process
+    /// `pid` in `view`.
+    let private create (pid : ProcessId) (path : string) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
         match
-            OpenFlagWords.openPath
+            OpenFlagWords.openPathIn
+                pid
                 {
                     Access = FileAccessMode.WriteOnly
                     Create = true
@@ -1642,10 +1677,10 @@ module TestCrossProcess =
         Machines.assertClean machine
         woken [ a, 1 ] machine |> shouldEqual []
 
-        let machine = Machines.doIn b (create "/d/x") machine
+        let machine = Machines.doIn b (create b "/d/x") machine
         Machines.assertClean machine
 
-        let instance = KeventWorld.idOf fd (Machines.viewOf a machine)
+        let instance = KeventWorld.idOfIn a fd (Machines.viewOf a machine)
 
         woken [ a, 1 ] machine
         |> shouldEqual [ (a, 1), Set.singleton (WakePrimitive.InotifyRecordQueued instance) ]
@@ -1679,18 +1714,18 @@ module TestCrossProcess =
 
         // A change in a process's own view, to what its own instance watches,
         // and to what the other process's instance watches.
-        let machine = Machines.doIn a (create "/d/x") machine
+        let machine = Machines.doIn a (create a "/d/x") machine
         Machines.assertClean machine
         queuedBytes a inA machine |> shouldEqual 32
         queuedBytes b inB machine |> shouldEqual 0
 
-        let machine = Machines.doIn a (create "/e/y") machine
+        let machine = Machines.doIn a (create a "/e/y") machine
         Machines.assertClean machine
         queuedBytes a inA machine |> shouldEqual 32
         queuedBytes b inB machine |> shouldEqual 32
 
         // A change neither watches.
-        let machine = Machines.doIn b (create "/z") machine
+        let machine = Machines.doIn b (create b "/z") machine
         Machines.assertClean machine
         queuedBytes a inA machine |> shouldEqual 32
         queuedBytes b inB machine |> shouldEqual 32

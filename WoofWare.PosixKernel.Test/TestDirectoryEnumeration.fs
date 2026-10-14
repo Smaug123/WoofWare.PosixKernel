@@ -80,7 +80,9 @@ module TestDirectoryEnumeration =
     /// The root, and a directory `d` beneath it holding the named entries as
     /// regular files.
     let private withEntries (names : string list) : VirtualFileSystem * InodeNumber =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         let directory, vfs =
@@ -127,7 +129,9 @@ module TestDirectoryEnumeration =
 
     [<Test>]
     let ``the root's dot-dot is the root`` () : unit =
-        let vfs = VirtualFileSystem.empty buildTime Owners.linuxDefault
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes buildTime Owners.linuxDefault
+
         let root = VirtualFileSystem.root vfs
 
         match VirtualFileSystem.nextDirectoryEntry root DirectoryCursor.Start vfs with

@@ -42,7 +42,7 @@ module TestFileSystemSeed =
         UnixTimestamp.createOrFail "test" 1_700_000_000L 250_000_000
 
     let private realise (seed : Map<DirectoryEntryName, SeedEntry>) : VirtualFileSystem =
-        VirtualFileSystem.ofFileSystemSeed createdAt Owners.linuxDefault SymlinkModes.linux seed
+        VirtualFileSystem.ofFileSystemSeed EntryNameMatching.Bytes createdAt Owners.linuxDefault SymlinkModes.linux seed
 
     // ----------------------------------------------------------------- basics
 

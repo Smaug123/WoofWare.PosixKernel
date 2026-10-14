@@ -24,12 +24,12 @@ module TestUnixThreadLifecycle =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = f system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = f proc.Signals
+            }
+        )
 
     /// A system with one epoll instance (a kqueue on Darwin), which a thread can park on
     /// in `flock`, and that instance's description.
@@ -41,16 +41,16 @@ module TestUnixThreadLifecycle =
         let create =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-            | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+            | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-        let fd, registry = create (UnixSystemState.fileDescriptors system)
+        let fd, registry = create (Lone.fileDescriptors system)
 
         let id =
             match FileDescriptorRegistry.tryFindWithId fd registry with
             | Some (id, _) -> id
             | None -> failwith $"fd %d{fd} names no description"
 
-        UnixSystemState.withFileDescriptors registry system, id
+        Lone.withFileDescriptors registry system, id
 
     let private flockOn (queue : OpenFileDescriptionId) : ParkedSyscall =
         ParkedSyscall.Flock
@@ -127,9 +127,9 @@ module TestUnixThreadLifecycle =
 
             let after = exitOrFail 1 system
 
-            after.Threads |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ; 2 ]
+            Lone.threads after |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ; 2 ]
 
-            SignalState.pending after.Process.Signals
+            SignalState.pending (Lone.proc after).Signals
             |> shouldEqual
                 [
                     {
@@ -142,10 +142,10 @@ module TestUnixThreadLifecycle =
                     }
                 ]
 
-            SignalState.threadsWithFrames after.Process.Signals
+            SignalState.threadsWithFrames (Lone.proc after).Signals
             |> shouldEqual (Set.singleton 2)
 
-            SignalState.maskOf 2 after.Process.Signals
+            SignalState.maskOf 2 (Lone.proc after).Signals
             |> SignalMask.signals
             |> shouldEqual (Set.singleton Signal.SIGUSR2)
 
@@ -160,7 +160,7 @@ module TestUnixThreadLifecycle =
                 system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
 
             let park =
-                match UnixThreadTable.parkOf 2 system.Threads with
+                match UnixThreadTable.parkOf 2 (Lone.threads system) with
                 | Some park -> park
                 | None -> failwith "expected thread 2 to be parked"
 
@@ -207,9 +207,9 @@ module TestUnixThreadLifecycle =
                     perThreadEntries ended.FinalProcess |> shouldEqual []
 
                     { ended.FinalProcess with
-                        Signals = system.Process.Signals
+                        Signals = (Lone.proc system).Signals
                     }
-                    |> shouldEqual system.Process
+                    |> shouldEqual (Lone.proc system)
                 | other -> failwith $"expected the process to end, got %A{other}"
 
     [<Test>]
@@ -248,7 +248,7 @@ module TestUnixThreadLifecycle =
         for platform in platforms do
             let system, queue = world platform
             let system = system |> withThread 1 |> UnixWait.park 0 (flockOn queue)
-            let park = UnixThreadTable.parkOf 0 system.Threads |> Option.get
+            let park = UnixThreadTable.parkOf 0 (Lone.threads system) |> Option.get
 
             UnixThreadLifecycle.tryExitThread 0 0 system
             |> shouldEqual (Error (ThreadExitRefusal.Parked (0, park)))
@@ -419,20 +419,20 @@ module TestUnixThreadLifecycle =
 
     /// The per-thread entries the system holds, each of which must name a thread.
     let private orphans (system : UnixSystem<int, string>) : string list =
-        let threads = system.Threads |> Map.keys |> Set.ofSeq
+        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
         let frames =
-            Set.difference (SignalState.threadsWithFrames system.Process.Signals) threads
+            Set.difference (SignalState.threadsWithFrames (Lone.proc system).Signals) threads
             |> Set.toList
             |> List.map (fun t -> $"frames of %d{t}")
 
         let masks =
-            Set.difference (SignalState.threadsWithMasks system.Process.Signals) threads
+            Set.difference (SignalState.threadsWithMasks (Lone.proc system).Signals) threads
             |> Set.toList
             |> List.map (fun t -> $"mask of %d{t}")
 
         let pending =
-            SignalState.pending system.Process.Signals
+            SignalState.pending (Lone.proc system).Signals
             |> List.choose (fun entry ->
                 match entry.Target with
                 | ValueSome t when not (Set.contains t threads) -> Some $"%O{entry.Signal} pending on %d{t}"
@@ -468,17 +468,17 @@ module TestUnixThreadLifecycle =
 
         SignalState.pending ended.FinalProcess.Signals
         |> shouldEqual (
-            SignalState.pending before.Process.Signals
+            SignalState.pending (Lone.proc before).Signals
             |> List.filter (fun entry -> entry.Target = ValueNone)
         )
 
         SignalState.dispositions ended.FinalProcess.Signals
-        |> shouldEqual (SignalState.dispositions before.Process.Signals)
+        |> shouldEqual (SignalState.dispositions (Lone.proc before).Signals)
 
         { ended.FinalProcess with
-            Signals = before.Process.Signals
+            Signals = (Lone.proc before).Signals
         }
-        |> shouldEqual before.Process
+        |> shouldEqual (Lone.proc before)
 
     let private runProperty (platform : SimulatedUnixPlatform) : Coverage<LifecycleLabel> =
         let initial, queue = world platform
@@ -507,43 +507,43 @@ module TestUnixThreadLifecycle =
 
                     // The child starts with its parent's mask, and nothing
                     // pending on it.
-                    let parentMask = SignalState.maskOf parent system.Process.Signals
+                    let parentMask = SignalState.maskOf parent (Lone.proc system).Signals
 
-                    SignalState.maskOf child after.Process.Signals |> shouldEqual parentMask
-                    SignalState.maskOf parent after.Process.Signals |> shouldEqual parentMask
-                    SignalState.framesOf child after.Process.Signals |> shouldEqual []
+                    SignalState.maskOf child (Lone.proc after).Signals |> shouldEqual parentMask
+                    SignalState.maskOf parent (Lone.proc after).Signals |> shouldEqual parentMask
+                    SignalState.framesOf child (Lone.proc after).Signals |> shouldEqual []
 
                     if not (SignalMask.isEmpty parentMask) then
                         cover LifecycleLabel.SpawnsInheritingAMask
 
-                    SignalState.pending after.Process.Signals
-                    |> shouldEqual (SignalState.pending system.Process.Signals)
+                    SignalState.pending (Lone.proc after).Signals
+                    |> shouldEqual (SignalState.pending (Lone.proc system).Signals)
 
                     after,
                     { model with
                         Live = Set.add child model.Live
                     }
                 | Op.Block (thread, signal) when live thread ->
-                    let threads = system.Threads |> Map.keys |> Set.ofSeq
+                    let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
                     match
                         HandlerFrames.tryEnter
                             "h"
-                            system.Leader
+                            (Lone.leader system)
                             threads
                             thread
                             (Set.singleton signal)
-                            system.Process.Signals
+                            (Lone.proc system).Signals
                     with
                     | Some signals -> mapSignals (fun _ -> signals) system, model
                     | None -> system, model
                 | Op.Unblock (thread, _) when
                     live thread
-                    && not (List.isEmpty (SignalState.framesOf thread system.Process.Signals))
+                    && not (List.isEmpty (SignalState.framesOf thread (Lone.proc system).Signals))
                     ->
                     mapSignals (HandlerFrames.leave thread) system, model
                 | Op.Mask (thread, signal) when live thread && not (Set.contains thread model.Parked) ->
-                    let numbering = SignalState.numbering system.Process.Signals
+                    let numbering = SignalState.numbering (Lone.proc system).Signals
 
                     let block =
                         match numbering with
@@ -602,7 +602,7 @@ module TestUnixThreadLifecycle =
                     let result = UnixThreadLifecycle.tryExitThread thread status system
 
                     if Set.contains thread model.Parked then
-                        let park = UnixThreadTable.parkOf thread system.Threads |> Option.get
+                        let park = UnixThreadTable.parkOf thread (Lone.threads system) |> Option.get
                         result |> shouldEqual (Error (ThreadExitRefusal.Parked (thread, park)))
                         cover LifecycleLabel.RefusedParked
                         system, model
@@ -635,8 +635,8 @@ module TestUnixThreadLifecycle =
                                 failwith
                                     $"expected thread %d{thread}'s exit to be answered, got: %s{ThreadExitRefusal.describe refusal}"
 
-                        let signalsBefore = system.Process.Signals
-                        let signalsAfter = after.Process.Signals
+                        let signalsBefore = (Lone.proc system).Signals
+                        let signalsAfter = (Lone.proc after).Signals
 
                         // Everything held for `thread` alone goes, and nothing else changes.
                         SignalState.pending signalsAfter
@@ -661,14 +661,14 @@ module TestUnixThreadLifecycle =
                         SignalState.dispositions signalsAfter
                         |> shouldEqual (SignalState.dispositions signalsBefore)
 
-                        after.Threads |> shouldEqual (Map.remove thread system.Threads)
+                        Lone.threads after |> shouldEqual (Map.remove thread (Lone.threads system))
 
                         // The thread's ID is freed, and nothing else on the
                         // machine moves.
                         ThreadIdAllocator.live after.Machine.ThreadIds
                         |> shouldEqual (
                             Set.remove
-                                (UnixThreadState.osThreadId (UnixThreadTable.get thread system.Threads))
+                                (UnixThreadState.osThreadId (UnixThreadTable.get thread (Lone.threads system)))
                                 (ThreadIdAllocator.live system.Machine.ThreadIds)
                         )
 
@@ -677,10 +677,10 @@ module TestUnixThreadLifecycle =
                         }
                         |> shouldEqual system.Machine
 
-                        { after.Process with
+                        { (Lone.proc after) with
                             Signals = signalsBefore
                         }
-                        |> shouldEqual system.Process
+                        |> shouldEqual (Lone.proc system)
 
                         if not (SignalMask.isEmpty (SignalState.maskOf thread signalsBefore)) then
                             cover LifecycleLabel.ExitsDroppingAMask
@@ -714,7 +714,7 @@ module TestUnixThreadLifecycle =
                 | Op.ExitGroup _ -> system, model
 
             // The thread set is exactly the model's, and no per-thread entry outlives its thread.
-            after.Threads |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
+            Lone.threads after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
             orphans after |> shouldEqual []
             UnixSystem.checkInvariants after |> shouldEqual []
 

@@ -130,6 +130,19 @@ module internal UnixSystemState =
                 }
         }
 
+    /// `system` with `signals` as its process's signal state.
+    let withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (signals : SignalState<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        { system with
+            Process =
+                { system.Process with
+                    Signals = signals
+                }
+        }
+
 /// Writing a thread's park, together with the holds it takes on open file
 /// descriptions.
 [<RequireQualifiedAccess>]

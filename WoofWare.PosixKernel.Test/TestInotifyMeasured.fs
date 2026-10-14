@@ -156,7 +156,7 @@ module TestInotifyMeasured =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText path) mask system with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
         | Ok answered -> answered
         | Error refusal ->
             failwith
@@ -178,14 +178,14 @@ module TestInotifyMeasured =
         | Error refusal -> failwith $"close(%d{fd}): %A{refusal}"
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names no description"
 
     /// The record the probe's filesystem change queued on the instance `fd`
     /// names, queued directly.
     let private queue (fd : int) (record : InotifyRecord) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixSystemState.mapOpenFiles
+        Lone.mapOpenFiles
             (OpenFileTable.enqueueInotify system.Machine.InotifyLimits.MaxQueuedEvents (idOf fd system) record)
             system
 
@@ -352,7 +352,7 @@ module TestInotifyMeasured =
             |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let objectOf (fd : int) =
-            FileDescriptorRegistry.tryFindObject fd (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindObject fd (Lone.fileDescriptors system)
 
         objectOf a |> shouldEqual (Some OpenFileObject.AnonymousInode)
         objectOf b |> shouldEqual (objectOf a)
@@ -484,7 +484,7 @@ module TestInotifyMeasured =
         )
 
         let badFd =
-            match UnixInotify.tryInotifyAddWatchEager 999 (PathArg.ofText "w/d1") modelledEvents system with
+            match Eager.tryInotifyAddWatch 999 (PathArg.ofText "w/d1") modelledEvents system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -496,7 +496,7 @@ module TestInotifyMeasured =
         system <- s
 
         let onRegular =
-            match UnixInotify.tryInotifyAddWatchEager regular (PathArg.ofText "w/d1") modelledEvents system with
+            match Eager.tryInotifyAddWatch regular (PathArg.ofText "w/d1") modelledEvents system with
             | Ok (answer, _) -> rc answer
             | Error refusal -> failwith $"%A{refusal}"
 
@@ -506,7 +506,7 @@ module TestInotifyMeasured =
         // made under each. The first row records an `IN_OPEN` at `w/f`'s
         // watch, which no watch here asks for.
         let maskOf (wd : int) =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Inotify state) -> state.Watches.[WatchDescriptor wd].Mask.Events
             | other -> failwith $"%A{other}"
 
@@ -592,7 +592,7 @@ module TestInotifyMeasured =
         let system = boot root [ "w", directory 0o755 [ "d1", directory 0o755 [] ] ]
         let fd, system = init1 nonblock system
 
-        UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText "w/d1") 0xFFFu system
+        Eager.tryInotifyAddWatch fd (PathArg.ofText "w/d1") 0xFFFu system
         |> shouldEqual (
             Error (
                 InotifyAddWatchRefusal.UnmodelledEvents
@@ -606,14 +606,14 @@ module TestInotifyMeasured =
         )
 
         // An add that fails anyway answers its errno.
-        match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText "w/missing") 0xFFFu system with
+        match Eager.tryInotifyAddWatch fd (PathArg.ofText "w/missing") 0xFFFu system with
         | Ok (SyscallAnswer.Failed UnixError.ENOENT, _) -> ()
         | other -> failwith $"%A{other}"
 
-        UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText "w/d1") (create ||| 0x80000000u) system
+        Eager.tryInotifyAddWatch fd (PathArg.ofText "w/d1") (create ||| 0x80000000u) system
         |> shouldEqual (Error InotifyAddWatchRefusal.OneShot)
 
-        UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText "w/d1") (create ||| 0x2000u) system
+        Eager.tryInotifyAddWatch fd (PathArg.ofText "w/d1") (create ||| 0x2000u) system
         |> shouldEqual (Error (InotifyAddWatchRefusal.UnmodelledEvents [ InotifyEvent.Unmount ]))
 
     [<Test>]
@@ -758,33 +758,33 @@ module TestInotifyMeasured =
 
     /// SIGUSR1 caught by a handler, restarting or not.
     let private catching (restart : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch
-                                { SignalCatch.ofHandler "h" with
-                                    Restart = restart
-                                })
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.setDisposition
+                        Signal.SIGUSR1
+                        (SignalDisposition.Catch
+                            { SignalCatch.ofHandler "h" with
+                                Restart = restart
+                            })
+                        proc.Signals
+            }
+        )
 
     let private signalThread (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome thread
-                            }
-                            system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome thread
+                        }
+                        proc.Signals
+            }
+        )
 
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
         match UnixWait.satisfied thread system with
@@ -966,7 +966,7 @@ module TestInotifyMeasured =
         system <- s
 
         let add (on : int) (path : PathArgumentBytes) (mask : uint32) =
-            match UnixInotify.tryInotifyAddWatchEager on path mask system with
+            match Eager.tryInotifyAddWatch on path mask system with
             | Ok (answer, s) ->
                 system <- s
                 rc answer
@@ -1006,7 +1006,7 @@ module TestInotifyMeasured =
         child <- s
 
         let addAs (path : string) (mask : uint32) =
-            match UnixInotify.tryInotifyAddWatchEager cfd (p path) mask child with
+            match Eager.tryInotifyAddWatch cfd (p path) mask child with
             | Ok (answer, s) ->
                 child <- s
                 rc answer
@@ -1131,7 +1131,7 @@ module TestInotifyMeasured =
                     // answers the same whatever path it is handed, and changes
                     // nothing.
                     for path in [ unreadable ; readable ] do
-                        match UnixInotify.tryInotifyAddWatchEager on path mask system with
+                        match Eager.tryInotifyAddWatch on path mask system with
                         | Ok (composed, after) ->
                             (on, mask, composed) |> shouldEqual (on, mask, answer)
                             obj.ReferenceEquals (after, system) |> shouldEqual true
@@ -1192,7 +1192,7 @@ module TestInotifyMeasured =
         for i, (case, mask) in List.indexed masks do
             let expected = measured |> List.find (fun (c, _) -> c = case) |> snd
 
-            match UnixInotify.tryInotifyAddWatchEager fd (PathArg.ofText $"m/%d{i}") mask system with
+            match Eager.tryInotifyAddWatch fd (PathArg.ofText $"m/%d{i}") mask system with
             | Error (InotifyAddWatchRefusal.UnmodelledEvents [ InotifyEvent.Unmount ]) when case = "UNMOUNT" -> ()
             | Error InotifyAddWatchRefusal.OneShot when case = "ONESHOT" -> ()
             | Ok (SyscallAnswer.Failed UnixError.EINVAL, _) -> expected |> shouldEqual "-1 EINVAL"
@@ -1217,7 +1217,7 @@ module TestInotifyMeasured =
         | SyscallAnswer.Completed again, s ->
             again |> shouldEqual wd
 
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors s) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors s) with
             | Some (OpenFileTarget.Inotify state) ->
                 state.Watches.[WatchDescriptor (int wd)].Mask.Events |> shouldEqual Set.empty
             | other -> failwith $"%A{other}"
@@ -1375,7 +1375,7 @@ module TestInotifyMeasured =
         system <- s |> queue fd2 (movedFrom 1u) |> queue fd2 (movedFrom 2u)
 
         let records =
-            match FileDescriptorRegistry.tryFindTarget fd2 (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd2 (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Inotify state) -> InotifyQueue.length state.Queue
             | other -> failwith $"%A{other}"
 

@@ -56,7 +56,7 @@ module TestConnect =
         : int * UnixSystem<int, string>
         =
         let fd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         let (SocketId raw) = socketId
         let (SocketId next) = system.Machine.NextSocketId
@@ -69,7 +69,7 @@ module TestConnect =
                     NextSocketId = SocketId (max next (raw + 1L))
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     let private streamSocket (binding : Ipv4Binding option) (phase : SocketPhase) : SocketDescription =
         {
@@ -155,11 +155,11 @@ module TestConnect =
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         let queueFd, registry = FileDescriptorRegistry.createEpoll registry
 
-        let system = UnixSystemState.withFileDescriptors registry system
+        let system = Lone.withFileDescriptors registry system
 
         for fd in [ 0 ; fileFd ; queueFd ] do
             admitOrFail fd UserBuffer.Mapped 16u system
@@ -406,7 +406,7 @@ module TestConnect =
         // The copy takes 16 bytes, so every other count is wrong.
         for passed in [ 0 ; 2 ; 8 ; 15 ; 17 ] do
             let e =
-                Assert.Throws<exn> (fun () ->
+                Assert.Throws<System.InvalidOperationException> (fun () ->
                     UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore<_>
                 )
@@ -448,8 +448,8 @@ module TestConnect =
         let fd, system = clientAndListener platform 5000us
 
         let system =
-            UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            Lone.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
 
         let outcome, system = connectTo fd 16u (loopback 5000us) system
@@ -548,6 +548,199 @@ module TestConnect =
 
         refusedBy fd (loopback 5000us) system
         |> shouldEqual (ConnectRefusal.EphemeralPortsExhausted (40000us, 40000us))
+
+    /// A system whose ephemeral range is the one port `port`, so that an
+    /// implicit bind can only take that port.
+    let private systemWithOnePort (platform : SimulatedUnixPlatform) (port : uint16) : UnixSystem<int, string> =
+        systemOnWith
+            (UnixBootImage.tryWithEphemeralPortRange (port, port)
+             >> Configured.expectOk EphemeralPortRangeRefusal.describe)
+            platform
+
+    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        UnixSystemState.withFileDescriptors
+            (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            system
+
+    /// The three ways a socket's source comes to be its own destination, port
+    /// 40000 on loopback, with nothing listening: connect's own implicit bind
+    /// taking the only ephemeral port, and bind(2) to loopback or to the
+    /// wildcard.
+    let private selfTupleSockets (platform : SimulatedUnixPlatform) : (string * int * UnixSystem<int, string>) list =
+        let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+
+        [
+            "implicit", streamSocket None SocketPhase.Idle, systemWithOnePort platform 40000us
+            "bound to loopback", streamSocket (boundAt (loopback 40000us)) SocketPhase.Idle, systemOn platform
+            "bound to the wildcard", streamSocket (boundAt wildcard) SocketPhase.Idle, systemOn platform
+        ]
+        |> List.map (fun (name, socket, system) ->
+            let fd, system = withSocket (SocketId 0L) socket system
+            name, fd, system
+        )
+
+    /// Linux completes such a connect as a TCP simultaneous open, connecting
+    /// the socket to itself, whichever way the source came about (measured,
+    /// `docs/probes/implicit-self-connect`, rows L1, L2, E1 and E2). This
+    /// library does not model that, so it refuses each alike.
+    [<Test>]
+    let ``Linux refuses a connect to the socket's own source as a simultaneous open`` () : unit =
+        for name, fd, system in selfTupleSockets SimulatedUnixPlatform.linuxX64 do
+            for blocking in [ true ; false ] do
+                let system = if blocking then system else nonBlocking fd system
+
+                match
+                    CopyIn.connect
+                        fd
+                        UserBuffer.Mapped
+                        16u
+                        (CopyIn.inet system.Machine.UnixPlatform (loopback 40000us))
+                        system
+                with
+                | Error (ConnectRefusal.SimultaneousOpen destination) ->
+                    destination |> shouldEqual (SocketAddress.Inet (loopback 40000us))
+                | other -> failwith $"%s{name}, blocking %b{blocking}: expected SimultaneousOpen, got %A{other}"
+
+    /// Darwin answers EINVAL instead, blocking or not, and the socket stays
+    /// idle with the binding it had, or, if it had none, the one its implicit
+    /// bind gave it: the wildcard at the port (measured,
+    /// `docs/probes/implicit-self-connect`, rows D1, N1, E1 and E2).
+    [<Test>]
+    let ``Darwin answers EINVAL to a connect to the socket's own source`` () : unit =
+        for name, fd, system in selfTupleSockets SimulatedUnixPlatform.macOsArm64 do
+            for blocking in [ true ; false ] do
+                let system = if blocking then system else nonBlocking fd system
+                let before = (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding
+                let answer, after = connectTo fd 16u (loopback 40000us) system
+                answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+
+                let socket = UnixMachineState.socket (SocketId 0L) after.Machine
+                socket.Phase |> shouldEqual SocketPhase.Idle
+
+                let expected =
+                    match before with
+                    | Some binding -> binding
+                    | None ->
+                        {
+                            Endpoint = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+                            LockedAddress = None
+                            LockedPort = false
+                        }
+
+                if socket.Ipv4Binding <> Some expected then
+                    failwith $"%s{name}, blocking %b{blocking}: bound at %A{socket.Ipv4Binding}, not %A{expected}"
+
+                UnixSystem.checkInvariants after |> shouldEqual []
+
+    /// Darwin's implicit bind binds the wildcard at the port before it resolves
+    /// the source, and its search passes over a port another socket holds at
+    /// any address, whatever `SO_REUSEADDR` says (measured,
+    /// `docs/probes/implicit-self-connect`, rows H and Hr), though this
+    /// library's search, judging the port for 127.0.0.1, can take it. Where it
+    /// took the destination's own port, the EINVAL answer would leave the
+    /// socket holding the wildcard over that other socket's binding, so it is
+    /// refused instead.
+    [<Test>]
+    let ``Darwin refuses an implicit self-tuple on a port held at another address`` () : unit =
+        let platform = SimulatedUnixPlatform.macOsArm64
+
+        for reuse in [ false ; true ] do
+            // Held at an address 127.0.0.1 does not overlap; a holder that did
+            // would have Darwin drop the SYN before any port is chosen.
+            let system =
+                let system = systemWithOnePort platform 40000us
+
+                { system with
+                    Machine =
+                        { system.Machine with
+                            LocalRoutes = UnixSystem.defaultLocalRoutes
+                        }
+                }
+
+            let holder =
+                { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
+                    ReuseAddress = reuse
+                }
+
+            let _, system = withSocket (SocketId 0L) holder system
+
+            let connecting =
+                { streamSocket None SocketPhase.Idle with
+                    ReuseAddress = reuse
+                }
+
+            let fd, system = withSocket (SocketId 1L) connecting system
+
+            match refusedBy fd (loopback 40000us) system with
+            | ConnectRefusal.DarwinImplicitBindHeld binding ->
+                binding
+                |> shouldEqual (SocketAddress.Inet (Ipv4Endpoint.ofParts Ipv4Address.any 40000us))
+            | other -> failwith $"SO_REUSEADDR %b{reuse}: expected DarwinImplicitBindHeld, got %A{other}"
+
+    /// A socket `bind(2)` gave the wildcard at the port searches for no port,
+    /// so another socket holding the port at another address, which the bind
+    /// rule lets two sockets carrying `SO_REUSEADDR` do, does not change its
+    /// answer: Darwin's EINVAL, as for row E2 of
+    /// `docs/probes/implicit-self-connect`.
+    [<Test>]
+    let ``Darwin answers a wildcard-bound self-tuple beside a port held elsewhere`` () : unit =
+        let platform = SimulatedUnixPlatform.macOsArm64
+
+        let system =
+            let system = systemOn platform
+
+            { system with
+                Machine =
+                    { system.Machine with
+                        LocalRoutes = UnixSystem.defaultLocalRoutes
+                    }
+            }
+
+        let holder =
+            { streamSocket (boundAt (Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us)) SocketPhase.Idle with
+                ReuseAddress = true
+            }
+
+        let _, system = withSocket (SocketId 0L) holder system
+
+        let bound =
+            { streamSocket (boundAt (Ipv4Endpoint.ofParts Ipv4Address.any 40000us)) SocketPhase.Idle with
+                ReuseAddress = true
+            }
+
+        let fd, system = withSocket (SocketId 1L) bound system
+        let answer, after = connectTo fd 16u (loopback 40000us) system
+        answer |> shouldEqual (SyscallAnswer.Failed UnixError.EINVAL)
+        (UnixMachineState.socket (SocketId 1L) after.Machine) |> shouldEqual bound
+
+    /// A socket bound to the wildcard is its own destination only where its
+    /// source is known to be: towards 127.0.0.1, which it resolves to.
+    /// Towards another loopback address the source is unmeasured, and the
+    /// connect is refused as such rather than answered as a self-tuple.
+    [<TestCaseSource(nameof platforms)>]
+    let ``a wildcard binding towards another loopback address is not a self-tuple``
+        (platform : SimulatedUnixPlatform)
+        : unit
+        =
+        let system =
+            let system = systemOn platform
+
+            { system with
+                Machine =
+                    { system.Machine with
+                        LocalRoutes = UnixSystem.defaultLocalRoutes
+                    }
+            }
+
+        let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any 40000us
+
+        let fd, system =
+            withSocket (SocketId 0L) (streamSocket (boundAt wildcard) SocketPhase.Idle) system
+
+        let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us
+
+        refusedBy fd other system
+        |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, true))
 
     /// The sockaddr copy's refusals come through `connect` under `Copy`, so a
     /// client matching on one type sees both kinds of refusal.

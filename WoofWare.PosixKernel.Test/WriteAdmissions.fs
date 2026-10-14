@@ -150,12 +150,11 @@ module internal WriteOutcomes =
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
-            match UnixReadWrite.tryWrite thread fd buffer (uint64 bytes.Length) system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered fate) -> Ok (stepOf fate)
-            | Ok (CallProgress.NeedsCopyIn paused) ->
-                let bytes = copied "write" (PausedWrite.copyRange paused) bytes
-                UnixReadWrite.tryWriteWithBytes bytes paused |> Result.map stepOf
+            UnixReadWrite.tryWrite thread fd buffer (uint64 bytes.Length) system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.tryWriteWithBytes (copied "write" (PausedWrite.copyRange paused) bytes) paused
+            )
+            |> Result.map stepOf
 
         agreeing "write" (stepsThenWrite thread fd buffer bytes system) actual
 
@@ -172,12 +171,11 @@ module internal WriteOutcomes =
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
         let actual =
-            match UnixReadWrite.trySend thread fd buffer (uint64 bytes.Length) flags system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered fate) -> Ok (stepOf fate)
-            | Ok (CallProgress.NeedsCopyIn paused) ->
-                let bytes = copied "send" (PausedSend.copyRange paused) bytes
-                UnixReadWrite.trySendWithBytes bytes paused |> Result.map stepOf
+            UnixReadWrite.trySend thread fd buffer (uint64 bytes.Length) flags system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.trySendWithBytes (copied "send" (PausedSend.copyRange paused) bytes) paused
+            )
+            |> Result.map stepOf
 
         agreeing "send" (stepsThenSend thread fd buffer bytes flags system) actual
 
@@ -216,17 +214,16 @@ module internal WriteOutcomes =
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
-            match UnixReadWrite.tryFinishWrite thread system with
-            | Error refusal -> Error refusal
-            | Ok (CallProgress.Answered fate) -> Ok (stepOf fate)
-            | Ok (CallProgress.NeedsCopyIn paused) ->
+            UnixReadWrite.tryFinishWrite thread system
+            |> CallProgress.resumeWith (fun paused ->
                 let range = PausedWrite.copyRange paused
 
                 if range.FirstByte < 0 || range.ByteCount <= 0 then
                     failwith $"finishWrite asked for %A{range}"
 
                 UnixReadWrite.tryWriteWithBytes (bytesAt range.FirstByte range.ByteCount) paused
-                |> Result.map stepOf
+            )
+            |> Result.map stepOf
 
         agreeing "finishWrite" (stepsThenFinishWrite thread bytesAt system) actual
 
@@ -238,7 +235,8 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAdmission * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryAdmitWrite system.Leader fd buffer count system |> returned
+        UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system
+        |> returned
 
     /// `UnixReadWrite.tryWriteBytes` by the leader, through `returned`.
     let write<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -247,7 +245,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryWriteBytes system.Leader fd bytes system |> returned
+        UnixReadWrite.tryWriteBytes (Lone.leader system) fd bytes system |> returned
 
 /// `UnixReadWrite.tryAdmitWrite` for a write whose admission must change nothing:
 /// every target but a Darwin pipe, whose timestamps a write moves whatever it

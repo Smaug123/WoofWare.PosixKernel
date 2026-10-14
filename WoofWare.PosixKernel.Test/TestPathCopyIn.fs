@@ -229,7 +229,9 @@ module TestPathCopyIn =
         | "chown", "uid -1" -> answered (fun path -> UnixPathResolution.tryChown path None None)
         | "chown", "uid own" ->
             Some (fun path system ->
-                match UnixPathResolution.tryChown path (Some system.Process.Credentials.EffectiveUser) None system with
+                match
+                    UnixPathResolution.tryChown path (Some (Lone.proc system).Credentials.EffectiveUser) None system
+                with
                 | Ok (answer, _) -> ofAnswer answer
                 | Error refusal -> failwith $"chown refused: %A{refusal}"
             )

@@ -948,6 +948,38 @@ module UnixMachineState =
         orphanedEndpoints machine
         |> List.exists (fun (held, _) -> held.Port = endpoint.Port && Ipv4Endpoint.addressesOverlap held endpoint)
 
+    /// Whether anything other than `socketId` holds `port`, at any address and
+    /// whatever anyone's `SO_REUSEADDR`: a socket of `socket`'s kind bound at
+    /// it, unless its connection released it (`releasedPort`), or, for a
+    /// stream socket, a connection end whose socket has closed and which still
+    /// holds it (`orphanedEndpoints`). Darwin's implicit connect bind, which
+    /// binds the wildcard, passes over every port another socket is bound at,
+    /// with the flag or without it (`docs/probes/implicit-self-connect`, rows H
+    /// and Hr).
+    let internal portHeldByAnother
+        (socketId : SocketId)
+        (socket : SocketDescription)
+        (port : uint16)
+        (machine : UnixMachineState)
+        : bool
+        =
+        let boundThere =
+            machine.Sockets
+            |> Map.exists (fun otherId (other : SocketDescription) ->
+                otherId <> socketId
+                && other.Kind = socket.Kind
+                && not (releasedPort other machine)
+                && (
+                    match other.Ipv4Binding with
+                    | Some binding -> binding.Endpoint.Port = port
+                    | None -> false
+                )
+            )
+
+        boundThere
+        || socket.Kind = SocketKind.Stream
+           && orphanedEndpoints machine |> List.exists (fun (held, _) -> held.Port = port)
+
     /// Whether a TCP connection occupies the four-tuple between `source` and
     /// `destination`, in either orientation. One a reset has reached does
     /// not (`resetReleasedTuple`).

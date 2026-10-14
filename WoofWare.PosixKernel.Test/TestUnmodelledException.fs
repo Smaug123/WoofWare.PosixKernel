@@ -241,6 +241,22 @@ module TestUnmodelledException =
 
     let private smallInt : Gen<int> = Gen.choose (-3, 40)
 
+    /// A buffer the model cannot hold the answer for is a gap in what this
+    /// library represents, never the client's mistake, whichever call meets it.
+    [<Test>]
+    let ``a buffer refusal is unmodelled, whichever call meets it`` () : unit =
+        for case in FSharpType.GetUnionCases typeof<BufferRefusal> do
+            let refusal = FSharpValue.MakeUnion (case, [||]) :?> BufferRefusal
+            BufferRefusal.kind refusal |> shouldEqual RefusalKind.Unmodelled
+
+        // And through a call that refuses one: getrandom into memory whose bytes
+        // the client cannot produce.
+        Assert.Throws<UnmodelledException> (fun () ->
+            UnixEntropy.getRandom 0 UserBuffer.Opaque 8UL 0u (booted SimulatedUnixPlatform.linuxX64)
+            |> ignore<GetRandomAnswer * UnixSystem<int, string>>
+        )
+        |> ignore
+
     [<Test>]
     let ``socket throws exactly when trySocket refuses`` () : unit =
         let gen =
@@ -450,7 +466,7 @@ module TestUnmodelledException =
                         (fun () -> UnixSystem.tryStep 0 call system)
                         (fun () -> UnixSystem.step 0 call system)
 
-                let machine = SimulatedMachine.ofSystem system
+                let machine = Machines.ofSystem system
                 let pid = UnixSystem.processId system
 
                 let unwrap (answer : 'a option) : 'a =
@@ -463,11 +479,11 @@ module TestUnmodelledException =
                         SyscallRefusal.kind
                         SyscallRefusal.describe
                         (fun () ->
-                            match unwrap (SimulatedMachine.tryStep pid 0 call machine) with
+                            match unwrap (Machines.tryStep pid 0 call machine) with
                             | Ok outcome, machine -> Ok (outcome, machine)
                             | Error refusal, _ -> Error refusal
                         )
-                        (fun () -> unwrap (SimulatedMachine.step pid 0 call machine))
+                        (fun () -> unwrap (Machines.step pid 0 call machine))
 
                 onMachine |> shouldEqual onSystem
                 onSystem
@@ -573,16 +589,16 @@ module TestUnmodelledException =
             let create =
                 match SimulatedUnixPlatform.flavour platform with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll
-                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue system.Process.ProcessId
+                | SimulatedUnixFlavour.Darwin -> FileDescriptorRegistry.createKqueue (Lone.proc system).ProcessId
 
-            let fd, registry = create (UnixSystemState.fileDescriptors system)
+            let fd, registry = create (Lone.fileDescriptors system)
 
             let queue =
                 match FileDescriptorRegistry.tryFindWithId fd registry with
                 | Some (id, _) -> id
                 | None -> failwith $"fd %d{fd} names no description"
 
-            UnixSystemState.withFileDescriptors registry system
+            Lone.withFileDescriptors registry system
             |> Threads.ensure 1
             |> Threads.ensure 2
             |> UnixWait.park

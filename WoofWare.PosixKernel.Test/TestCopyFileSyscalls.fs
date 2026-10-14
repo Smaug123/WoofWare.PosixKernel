@@ -74,7 +74,7 @@ module TestCopyFileSyscalls =
                     | Ok (_, vfs) -> vfs
                     | Error error -> failwith $"creating %s{fileName}: %O{error}"
             )
-            (VirtualFileSystem.empty epoch (owner 0u 0u))
+            (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u))
 
     let private systemOnWith
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
@@ -94,12 +94,13 @@ module TestCopyFileSyscalls =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private systemOn
         (platform : SimulatedUnixPlatform)
@@ -138,7 +139,7 @@ module TestCopyFileSyscalls =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private opened
         (fileName : string)
@@ -151,17 +152,17 @@ module TestCopyFileSyscalls =
                 (ForgedName.ofInode system (inodeAt system fileName))
                 (inodeAt system fileName)
                 access
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         fd, withRegistry registry system
 
     let private offsetOf (fd : int) (system : UnixSystem<int, string>) : int64 =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.File (_, offset)) -> offset
         | other -> failwith $"fd %d{fd} names %A{other}"
 
     let private seekTo (fd : int) (offset : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        withRegistry (FileDescriptorRegistry.setOffset fd offset (UnixSystemState.fileDescriptors system)) system
+        withRegistry (FileDescriptorRegistry.setOffset fd offset (Lone.fileDescriptors system)) system
 
     let private answerText (answer : SyscallAnswer) : string =
         match answer with
@@ -203,7 +204,7 @@ module TestCopyFileSyscalls =
                 FileDescriptorRegistry.openDirectory
                     (ForgedName.ofInode system (VirtualFileSystem.root system.Machine.FileSystem))
                     (VirtualFileSystem.root system.Machine.FileSystem)
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
             fd, withRegistry registry system
         | "pipe-r"
@@ -896,7 +897,7 @@ module TestCopyFileRangeLarge =
                         (VirtualFileSystem.root system.Machine.FileSystem)
                         (DirectoryEntryName.parseOrFail "TestCopyFileRangeLarge" "g")
                         (PermissionBits.parseOrFail "TestCopyFileRangeLarge" 0o644)
-                        (InodeOwner.ofProcess system.Process.Credentials)
+                        (InodeOwner.ofProcess (Lone.proc system).Credentials)
                         TestTransferCounts.epoch
                         ImmutableArray.Empty
                         system.Machine.FileSystem
@@ -909,7 +910,7 @@ module TestCopyFileRangeLarge =
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
             fd,
             { system with
@@ -918,7 +919,7 @@ module TestCopyFileRangeLarge =
                         CommittedFileSystem = CommittedFileSystem.initial filesystem
                     }
             }
-            |> UnixSystemState.withFileDescriptors registry
+            |> Lone.withFileDescriptors registry
 
         match UnixReadWrite.tryCopyFileRange source destination (uint64 length) 0 system with
         | Ok (SyscallAnswer.Completed moved, after) ->

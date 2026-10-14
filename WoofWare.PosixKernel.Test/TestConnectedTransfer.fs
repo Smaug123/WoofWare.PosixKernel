@@ -37,12 +37,12 @@ module TestConnectedTransfer =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> fun system -> ([ 1..4 ], system) ||> List.foldBack Threads.ensure
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE SignalDisposition.Ignore proc.Signals
+            }
+        )
 
     /// TCP buffers as small as each flavour admits.
     let private small (image : UnixBootImage<int, string>) : UnixBootImage<int, string> =
@@ -78,29 +78,69 @@ module TestConnectedTransfer =
         let _, system = UnixDescriptor.setNonBlocking server nonBlocking system
         client, server, system
 
-    /// A write of the first `count` bytes of the payload through `fd`.
-    let private send
+    /// A write of the first `count` bytes of the payload through `fd`, by the
+    /// leader of the process `pid`.
+    let private sendIn
+        (pid : ProcessId)
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
         : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
         =
         WriteOutcomes.admitThenWrite
-            system.Leader
+            (Proc.leader pid system)
             fd
             UserBuffer.Mapped
             (ImmutableArray.Create (payload, 0, count))
             system
 
-    let private sent (fd : int) (count : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
-        match send fd count system with
+    /// `sendIn` the only process on the machine.
+    let private send
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        =
+        sendIn (Lone.pid system) fd count system
+
+    let private sentIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : int64 * UnixSystem<int, string>
+        =
+        match sendIn pid fd count system with
         | Ok (WriteStep.Returns (WriteAnswer.Completed written, system)) -> written, system
         | other -> failwith $"a write of %d{count} through fd %d{fd}: %A{other}"
 
-    let private sentAll (fd : int) (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match sent fd count system with
+    let private sent (fd : int) (count : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
+        sentIn (Lone.pid system) fd count system
+
+    let private sentAllIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match sentIn pid fd count system with
         | written, system when written = int64 count -> system
         | written, _ -> failwith $"a write of %d{count} through fd %d{fd} took %d{written}"
+
+    let private sentAll (fd : int) (count : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        sentAllIn (Lone.pid system) fd count system
+
+    let private receivedIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : ReadAnswer * UnixSystem<int, string>
+        =
+        match ReadOutcomes.readIn pid fd UserBuffer.Mapped (uint64 count) system with
+        | Ok answered -> answered
+        | Error refusal -> failwith $"a read of %d{count} through fd %d{fd}: %s{ReadRefusal.describe refusal}"
 
     let private received
         (fd : int)
@@ -108,9 +148,18 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : ReadAnswer * UnixSystem<int, string>
         =
-        match ReadOutcomes.read fd UserBuffer.Mapped (uint64 count) system with
-        | Ok answered -> answered
-        | Error refusal -> failwith $"a read of %d{count} through fd %d{fd}: %s{ReadRefusal.describe refusal}"
+        receivedIn (Lone.pid system) fd count system
+
+    let private receivedCountIn
+        (pid : ProcessId)
+        (fd : int)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        match receivedIn pid fd count system with
+        | ReadAnswer.Completed bytes, system -> bytes.Length, system
+        | other, _ -> failwith $"a read of %d{count} through fd %d{fd}: %A{other}"
 
     let private receivedCount
         (fd : int)
@@ -118,22 +167,30 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        match received fd count system with
-        | ReadAnswer.Completed bytes, system -> bytes.Length, system
-        | other, _ -> failwith $"a read of %d{count} through fd %d{fd}: %A{other}"
+        receivedCountIn (Lone.pid system) fd count system
 
-    /// Write through `fd` until a write answers `EAGAIN`: how much was taken.
-    let private fill (fd : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
+    /// Write through `fd`, as the leader of the process `pid`, until a write
+    /// answers `EAGAIN`: how much was taken.
+    let private fillIn
+        (pid : ProcessId)
+        (fd : int)
+        (system : UnixSystem<int, string>)
+        : int64 * UnixSystem<int, string>
+        =
         let rec go (total : int64) (system : UnixSystem<int, string>) =
-            match send fd 65536 system with
+            match sendIn pid fd 65536 system with
             | Ok (WriteStep.Returns (WriteAnswer.Completed written, system)) -> go (total + written) system
             | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EAGAIN, system)) -> total, system
             | other -> failwith $"filling fd %d{fd}: %A{other}"
 
         go 0L system
 
+    /// `fillIn` the only process on the machine.
+    let private fill (fd : int) (system : UnixSystem<int, string>) : int64 * UnixSystem<int, string> =
+        fillIn (Lone.pid system) fd system
+
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketId =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> socketId
         | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -204,7 +261,7 @@ module TestConnectedTransfer =
         for platform in Machines.platforms do
             let client, server, system = pair false (systemOn small platform)
 
-            match UnixReadWrite.tryRead system.Leader client UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Lone.leader system) client UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -261,7 +318,7 @@ module TestConnectedTransfer =
             |> Result.map fst
             |> shouldEqual (Ok (WriteAnswer.Completed 0L))
 
-            UnixReadWrite.tryAdmitWrite system.Leader client unmapped 0UL system
+            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
             |> Result.map (fun outcome ->
                 match outcome with
                 | WriteStep.Returns (admission, _) -> admission
@@ -270,7 +327,7 @@ module TestConnectedTransfer =
             |> shouldEqual (Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
             // Something to copy.
-            UnixReadWrite.tryAdmitWrite system.Leader client unmapped 10UL system
+            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
             |> shouldEqual (Error (WriteRefusal.ConnectionFault (socketOf client system)))
 
             let system = sentAll server 10 system
@@ -899,7 +956,11 @@ module TestConnectedTransfer =
 
                 let direct =
                     thrice (fun system ->
-                        UnixReadWrite.tryWriteBytes system.Leader c (ImmutableArray.Create (payload, 0, 100)) system
+                        UnixReadWrite.tryWriteBytes
+                            (Lone.leader system)
+                            c
+                            (ImmutableArray.Create (payload, 0, 100))
+                            system
                     )
 
                 (build, direct) |> shouldEqual (build, admitted)
@@ -1624,7 +1685,7 @@ module TestConnectedTransfer =
         : int * int * SimulatedMachine<int, string>
         =
         let listener, machine = Machines.inProcess b (KeventWorld.listenerAt port) machine
-        let client, machine = Machines.inProcess a (KeventWorld.client port) machine
+        let client, machine = Machines.inProcess a (KeventWorld.clientIn a port) machine
 
         let accepted, machine =
             Machines.inProcess
@@ -1648,7 +1709,7 @@ module TestConnectedTransfer =
             |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
-        SimulatedMachine.wakes asleep machine |> List.map fst
+        Machines.wakes asleep machine |> List.map fst
 
     /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
@@ -1669,10 +1730,10 @@ module TestConnectedTransfer =
                     let _, view = wait view
 
                     let epoll =
-                        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors view)
+                        FileDescriptorRegistry.fds (Proc.fileDescriptors pid view)
                         |> Map.keys
                         |> Seq.filter (fun fd ->
-                            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors view) with
+                            match FileDescriptorRegistry.tryFindTarget fd (Proc.fileDescriptors pid view) with
                             | Some (OpenFileTarget.Epoll _) -> true
                             | _ -> false
                         )
@@ -1686,10 +1747,10 @@ module TestConnectedTransfer =
                     let _, view = wait view
 
                     let kq =
-                        FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors view)
+                        FileDescriptorRegistry.fds (Proc.fileDescriptors pid view)
                         |> Map.keys
                         |> Seq.filter (fun fd ->
-                            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors view) with
+                            match FileDescriptorRegistry.tryFindTarget fd (Proc.fileDescriptors pid view) with
                             | Some (OpenFileTarget.Kqueue _) -> true
                             | _ -> false
                         )
@@ -1734,7 +1795,7 @@ module TestConnectedTransfer =
             Machines.assertClean machine
             woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
 
-            let machine = Machines.doIn a (sentAll client 100) machine
+            let machine = Machines.doIn a (sentAllIn a client 100) machine
             Machines.assertClean machine
             woken [ b, 1 ; b, 2 ] machine |> List.sort |> shouldEqual [ b, 1 ; b, 2 ]
 
@@ -1746,7 +1807,7 @@ module TestConnectedTransfer =
             let client, accepted, machine = across a b machine
 
             // `b` fills its end, then sleeps for room.
-            let machine = Machines.doIn b (fun view -> fill accepted view |> snd) machine
+            let machine = Machines.doIn b (fun view -> fillIn b accepted view |> snd) machine
             let machine = sleepOn b 1 accepted 'w' machine
             woken [ b, 1 ] machine |> shouldEqual []
 
@@ -1756,7 +1817,7 @@ module TestConnectedTransfer =
                     failwith "the drain never woke the writer"
                 else
                     let machine =
-                        Machines.doIn a (fun view -> receivedCount client 4096 view |> snd) machine
+                        Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
                     Machines.assertClean machine
 
@@ -1775,21 +1836,21 @@ module TestConnectedTransfer =
                 let client, accepted, machine = across a b machine
 
                 // `a` sends 50; `b` sends 30, which `a` reads unless `unread`.
-                let machine = Machines.doIn a (sentAll client 50) machine
-                let machine = Machines.doIn b (sentAll accepted 30) machine
+                let machine = Machines.doIn a (sentAllIn a client 50) machine
+                let machine = Machines.doIn b (sentAllIn b accepted 30) machine
 
                 let machine =
                     if unread then
                         machine
                     else
-                        Machines.doIn a (fun view -> receivedCount client 4096 view |> snd) machine
+                        Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
                 let ended =
                     Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
                     |> fst
 
                 let machine =
-                    match SimulatedMachine.tryEndProcess ended machine with
+                    match Machines.tryEndProcess ended machine with
                     | Ok (_, machine) -> machine
                     | Error refusal -> failwith $"%A{refusal}"
 
@@ -1799,8 +1860,8 @@ module TestConnectedTransfer =
                     Machines.inProcess
                         b
                         (fun view ->
-                            let first, view = received accepted 4096 view
-                            let second, view = received accepted 4096 view
+                            let first, view = receivedIn b accepted 4096 view
+                            let second, view = receivedIn b accepted 4096 view
                             [ first ; second ], view
                         )
                         machine

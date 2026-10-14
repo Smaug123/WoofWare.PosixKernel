@@ -82,7 +82,7 @@ module TestSigprocmask =
         | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
     let private wordOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
-        SignalState.maskOf thread system.Process.Signals |> SignalMask.toWord
+        SignalState.maskOf thread (Lone.proc system).Signals |> SignalMask.toWord
 
     let private orFail (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : UnixSystem<int, string> =
         match result with
@@ -483,7 +483,7 @@ module TestSigprocmask =
                 SignalMask.ofSignals numbering (Set.ofList [ Signal.SIGUSR1 ; Signal.SIGTERM ])
 
             UnixSignal.sigpending 0 inHandler |> shouldEqual both
-            SignalState.maskOf 0 inHandler.Process.Signals |> shouldEqual both
+            SignalState.maskOf 0 (Lone.proc inHandler).Signals |> shouldEqual both
 
             let rec run
                 (ran : Signal list)
@@ -510,7 +510,7 @@ module TestSigprocmask =
             (flavour, ran)
             |> shouldEqual (flavour, [ Signal.SIGUSR1 ; Signal.SIGUSR1 ; Signal.SIGTERM ])
 
-            SignalState.maskOf 0 after.Process.Signals |> shouldEqual SignalMask.empty
+            SignalState.maskOf 0 (Lone.proc after).Signals |> shouldEqual SignalMask.empty
             UnixSignal.sigpending 0 after |> shouldEqual SignalMask.empty
 
     [<Test>]
@@ -531,7 +531,7 @@ module TestSigprocmask =
                 |> Threads.spawn 1
                 |> withMask flavour 0 usr1
 
-            SignalState.framesOf 0 system.Process.Signals |> shouldEqual []
+            SignalState.framesOf 0 (Lone.proc system).Signals |> shouldEqual []
 
             UnixSignal.tryKill (self system) (signo flavour Signal.SIGUSR1) system
             |> Result.map (fun _ -> ())
@@ -569,7 +569,7 @@ module TestSigprocmask =
             // it.
             let parked =
                 match UnixPoll.tryPoll 1 [] -1 system with
-                | Ok (_, system) when UnixThreadTable.parkOf 1 system.Threads |> Option.isSome -> system
+                | Ok (_, system) when UnixThreadTable.parkOf 1 (Lone.threads system) |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
             UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
@@ -727,7 +727,7 @@ module TestSigprocmask =
                         (c, thread, wordOf thread system')
                         |> shouldEqual (c, thread, Map.find thread masks')
 
-                    SignalState.threadsWithMasks system'.Process.Signals
+                    SignalState.threadsWithMasks (Lone.proc system').Signals
                     |> shouldEqual (masks' |> Map.filter (fun _ w -> w <> 0UL) |> Map.keys |> Set.ofSeq)
 
                     UnixSystem.checkInvariants system' |> shouldEqual []
@@ -808,7 +808,7 @@ module TestSigprocmask =
 
             frame.SavedMask |> shouldEqual (ofList before)
 
-            SignalState.maskOf 0 inHandler.Process.Signals
+            SignalState.maskOf 0 (Lone.proc inHandler).Signals
             |> SignalMask.signals
             |> shouldEqual (
                 Set.unionMany
@@ -826,7 +826,7 @@ module TestSigprocmask =
                 )
 
             let returned = UnixSignal.sigreturn 0 frame.Id changed
-            SignalState.maskOf 0 returned.Process.Signals |> shouldEqual (ofList before)
+            SignalState.maskOf 0 (Lone.proc returned).Signals |> shouldEqual (ofList before)
             UnixSystem.checkInvariants returned |> shouldEqual []
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 500, Prop.forAll (Arb.fromGen gen) property)

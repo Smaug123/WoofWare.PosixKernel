@@ -42,12 +42,12 @@ module TestStreamReaderGone =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = SignalState.setDisposition Signal.SIGPIPE disposition system.Process.Signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = SignalState.setDisposition Signal.SIGPIPE disposition proc.Signals
+            }
+        )
 
     /// A process with a leader, 0, and a worker, 1.
     let private systemOn
@@ -128,14 +128,16 @@ module TestStreamReaderGone =
                       Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
                         signal |> shouldEqual raised
                         pending <- Set.add raised pending
-                        Set.ofList (SignalState.pending after.Process.Signals) |> shouldEqual pending
 
-                        { after with
-                            Process =
-                                { after.Process with
-                                    Signals = system.Process.Signals
-                                }
-                        }
+                        Set.ofList (SignalState.pending (Lone.proc after).Signals)
+                        |> shouldEqual pending
+
+                        after
+                        |> Lone.mapProc (fun proc ->
+                            { proc with
+                                Signals = (Lone.proc system).Signals
+                            }
+                        )
                         |> shouldEqual system
 
                         system <- after
@@ -201,33 +203,35 @@ module TestStreamReaderGone =
             let system =
                 systemOn platform (Set.singleton 1) (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
 
-            let threads = system.Threads |> Map.keys |> Set.ofSeq
+            let threads = Lone.threads system |> Map.keys |> Set.ofSeq
 
             let system =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals =
-                                HandlerFrames.enter
-                                    "carrier"
-                                    system.Leader
-                                    threads
-                                    system.Leader
-                                    (Set.singleton Signal.SIGPIPE)
-                                    system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals =
+                            HandlerFrames.enter
+                                "carrier"
+                                (Lone.leader system)
+                                threads
+                                (Lone.leader system)
+                                (Set.singleton Signal.SIGPIPE)
+                                proc.Signals
+                    }
+                )
 
             let actual =
-                WriteOutcomes.admitThenWrite system.Leader 1 UserBuffer.Mapped (payload 0 5) system
+                WriteOutcomes.admitThenWrite (Lone.leader system) 1 UserBuffer.Mapped (payload 0 5) system
 
             match SimulatedUnixPlatform.flavour platform, actual with
             | SimulatedUnixFlavour.Darwin,
               Error (WriteRefusal.SignalReceiver (_, SignalReceiverRefusal.LeaderBlocks Signal.SIGPIPE)) -> ()
             | SimulatedUnixFlavour.Linux,
               Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
-                signal |> shouldEqual (sigPipeFrom SimulatedUnixFlavour.Linux system.Leader)
-                SignalState.pending after.Process.Signals |> shouldEqual [ signal ]
+                signal
+                |> shouldEqual (sigPipeFrom SimulatedUnixFlavour.Linux (Lone.leader system))
+
+                SignalState.pending (Lone.proc after).Signals |> shouldEqual [ signal ]
             | flavour, other -> failwith $"%O{flavour}: %A{other}"
 
     /// A gone stream's write end polls as a pipe's with no reader does, and
@@ -238,7 +242,7 @@ module TestStreamReaderGone =
             let system = systemOn platform (Set.singleton 1) SignalDisposition.Ignore
 
             let pipe =
-                match FileDescriptorRegistry.tryFindTarget 1 (UnixSystemState.fileDescriptors system) with
+                match FileDescriptorRegistry.tryFindTarget 1 (Lone.fileDescriptors system) with
                 | Some (OpenFileTarget.Pipe (pipeId, PipeEnd.Write)) -> pipeId
                 | other -> failwith $"fd 1 is %A{other}"
 
@@ -246,8 +250,7 @@ module TestStreamReaderGone =
             | SimulatedUnixFlavour.Darwin -> ()
             | SimulatedUnixFlavour.Linux ->
                 let id =
-                    FileDescriptorRegistry.tryFindId 1 (UnixSystemState.fileDescriptors system)
-                    |> Option.get
+                    FileDescriptorRegistry.tryFindId 1 (Lone.fileDescriptors system) |> Option.get
 
                 // OUT|WRNORM, the empty pipe having room, and ERR: measured
                 // (pipe-epipe-sweep.c), 0xc through `poll(POLLOUT)`.
@@ -305,13 +308,13 @@ module TestStreamReaderGone =
                     |> Launched.boot (launch (Set.singleton 1)) 0 (CpuId 0)
                     |> withSigPipe disposition
 
-                match WriteOutcomes.admitThenWrite system.Leader 1 UserBuffer.Mapped (payload 0 5) system with
+                match WriteOutcomes.admitThenWrite (Lone.leader system) 1 UserBuffer.Mapped (payload 0 5) system with
                 | Error (WriteRefusal.InitProcess _) -> ()
                 | other -> failwith $"%O{platform}, %A{disposition}: %A{other}"
 
                 match
                     SimulatedUnixPlatform.flavour platform,
-                    UnixReadWrite.tryWriteBytes system.Leader 1 ImmutableArray.Empty system
+                    UnixReadWrite.tryWriteBytes (Lone.leader system) 1 ImmutableArray.Empty system
                 with
                 | SimulatedUnixFlavour.Linux, Ok (WriteStep.Returns (WriteAnswer.Completed 0L, _))
                 | SimulatedUnixFlavour.Darwin, Error (WriteRefusal.InitProcess _) -> ()
