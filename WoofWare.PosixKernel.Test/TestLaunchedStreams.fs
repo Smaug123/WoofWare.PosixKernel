@@ -369,7 +369,13 @@ module TestLaunchedStreams =
 
             let rec run (index : int) (ops : Op list) (reference : Reference) (system : UnixSystem<int, string>) =
                 UnixSystem.checkInvariants system |> shouldEqual []
-                deliveredLog system |> shouldEqual (List.rev reference.Log)
+                let delivered = deliveredLog system
+                let logged = List.rev reference.Log
+
+                // NUnit's comparison walks each byte reflectively, and the log
+                // grows every step, so it is asked only to describe a mismatch.
+                if delivered <> logged then
+                    delivered |> shouldEqual logged
 
                 match ops with
                 | [] -> ()

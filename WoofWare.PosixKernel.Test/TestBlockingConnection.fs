@@ -1177,11 +1177,12 @@ module TestBlockingConnection =
                 | None -> ()
                 | Some op ->
 
-                let where = $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
+                let where () : string =
+                    $"%O{platform}, restart %b{restart}, op %d{i} (%A{op})"
 
                 let compare (expected : Seen) (actual : Seen) =
                     if expected <> actual then
-                        failwith $"%s{where}: expected %A{expected}, got %A{actual}"
+                        failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
 
                 match op with
                 | BlockingConnectionOp.Read (thread, fd, count) ->
@@ -1214,7 +1215,7 @@ module TestBlockingConnection =
                     compare expected seen
 
                     if raised <> raises TcpSendCall.Write seen then
-                        failwith $"%s{where}: raised SIGPIPE %b{raised} answering %A{seen}"
+                        failwith $"%s{where ()}: raised SIGPIPE %b{raised} answering %A{seen}"
 
                     match seen, Map.tryFind thread after.Parks with
                     | Seen.Sleeps,
@@ -1242,7 +1243,7 @@ module TestBlockingConnection =
 
                     let seen, actual =
                         match UnixReadWrite.tryRecv thread fd UserBuffer.Mapped (uint64 count) flags system with
-                        | Error refusal -> failwith $"%s{where}: recv refused: %s{ReceiveRefusal.describe refusal}"
+                        | Error refusal -> failwith $"%s{where ()}: recv refused: %s{ReceiveRefusal.describe refusal}"
                         | Ok outcome -> fromRead (Ok outcome)
 
                     compare expected seen
@@ -1286,7 +1287,7 @@ module TestBlockingConnection =
                     compare expected seen
 
                     if raised <> raises call seen then
-                        failwith $"%s{where}: raised SIGPIPE %b{raised} answering %A{seen}"
+                        failwith $"%s{where ()}: raised SIGPIPE %b{raised} answering %A{seen}"
 
                     let what =
                         match noSignal, dontWait with
@@ -1478,7 +1479,8 @@ module TestBlockingConnection =
                             }
                             |> releaseUnreferenced
                     | expected, lingering, other ->
-                        failwith $"%s{where}: close expected refusal for %A{expected}, or %A{lingering}, got %A{other}"
+                        failwith
+                            $"%s{where ()}: close expected refusal for %A{expected}, or %A{lingering}, got %A{other}"
                 | BlockingConnectionOp.Dup fd ->
                     let copy, after = KeventWorld.dup fd system
                     system <- after
@@ -1502,10 +1504,10 @@ module TestBlockingConnection =
                     match tryLinger fd (if on then 1 else 0) seconds system with
                     | None ->
                         if not fails then
-                            failwith $"%s{where}: setting SO_LINGER failed"
+                            failwith $"%s{where ()}: setting SO_LINGER failed"
 
                         cover $"%s{flavourName} SO_LINGER: fails"
-                    | Some _ when fails -> failwith $"%s{where}: setting SO_LINGER succeeded"
+                    | Some _ when fails -> failwith $"%s{where ()}: setting SO_LINGER succeeded"
                     | Some after ->
 
                     system <- after
@@ -1538,7 +1540,8 @@ module TestBlockingConnection =
                         | Ok (ShutdownAnswer.Shut, after) -> Seen.Shut, Some after
                         | Ok (ShutdownAnswer.Failed error, after) -> Seen.Failed error, Some after
                         | Error (ShutdownRefusal.ReceiveShutBeforeUnsentBytes _) -> Seen.RefusedShutdown, None
-                        | Error refusal -> failwith $"%s{where}: shutdown refused: %s{ShutdownRefusal.describe refusal}"
+                        | Error refusal ->
+                            failwith $"%s{where ()}: shutdown refused: %s{ShutdownRefusal.describe refusal}"
 
                     compare expected seen
                     cover (label flavourName $"shutdown(%s{howName})" seen)
@@ -1600,7 +1603,7 @@ module TestBlockingConnection =
                     let expected = referenceWakes ordinals reference
 
                     if woken <> expected then
-                        failwith $"%s{where}: woke %A{woken}, expected %A{expected}"
+                        failwith $"%s{where ()}: woke %A{woken}, expected %A{expected}"
 
                     if List.length woken > 1 then
                         cover $"%s{flavourName} wake: several"
@@ -1663,7 +1666,7 @@ module TestBlockingConnection =
                             let raisedExpected = park.Through.IsSome && raises call seen
 
                             if raised <> raisedExpected then
-                                failwith $"%s{where}: finishing raised SIGPIPE %b{raised} answering %A{seen}"
+                                failwith $"%s{where ()}: finishing raised SIGPIPE %b{raised} answering %A{seen}"
 
                             seen, actual
 
@@ -1722,30 +1725,30 @@ module TestBlockingConnection =
                 if not stopped then
                     match UnixSystem.checkInvariants system with
                     | [] -> ()
-                    | defects -> failwith $"%s{where}: %A{defects}"
+                    | defects -> failwith $"%s{where ()}: %A{defects}"
 
                     for thread in threads do
                         let expected =
                             Map.tryFind thread reference.Parks
                             |> Option.map (fun park ->
                                 match park.Call with
-                                | Call.Reading (_, count, call) -> 0, count, 0, $"%A{call}"
+                                | Call.Reading (_, count, call) -> 0, count, 0, Choice1Of2 call
                                 | Call.Writing (_, payload, written, call) ->
-                                    1, List.length payload, written, $"%A{call}"
+                                    1, List.length payload, written, Choice2Of2 call
                             )
 
                         let actual =
                             UnixThreadTable.parkedFor thread system.Threads
                             |> Option.map (fun parked ->
                                 match parked with
-                                | ParkedSyscall.ConnectionRead read -> 0, read.Count, 0, $"%A{read.Call}"
+                                | ParkedSyscall.ConnectionRead read -> 0, read.Count, 0, Choice1Of2 read.Call
                                 | ParkedSyscall.ConnectionWrite write ->
-                                    1, write.Count, write.Written, $"%A{write.Call}"
-                                | other -> failwith $"%s{where}: thread %d{thread} parked in %A{other}"
+                                    1, write.Count, write.Written, Choice2Of2 write.Call
+                                | other -> failwith $"%s{where ()}: thread %d{thread} parked in %A{other}"
                             )
 
                         if expected <> actual then
-                            failwith $"%s{where}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
+                            failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                     // The socket of an end goes exactly when nothing references
                     // its description.
@@ -1784,7 +1787,7 @@ module TestBlockingConnection =
 
                             if refused <> (held && (linux || not reuse)) then
                                 failwith
-                                    $"%s{where}: a bind of the %A{connectionEnd} end's port %d{endPort}, SO_REUSEADDR %b{reuse}, refused %b{refused}"
+                                    $"%s{where ()}: a bind of the %A{connectionEnd} end's port %d{endPort}, SO_REUSEADDR %b{reuse}, refused %b{refused}"
 
                         let socket =
                             match Set.count reference.Gone with
@@ -1802,10 +1805,10 @@ module TestBlockingConnection =
                         let written =
                             match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
                             | Some (_, description) -> description.Status.Written
-                            | None -> failwith $"%s{where}: fd %d{fd} names no description"
+                            | None -> failwith $"%s{where ()}: fd %d{fd} names no description"
 
                         if written <> Set.contains connectionEnd reference.Marked then
-                            failwith $"%s{where}: fd %d{fd}'s description marked written %b{written}"
+                            failwith $"%s{where ()}: fd %d{fd}'s description marked written %b{written}"
 
                         if written then
                             cover $"%s{flavourName}: a description marked written"

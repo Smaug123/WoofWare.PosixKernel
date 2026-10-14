@@ -23,3 +23,9 @@ module TestGcHeapHardLimit =
         // DOTNET_GCHeapHardLimit environment variable overrides the runtimeconfig property, and a
         // different value makes this fail, as it should.
         GC.GetGCMemoryInfo().TotalAvailableMemoryBytes |> shouldEqual ExpectedBytes
+
+    [<Test>]
+    let ``the test host runs server GC`` () : unit =
+        // ServerGarbageCollection in WoofWare.PosixKernel.Test.fsproj, which roughly halves the
+        // suite's time; a DOTNET_gcServer environment variable of 0 overrides it, and fails this.
+        System.Runtime.GCSettings.IsServerGC |> shouldEqual true
