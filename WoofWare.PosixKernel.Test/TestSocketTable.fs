@@ -341,6 +341,7 @@ module TestSocketTable =
 
             let filesystem =
                 VirtualFileSystem.ofFileSystemSeed
+                    EntryNameMatching.Bytes
                     (UnixTimestamp.createOrFail "test" 1_700_000_000L 0)
                     Owners.linuxDefault
                     SymlinkModes.linux

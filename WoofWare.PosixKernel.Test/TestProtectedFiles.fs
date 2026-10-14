@@ -166,7 +166,7 @@ module TestProtectedFiles =
 
     /// One inode of each kind, owned by `by`, read off a hand-built filesystem.
     let private inodesOwnedBy (by : InodeOwner) : (string * Inode) list =
-        let vfs = VirtualFileSystem.empty epoch by
+        let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         let root = VirtualFileSystem.root vfs
 
         let vfs =
@@ -528,7 +528,7 @@ module TestProtectedFiles =
     /// a directory holding `x`, `/c` in which anyone may create, and `/v` for
     /// root's links into the directory under test.
     let private scaffold : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u)
         |> directory "/t" 0u 0o755
         |> file "/t/file" 0u 0o644
         |> directory "/t/dir" 0u 0o755

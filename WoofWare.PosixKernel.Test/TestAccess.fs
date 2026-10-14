@@ -106,7 +106,8 @@ module TestAccess =
             InodeContent.Directory
                 {
                     Entries = Map.empty
-                    Parent = VirtualFileSystem.root (VirtualFileSystem.empty epoch (owner 0u 0u))
+                    Parent =
+                        VirtualFileSystem.root (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u))
                     Permissions = bits
                 }
         | Kind.Link -> InodeContent.Symlink (SymlinkTarget.parseOrFail context "target", bits)
@@ -546,7 +547,7 @@ module TestAccess =
     /// directory of 1001's holding a 0666 file.
     let private credentialTree : VirtualFileSystem =
         let mutable vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/creds" (owner 0u 0u) 0o755
 
         for bits in sweptModes do
@@ -648,7 +649,7 @@ module TestAccess =
         // OWN-SWEEP: uid 501's own file and directory, through access and
         // AT_EACCESS alike.
         let mutable vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/own" (owner 501u 20u) 0o755
 
         for bits in sweptModes do
@@ -685,7 +686,7 @@ module TestAccess =
     [<Test>]
     let ``Darwin refuses root's execute question on a non-directory, and answers the rest`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/t" (owner 0u 0u) 0o755
             |> file "/t/f" (owner 501u 20u) 0o755
             |> directory "/t/d" (owner 501u 20u) 0o000
@@ -739,7 +740,7 @@ module TestAccess =
     [<Test>]
     let ``Darwin's extended rights are refused once the path resolves, and its other high bits ignored`` () : unit =
         let vfs =
-            VirtualFileSystem.empty epoch (owner 501u 20u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 501u 20u)
             |> file "/f" (owner 501u 20u) 0o777
             |> file "/z" (owner 501u 20u) 0o000
 
@@ -779,7 +780,7 @@ module TestAccess =
                 SimulatedUnixPlatform.macOsArm64
                 u501
                 "/"
-                (VirtualFileSystem.empty epoch (owner 501u 20u)
+                (VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 501u 20u)
                  |> file "/f" (owner 501u 20u) 0o777)
 
         for flag in [ 0x800 ; 0x2000 ; 0x8000 ] do
@@ -791,7 +792,7 @@ module TestAccess =
     /// `pd` as the probe built it: a 0644 file, a 0755 directory, and links to
     /// each, a dangling one and a cyclic one, all the caller's.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/pd" by 0o755
         |> file "/pd/f" by 0o644
         |> directory "/pd/sub" by 0o755
@@ -860,7 +861,7 @@ module TestAccess =
         // CRED-SWEEP's symlink rows: a link's mode is 0777 on Linux, so every
         // standing is granted every question, root's execute included.
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> symlink "/l" (owner 1001u 2000u) "nx"
 
         for credentials in [ Owners.root ; Credentials.ofIds (uid 1000u) (gid 1000u) [] ] do
@@ -875,7 +876,7 @@ module TestAccess =
 
     /// The probe's base: a 0777 file and a 0000 file of the caller's.
     let private screenTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/b" by 0o755
         |> file "/b/screen_f" by 0o777
         |> file "/b/screen_z" by 0o000
@@ -1113,7 +1114,7 @@ module TestAccess =
         let by = owner 1000u 1000u
 
         let vfs =
-            VirtualFileSystem.empty epoch (owner 0u 0u)
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
             |> directory "/x" (owner 0u 0u) 0o755
             |> directory "/x/here" by 0o500
 

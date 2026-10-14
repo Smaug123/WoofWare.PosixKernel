@@ -99,7 +99,9 @@ module TestSymlinkMode =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials caller) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        let vfs = VirtualFileSystem.empty epoch (InodeOwner.ofProcess caller)
+        let vfs =
+            VirtualFileSystem.empty EntryNameMatching.Bytes epoch (InodeOwner.ofProcess caller)
+
         let root = VirtualFileSystem.root vfs
 
         let vfs =

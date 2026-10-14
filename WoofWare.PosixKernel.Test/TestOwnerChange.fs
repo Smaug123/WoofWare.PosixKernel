@@ -837,7 +837,7 @@ module TestOwnerChange =
     /// `/t` holding a file and a directory owned by `by`, as the probe
     /// prepared each row.
     let private tree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch (owner 0u 0u)
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch (owner 0u 0u)
         |> directory "/t" (owner 0u 0u) 0o755
         |> file "/t/f" by 0o600
         |> directory "/t/d" by 0o700
@@ -973,7 +973,7 @@ module TestOwnerChange =
     /// link to itself, an unsearchable directory holding a file, and a file
     /// root owns, everything else owned by `by`.
     let private pathTree (by : InodeOwner) : VirtualFileSystem =
-        VirtualFileSystem.empty epoch by
+        VirtualFileSystem.empty EntryNameMatching.Bytes epoch by
         |> directory "/p" by 0o755
         |> file "/p/f" by 0o600
         |> directory "/p/d" by 0o700

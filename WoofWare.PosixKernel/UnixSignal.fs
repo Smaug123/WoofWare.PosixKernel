@@ -101,16 +101,6 @@ module internal SigprocmaskRefusal =
         match refusal with
         | SigprocmaskRefusal.DarwinUnblockedForAnotherThread _ -> RefusalKind.Unmodelled
 
-/// What a `kill(2)` or `pthread_kill(3)` the kernel answered did to the
-/// calling process, if it did not end it (see `ProcessFate`).
-[<RequireQualifiedAccess>]
-type KillOutcome =
-    /// The process runs on: the signal is pending, or was discarded, or there
-    /// was no signal to send.
-    | ProcessRuns
-    /// The signal stops the whole process.
-    | ProcessStopped of signal : Signal
-
 /// What a thread's return to user mode did, as `UnixSignal.onReturnToUser`
 /// answers it, if it did not end the process (see `ProcessFate`): run the
 /// handlers of the caught signals it took, or apply a signal's kernel default.
@@ -204,7 +194,7 @@ module UnixSignal =
             Error (KillRefusal.ProcessGroup pid)
         elif pid <> self then
             Error (KillRefusal.OtherProcess pid)
-        elif self = 1 then
+        elif ProcessSignal.isInit system then
             Error KillRefusal.InitProcess
         elif signo = 0 then
             Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)))
@@ -213,36 +203,14 @@ module UnixSignal =
         match Signal.ofRawSignoUnder (SignalState.numbering system.Process.Signals) signo with
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
-            let withSignals (signals : SignalState<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals = signals
-                        }
+            ProcessSignal.generate
+                {
+                    Signal = signal
+                    Target = ValueNone
                 }
-
-            let generation =
-                SignalState.generate
-                    system.Process.CoreDumps
-                    system.Leader
-                    (threadsOf system)
-                    {
-                        Signal = signal
-                        Target = ValueNone
-                    }
-                    system.Process.Signals
-
-            match generation with
-            | Error refusal -> Error (KillRefusal.Receiver refusal)
-            | Ok (SignalGeneration.ProcessContinues signals) ->
-                Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, withSignals signals)))
-            | Ok (SignalGeneration.ProcessStopped (signal, signals)) ->
-                Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, withSignals signals)))
-            | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-                let ended =
-                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
-
-                Ok (Ok (ProcessFate.ProcessEnded ended))
+                system
+            |> Result.map Ok
+            |> Result.mapError KillRefusal.Receiver
 
     /// `kill(2)`, sent by the calling process to `pid`, with `signo` read under
     /// the process's own signal numbering.
@@ -310,18 +278,6 @@ module UnixSignal =
         | SignalNumbering.Linux, Signal.RealTime 1 -> true
         | _, _ -> false
 
-    let private withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (signals : SignalState<'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
-        =
-        { system with
-            Process =
-                { system.Process with
-                    Signals = signals
-                }
-        }
-
     /// `onReturnToUser`, with a refusal answered as the `Error` rather than raised.
     let internal tryOnReturnToUser<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -346,7 +302,7 @@ module UnixSignal =
             thread
             system.Process.Signals
         |> Result.map (fun (delivery, signals) ->
-            let after = withSignals signals system
+            let after = UnixSystemState.withSignals signals system
 
             match delivery with
             | None -> ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)
@@ -469,7 +425,7 @@ module UnixSignal =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        withSignals (SignalState.sigreturn thread frame system.Process.Signals) system
+        UnixSystemState.withSignals (SignalState.sigreturn thread frame system.Process.Signals) system
 
     /// `pthreadKill`, with a refusal answered as the `Error` rather than raised.
     let internal tryPthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -491,7 +447,7 @@ module UnixSignal =
         // every row: 0 sends nothing; every signal but Linux's 32 and 33 is sent;
         // every other number is EINVAL. glibc refuses 32 and 33 before the
         // kernel sees them: `kill(2)` sends both (`kill-arguments.c`).
-        if ProcessId.toInt32 (UnixSystem.processId system) = 1 then
+        if ProcessSignal.isInit system then
             Error ThreadKillRefusal.InitProcess
         elif signo = 0 then
             Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)))
@@ -501,28 +457,14 @@ module UnixSignal =
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal when reservedByCLibrary numbering signal -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
-            let generation =
-                SignalState.generate
-                    system.Process.CoreDumps
-                    system.Leader
-                    (threadsOf system)
-                    {
-                        Signal = signal
-                        Target = ValueSome target
-                    }
-                    system.Process.Signals
-
-            match generation with
-            | Error refusal -> Error (ThreadKillRefusal.Receiver refusal)
-            | Ok (SignalGeneration.ProcessContinues signals) ->
-                Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, withSignals signals system)))
-            | Ok (SignalGeneration.ProcessStopped (signal, signals)) ->
-                Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, withSignals signals system)))
-            | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
-                let ended =
-                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
-
-                Ok (Ok (ProcessFate.ProcessEnded ended))
+            ProcessSignal.generate
+                {
+                    Signal = signal
+                    Target = ValueSome target
+                }
+                system
+            |> Result.map Ok
+            |> Result.mapError ThreadKillRefusal.Receiver
 
     /// `pthread_kill(3)`, sent by the calling process to `target`, one of its
     /// own threads, with `signo` read under the process's own signal numbering.
@@ -589,7 +531,10 @@ module UnixSignal =
         | _, Some action ->
             let old = SignalState.disposition signal system.Process.Signals
 
-            Ok (old, withSignals (SignalState.setDisposition signal action system.Process.Signals) system)
+            Ok (
+                old,
+                UnixSystemState.withSignals (SignalState.setDisposition signal action system.Process.Signals) system
+            )
 
     /// `sigaction(3)` as a program calls it, through its C library, which on
     /// Linux refuses glibc's own 32 and 33 before the kernel sees them: see
@@ -698,7 +643,7 @@ module UnixSignal =
                 (signals, targets)
                 ||> List.fold (fun signals target -> SignalState.changeMask change set target signals)
 
-            Ok (old, withSignals signals system)
+            Ok (old, UnixSystemState.withSignals signals system)
 
     /// The signals Linux's C library takes out of every set its mask calls are
     /// handed: its own 32 and 33. Darwin's takes none.
@@ -920,11 +865,11 @@ module UnixSignal =
         match SyscallInterruption.suspension thread system signals with
         | Error refusal -> Error refusal
         | Ok (SyscallInterruption.Suspension.Ends signals) ->
-            Ok (SigsuspendOutcome.Failed UnixError.EINTR, withSignals signals system)
+            Ok (SigsuspendOutcome.Failed UnixError.EINTR, UnixSystemState.withSignals signals system)
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.park thread ParkedSyscall.SigSuspend (withSignals signals system)
+                UnixWait.park thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// `sigsuspend`, with a refusal answered as the `Error` rather than raised.
@@ -1063,11 +1008,14 @@ module UnixSignal =
         match SyscallInterruption.suspension thread system system.Process.Signals with
         | Error refusal -> Error refusal
         | Ok (SyscallInterruption.Suspension.Ends signals) ->
-            Ok (SigsuspendOutcome.Failed UnixError.EINTR, withSignals signals (UnixParkState.unpark thread system))
+            Ok (
+                SigsuspendOutcome.Failed UnixError.EINTR,
+                UnixSystemState.withSignals signals (UnixParkState.unpark thread system)
+            )
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.park thread ParkedSyscall.SigSuspend (withSignals signals system)
+                UnixWait.park thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// Finish the `sigsuspend(2)` or `pause(2)` `thread` is parked in, once
