@@ -199,12 +199,12 @@ module TestAttributeChangeAt =
     /// `system` with the caller's credentials, as the probe's child had once it
     /// dropped.
     let private dropped (caller : Caller) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Credentials = caller.Credentials
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Credentials = caller.Credentials
+            }
+        )
 
     /// The permission bits `stat` (or `lstat`, under `NoFollowFinal`) reports
     /// for `path`, or `None` where it fails.

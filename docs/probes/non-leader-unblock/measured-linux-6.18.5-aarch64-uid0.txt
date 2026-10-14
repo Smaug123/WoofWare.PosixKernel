@@ -1,0 +1,15 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, gcc:14 container
+# Linux 6.18.5 aarch64, uid 0
+# flavour linux TERM=15 TSTP=20 USR1=10
+sig=15(default) who=none main-pending=4000 second-pending=4000 second-alive pending=4000 main-alive pending=4000 end=exit0
+sig=15(default) who=main main-pending=4000 second-pending=4000 end=signal15
+sig=15(default) who=second main-pending=4000 second-pending=4000 end=signal15
+sig=15(default) who=second-ss main-pending=4000 second-pending=4000 end=signal15
+sig=20(default) who=none main-pending=80000 second-pending=80000 second-alive pending=80000 main-alive pending=80000 end=exit0
+sig=20(default) who=main main-pending=80000 second-pending=80000 end=stopped20
+sig=20(default) who=second main-pending=80000 second-pending=80000 end=stopped20
+sig=20(default) who=second-ss main-pending=80000 second-pending=80000 end=stopped20
+sig=10(caught) who=none main-pending=200 second-pending=200 second-alive pending=200 main-alive pending=200 end=exit0
+sig=10(caught) who=main main-pending=200 second-pending=200 handler-on=main main-returned second-alive pending=0 main-alive pending=0 end=exit0
+sig=10(caught) who=second main-pending=200 second-pending=200 handler-on=second second-returned second-alive pending=0 main-alive pending=0 end=exit0
+sig=10(caught) who=second-ss main-pending=200 second-pending=200 handler-on=second second-returned main-alive pending=0 end=exit0

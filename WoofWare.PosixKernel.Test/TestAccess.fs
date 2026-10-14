@@ -450,12 +450,13 @@ module TestAccess =
                 { system.Machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = inodeAt vfs cwd
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = inodeAt vfs cwd
+            }
+        )
+        |> Lone.restand
 
     /// What an `access`-family call answered, as the probe printed it.
     let private answered (result : Result<SyscallAnswer, AccessRefusal>) : string =

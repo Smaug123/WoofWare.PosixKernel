@@ -257,16 +257,16 @@ module SignalFuzz =
         let bits (signals : Set<Signal>) : uint64 =
             (0UL, signals) ||> Set.fold (fun acc s -> acc ||| (1UL <<< (signo s - 1)))
 
-        let signals () = system.Process.Signals
+        let signals () = (Lone.proc system).Signals
 
         let withSignals (signals : SignalState<int, unit>) : unit =
             system <-
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals = signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals = signals
+                    }
+                )
 
         let rec returnToUser () : unit =
             match UnixSignal.tryOnReturnToUser leader system with

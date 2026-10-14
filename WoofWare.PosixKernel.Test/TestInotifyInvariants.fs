@@ -71,7 +71,7 @@ module TestInotifyInvariants =
         | Error refusal -> failwith $"add: %s{InotifyAddWatchRefusal.describe refusal}"
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names nothing"
 
@@ -84,10 +84,10 @@ module TestInotifyInvariants =
 
     let private forge (state : InotifyState) : UnixSystem<int, string> =
         let system, id, _ = instance
-        UnixSystemState.mapOpenFiles (OpenFileTable.setInotifyState context id state) system
+        Lone.mapOpenFiles (OpenFileTable.setInotifyState context id state) system
 
     let private registryDefects (system : UnixSystem<int, string>) : FileDescriptorRegistryDefect list =
-        FileDescriptorRegistry.checkInvariants (UnixSystemState.fileDescriptors system)
+        FileDescriptorRegistry.checkInvariants (Lone.fileDescriptors system)
 
     [<Test>]
     let ``an instance made by the calls has no defect`` () : unit =
@@ -202,7 +202,7 @@ module TestInotifyInvariants =
         let system, id, _ = instance
 
         let forged =
-            UnixSystemState.mapOpenFiles
+            Lone.mapOpenFiles
                 (OpenFileTable.mapDescription
                     context
                     id
@@ -235,7 +235,7 @@ module TestInotifyInvariants =
         let _, system = add fd "d2" 0x100u system
         let _, system = init1 0 system
         let id = idOf fd system
-        let user = system.Process.Credentials.EffectiveUser
+        let user = (Lone.proc system).Credentials.EffectiveUser
         UnixSystem.checkInvariants system |> shouldEqual []
         let limits = system.Machine.InotifyLimits
 
@@ -268,7 +268,7 @@ module TestInotifyInvariants =
         let state = OpenFileTable.inotifyState context id system.Machine.OpenFiles
 
         let overfull =
-            UnixSystemState.mapOpenFiles
+            Lone.mapOpenFiles
                 (OpenFileTable.setInotifyState
                     context
                     id
@@ -345,9 +345,9 @@ module TestInotifyInvariants =
         |> shouldEqual (Error (InotifyLimitsRefusal.NotReadOn SimulatedUnixFlavour.Darwin))
 
         let fd, registry =
-            FileDescriptorRegistry.createInotify UserId.root false (UnixSystemState.fileDescriptors darwin)
+            FileDescriptorRegistry.createInotify UserId.root false (Lone.fileDescriptors darwin)
 
-        let forged = UnixSystemState.withFileDescriptors registry darwin
+        let forged = Lone.withFileDescriptors registry darwin
         let id = idOf fd forged
 
         UnixSystem.checkInvariants forged
@@ -510,9 +510,7 @@ module TestInotifyInvariants =
         SimulatedMachine.checkInvariants machine |> shouldEqual []
 
         let state =
-            match
-                FileDescriptorRegistry.tryFindTarget fdB (UnixSystemState.fileDescriptors (Machines.viewOf b machine))
-            with
+            match FileDescriptorRegistry.tryFindTarget fdB (Proc.fileDescriptors b (Machines.viewOf b machine)) with
             | Some (OpenFileTarget.Inotify state) -> state
             | other -> failwith $"%A{other}"
 
@@ -582,16 +580,16 @@ module TestInotifyInvariants =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             |> Threads.ensure 1
             |> fun system ->
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals =
-                                SignalState.setDisposition
-                                    Signal.SIGUSR1
-                                    (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                                    system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals =
+                            SignalState.setDisposition
+                                Signal.SIGUSR1
+                                (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                                proc.Signals
+                    }
+                )
 
         let opGen : Gen<Op> =
             let slot = Gen.choose (0, 3)
@@ -686,7 +684,7 @@ module TestInotifyInvariants =
                     | Ok (_, after) ->
                         system <- after
 
-                        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+                        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                         | Some (OpenFileTarget.Inotify state) when
                             InotifyQueue.toList state.Queue |> List.contains InotifyRecord.QueueOverflow
                             ->
@@ -705,7 +703,7 @@ module TestInotifyInvariants =
                     // it sleeps, the leader reads only what it need not sleep
                     // for.
                     let leaderWouldSleep =
-                        match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors system) with
+                        match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) with
                         | Some {
                                    Target = OpenFileTarget.Inotify state
                                    NonBlocking = false
@@ -755,18 +753,18 @@ module TestInotifyInvariants =
                 | Op.Signal ->
                     if asleep then
                         system <-
-                            { system with
-                                Process =
-                                    { system.Process with
-                                        Signals =
-                                            SignalState.enqueue
-                                                {
-                                                    Signal = Signal.SIGUSR1
-                                                    Target = ValueSome 1
-                                                }
-                                                system.Process.Signals
-                                    }
-                            }
+                            system
+                            |> Lone.mapProc (fun proc ->
+                                { proc with
+                                    Signals =
+                                        SignalState.enqueue
+                                            {
+                                                Signal = Signal.SIGUSR1
+                                                Target = ValueSome 1
+                                            }
+                                            proc.Signals
+                                }
+                            )
 
                 check op
                 finishReader ()
@@ -822,8 +820,8 @@ module TestInotifyInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors
-            (FileDescriptorRegistry.Unchecked.setOpenedThrough id through (UnixSystemState.fileDescriptors system))
+        Lone.withFileDescriptors
+            (FileDescriptorRegistry.Unchecked.setOpenedThrough id through (Lone.fileDescriptors system))
             system
 
     [<Test>]

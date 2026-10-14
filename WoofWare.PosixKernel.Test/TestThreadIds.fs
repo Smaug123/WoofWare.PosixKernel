@@ -31,10 +31,10 @@ module TestThreadIds =
     let private pid (value : int32) : ProcessId = ProcessId.parseOrFail "test" value
 
     let private idOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
-        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread system.Threads))
+        OsThreadId.toUInt64 (UnixThreadState.osThreadId (UnixThreadTable.get thread (Lone.threads system)))
 
     let private spawnOrFail (child : int) (system : UnixSystem<int, string>) : uint64 * UnixSystem<int, string> =
-        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
+        match UnixThreadLifecycle.trySpawn (Lone.leader system) child (CpuId 0) system with
         | Ok (SpawnAnswer.Spawned id, system) -> OsThreadId.toUInt64 id, system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{child} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{child} was refused: %s{SpawnRefusal.describe refusal}"
@@ -53,13 +53,13 @@ module TestThreadIds =
     [<Test>]
     let ``a fresh process's leader has the process ID as its thread ID, on both flavours`` () : unit =
         for system in [ linux ; darwin ] do
-            system.Leader |> shouldEqual 0
-            system.Threads |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
+            Lone.leader system |> shouldEqual 0
+            Lone.threads system |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ]
 
             idOf 0 system
             |> shouldEqual (uint64 (ProcessId.toInt32 UnixSystem.defaultProcessId))
 
-            UnixThreadState.cpu (UnixThreadTable.get 0 system.Threads)
+            UnixThreadState.cpu (UnixThreadTable.get 0 (Lone.threads system))
             |> shouldEqual (CpuId 0)
 
             UnixSystem.checkInvariants system |> shouldEqual []
@@ -72,9 +72,9 @@ module TestThreadIds =
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams "main" (CpuId 3)
 
-        system.Leader |> shouldEqual "main"
+        Lone.leader system |> shouldEqual "main"
 
-        UnixThreadState.cpu (UnixThreadTable.get "main" system.Threads)
+        UnixThreadState.cpu (UnixThreadTable.get "main" (Lone.threads system))
         |> shouldEqual (CpuId 3)
 
     [<Test>]
@@ -208,7 +208,7 @@ module TestThreadIds =
         let system = system |> UnixSystem.writePidMaxSysctl "test" 400
 
         let rec fill (child : int) (started : uint64 list) (system : UnixSystem<int, string>) =
-            match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
+            match UnixThreadLifecycle.trySpawn (Lone.leader system) child (CpuId 0) system with
             | Ok (SpawnAnswer.Spawned id, system) -> fill (child + 1) (OsThreadId.toUInt64 id :: started) system
             | Ok (SpawnAnswer.Failed error, after) ->
                 // A failed creation hands out no thread ID and adds no thread.
@@ -441,7 +441,7 @@ module TestThreadIds =
         // alone. The new thread's mask was exactly its creator's, and the
         // creator's own pending signal was not pending on it.
         for system in [ linux ; darwin ] do
-            let numbering = SignalState.numbering system.Process.Signals
+            let numbering = SignalState.numbering (Lone.proc system).Signals
 
             let blocking (signals : Signal list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match
@@ -477,7 +477,7 @@ module TestThreadIds =
 
                 let _, spawned = spawnOrFail 1 creator
 
-                SignalState.maskOf 1 spawned.Process.Signals
+                SignalState.maskOf 1 (Lone.proc spawned).Signals
                 |> SignalMask.signals
                 |> shouldEqual (Set.ofList blocked)
 
@@ -501,7 +501,7 @@ module TestThreadIds =
         // return restores its own thread's mask alone.
         for system in [ linux ; darwin ] do
             let usr1 =
-                Signal.toRawSignoUnder (SignalState.numbering system.Process.Signals) Signal.SIGUSR1
+                Signal.toRawSignoUnder (SignalState.numbering (Lone.proc system).Signals) Signal.SIGUSR1
 
             let system =
                 match UnixSignal.sigaction usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) system with
@@ -520,14 +520,16 @@ module TestThreadIds =
 
             let _, spawned = spawnOrFail 1 inHandler
 
-            SignalState.maskOf 1 spawned.Process.Signals
+            SignalState.maskOf 1 (Lone.proc spawned).Signals
             |> SignalMask.signals
             |> shouldEqual (Set.singleton Signal.SIGUSR1)
 
             let returned = UnixSignal.sigreturn 0 frame.Id spawned
-            SignalState.maskOf 0 returned.Process.Signals |> shouldEqual SignalMask.empty
 
-            SignalState.maskOf 1 returned.Process.Signals
+            SignalState.maskOf 0 (Lone.proc returned).Signals
+            |> shouldEqual SignalMask.empty
+
+            SignalState.maskOf 1 (Lone.proc returned).Signals
             |> SignalMask.signals
             |> shouldEqual (Set.singleton Signal.SIGUSR1)
 
@@ -719,7 +721,7 @@ module TestThreadIds =
         | Setup.Darwin first -> idOf 0 system |> shouldEqual first
 
         let liveIds (system : UnixSystem<int, string>) : Set<uint64> =
-            system.Threads
+            (Lone.threads system)
             |> Map.toSeq
             |> Seq.map (fun (thread, _) -> idOf thread system)
             |> Set.ofSeq
@@ -727,7 +729,7 @@ module TestThreadIds =
         let check (system : UnixSystem<int, string>) : unit =
             UnixSystem.checkInvariants system |> shouldEqual []
             // Unique among live threads.
-            (liveIds system).Count |> shouldEqual system.Threads.Count
+            (liveIds system).Count |> shouldEqual (Lone.threads system).Count
 
             // The machine's allocator records exactly the live threads' IDs, which
             // is what it skips.
@@ -743,7 +745,7 @@ module TestThreadIds =
             ((system, model, nextName, minted, last) : UnixSystem<int, string> * Model * int * Set<uint64> * uint64)
             (op : Op)
             =
-            let live = system.Threads |> Map.keys |> List.ofSeq
+            let live = Lone.threads system |> Map.keys |> List.ofSeq
 
             match op with
             | Op.Spawn index ->
@@ -792,7 +794,7 @@ module TestThreadIds =
                     after, model, nextName + 1, minted, id
                 | expected, actual -> failwith $"the model says %A{expected}, and the library %A{actual}"
             | Op.Exit index ->
-                match live |> List.filter (fun thread -> thread <> system.Leader) with
+                match live |> List.filter (fun thread -> thread <> (Lone.leader system)) with
                 | [] -> system, model, nextName, minted, last
                 | others ->
                     let thread = others.[index % others.Length]

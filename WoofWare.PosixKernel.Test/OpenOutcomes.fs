@@ -22,8 +22,20 @@ module internal OpenOutcomes =
             | SyscallOutcome.Restarts -> failwith $"expected an open that returns, got %A{outcome}"
         )
 
-    /// `UnixNamespace.openPath` by the process's leader, failing the test if
-    /// the call sleeps.
+    /// `UnixNamespace.openPath` by the leader of the process `pid`, failing the
+    /// test if the call sleeps.
+    let openPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (flags : int)
+        (path : PathArgumentBytes)
+        (mode : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
+        =
+        UnixNamespace.tryOpenPath (Proc.leader pid system) flags path mode system
+        |> answered
+
+    /// `openPathIn` the only process on the machine.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (path : PathArgumentBytes)
@@ -31,7 +43,7 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenPath system.Leader flags path mode system |> answered
+        openPathIn (Lone.pid system) flags path mode system
 
     /// `UnixNamespace.openat` by the process's leader, failing the test if the
     /// call sleeps.
@@ -43,4 +55,5 @@ module internal OpenOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        UnixNamespace.tryOpenat system.Leader dirfd path flags mode system |> answered
+        UnixNamespace.tryOpenat (Lone.leader system) dirfd path flags mode system
+        |> answered

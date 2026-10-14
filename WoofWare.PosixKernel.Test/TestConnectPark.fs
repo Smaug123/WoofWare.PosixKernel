@@ -66,7 +66,7 @@ module TestConnectPark =
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
             let socket =
-                match FileDescriptorRegistry.tryFindId 0 (UnixSystemState.fileDescriptors awake) with
+                match FileDescriptorRegistry.tryFindId 0 (Lone.fileDescriptors awake) with
                 | Some id -> id
                 | None -> failwith "fd 0 names no description"
 

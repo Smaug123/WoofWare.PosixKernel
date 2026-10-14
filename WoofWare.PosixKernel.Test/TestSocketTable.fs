@@ -111,7 +111,7 @@ module TestSocketTable =
                     NextSocketId = SocketId nextSocketId
                 }
         }
-        |> UnixSystemState.withFileDescriptors registry
+        |> Lone.withFileDescriptors registry
 
     let private someSocket : SocketDescription =
         {
@@ -130,7 +130,7 @@ module TestSocketTable =
         let fd, kernel =
             NewSocket.create SocketDomain.Inet6 SocketKind.Datagram SocketProtocol.Udp initialSystem
 
-        match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors kernel) with
+        match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors kernel) with
         | None -> failwith "the socket descriptor is not live"
         | Some description ->
 
@@ -189,8 +189,8 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let duped, kernel =
-            match FileDescriptorRegistry.dup fd (UnixSystemState.fileDescriptors kernel) with
-            | Ok (duped, registry) -> duped, UnixSystemState.withFileDescriptors registry kernel
+            match FileDescriptorRegistry.dup fd (Lone.fileDescriptors kernel) with
+            | Ok (duped, registry) -> duped, Lone.withFileDescriptors registry kernel
             | Error e -> failwith $"expected dup to succeed, got %O{e}"
 
         match closeFd duped kernel with
@@ -201,7 +201,7 @@ module TestSocketTable =
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
         // And the surviving descriptor still resolves to it.
-        match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors kernel) with
+        match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors kernel) with
         | Some description ->
             match description.Target with
             | OpenFileTarget.Socket socketId ->
@@ -218,9 +218,9 @@ module TestSocketTable =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp initialSystem
 
         let epoll, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors kernel)
+            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
 
-        let kernel = UnixSystemState.withFileDescriptors registry kernel
+        let kernel = Lone.withFileDescriptors registry kernel
 
         match closeFd epoll kernel with
         | Error e -> failwith $"expected close to succeed, got %O{e}"
@@ -352,21 +352,22 @@ module TestSocketTable =
                         { initialSystem.Machine with
                             CommittedFileSystem = CommittedFileSystem.initial filesystem
                         }
-                    Process =
-                        { initialSystem.Process with
-                            CurrentDirectoryInode = VirtualFileSystem.root filesystem
-                        }
                 }
-                |> Launched.restand
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        CurrentDirectoryInode = VirtualFileSystem.root filesystem
+                    }
+                )
+                |> Lone.restand
 
             for _ in 1..steps do
                 let live =
-                    FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors kernel)
+                    FileDescriptorRegistry.fds (Lone.fileDescriptors kernel)
                     |> Map.toList
                     |> List.map fst
 
                 let namesSocket (fd : int) : bool =
-                    match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors kernel) with
+                    match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors kernel) with
                     | Some description ->
                         match description.Target with
                         | OpenFileTarget.Socket _ -> true
@@ -390,11 +391,9 @@ module TestSocketTable =
                     | Error e -> failwith $"unexpected close error: %O{e}"
                 | 2
                 | 3 ->
-                    match
-                        FileDescriptorRegistry.dup live.[rng.Next live.Length] (UnixSystemState.fileDescriptors kernel)
-                    with
+                    match FileDescriptorRegistry.dup live.[rng.Next live.Length] (Lone.fileDescriptors kernel) with
                     | Ok (_, registry) ->
-                        kernel <- UnixSystemState.withFileDescriptors registry kernel
+                        kernel <- Lone.withFileDescriptors registry kernel
 
                         cover LifetimeMixLabel.Dup
                     | Error e -> failwith $"unexpected dup error: %O{e}"
@@ -421,15 +420,15 @@ module TestSocketTable =
                                 FileDescriptorRegistry.openDirectory
                                     (ForgedName.ofInode kernel inode)
                                     inode
-                                    (UnixSystemState.fileDescriptors kernel)
+                                    (Lone.fileDescriptors kernel)
                             | _ ->
                                 FileDescriptorRegistry.openFile
                                     (ForgedName.ofInode kernel inode)
                                     inode
                                     FileAccessMode.ReadOnly
-                                    (UnixSystemState.fileDescriptors kernel)
+                                    (Lone.fileDescriptors kernel)
 
-                        kernel <- UnixSystemState.withFileDescriptors registry kernel
+                        kernel <- Lone.withFileDescriptors registry kernel
                 | 7 ->
                     // Remove a name at random, from *any* directory the graph
                     // still contains, and reap if that was the last reference.
@@ -514,10 +513,9 @@ module TestSocketTable =
                             | Some (InodeContent.Symlink _)
                             | None -> ()
                 | 6 ->
-                    let _, registry =
-                        FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors kernel)
+                    let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors kernel)
 
-                    kernel <- UnixSystemState.withFileDescriptors registry kernel
+                    kernel <- Lone.withFileDescriptors registry kernel
                 | _ ->
                     // A different triple each time, so that a `socket`
                     // which keyed identity off the triple rather than off a
@@ -541,7 +539,7 @@ module TestSocketTable =
 
                 UnixSystem.checkInvariants kernel |> shouldEqual []
 
-                FileDescriptorRegistry.checkInvariants (UnixSystemState.fileDescriptors kernel)
+                FileDescriptorRegistry.checkInvariants (Lone.fileDescriptors kernel)
                 |> shouldEqual []
 
                 VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes kernel) kernel.Machine.FileSystem
@@ -1163,7 +1161,7 @@ module TestSocketTable =
         tcpConnection |> shouldEqual firstClient
 
         let acceptedId =
-            match FileDescriptorRegistry.tryFind fd (UnixSystemState.fileDescriptors kernel) with
+            match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors kernel) with
             | Some description ->
                 match description.Target with
                 | OpenFileTarget.Socket socketId -> socketId

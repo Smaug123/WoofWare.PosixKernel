@@ -20,10 +20,10 @@ module TestUnixWait =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -38,7 +38,7 @@ module TestUnixWait =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let lockerFd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
         let blockedFd, registry = FileDescriptorRegistry.createEpoll registry
 
@@ -91,7 +91,7 @@ module TestUnixWait =
                 }
 
     let private releaseLock (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match FileDescriptorRegistry.flock lockerFd FlockRequest.Release (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.flock lockerFd FlockRequest.Release (Lone.fileDescriptors system) with
         | registry, None -> withRegistry registry system
         | _, Some error -> failwith $"expected the release to succeed, got %O{error}"
 
@@ -124,12 +124,11 @@ module TestUnixWait =
                 Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
             }
         | Op.CreateEpoll ->
-            let _, registry =
-                FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+            let _, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
             withRegistry registry system
         | Op.Register thread ->
-            if Map.containsKey thread system.Threads then
+            if Map.containsKey thread (Lone.threads system) then
                 system
             else
                 withThread thread system
@@ -156,19 +155,19 @@ module TestUnixWait =
                     | Op.Register _ -> None
 
                 // Every other thread keeps its park, ordinal and all.
-                for thread in Map.keys before.Threads do
+                for thread in Map.keys (Lone.threads before) do
                     if Some thread <> subject then
-                        UnixThreadTable.parkOf thread after.Threads
-                        |> shouldEqual (UnixThreadTable.parkOf thread before.Threads)
+                        UnixThreadTable.parkOf thread (Lone.threads after)
+                        |> shouldEqual (UnixThreadTable.parkOf thread (Lone.threads before))
 
                 UnixSystem.checkInvariants after |> shouldEqual []
 
                 match op with
                 | Op.Park thread ->
-                    if (UnixThreadTable.parkOf thread before.Threads).IsSome then
+                    if (UnixThreadTable.parkOf thread (Lone.threads before)).IsSome then
                         cover ParkLabel.Repark
 
-                    match UnixThreadTable.parkOf thread after.Threads with
+                    match UnixThreadTable.parkOf thread (Lone.threads after) with
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
                         park.Syscall |> shouldEqual (parkOfThread thread)
@@ -179,7 +178,7 @@ module TestUnixWait =
 
                         after, Some park.Ordinal
                 | Op.Unpark thread ->
-                    UnixThreadTable.parkOf thread after.Threads |> shouldEqual None
+                    UnixThreadTable.parkOf thread (Lone.threads after) |> shouldEqual None
                     after, lastMinted
                 | Op.AdvanceClock _
                 | Op.CreateEpoll
@@ -262,7 +261,7 @@ module TestUnixWait =
             UnixParkState.unpark 1 parked
 
         UnixWait.park 1 (parkOfThread 3) cleared
-        |> fun system -> UnixThreadTable.parkedFor 1 system.Threads
+        |> fun system -> UnixThreadTable.parkedFor 1 (Lone.threads system)
         |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]

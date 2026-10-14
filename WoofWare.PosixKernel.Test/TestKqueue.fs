@@ -41,10 +41,10 @@ module TestKqueue =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
         | Some id -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -54,7 +54,7 @@ module TestKqueue =
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match FileDescriptorRegistry.dup fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.dup fd (Lone.fileDescriptors system) with
         | Ok (copy, registry) -> copy, withRegistry registry system
         | Error error -> failwith $"dup: %O{error}"
 
@@ -86,7 +86,7 @@ module TestKqueue =
     let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
         match UnixKqueue.tryFinishKevent thread system with
         | Ok (outcome, finished) ->
-            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
             outcome, finished
         | Error refusal ->
             failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
@@ -96,21 +96,19 @@ module TestKqueue =
 
     /// `system` with a caught SIGUSR1 pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Process =
-                { system.Process with
-                    Signals =
-                        system.Process.Signals
-                        |> SignalState.setDisposition
-                            Signal.SIGUSR1
-                            (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
-                        |> SignalState.enqueue
-                            {
-                                Signal = Signal.SIGUSR1
-                                Target = ValueSome thread
-                            }
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals =
+                    proc.Signals
+                    |> SignalState.setDisposition Signal.SIGUSR1 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                    |> SignalState.enqueue
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = ValueSome thread
+                        }
+            }
+        )
 
     /// A change a kqueue would apply: an `EV_ADD` of `EVFILT_READ` on standard input.
     let private someChange : Kevent =
@@ -148,14 +146,14 @@ module TestKqueue =
             let expected =
                 Seq.initInfinite id
                 |> Seq.find (fun fd ->
-                    FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system)
+                    FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system)
                     |> Option.isNone
                 )
 
             let fd, created = createKqueue system
             fd |> shouldEqual expected
 
-            match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors created) with
+            match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors created) with
             | Some (id, description) ->
                 description
                 |> shouldEqual
@@ -163,7 +161,7 @@ module TestKqueue =
                         Target =
                             OpenFileTarget.Kqueue
                                 {
-                                    Owner = created.Process.ProcessId
+                                    Owner = (Lone.proc created).ProcessId
                                     Drained = false
                                     Registrations = Map.empty
                                     Active = []
@@ -187,8 +185,8 @@ module TestKqueue =
                     { created.Machine with
                         OpenFiles = system.Machine.OpenFiles
                     }
-                Process = system.Process
             }
+            |> Lone.mapProc (fun _ -> Lone.proc system)
             |> shouldEqual system
 
             UnixSystem.checkInvariants created |> shouldEqual []
@@ -296,13 +294,13 @@ module TestKqueue =
             after |> shouldEqual before
         | "rv=0", "-", "slept=0", KeventOutcome.Answered [] -> after |> shouldEqual before
         | "rv=0", "-", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread after.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads after) with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = Some deadline
                                          }) -> deadline - now |> shouldBeSmallerThan probeTimer
             | other -> failwith $"expected a park with a deadline, got %A{other}"
         | "rv=-1", "EINTR", "slept=1", KeventOutcome.WouldBlock _ ->
-            match UnixThreadTable.parkedFor thread after.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads after) with
             | Some (ParkedSyscall.Kevent {
                                              Deadline = None
                                          }) -> ()
@@ -331,7 +329,7 @@ module TestKqueue =
                 }
 
             let fd, registry =
-                FileDescriptorRegistry.createSocket system.Machine.NextSocketId (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createSocket system.Machine.NextSocketId (Lone.fileDescriptors system)
 
             let (SocketId raw) = system.Machine.NextSocketId
 
@@ -351,7 +349,7 @@ module TestKqueue =
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
-                    (UnixSystemState.fileDescriptors system)
+                    (Lone.fileDescriptors system)
 
             fd, withRegistry registry system
 
@@ -473,11 +471,7 @@ module TestKqueue =
                     elif change.Flags &&& 0x02us <> 0us then
                         Ok UnixError.ENOENT
                     else
-                        match
-                            FileDescriptorRegistry.tryFindTarget
-                                (int change.Ident)
-                                (UnixSystemState.fileDescriptors system)
-                        with
+                        match FileDescriptorRegistry.tryFindTarget (int change.Ident) (Lone.fileDescriptors system) with
                         | None -> Ok UnixError.EBADF
                         | Some target -> Error (KeventRefusal.UnmodelledTarget (change, target))
 
@@ -601,7 +595,7 @@ module TestKqueue =
             | Error expected, actual -> actual |> shouldEqual (Error expected)
             | Ok (Some expected), actual -> actual |> shouldEqual (Ok (expected, system))
             | Ok None, Ok (KeventOutcome.WouldBlock _, parked) ->
-                match UnixThreadTable.parkedFor 1 parked.Threads with
+                match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
                 | Some (ParkedSyscall.Kevent wait) ->
                     wait.Kqueue |> shouldEqual (idOf fd system)
                     wait.Fd |> shouldEqual fd
@@ -673,13 +667,13 @@ module TestKqueue =
             let short = after (deadline - 1L - now) parked
             woken [ 1 ] short |> shouldEqual []
 
-            let ordinalBefore = (UnixThreadTable.parkOf 1 parked.Threads).Value.Ordinal
+            let ordinalBefore = (UnixThreadTable.parkOf 1 (Lone.threads parked)).Value.Ordinal
 
             match UnixKqueue.tryFinishKevent 1 short with
             | Ok (KeventOutcome.WouldBlock _, reparked) ->
                 UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
 
-                (UnixThreadTable.parkOf 1 reparked.Threads).Value.Ordinal
+                (UnixThreadTable.parkOf 1 (Lone.threads reparked)).Value.Ordinal
                 |> shouldBeGreaterThan ordinalBefore
             | other -> failwith $"expected a re-park, got %A{other}"
 
@@ -717,7 +711,7 @@ module TestKqueue =
             )
         )
 
-        match UnixThreadTable.parkedFor 1 parked.Threads with
+        match UnixThreadTable.parkedFor 1 (Lone.threads parked) with
         | Some (ParkedSyscall.Kevent wait) ->
             wait
             |> shouldEqual
@@ -761,7 +755,7 @@ module TestKqueue =
 
             // The number is free again, but the sleeping call holds the kqueue, which
             // outlives its last descriptor drained.
-            FileDescriptorRegistry.tryFindId k (UnixSystemState.fileDescriptors closed)
+            FileDescriptorRegistry.tryFindId k (Lone.fileDescriptors closed)
             |> shouldEqual None
 
             OpenFileTable.descriptions closed.Machine.OpenFiles
@@ -771,7 +765,7 @@ module TestKqueue =
                 Some (
                     OpenFileTarget.Kqueue
                         {
-                            Owner = closed.Process.ProcessId
+                            Owner = (Lone.proc closed).ProcessId
                             Drained = true
                             Registrations = Map.empty
                             Active = []
@@ -833,7 +827,7 @@ module TestKqueue =
 
             let drains = List.contains through sleepers
 
-            match FileDescriptorRegistry.tryFindTarget surviving (UnixSystemState.fileDescriptors closed) with
+            match FileDescriptorRegistry.tryFindTarget surviving (Lone.fileDescriptors closed) with
             | Some (OpenFileTarget.Kqueue state) -> state.Drained |> shouldEqual drains
             | other -> failwith $"expected the surviving kqueue, got %A{other}"
 
@@ -904,7 +898,7 @@ module TestKqueue =
                 Some (
                     OpenFileTarget.Kqueue
                         {
-                            Owner = closed.Process.ProcessId
+                            Owner = (Lone.proc closed).ProcessId
                             Drained = true
                             Registrations = Map.empty
                             Active = []
@@ -1079,14 +1073,14 @@ module TestKqueue =
                 UnixSystemDefect.ParkedKeventOnNonKqueue (
                     1,
                     idOf 0 system,
-                    (FileDescriptorRegistry.tryFindTarget 0 (UnixSystemState.fileDescriptors system)).Value
+                    (FileDescriptorRegistry.tryFindTarget 0 (Lone.fileDescriptors system)).Value
                 )
             ]
 
     [<Test>]
     let ``checkInvariants rejects an object the flavour's kernel does not have`` () : unit =
         let fd, registry =
-            FileDescriptorRegistry.createKqueue linux.Process.ProcessId (UnixSystemState.fileDescriptors linux)
+            FileDescriptorRegistry.createKqueue (Lone.proc linux).ProcessId (Lone.fileDescriptors linux)
 
         let withKqueue = withRegistry registry linux
 
@@ -1097,7 +1091,7 @@ module TestKqueue =
                     idOf fd withKqueue,
                     OpenFileTarget.Kqueue
                         {
-                            Owner = linux.Process.ProcessId
+                            Owner = (Lone.proc linux).ProcessId
                             Drained = false
                             Registrations = Map.empty
                             Active = []
@@ -1106,8 +1100,7 @@ module TestKqueue =
                 )
             ]
 
-        let fd, registry =
-            FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors darwin)
+        let fd, registry = FileDescriptorRegistry.createEpoll (Lone.fileDescriptors darwin)
 
         let withEpoll = withRegistry registry darwin
 

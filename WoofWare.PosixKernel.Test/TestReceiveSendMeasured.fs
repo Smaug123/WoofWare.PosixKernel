@@ -134,7 +134,7 @@ module TestReceiveSendMeasured =
             let _, system = UnixDescriptor.setNonBlocking client true system
             let bad = 900
 
-            FileDescriptorRegistry.tryFindId bad (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.tryFindId bad (Lone.fileDescriptors system)
             |> shouldEqual None
 
             let target (name : string) : int =

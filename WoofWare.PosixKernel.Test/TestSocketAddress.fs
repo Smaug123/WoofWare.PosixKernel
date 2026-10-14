@@ -246,7 +246,7 @@ module TestSocketAddress =
         let platform = system.Machine.UnixPlatform
 
         let socket =
-            match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId system.Machine
             | other -> failwith $"fd %d{fd} names %A{other}"
 
@@ -285,7 +285,7 @@ module TestSocketAddress =
                 | Family.Inet6 -> SimulatedUnixPlatform.internetV6AddressFamily platform
                 | Family.Unspec -> 0
                 | Family.Own ->
-                    match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
                     | Some (OpenFileTarget.Socket socketId) ->
                         match (UnixMachineState.socket socketId system.Machine).Domain with
                         | SocketDomain.Inet6 -> SimulatedUnixPlatform.internetV6AddressFamily platform

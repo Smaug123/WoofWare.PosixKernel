@@ -553,9 +553,9 @@ module TestDirectoryDescription =
                 NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system
 
             let epoll, registry =
-                FileDescriptorRegistry.createEpoll (UnixSystemState.fileDescriptors system)
+                FileDescriptorRegistry.createEpoll (Lone.fileDescriptors system)
 
-            let system = UnixSystemState.withFileDescriptors registry system
+            let system = Lone.withFileDescriptors registry system
 
             let expect (fd : int) (linux : UnixError) (darwin : UnixError) =
                 let expected =
@@ -680,11 +680,11 @@ module TestDirectoryDescription =
         : UnixSystem<int, string>
         =
         let id =
-            match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
             | Some (id, _) -> id
             | None -> failwith $"fd %d{fd} is not live"
 
-        UnixSystemState.withFileDescriptors
+        Lone.withFileDescriptors
             (FileDescriptorRegistry.Unchecked.mapDescription
                 id
                 (fun d ->
@@ -692,7 +692,7 @@ module TestDirectoryDescription =
                         Target = target
                     }
                 )
-                (UnixSystemState.fileDescriptors system))
+                (Lone.fileDescriptors system))
             system
 
     [<Test>]

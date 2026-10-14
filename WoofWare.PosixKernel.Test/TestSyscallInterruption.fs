@@ -95,7 +95,7 @@ module TestSyscallInterruption =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     /// A system on `platform` with threads 1 to 3, a blocking listener at
     /// loopback port 5000, on Linux an epoll instance holding it edge-triggered,
@@ -155,7 +155,7 @@ module TestSyscallInterruption =
                     (InodeNumber 1L)
                     (DirectoryEntryName.parseOrFail context "f")
                     (PermissionBits.parseOrFail context 0o644)
-                    (InodeOwner.ofProcess system.Process.Credentials)
+                    (InodeOwner.ofProcess (Lone.proc system).Credentials)
                     (UnixTimestamp.ofMillisecondsSinceEpoch 0L)
                     ImmutableArray.Empty
                     system.Machine.FileSystem
@@ -168,7 +168,7 @@ module TestSyscallInterruption =
                 (ForgedName.ofInode system inode)
                 inode
                 FileAccessMode.ReadWrite
-                (UnixSystemState.fileDescriptors system)
+                (Lone.fileDescriptors system)
 
         let waitingThrough, registry =
             FileDescriptorRegistry.openFile (ForgedName.ofInode system inode) inode FileAccessMode.ReadWrite registry
@@ -360,7 +360,7 @@ module TestSyscallInterruption =
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let signals =
-            (system.Process.Signals, sent)
+            ((Lone.proc system).Signals, sent)
             ||> List.fold (fun signals sent ->
                 let disposition =
                     match sent with
@@ -380,12 +380,12 @@ module TestSyscallInterruption =
                     }
             )
 
-        { system with
-            Process =
-                { system.Process with
-                    Signals = signals
-                }
-        }
+        system
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                Signals = signals
+            }
+        )
 
     /// How the call should end, from the measured table alone.
     let private oracle
@@ -541,7 +541,7 @@ module TestSyscallInterruption =
             let held =
                 enteredThrough world sleep
                 |> Option.map (fun fd ->
-                    match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
+                    match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
                     | Some id -> id
                     | None -> failwith $"fd %d{fd} names no description"
                 )
@@ -608,7 +608,7 @@ module TestSyscallInterruption =
             | Ending.TimedOut
             | Ending.Eintr
             | Ending.Restart ->
-                UnixThreadTable.parkedFor thread after.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads after) |> shouldEqual None
 
                 // The signals are still pending, for the return to user mode
                 // that follows: every caught one gets a frame there.
@@ -660,7 +660,7 @@ module TestSyscallInterruption =
     [<Test>]
     let ``the rule each sleeping call follows is the measured one`` () : unit =
         let parked (sleep : Sleep) : ParkedSyscall =
-            match UnixThreadTable.parkedFor 1 (asleep linuxWorld 1 sleep).Threads with
+            match UnixThreadTable.parkedFor 1 (Lone.threads (asleep linuxWorld 1 sleep)) with
             | Some parked -> parked
             | None -> failwith $"%O{sleep} did not park"
 
@@ -867,7 +867,7 @@ module TestSyscallInterruption =
 
             case.Name
 
-        let threads = (worldOn SimulatedUnixPlatform.linuxX64).System.Threads
+        let threads = (worldOn SimulatedUnixPlatform.linuxX64).System |> Lone.threads
 
         let park (parked : ParkedSyscall) (threads : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
             UnixThreadTable.withPark
@@ -899,19 +899,19 @@ module TestSyscallInterruption =
             let system = asleep linuxWorld 0 Sleep.Accept
 
             let system =
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals =
-                                SignalState.setDisposition
-                                    Signal.SIGUSR1
-                                    (SignalDisposition.Catch
-                                        { SignalCatch.ofHandler "h" with
-                                            Restart = restart
-                                        })
-                                    system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals =
+                            SignalState.setDisposition
+                                Signal.SIGUSR1
+                                (SignalDisposition.Catch
+                                    { SignalCatch.ofHandler "h" with
+                                        Restart = restart
+                                    })
+                                proc.Signals
+                    }
+                )
 
             let self = ProcessId.toInt32 (UnixSystem.processId system)
 
@@ -944,18 +944,18 @@ module TestSyscallInterruption =
         let system =
             asleep linuxWorld 1 Sleep.Accept
             |> fun system ->
-                { system with
-                    Process =
-                        { system.Process with
-                            Signals =
-                                SignalState.enqueue
-                                    {
-                                        Signal = Signal.SIGCONT
-                                        Target = ValueSome 1
-                                    }
-                                    system.Process.Signals
-                        }
-                }
+                system
+                |> Lone.mapProc (fun proc ->
+                    { proc with
+                        Signals =
+                            SignalState.enqueue
+                                {
+                                    Signal = Signal.SIGCONT
+                                    Target = ValueSome 1
+                                }
+                                proc.Signals
+                    }
+                )
 
         UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
 

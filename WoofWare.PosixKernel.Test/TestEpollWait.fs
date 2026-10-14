@@ -36,10 +36,10 @@ module TestEpollWait =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        UnixSystemState.withFileDescriptors registry system
+        Lone.withFileDescriptors registry system
 
     let private idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId =
-        match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindWithId fd (Lone.fileDescriptors system) with
         | Some (id, _) -> id
         | None -> failwith $"fd %d{fd} names no description"
 
@@ -94,7 +94,7 @@ module TestEpollWait =
             }
 
         let listenerFd, registry =
-            FileDescriptorRegistry.createSocket socketId (UnixSystemState.fileDescriptors system)
+            FileDescriptorRegistry.createSocket socketId (Lone.fileDescriptors system)
 
         let system =
             { system with
@@ -139,7 +139,7 @@ module TestEpollWait =
     /// `system` with the listener's accept queue holding `queue`.
     let private withQueue (queue : ConnectionId list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let socketId =
-            match FileDescriptorRegistry.tryFindTarget listener (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget listener (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected the listener, got %O{other}"
 
@@ -172,14 +172,14 @@ module TestEpollWait =
         let system = withQueue [ ConnectionId 99L ] system
 
         let alreadyReady =
-            match FileDescriptorRegistry.tryFindTarget epoll (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget epoll (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Epoll state) -> List.contains key state.Ready
             | other -> failwith $"expected the epoll instance, got %O{other}"
 
         if alreadyReady then
             system
         else
-            UnixSystemState.mapOpenFiles (OpenFileTable.appendEpollReady queueId key) system
+            Lone.mapOpenFiles (OpenFileTable.appendEpollReady queueId key) system
 
     /// The connection is taken by someone else: the listener's level drops, and
     /// the pending entry goes stale.
@@ -187,7 +187,7 @@ module TestEpollWait =
         withQueue []
 
     let private pendingEntries (system : UnixSystem<int, string>) : int =
-        match FileDescriptorRegistry.tryFindTarget epoll (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget epoll (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Epoll state) -> List.length state.Ready
         | other -> failwith $"expected the epoll instance, got %O{other}"
 
@@ -363,7 +363,7 @@ module TestEpollWait =
             match waits milliseconds ready with
             | Ok (EpollWaitOutcome.Answered events, answered) ->
                 events |> shouldEqual delivered
-                UnixThreadTable.parkedFor thread answered.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads answered) |> shouldEqual None
                 pendingEntries answered |> shouldEqual 0
             | other -> failwith $"expected the event, got %A{other}"
 
@@ -377,7 +377,7 @@ module TestEpollWait =
 
             match waits 0 stale with
             | Ok (EpollWaitOutcome.Answered [], answered) ->
-                UnixThreadTable.parkedFor thread answered.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads answered) |> shouldEqual None
                 // The walk consumed the stale entry even though it delivered nothing.
                 pendingEntries answered |> shouldEqual 0
                 answered |> shouldEqual (snd (EpollReadyList.drain queueId 8 stale))
@@ -423,7 +423,7 @@ module TestEpollWait =
 
             let events, finished = finishes expired
             events |> shouldEqual []
-            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
 
         let bounded =
             Gen.zip positiveTimeout start
@@ -443,7 +443,7 @@ module TestEpollWait =
 
             UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
 
-            match UnixThreadTable.parkedFor thread parked.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads parked) with
             | Some (ParkedSyscall.EpollWait wait) ->
                 wait
                 |> shouldEqual
@@ -472,7 +472,7 @@ module TestEpollWait =
 
             let events, finished = finishes ready
             events |> shouldEqual delivered
-            UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+            UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.zip positiveTimeout start)) property)
 
@@ -506,7 +506,10 @@ module TestEpollWait =
     [<Test>]
     let ``a wake whose event goes stale parks again on the same deadline, behind every other park`` () : unit =
         let _, parked = parks 5 idle
-        let ordinalBefore = (UnixThreadTable.parkOf thread parked.Threads).Value.Ordinal
+
+        let ordinalBefore =
+            (UnixThreadTable.parkOf thread (Lone.threads parked)).Value.Ordinal
+
         let ready = parked |> after 1L |> signal
 
         woken ready
@@ -521,7 +524,9 @@ module TestEpollWait =
         UnixWait.deadlines (Set.singleton thread) reparked
         |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
-        let ordinalAfter = (UnixThreadTable.parkOf thread reparked.Threads).Value.Ordinal
+        let ordinalAfter =
+            (UnixThreadTable.parkOf thread (Lone.threads reparked)).Value.Ordinal
+
         ordinalAfter |> shouldBeGreaterThan ordinalBefore
 
     [<Test>]
@@ -589,7 +594,7 @@ module TestEpollWait =
                 | Ok (EpollWaitOutcome.WouldBlock condition, parked) -> condition, parked
                 | other -> failwith $"expected a park, got %A{other}"
 
-            match UnixThreadTable.parkedFor thread parked.Threads with
+            match UnixThreadTable.parkedFor thread (Lone.threads parked) with
             | Some (ParkedSyscall.EpollWait wait) -> wait.Buffer |> shouldEqual buffer
             | other -> failwith $"expected an epoll_wait, got %A{other}"
 
@@ -599,7 +604,7 @@ module TestEpollWait =
             // Timing out copies nothing, so it answers.
             match UnixPoll.tryFinishEpollWait thread (after (5L * nanosecondsPerMillisecond) parked) with
             | Ok (EpollWaitOutcome.Answered [], finished) ->
-                UnixThreadTable.parkedFor thread finished.Threads |> shouldEqual None
+                UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
             | other -> failwith $"expected the wait to time out, got %A{other}"
 
     // ------------------------------------------------------------------
@@ -677,7 +682,7 @@ module TestEpollWait =
                         else
                             openFiles
 
-                    UnixSystemState.mapOpenFiles (fun _ -> openFiles) system, epolls @ [ id ]
+                    Lone.mapOpenFiles (fun _ -> openFiles) system, epolls @ [ id ]
                 )
                 |> fun (system, epolls) -> epolls, system
 
@@ -698,7 +703,7 @@ module TestEpollWait =
                 |> after clock
 
             let parkedThreads =
-                system.Threads
+                (Lone.threads system)
                 |> Map.toList
                 |> List.choose (fun (name, state) ->
                     match state.Parked with

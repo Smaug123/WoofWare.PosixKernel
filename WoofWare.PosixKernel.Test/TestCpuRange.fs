@@ -86,7 +86,7 @@ module TestCpuRange =
             match spawned, inRange count cpu with
             | Ok (Ok (SpawnAnswer.Spawned _, after)), true ->
                 cover Side.Inside
-                (UnixThreadTable.get 1 after.Threads).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 1 (Lone.threads after)).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants after |> shouldEqual []
             | Error message, false ->
                 cover Side.Outside
@@ -105,7 +105,7 @@ module TestCpuRange =
             match UnixBootImage.tryBoot launch (imageWith platform count), inRange count cpu with
             | Ok system, true ->
                 cover Side.Inside
-                (UnixThreadTable.get 0 system.Threads).Cpu |> shouldEqual (CpuId cpu)
+                (UnixThreadTable.get 0 (Lone.threads system)).Cpu |> shouldEqual (CpuId cpu)
                 UnixSystem.checkInvariants system |> shouldEqual []
             | Error refusal, false ->
                 cover Side.Outside
@@ -126,7 +126,7 @@ module TestCpuRange =
             | Ok (pid, after), true ->
                 cover Side.Inside
 
-                (UnixThreadTable.get 0 (Machines.viewOf pid after).Threads).Cpu
+                (UnixThreadTable.get 0 (Proc.threads pid (Machines.viewOf pid after))).Cpu
                 |> shouldEqual (CpuId cpu)
 
                 SimulatedMachine.checkInvariants after |> shouldEqual []
@@ -143,15 +143,15 @@ module TestCpuRange =
     /// `system` with thread `thread`'s processor overwritten with `cpu`, as no
     /// public route can do.
     let private forgeCpu (thread : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Threads =
-                system.Threads
-                |> Map.add
-                    thread
-                    { UnixThreadTable.get thread system.Threads with
-                        Cpu = CpuId cpu
-                    }
-        }
+        system
+        |> Lone.mapThreads (fun threads ->
+            threads
+            |> Map.add
+                thread
+                { UnixThreadTable.get thread threads with
+                    Cpu = CpuId cpu
+                }
+        )
 
     [<Test>]
     let ``checkInvariants reports exactly a thread on a processor the machine does not have`` () : unit =

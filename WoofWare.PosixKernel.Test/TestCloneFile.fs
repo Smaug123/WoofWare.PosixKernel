@@ -159,12 +159,13 @@ module TestCloneFile =
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
             Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            Process =
-                { system.Process with
-                    CurrentDirectoryInode = VirtualFileSystem.root vfs
-                }
         }
-        |> Launched.restand
+        |> Lone.mapProc (fun proc ->
+            { proc with
+                CurrentDirectoryInode = VirtualFileSystem.root vfs
+            }
+        )
+        |> Lone.restand
 
     let private systemOn
         (platform : SimulatedUnixPlatform)
@@ -470,13 +471,13 @@ module TestCloneFile =
         let system =
             let s = systemOn SimulatedUnixPlatform.macOsArm64 u501 vfs
 
-            { s with
-                Process =
-                    { s.Process with
-                        CurrentDirectoryInode = inodeAt vfs "/orph"
-                    }
-            }
-            |> Launched.restand
+            s
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    CurrentDirectoryInode = inodeAt vfs "/orph"
+                }
+            )
+            |> Lone.restand
 
         let system =
             match UnixNamespace.tryRmdir (PathArg.ofPath (UnixPath.parseOrFail context "/orph")) system with

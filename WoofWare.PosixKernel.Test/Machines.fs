@@ -42,7 +42,7 @@ module internal Machines =
                 match
                     SimulatedMachine.inView
                         pid
-                        (fun view -> (), ([ 1 .. threads - 1 ], view) ||> List.foldBack Threads.ensure)
+                        (fun view -> (), ([ 1 .. threads - 1 ], view) ||> List.foldBack (Threads.ensureIn pid))
                         machine
                 with
                 | Some ((), machine) -> machine

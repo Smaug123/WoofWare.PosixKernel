@@ -6,26 +6,45 @@ open WoofWare.PosixKernel
 [<RequireQualifiedAccess>]
 module Threads =
 
-    /// `child`, created by the process's leader on processor 0, failing the test if
-    /// the creation is refused.
+    /// `child`, created by the leader of the process `pid` on processor 0,
+    /// failing the test if the creation is refused.
+    let spawnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (child : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        match UnixThreadLifecycle.trySpawn (Proc.leader pid system) child (CpuId 0) system with
+        | Ok (SpawnAnswer.Spawned _, system) -> system
+        | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
+        | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"
+
+    /// `system` with a thread `name` in the process `pid`: itself if `name` is
+    /// already one of its threads, and otherwise with `name` spawned by its
+    /// leader.
+    let ensureIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (name : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        if Map.containsKey name (Proc.threads pid system) then
+            system
+        else
+            spawnIn pid name system
+
+    /// `spawnIn` the only process on the machine.
     let spawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (child : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        match UnixThreadLifecycle.trySpawn system.Leader child (CpuId 0) system with
-        | Ok (SpawnAnswer.Spawned _, system) -> system
-        | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %O{child} failed with %O{error}"
-        | Error refusal -> failwith $"spawning %O{child} was refused: %s{SpawnRefusal.describe refusal}"
+        spawnIn (Lone.pid system) child system
 
-    /// `system` with a thread `name`: itself if `name` is already a thread, and
-    /// otherwise with `name` spawned by the leader.
+    /// `ensureIn` the only process on the machine.
     let ensure<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (name : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        if Map.containsKey name system.Threads then
-            system
-        else
-            spawn name system
+        ensureIn (Lone.pid system) name system

@@ -196,7 +196,7 @@ module internal CopyIn =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
-        connectAs system.Leader fd destination declaredLength blob system
+        connectAs (Lone.leader system) fd destination declaredLength blob system
 
 /// What `getsockname(2)` and `accept(2)` copy out, read back and predicted
 /// without the library's own encoder.
