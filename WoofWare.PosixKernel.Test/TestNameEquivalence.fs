@@ -361,13 +361,13 @@ module TestNameEquivalence =
                 answer, "", system
             | "link(src,second)" ->
                 let answer, system =
-                    UnixNamespace.tryLinkEager (arg (ascii "src")) (arg second) system
+                    Eager.tryLink (arg (ascii "src")) (arg second) system
                     |> answered LinkRefusal.describe
 
                 answer, "", system
             | "symlink(t,second)" ->
                 let answer, system =
-                    UnixNamespace.trySymlinkEager (arg (ascii "t")) (arg second) system
+                    Eager.trySymlink (arg (ascii "t")) (arg second) system
                     |> answered SymlinkRefusal.describe
 
                 answer, "", system
@@ -392,7 +392,7 @@ module TestNameEquivalence =
                     | _ -> first, second
 
                 let answer, system =
-                    UnixNamespace.tryRenameEager (arg source) (arg destination) system
+                    Eager.tryRename (arg source) (arg destination) system
                     |> answered RenameRefusal.describe
 
                 answer, "", system
@@ -912,7 +912,7 @@ module TestNameEquivalence =
                 Some (errnoOf answer, files, system)
             | Step.Rename (source, destination) ->
                 let answer, system =
-                    UnixNamespace.tryRenameEager (arg source) (arg destination) system
+                    Eager.tryRename (arg source) (arg destination) system
                     |> answered RenameRefusal.describe
 
                 Some (errnoOf answer, files, system)
