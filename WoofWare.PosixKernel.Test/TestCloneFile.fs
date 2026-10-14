@@ -579,7 +579,12 @@ module TestCloneFile =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
         for destination in [ "new" ; "g" ] do
-            match UnixSystem.tryStep 0 (Syscall.CloneFile (argument "f", argument destination, 0x4)) system with
+            match
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.CloneFile (argument "f", argument destination, 0x4))
+                    system
+            with
             | Ok (SyscallOutcome.Answered answer, after) ->
                 Ok (answer, after) |> shouldEqual (clone "f" destination 0x4 system)
             | other -> failwith $"%A{other}"

@@ -98,7 +98,7 @@ module TestCallProgress =
             =
             let writeFd, system = pipeWith platform prefill writeNonBlocking
 
-            match UnixReadWrite.write 0 writeFd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.write (Callers.thread 0 system) writeFd UserBuffer.Mapped (uint64 count) system with
             | CallProgress.Answered _ -> cover Reached.Answered
             | CallProgress.NeedsCopyIn paused ->
                 let range = PausedWrite.copyRange paused

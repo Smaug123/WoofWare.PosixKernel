@@ -97,8 +97,8 @@ module TestConnectedTransfer =
         (system : UnixSystem<int, string>)
         : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
         =
-        WriteOutcomes.admitThenWrite
-            (Proc.leader pid system)
+        WriteOutcomes.admitThenWriteAs
+            (Caller.make pid (Proc.leader pid system))
             fd
             UserBuffer.Mapped
             (ImmutableArray.Create (payload, 0, count))
@@ -271,7 +271,7 @@ module TestConnectedTransfer =
         for platform in Machines.platforms do
             let client, server, system = pair false (systemOn small platform)
 
-            match UnixReadWrite.tryRead (Lone.leader system) client UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) client UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"expected the read to sleep, got %A{other}"
 
@@ -1896,7 +1896,10 @@ module TestConnectedTransfer =
                         Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
                 let ended =
-                    Machines.inProcess a (fun view -> UnixThreadLifecycle.exitGroup 0 0 view, view) machine
+                    Machines.inProcess
+                        a
+                        (fun view -> UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 view, view)
+                        machine
                     |> fst
 
                 let machine =

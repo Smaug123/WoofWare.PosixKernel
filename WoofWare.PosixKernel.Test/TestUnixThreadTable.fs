@@ -24,7 +24,7 @@ module TestUnixThreadTable =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     let private withThread (name : int) (cpu : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.trySpawn (Lone.leader system) name (CpuId cpu) system with
+        match UnixThreadLifecycle.trySpawn (Callers.leader system) name (CpuId cpu) system with
         | Ok (SpawnAnswer.Spawned _, system) -> system
         | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawning %d{name} failed with %O{error}"
         | Error refusal -> failwith $"spawning %d{name} was refused: %s{SpawnRefusal.describe refusal}"

@@ -1,15 +1,18 @@
 namespace WoofWare.PosixKernel.Test
 
 open System
+open System.Collections.Immutable
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Every public function of the families that take a `Caller` checks it, through
-/// `Entry`, before it does anything else: a caller in another process, a thread
-/// the process does not have, a parked thread making a call, and an unparked
-/// thread at a finishing function each throw `InvalidOperationException`, naming
-/// the function; the caller each requirement admits does not.
+/// Every public function that takes a `Caller` checks it, through `Entry`,
+/// before it does anything else: a caller in another process, a thread the
+/// process does not have, a parked thread making a call or returning to user
+/// mode, and an unparked thread at a finishing function each throw
+/// `InvalidOperationException`, naming the function; the caller each
+/// requirement admits does not. A query about a process, or about a thread,
+/// checks only that the system holds the process.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestCallerChecks =
@@ -22,6 +25,13 @@ module TestCallerChecks =
         /// A finishing function: a thread parked in the call it finishes, which
         /// `world` parks `thread` in.
         | Finishing of thread : int
+        /// The return to user mode: a thread parked in no syscall.
+        | Returning
+        /// A dispatch: any thread of the process, parked or not.
+        | AnyThread
+        /// A query about a process, or about a thread of it, which checks the
+        /// process alone.
+        | Process
 
     /// A public function, made by a caller in a system: what it answers is
     /// thrown away, since only whether it throws matters here.
@@ -48,14 +58,29 @@ module TestCallerChecks =
     /// `kevent` under Darwin.
     let private eventWaiter : int = 5
 
+    /// The thread `world` parks in a `read` of an empty pipe.
+    let private pipeReader : int = 6
+
+    /// The thread `world` parks in a `write` to a full pipe.
+    let private pipeWriter : int = 7
+
+    /// The thread `world` parks in a `sigsuspend`.
+    let private suspender : int = 1
+
+    /// The thread `world` parks in a `pause`.
+    let private pauser : int = 8
+
+    /// A thread neither process has.
+    let private absent : int = 9
+
     let private everyFlavour : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
 
     /// One call of each public function of the families that take a caller:
-    /// the descriptor, pipe, socket, poll, kqueue and inotify calls on the
-    /// standard streams, which every flavour gives as pipes, and the path and
-    /// namespace calls on the root directory, so that a call's `dirfd` is
-    /// never looked up.
+    /// the descriptor, pipe, socket, poll, kqueue, read/write and inotify
+    /// calls on the standard streams, which every flavour gives as pipes, and
+    /// the path and namespace calls on the root directory, so that a call's
+    /// `dirfd` is never looked up.
     let private calls : Call list =
         let root = PathArg.ofText "/"
         let file = PathArg.ofText "/f"
@@ -79,6 +104,30 @@ module TestCallerChecks =
                 Name = name
                 Admits = Admits.Finishing sleeper
                 On = on
+                Make = make
+            }
+
+        let returning (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
+            {
+                Name = name
+                Admits = Admits.Returning
+                On = everyFlavour
+                Make = make
+            }
+
+        let anyThread (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
+            {
+                Name = name
+                Admits = Admits.AnyThread
+                On = everyFlavour
+                Make = make
+            }
+
+        let query (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
+            {
+                Name = name
+                Admits = Admits.Process
+                On = everyFlavour
                 Make = make
             }
 
@@ -225,6 +274,40 @@ module TestCallerChecks =
                 eventWaiter
                 [ SimulatedUnixFlavour.Darwin ]
                 (fun caller system -> UnixKqueue.finishKevent caller system |> ignore)
+            // Each read and write of nothing, so that an admitted caller's call
+            // answers at once. Darwin has no `copy_file_range`, but refuses it
+            // only once the caller is checked.
+            running
+                "UnixReadWrite.read"
+                (fun caller system -> UnixReadWrite.read caller 0 UserBuffer.Mapped 0UL system |> ignore)
+            running
+                "UnixReadWrite.recv"
+                (fun caller system -> UnixReadWrite.recv caller 0 UserBuffer.Mapped 0UL 0 system |> ignore)
+            running
+                "UnixReadWrite.pread"
+                (fun caller system -> UnixReadWrite.pread caller 0 UserBuffer.Mapped 0UL 0L system |> ignore)
+            running
+                "UnixReadWrite.write"
+                (fun caller system -> UnixReadWrite.write caller 1 UserBuffer.Mapped 0UL system |> ignore)
+            running
+                "UnixReadWrite.send"
+                (fun caller system -> UnixReadWrite.send caller 1 UserBuffer.Mapped 0UL 0 system |> ignore)
+            running
+                "UnixReadWrite.pwrite"
+                (fun caller system -> UnixReadWrite.pwrite caller 1 UserBuffer.Mapped 0UL 0L system |> ignore)
+            running
+                "UnixReadWrite.copyFileRange"
+                (fun caller system -> UnixReadWrite.copyFileRange caller 0 1 0UL 0 system |> ignore)
+            finishing
+                "UnixReadWrite.finishRead"
+                pipeReader
+                everyFlavour
+                (fun caller system -> UnixReadWrite.finishRead caller system |> ignore)
+            finishing
+                "UnixReadWrite.finishWrite"
+                pipeWriter
+                everyFlavour
+                (fun caller system -> UnixReadWrite.finishWrite caller system |> ignore)
             running
                 "UnixPathResolution.stat"
                 (fun caller system ->
@@ -416,6 +499,140 @@ module TestCallerChecks =
             running
                 "UnixInotify.inotifyRmWatch"
                 (fun caller system -> UnixInotify.inotifyRmWatch caller 0 1 system |> ignore)
+            // Signal number 0 sends nothing.
+            running
+                "UnixSignal.kill"
+                (fun caller system ->
+                    UnixSignal.kill caller (ProcessId.toInt32 (Caller.processId caller)) 0 system
+                    |> ignore
+                )
+            running "UnixSignal.pthreadKill" (fun caller system -> UnixSignal.pthreadKill caller 0 0 system |> ignore)
+            // SIGUSR1's disposition, asked for and left as it is. 10 is SIGUSR1 on
+            // Linux and SIGBUS on Darwin, a signal either way.
+            running "UnixSignal.sigaction" (fun caller system -> UnixSignal.sigaction caller 10 None system |> ignore)
+            running
+                "UnixSignal.sigactionSyscall"
+                (fun caller system -> UnixSignal.sigactionSyscall caller 10 None system |> ignore)
+            // A NULL set asks for the mask, whatever `how` is. Darwin has no
+            // `rt_sigprocmask`, but refuses it only once the caller is checked.
+            running
+                "UnixSignal.pthreadSigmask"
+                (fun caller system -> UnixSignal.pthreadSigmask caller 0 None system |> ignore)
+            running
+                "UnixSignal.sigprocmask"
+                (fun caller system -> UnixSignal.sigprocmask caller 0 None system |> ignore)
+            running
+                "UnixSignal.rtSigprocmask"
+                (fun caller system -> UnixSignal.rtSigprocmask caller 0 None 8UL system |> ignore)
+            running
+                "UnixSignal.sigpending"
+                (fun caller system -> UnixSignal.sigpending caller system |> ignore<SignalMask>)
+            running
+                "UnixSignal.sigsuspend"
+                (fun caller system -> UnixSignal.sigsuspend caller SignalMask.empty system |> ignore)
+            running
+                "UnixSignal.rtSigsuspend"
+                (fun caller system -> UnixSignal.rtSigsuspend caller SignalMask.empty 8UL system |> ignore)
+            running "UnixSignal.pause" (fun caller system -> UnixSignal.pause caller system |> ignore)
+            finishing
+                "UnixSignal.finishSigsuspend"
+                suspender
+                everyFlavour
+                (fun caller system -> UnixSignal.finishSigsuspend caller system |> ignore)
+            finishing
+                "UnixSignal.finishSigsuspend"
+                pauser
+                everyFlavour
+                (fun caller system -> UnixSignal.finishSigsuspend caller system |> ignore)
+            // The thread has no handler frame, which `sigreturn` refuses only once
+            // the caller is checked.
+            running
+                "UnixSignal.sigreturn"
+                (fun caller system -> UnixSignal.sigreturn caller (HandlerFrameId 0L) system |> ignore)
+            returning
+                "UnixSignal.onReturnToUser"
+                (fun caller system -> UnixSignal.onReturnToUser caller system |> ignore)
+            running
+                "UnixThreadLifecycle.spawn"
+                (fun caller system -> UnixThreadLifecycle.spawn caller 20 (CpuId 0) system |> ignore)
+            // The leader's exit, while other threads live, is refused once the
+            // caller is checked.
+            running
+                "UnixThreadLifecycle.exitThread"
+                (fun caller system -> UnixThreadLifecycle.exitThread caller 0 system |> ignore)
+            running
+                "UnixThreadLifecycle.exitGroup"
+                (fun caller system ->
+                    UnixThreadLifecycle.exitGroup caller 0 system
+                    |> ignore<EndedProcess<int, string>>
+                )
+            anyThread
+                "UnixScheduling.dispatch"
+                (fun caller system -> UnixScheduling.dispatch caller (CpuId 0) system |> ignore)
+            // No thread has been dispatched, so `getcpu` fails loudly, and
+            // Darwin has none, each once the caller is checked.
+            running
+                "UnixScheduling.getcpu"
+                (fun caller system -> UnixScheduling.getcpu caller system |> ignore<GetCpuAnswer>)
+            running "UnixSystem.processId" (fun caller system -> UnixSystem.processId caller system |> ignore)
+            running "UnixSystem.umask" (fun caller system -> UnixSystem.umask caller 0o022 system |> ignore)
+            // Each case of `step` is made through its own function, which names
+            // itself: `getpid`'s is `UnixSystem.processId`.
+            running
+                "UnixSystem.processId"
+                (fun caller system -> UnixSystem.step caller Syscall.GetProcessId system |> ignore)
+            running "UnixDescriptor.dup" (fun caller system -> UnixSystem.step caller (Syscall.Dup 0) system |> ignore)
+            running
+                "UnixSystem.umask"
+                (fun caller system -> UnixSystem.step caller (Syscall.UMask 0o022) system |> ignore)
+            query
+                "UnixScheduling.runningOn"
+                (fun caller system -> UnixScheduling.runningOn caller system |> ignore<CpuId option>)
+            query
+                "UnixWait.satisfied"
+                (fun caller system -> UnixWait.satisfied caller system |> ignore<Set<WakePrimitive> option>)
+            query
+                "UnixSystem.leader"
+                (fun caller system -> UnixSystem.leader (Caller.processId caller) system |> ignore<int>)
+            query
+                "UnixSystem.threads"
+                (fun caller system -> UnixSystem.threads (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.signals"
+                (fun caller system -> UnixSystem.signals (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.environment"
+                (fun caller system -> UnixSystem.environment (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.processPath"
+                (fun caller system -> UnixSystem.processPath (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.fileDescriptors"
+                (fun caller system -> UnixSystem.fileDescriptors (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.currentDirectoryInode"
+                (fun caller system ->
+                    UnixSystem.currentDirectoryInode (Caller.processId caller) system
+                    |> ignore<InodeNumber>
+                )
+            query
+                "UnixSystem.credentials"
+                (fun caller system -> UnixSystem.credentials (Caller.processId caller) system |> ignore)
+            query
+                "UnixSystem.fileModeCreationMask"
+                (fun caller system ->
+                    UnixSystem.fileModeCreationMask (Caller.processId caller) system
+                    |> ignore<PermissionBits>
+                )
+            query
+                "UnixSystem.descriptorTarget"
+                (fun caller system -> UnixSystem.descriptorTarget (Caller.processId caller) 0 system |> ignore)
+            query
+                "UnixPathResolution.currentDirectoryPath"
+                (fun caller system ->
+                    UnixPathResolution.currentDirectoryPath (Caller.processId caller) system
+                    |> ignore
+                )
         ]
 
     /// What each requirement refuses, by the thread the caller names: what the
@@ -426,6 +643,7 @@ module TestCallerChecks =
         | Absent
         | Parked
         | Unparked
+        | NotReturning
 
     let private reason (refused : Refused) : string =
         match refused with
@@ -433,16 +651,19 @@ module TestCallerChecks =
         | Refused.Absent -> "is not one of the process's threads"
         | Refused.Parked -> "and is making another call"
         | Refused.Unparked -> "is not parked, so there is no call to finish"
+        | Refused.NotReturning -> "so it is not returning to user mode"
 
-    /// A machine of `platform` holding two processes, each with threads 0 to 5,
+    /// A machine of `platform` holding two processes, each with threads 0 to 8,
     /// and the view of the first, in which thread 2 is parked in an `flock` of
     /// a pipe it made (so that `flockAcquire` admits it), thread 3 in an
     /// `accept` of a listener at `listenerFd` (so that `finishAccept` admits
     /// it), `poller` in a `poll`, `eventWaiter` in an `epoll_wait` (Linux) or a
-    /// `kevent` (Darwin) of a queue the leader made, and thread 1 in a
-    /// `sigsuspend`; and the IDs of the two processes.
+    /// `kevent` (Darwin) of a queue the leader made, `pipeReader` in a `read`
+    /// of an empty pipe and `pipeWriter` in a `write` to a full one, each of
+    /// a pipe the leader made, `suspender` in a `sigsuspend` and `pauser` in a
+    /// `pause`; and the IDs of the two processes.
     let private world (platform : SimulatedUnixPlatform) : ProcessId * ProcessId * UnixSystem<int, string> =
-        let pids, machine = Machines.withThreads platform 2 6
+        let pids, machine = Machines.withThreads platform 2 9
         let own, other = pids.[0], pids.[1]
         let view = Machines.viewOf own machine
 
@@ -531,15 +752,58 @@ module TestCallerChecks =
                 | KeventOutcome.WouldBlock _, view -> view
                 | other -> failwith $"the kevent: expected it to sleep, got %A{other}"
 
-        own, other, UnixWait.park 1 ParkedSyscall.SigSuspend view
+        let pipe (view : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
+            match UnixPipe.pipe2 (Caller.make own 0) 0 UserBuffer.Mapped view with
+            | Pipe2Answer.Created (reader, writer), view -> reader, writer, view
+            | other, _ -> failwith $"pipe2: %A{other}"
 
-    /// Every public function of the families that take a caller refuses each
-    /// caller its requirement refuses, with `InvalidOperationException` naming
+        let view =
+            let reader, _, view = pipe view
+
+            match UnixReadWrite.read (Caller.make own pipeReader) reader UserBuffer.Mapped 1UL view with
+            | ReadOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the read: expected it to sleep, got %A{other}"
+
+        // More than either flavour's pipe holds, so the write puts in what
+        // fits and sleeps for the rest.
+        let view =
+            let _, writer, view = pipe view
+            let count = 1 <<< 20
+
+            match UnixReadWrite.write (Caller.make own pipeWriter) writer UserBuffer.Mapped (uint64 count) view with
+            | CallProgress.NeedsCopyIn paused ->
+                let range = PausedWrite.copyRange paused
+
+                match
+                    UnixReadWrite.writeWithBytes
+                        (ImmutableArray.Create<byte> (Array.zeroCreate<byte> range.ByteCount))
+                        paused
+                with
+                | ProcessFate.Continues (WriteOutcome.WouldBlock _, view) -> view
+                | other -> failwith $"the write: expected it to sleep, got %A{other}"
+            | CallProgress.Answered other -> failwith $"the write: expected it to copy, got %A{other}"
+
+        // No signal is pending, so each sleeps.
+        let view =
+            match UnixSignal.sigsuspend (Caller.make own suspender) SignalMask.empty view with
+            | SigsuspendOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the sigsuspend: expected it to sleep, got %A{other}"
+
+        let view =
+            match UnixSignal.pause (Caller.make own pauser) view with
+            | SigsuspendOutcome.WouldBlock _, view -> view
+            | other -> failwith $"the pause: expected it to sleep, got %A{other}"
+
+        own, other, view
+
+    /// Every public function that takes a caller, or asks about a process,
+    /// refuses each caller its requirement refuses, with `InvalidOperationException` naming
     /// it and saying why, before it does anything else, so even where the
-    /// flavour would refuse the call itself (`dup3` and epoll on Darwin, kqueue
-    /// on Linux); and does not refuse the caller its requirement admits.
+    /// flavour would refuse the call itself (`dup3`, epoll and `copy_file_range`
+    /// on Darwin, kqueue on Linux); and does not refuse the caller its
+    /// requirement admits.
     [<Test>]
-    let ``every function of a family that takes a caller checks it first`` () : unit =
+    let ``every function that takes a caller or a process checks it first`` () : unit =
         let mismatches =
             [
                 for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
@@ -554,15 +818,36 @@ module TestCallerChecks =
                                 [
                                     Caller.make own 0, None
                                     Caller.make other 0, Some Refused.OtherProcess
-                                    Caller.make own 7, Some Refused.Absent
+                                    Caller.make own absent, Some Refused.Absent
                                     Caller.make own 1, Some Refused.Parked
                                 ]
                             | Admits.Finishing sleeper ->
                                 [
                                     Caller.make own sleeper, None
                                     Caller.make other sleeper, Some Refused.OtherProcess
-                                    Caller.make own 7, Some Refused.Absent
+                                    Caller.make own absent, Some Refused.Absent
                                     Caller.make own 0, Some Refused.Unparked
+                                ]
+                            | Admits.Returning ->
+                                [
+                                    Caller.make own 0, None
+                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make own absent, Some Refused.Absent
+                                    Caller.make own suspender, Some Refused.NotReturning
+                                ]
+                            | Admits.AnyThread ->
+                                [
+                                    Caller.make own 0, None
+                                    Caller.make own suspender, None
+                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make own absent, Some Refused.Absent
+                                ]
+                            | Admits.Process ->
+                                [
+                                    Caller.make own 0, None
+                                    Caller.make own suspender, None
+                                    Caller.make own absent, None
+                                    Caller.make other 0, Some Refused.OtherProcess
                                 ]
 
                         for caller, expected in cases do

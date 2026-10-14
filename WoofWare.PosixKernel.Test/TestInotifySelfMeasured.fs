@@ -385,7 +385,8 @@ module TestInotifySelfMeasured =
                     )
                     machine
 
-            let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf child machine)
+            let ended =
+                UnixThreadLifecycle.exitGroup (Caller.make child 0) 0 (Machines.viewOf child machine)
 
             let machine =
                 match Machines.tryEndProcess ended machine with

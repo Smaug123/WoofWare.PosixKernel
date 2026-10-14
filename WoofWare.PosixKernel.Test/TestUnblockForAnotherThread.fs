@@ -377,7 +377,7 @@ module TestUnblockForAnotherThread =
             UnixDescriptor.tryFlock (Callers.thread thread system) world.WaitingThrough 2 system
             |> parkedOrNot "the flock"
         | Sleep.PipeRead ->
-            UnixReadWrite.tryRead thread world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
+            UnixReadWrite.tryRead (Callers.thread thread system) world.EmptyPipeReadEnd UserBuffer.Mapped 1UL system
             |> parkedOrNot "the read"
         | Sleep.PipeWrite ->
             match
@@ -409,8 +409,12 @@ module TestUnblockForAnotherThread =
                 |> parkedOrNot "the kevent"
         | Sleep.Sigsuspend ->
             let mask = SignalState.maskOf thread (Lone.proc system).Signals
-            UnixSignal.trySigsuspend thread mask system |> parkedOrNot "the sigsuspend"
-        | Sleep.Pause -> UnixSignal.tryPause thread system |> parkedOrNot "the pause"
+
+            UnixSignal.trySigsuspend (Callers.thread thread system) mask system
+            |> parkedOrNot "the sigsuspend"
+        | Sleep.Pause ->
+            UnixSignal.tryPause (Callers.thread thread system) system
+            |> parkedOrNot "the pause"
 
     let private orFail (what : string) (result : Result<'a * UnixSystem<int, string>, 'e>) : UnixSystem<int, string> =
         match result with
@@ -425,10 +429,14 @@ module TestUnblockForAnotherThread =
         let outcome =
             match case.Target with
             | Target.Process ->
-                UnixSignal.tryKill (ProcessId.toInt32 (UnixSystem.processId system)) raw system
+                UnixSignal.tryKill
+                    (Callers.thread case.Unblocker system)
+                    (ProcessId.toInt32 (Lone.pid system))
+                    raw
+                    system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
             | Target.Thread thread ->
-                UnixSignal.tryPthreadKill thread raw system
+                UnixSignal.tryPthreadKill (Callers.thread case.Unblocker system) thread raw system
                 |> Result.mapError (fun refusal -> $"%A{refusal}")
 
         match outcome with
@@ -452,7 +460,7 @@ module TestUnblockForAnotherThread =
 
         match case.Route with
         | Route.PthreadSigmaskUnblock ->
-            UnixSignal.pthreadSigmask case.Unblocker (unblockHow case.Flavour) (Some s) system
+            UnixSignal.pthreadSigmask (Callers.thread case.Unblocker system) (unblockHow case.Flavour) (Some s) system
             |> answered
         | Route.SigprocmaskUnblock
         | Route.SigprocmaskSetEmpty ->
@@ -461,7 +469,7 @@ module TestUnblockForAnotherThread =
                 | Route.SigprocmaskUnblock -> unblockHow case.Flavour, s
                 | _ -> setmaskHow case.Flavour, SignalMask.empty
 
-            match UnixSignal.trySigprocmask case.Unblocker how (Some set) system with
+            match UnixSignal.trySigprocmask (Callers.thread case.Unblocker system) how (Some set) system with
             | Ok answer -> answered answer
             | Error refusal -> Unblocked.Refused refusal
 
@@ -493,13 +501,17 @@ module TestUnblockForAnotherThread =
             match disposition with
             | None -> world.System
             | Some disposition ->
-                UnixSignal.sigaction (signo case.Flavour signal) (Some disposition) world.System
+                UnixSignal.sigaction
+                    (Callers.leader world.System)
+                    (signo case.Flavour signal)
+                    (Some disposition)
+                    world.System
                 |> orFail "sigaction"
 
         let system =
             (system, threads)
             ||> List.fold (fun system thread ->
-                UnixSignal.pthreadSigmask thread (setmaskHow case.Flavour) (Some s) system
+                UnixSignal.pthreadSigmask (Callers.thread thread system) (setmaskHow case.Flavour) (Some s) system
                 |> orFail "pthread_sigmask"
             )
 

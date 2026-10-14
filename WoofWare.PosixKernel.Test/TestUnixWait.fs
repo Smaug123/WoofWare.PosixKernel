@@ -320,7 +320,7 @@ module TestUnixWait =
 
         let parked = UnixWait.parkWaiting 1 (parkOfThread 1) signalled
 
-        UnixWait.satisfied 1 parked
+        UnixWait.satisfied (Callers.thread 1 parked) parked
         |> shouldEqual (Some (Set.singleton WakePrimitive.SignalDeliverable))
 #else
         Assert.Ignore "parkWaiting checks a park's condition only in a Debug build."

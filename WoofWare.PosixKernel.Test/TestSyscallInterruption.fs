@@ -657,7 +657,7 @@ module TestSyscallInterruption =
                     )
                     |> Set.ofList
 
-                match UnixSignal.tryOnReturnToUser thread after with
+                match UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> caught |> shouldEqual Set.empty
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) ->
                     frames
@@ -950,10 +950,10 @@ module TestSyscallInterruption =
                     }
                 )
 
-            let self = ProcessId.toInt32 (UnixSystem.processId system)
+            let self = ProcessId.toInt32 (Lone.pid system)
 
             let system =
-                match UnixSignal.tryKill self 10 system with
+                match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
@@ -969,7 +969,9 @@ module TestSyscallInterruption =
             |> send 0 [ Sent.Caught (Signal.SIGUSR1, true) ]
 
         let thrown =
-            Assert.Throws<System.InvalidOperationException> (fun () -> UnixSignal.tryOnReturnToUser 0 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system |> ignore
+            )
 
         thrown.Message |> shouldContainText "asleep"
 

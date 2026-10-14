@@ -57,12 +57,12 @@ module PendingSignal =
         let system = Threads.ensure 1 system
 
         let install (disposition : SignalDisposition<string>) (system : UnixSystem<int, string>) =
-            match UnixSignal.sigaction 10 (Some disposition) system with
+            match UnixSignal.sigaction (Callers.leader system) 10 (Some disposition) system with
             | Ok (_, system) -> system
             | Error error -> failwith $"sigaction: %O{error}"
 
         let send (target : int) (signo : int) (system : UnixSystem<int, string>) =
-            match UnixSignal.tryPthreadKill target signo system with
+            match UnixSignal.tryPthreadKill (Callers.leader system) target signo system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
             | other -> failwith $"pthread_kill %d{target} %d{signo}: %A{other}"
 

@@ -278,7 +278,7 @@ module TestInotifyMeasured =
         (system : UnixSystem<int, string>)
         : ReadOutcome * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryRead thread fd buffer (uint64 count) system with
+        match UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"read(%d{fd}, %d{count}) refused: %s{ReadRefusal.describe refusal}"
 
@@ -790,13 +790,13 @@ module TestInotifyMeasured =
         )
 
     let private returned (thread : int) (system : UnixSystem<int, string>) : bool =
-        match UnixWait.satisfied thread system with
+        match UnixWait.satisfied (Callers.thread thread system) system with
         | Some woken -> not (Set.isEmpty woken)
         | None -> failwith $"thread %d{thread} is not asleep"
 
     /// What the woken read of `thread` answers, as the probe prints it.
     let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
-        match UnixReadWrite.tryFinishRead thread system with
+        match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
@@ -862,10 +862,10 @@ module TestInotifyMeasured =
 
         // The handler runs and returns, and the client issues the read again.
         let s =
-            match UnixSignal.tryOnReturnToUser reader s with
+            match UnixSignal.tryOnReturnToUser (Callers.thread reader s) s with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, s)) ->
                 (s, frames)
-                ||> List.fold (fun s frame -> UnixSignal.sigreturn reader frame.Id s)
+                ||> List.fold (fun s frame -> UnixSignal.sigreturn (Callers.thread reader s) frame.Id s)
             | other -> failwith $"%A{other}"
 
         system <- sleeps reader fd s
@@ -1473,7 +1473,7 @@ module TestInotifyMeasured =
             | TerminalAttributesAnswer.NotATerminal error -> $"isatty=0 errno=%O{error}"
 
         let pread () =
-            match UnixReadWrite.tryPread 0 fd UserBuffer.Mapped 256UL 0L system with
+            match UnixReadWrite.tryPread (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0L system with
             | Ok (ReadAnswer.Failed error, _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 
@@ -1521,7 +1521,7 @@ module TestInotifyMeasured =
             | other -> failwith $"%A{other}"
 
         let recv =
-            match UnixReadWrite.tryRecv 0 fd UserBuffer.Mapped 256UL 0 system with
+            match UnixReadWrite.tryRecv (Callers.thread 0 system) fd UserBuffer.Mapped 256UL 0 system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 

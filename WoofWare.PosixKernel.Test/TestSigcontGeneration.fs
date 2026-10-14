@@ -117,7 +117,7 @@ module TestSigcontGeneration =
     /// past a SIGCONT the kernel discards.
     let rec private returns (thread : int) : Step =
         fun r ->
-            match UnixSignal.tryOnReturnToUser thread r.System with
+            match UnixSignal.tryOnReturnToUser (Callers.thread thread r.System) r.System with
             | Error refusal -> Error (Stop.Receiver refusal)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
@@ -136,7 +136,7 @@ module TestSigcontGeneration =
                 let r =
                     { r with
                         Runs = (frame.Entry.Signal, thread, r.Phase) :: r.Runs
-                        System = UnixSignal.sigreturn thread frame.Id r.System
+                        System = UnixSignal.sigreturn (Callers.thread thread r.System) frame.Id r.System
                     }
 
                 (returns thread >=> runFrames thread outer) r
@@ -156,20 +156,24 @@ module TestSigcontGeneration =
                 | SimulatedUnixFlavour.Linux -> 2
                 | SimulatedUnixFlavour.Darwin -> 3
 
-            match UnixSignal.pthreadSigmask thread setmask (Some (signals blocked r)) r.System with
+            match
+                UnixSignal.pthreadSigmask (Callers.thread thread r.System) setmask (Some (signals blocked r)) r.System
+            with
             | Ok (_, system) -> returns thread (withSystem system r)
             | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
 
     /// `sigaction` by `thread`.
     let private install (thread : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
         fun r ->
-            match UnixSignal.sigaction (signo r signal) (Some disposition) r.System with
+            match
+                UnixSignal.sigaction (Callers.thread thread r.System) (signo r signal) (Some disposition) r.System
+            with
             | Ok (_, system) -> returns thread (withSystem system r)
             | Error errno -> failwith $"sigaction of %O{signal} failed with %O{errno}"
 
     let private spawnSecond : Step =
         fun r ->
-            match UnixThreadLifecycle.trySpawn main second (CpuId 0) r.System with
+            match UnixThreadLifecycle.trySpawn (Callers.thread main r.System) second (CpuId 0) r.System with
             | Ok (SpawnAnswer.Spawned _, system) -> (returns main >=> returns second) (withSystem system r)
             | other -> failwith $"spawn: %A{other}"
 
@@ -190,14 +194,16 @@ module TestSigcontGeneration =
             let outcome =
                 match route with
                 | Route.Process ->
-                    let pid = ProcessId.toInt32 (UnixSystem.processId r.System)
+                    let pid = ProcessId.toInt32 (Lone.pid r.System)
 
-                    match UnixSignal.tryKill pid (signo r signal) r.System with
+                    match UnixSignal.tryKill (Callers.thread sender r.System) pid (signo r signal) r.System with
                     | Error (KillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"kill: %A{other}")
                     | Ok outcome -> Ok outcome
                 | Route.Thread target ->
-                    match UnixSignal.tryPthreadKill target (signo r signal) r.System with
+                    match
+                        UnixSignal.tryPthreadKill (Callers.thread sender r.System) target (signo r signal) r.System
+                    with
                     | Error (ThreadKillRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                     | Error other -> Error (Stop.Other $"pthread_kill: %A{other}")
                     | Ok outcome -> Ok outcome
@@ -210,7 +216,9 @@ module TestSigcontGeneration =
     /// `sigpending` by `thread`, printed as the probe prints it.
     let private pending (label : string) (thread : int) : Step =
         fun r ->
-            let word = SignalMask.toWord (UnixSignal.sigpending thread r.System)
+            let word =
+                SignalMask.toWord (UnixSignal.sigpending (Callers.thread thread r.System) r.System)
+
             (print $" %s{label}=%x{word}" >=> returns thread) r
 
     /// The probe's `out_runs`.
@@ -347,7 +355,7 @@ module TestSigcontGeneration =
             | _ ->
 
             if row.InSigsuspend then
-                match UnixSignal.tryFinishSigsuspend row.Sleeper r.System with
+                match UnixSignal.tryFinishSigsuspend (Callers.thread row.Sleeper r.System) r.System with
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishSigsuspend: %A{other}")
                 | Ok (SigsuspendOutcome.Failed UnixError.EINTR, system) ->
@@ -369,7 +377,7 @@ module TestSigcontGeneration =
     let private sleeps (row : SleepRow) : Step =
         fun r ->
             if row.InSigsuspend then
-                match UnixSignal.trySigsuspend row.Sleeper (signals [] r) r.System with
+                match UnixSignal.trySigsuspend (Callers.thread row.Sleeper r.System) (signals [] r) r.System with
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | other -> failwith $"sigsuspend did not sleep: %A{other}"
@@ -683,16 +691,18 @@ module TestSigcontGeneration =
              >=> send main Route.Process Signal.SIGCONT)
                 start
             |> Result.map (fun r ->
-                UnixSignal.sigpending main r.System
+                UnixSignal.sigpending (Callers.thread main r.System) r.System
                 |> shouldEqual (SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGCONT))
 
-                let pid = ProcessId.toInt32 (UnixSystem.processId r.System)
+                let pid = ProcessId.toInt32 (Lone.pid r.System)
 
-                match UnixSignal.tryKill pid (signo r Signal.SIGSTOP) r.System with
+                match UnixSignal.tryKill (Callers.leader r.System) pid (signo r Signal.SIGSTOP) r.System with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped Signal.SIGSTOP, system))) -> system
                 | other -> failwith $"SIGSTOP: %A{other}"
             )
 
         match stopped with
-        | Ok system -> SignalMask.toWord (UnixSignal.sigpending main system) |> shouldEqual 0UL
+        | Ok system ->
+            SignalMask.toWord (UnixSignal.sigpending (Callers.thread main system) system)
+            |> shouldEqual 0UL
         | Error stop -> failwith $"%A{stop}"

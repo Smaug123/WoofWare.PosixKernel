@@ -418,14 +418,14 @@ module TestNonBlocking =
                 written |> shouldEqual (int64 count)
 
                 deliveries blockingAfter
-                |> shouldEqual [ ExternalEndpoint (UnixSystem.processId blockingAfter, fd), List.ofSeq bytes ]
+                |> shouldEqual [ ExternalEndpoint (Lone.pid blockingAfter, fd), List.ofSeq bytes ]
 
                 answer |> shouldEqual (WriteAnswer.Completed (int64 emptyPipeTakes))
 
                 deliveries after
                 |> shouldEqual
                     [
-                        ExternalEndpoint (UnixSystem.processId after, fd), List.ofSeq bytes |> List.take emptyPipeTakes
+                        ExternalEndpoint (Lone.pid after, fd), List.ofSeq bytes |> List.take emptyPipeTakes
                     ]
             | flaggedResult, clearResult ->
                 failwith

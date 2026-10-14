@@ -245,7 +245,7 @@ module SignalFuzz =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams leader (CpuId 0)
 
-        let self = ProcessId.toInt32 (UnixSystem.processId system)
+        let self = ProcessId.toInt32 (Lone.pid system)
 
         let signal (signo : int) : Signal =
             match Signal.ofRawSignoUnder numbering signo with
@@ -269,7 +269,7 @@ module SignalFuzz =
                 )
 
         let rec returnToUser () : unit =
-            match UnixSignal.tryOnReturnToUser leader system with
+            match UnixSignal.tryOnReturnToUser (Callers.thread leader system) system with
             | Error refusal -> raise (Refusal $"onReturnToUser refused: %O{refusal}")
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) -> system <- after
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
@@ -306,7 +306,7 @@ module SignalFuzz =
                 | [] -> ()
 
                 events.Add "x"
-                system <- UnixSignal.sigreturn leader frame.Id system
+                system <- UnixSignal.sigreturn (Callers.thread leader system) frame.Id system
                 returnToUser ()
                 runFrames outer
 
@@ -329,7 +329,7 @@ module SignalFuzz =
 
                 withSignals (SignalState.setDisposition numbering (signal s) disposition (signals ()))
             | SignalFuzzOp.Kill s ->
-                match UnixSignal.tryKill self s system with
+                match UnixSignal.tryKill (Callers.leader system) self s system with
                 | Error refusal -> raise (Refusal $"kill refused: %O{refusal}")
                 | Ok (Error errno) ->
                     events.Add
@@ -342,7 +342,7 @@ module SignalFuzz =
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _))) ->
                     raise (Refusal "a stop signal was sent")
             | SignalFuzzOp.Raise s ->
-                match UnixSignal.tryPthreadKill leader s system with
+                match UnixSignal.tryPthreadKill (Callers.leader system) leader s system with
                 | Error refusal -> raise (Refusal $"raise refused: %O{refusal}")
                 | Ok (Error errno) ->
                     events.Add

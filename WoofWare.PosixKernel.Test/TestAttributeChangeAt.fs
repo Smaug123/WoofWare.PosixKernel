@@ -1357,7 +1357,11 @@ module TestAttributeChangeAt =
                 for row in fchmodatRows resource "UMASK" do
                     let caller = callerOf platform row.[0]
                     let umask = Convert.ToInt32 (row.[2], 8)
-                    let _, system = boot caller |> dropped caller |> UnixSystem.umask umask
+
+                    let _, system =
+                        boot caller
+                        |> dropped caller
+                        |> fun system -> UnixSystem.umask (Callers.leader system) umask system
 
                     let actual =
                         match

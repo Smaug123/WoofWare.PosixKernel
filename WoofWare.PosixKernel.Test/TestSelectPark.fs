@@ -84,7 +84,9 @@ module TestSelectPark =
             |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
 
             UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
-            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
+
+            UnixWait.satisfied (Callers.thread thread asleep) asleep
+            |> shouldEqual (Some Set.empty)
 
             let elapsed =
                 { asleep with
@@ -94,5 +96,5 @@ module TestSelectPark =
                             asleep.Scheduling
                 }
 
-            UnixWait.satisfied thread elapsed
+            UnixWait.satisfied (Callers.thread thread elapsed) elapsed
             |> shouldEqual (Some (Set.singleton (WakePrimitive.DeadlinePassed deadline)))

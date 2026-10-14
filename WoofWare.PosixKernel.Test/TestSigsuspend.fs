@@ -133,8 +133,10 @@ module TestSigsuspend =
 
             let result =
                 match r.Flavour with
-                | SimulatedUnixFlavour.Linux -> UnixSignal.rtSigprocmask thread setmask set 8UL r.System
-                | SimulatedUnixFlavour.Darwin -> UnixSignal.pthreadSigmask thread setmask set r.System
+                | SimulatedUnixFlavour.Linux ->
+                    UnixSignal.rtSigprocmask (Callers.thread thread r.System) setmask set 8UL r.System
+                | SimulatedUnixFlavour.Darwin ->
+                    UnixSignal.pthreadSigmask (Callers.thread thread r.System) setmask set r.System
 
             match result with
             | Ok (_, system) ->
@@ -144,9 +146,16 @@ module TestSigsuspend =
                     }
             | Error errno -> failwith $"set_current failed with %O{errno}"
 
+    /// The thread the probe makes a call from: the main thread, or, while it
+    /// is in its call, the helper (`with_helper`).
+    let private sender (system : UnixSystem<int, string>) : Caller<int> =
+        match UnixThreadTable.parkedFor main (Lone.threads system) with
+        | None -> Callers.thread main system
+        | Some _ -> Callers.thread helper system
+
     let private install (signal : Signal) (disposition : SignalDisposition<string>) : Step =
         fun r ->
-            match UnixSignal.sigaction (signo r signal) (Some disposition) r.System with
+            match UnixSignal.sigaction (sender r.System) (signo r signal) (Some disposition) r.System with
             | Ok (_, system) ->
                 Ok
                     { r with
@@ -184,7 +193,7 @@ module TestSigsuspend =
                 (ran : (Signal * SignalMask * SignalMask) list)
                 : Result<UnixSystem<int, string> * (Signal * SignalMask * SignalMask) list, Stop>
                 =
-                match UnixSignal.tryOnReturnToUser main system with
+                match UnixSignal.tryOnReturnToUser (Callers.thread main system) system with
                 | Error refusal -> failwith $"onReturnToUser refused: %A{refusal}"
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> continuation system ran
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
@@ -208,7 +217,7 @@ module TestSigsuspend =
                 | [] -> Ok (system, ran)
                 | frame :: outer ->
                     let seen = frame.Entry.Signal, frame.SavedMask, maskIn main system
-                    let system = UnixSignal.sigreturn main frame.Id system
+                    let system = UnixSignal.sigreturn (Callers.thread main system) frame.Id system
                     returnThen (runFrames outer) system (seen :: ran)
 
             returnThen (fun system ran -> Ok (system, ran)) r.System []
@@ -253,8 +262,8 @@ module TestSigsuspend =
         fun r ->
             let outcome =
                 match call with
-                | Call.Sigsuspend mask -> UnixSignal.trySigsuspend main (mask r) r.System
-                | Call.Pause -> UnixSignal.tryPause main r.System
+                | Call.Sigsuspend mask -> UnixSignal.trySigsuspend (Callers.thread main r.System) (mask r) r.System
+                | Call.Pause -> UnixSignal.tryPause (Callers.thread main r.System) r.System
 
             match outcome with
             | Error refusal -> Error (Stop.Refused refusal)
@@ -281,7 +290,7 @@ module TestSigsuspend =
                 match UnixWait.wakes (Set.singleton main) r.System with
                 | [] -> Ok r
                 | _ ->
-                    match UnixSignal.tryFinishSigsuspend main r.System with
+                    match UnixSignal.tryFinishSigsuspend (Callers.thread main r.System) r.System with
                     | Error refusal -> Error (Stop.Refused refusal)
                     | Ok (SigsuspendOutcome.Failed error, system) ->
                         mainReturns
@@ -312,9 +321,9 @@ module TestSigsuspend =
                 | other -> failwith $"the process ended by %O{other}"
 
     let private kill (r : Replay) (signal : Signal) : Result<ProcessFate<KillOutcome, int, string>, UnixError> =
-        let pid = ProcessId.toInt32 (UnixSystem.processId r.System)
+        let pid = ProcessId.toInt32 (Lone.pid r.System)
 
-        match UnixSignal.tryKill pid (signo r signal) r.System with
+        match UnixSignal.tryKill (sender r.System) pid (signo r signal) r.System with
         | Ok outcome -> outcome
         | Error refusal -> failwith $"kill was refused: %A{refusal}"
 
@@ -326,7 +335,7 @@ module TestSigsuspend =
                 if toProcess then
                     kill r signal
                 else
-                    match UnixSignal.tryPthreadKill main (signo r signal) r.System with
+                    match UnixSignal.tryPthreadKill (sender r.System) main (signo r signal) r.System with
                     | Ok outcome -> outcome
                     | Error refusal -> failwith $"pthread_kill was refused: %A{refusal}"
 
@@ -342,12 +351,15 @@ module TestSigsuspend =
         printWith (fun r -> $" %s{label}=%s{hex (maskIn thread r.System)}")
 
     let private printPending (label : string) : Step =
-        printWith (fun r -> $" %s{label}=%s{hex (UnixSignal.sigpending main r.System)}")
+        printWith (fun r ->
+            let pending = UnixSignal.sigpending (Callers.thread main r.System) r.System
+            $" %s{label}=%s{hex pending}"
+        )
 
     /// The probe's `with_helper`: a second thread, which blocks every signal.
     let private spawnHelper : Step =
         fun r ->
-            match UnixThreadLifecycle.trySpawn main helper (CpuId 0) r.System with
+            match UnixThreadLifecycle.trySpawn (Callers.thread main r.System) helper (CpuId 0) r.System with
             | Ok (SpawnAnswer.Spawned _, system) ->
                 setMask
                     helper
@@ -482,12 +494,31 @@ module TestSigsuspend =
                     Parent = text r :: r.Parent
                 }
 
+    /// The probe's parent's `kill(child, signal)`. No other process's `kill`
+    /// reaches this one, and while the child's one thread is in its call no
+    /// thread of the child can make one, so the signal is generated for the
+    /// process as `kill` generates it once it has checked its arguments.
+    let private parentKill (r : Replay) (signal : Signal) : Result<ProcessFate<KillOutcome, int, string>, UnixError> =
+        match
+            ProcessSignal.generate
+                {
+                    Signal = signal
+                    Target = ValueNone
+                }
+                r.System
+        with
+        | Ok fate -> Ok fate
+        | Error refusal -> failwith $"the parent's kill was refused: %A{refusal}"
+
     /// The probe's `stopcont`: the parent stops the child and continues it,
     /// and sends USR1 if the call has not returned.
     let private stopcont (kind : Kind) (contHandler : bool) : Step =
+        let fromParent (signal : Signal) : Step =
+            fun r -> afterKill (parentKill r signal) r
+
         let stop : Step =
             fun r ->
-                match kill r Signal.SIGSTOP with
+                match parentKill r Signal.SIGSTOP with
                 | Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, system)) ->
                     parent
                         (fun _ -> " stopped=1")
@@ -501,14 +532,20 @@ module TestSigsuspend =
         >=> setMask main (signals [ Signal.SIGHUP ])
         >=> suspend (call kind (signals [ Signal.SIGINT ]))
         >=> stop
-        >=> send true Signal.SIGCONT
+        >=> fromParent Signal.SIGCONT
         >=> parent (fun r -> $" returned-after-cont=%d{if r.Returned then 1 else 0}")
-        >=> fun r -> if r.Returned then Ok r else send true Signal.SIGUSR1 r
+        >=> fun r -> if r.Returned then Ok r else fromParent Signal.SIGUSR1 r
 
     let private spread (kind : Kind) (change : SignalMaskChange) (set : Signal list) (label : string) : Step =
         let helperCall : Step =
             fun r ->
-                match UnixSignal.trySigprocmask helper (how r.Flavour change) (Some (signals set r)) r.System with
+                match
+                    UnixSignal.trySigprocmask
+                        (Callers.thread helper r.System)
+                        (how r.Flavour change)
+                        (Some (signals set r))
+                        r.System
+                with
                 | Error refusal ->
                     failwith $"the helper's sigprocmask was refused: %s{SigprocmaskRefusal.describe refusal}"
                 | Ok (Ok (_, system)) ->
@@ -533,7 +570,7 @@ module TestSigsuspend =
         catch Signal.SIGUSR1
         >=> setMask main (signals [ Signal.SIGHUP ])
         >=> fun r ->
-            match UnixSignal.tryRtSigsuspend main (signals [] r) size r.System with
+            match UnixSignal.tryRtSigsuspend (Callers.thread main r.System) (signals [] r) size r.System with
             | Ok (SigsuspendOutcome.Failed error, system) ->
                 let errno =
                     UnixError.toRawErrnoUnder
@@ -883,12 +920,18 @@ module TestSigsuspend =
                                 Restart = rng.Next 2 = 0
                             }
 
-                match UnixSignal.sigaction (Signal.toRawSignoUnder numbering signal) (Some installed) system with
+                match
+                    UnixSignal.sigaction
+                        (Callers.thread helper system)
+                        (Signal.toRawSignoUnder numbering signal)
+                        (Some installed)
+                        system
+                with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"sigaction: %O{errno}"
 
             let returnToUser (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixSignal.tryOnReturnToUser main system with
+                match UnixSignal.tryOnReturnToUser (Callers.thread main system) system with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system))
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, system)) -> system
                 | other -> failwith $"the main thread's return took %A{other}"
@@ -897,7 +940,7 @@ module TestSigsuspend =
             let everyBit = maskOfWord flavour (everyBitWord flavour)
 
             let withMask (thread : int) (mask : SignalMask) (system : UnixSystem<int, string>) =
-                match UnixSignal.pthreadSigmask thread setmask (Some mask) system with
+                match UnixSignal.pthreadSigmask (Callers.thread thread system) setmask (Some mask) system with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
@@ -908,7 +951,7 @@ module TestSigsuspend =
                 let booted = boot flavour
 
                 let spawned =
-                    match UnixThreadLifecycle.trySpawn main helper (CpuId 0) booted with
+                    match UnixThreadLifecycle.trySpawn (Callers.thread main booted) helper (CpuId 0) booted with
                     | Ok (SpawnAnswer.Spawned _, system) -> system
                     | other -> failwith $"spawn: %A{other}"
 
@@ -985,7 +1028,7 @@ module TestSigsuspend =
                     if due then
                         cover ModelLabel.Wake
 
-                        match UnixSignal.tryFinishSigsuspend main system with
+                        match UnixSignal.tryFinishSigsuspend (Callers.thread main system) system with
                         | Ok (SigsuspendOutcome.Failed UnixError.EINTR, after) ->
                             system <- after
 
@@ -1081,12 +1124,20 @@ module TestSigsuspend =
 
                 match op with
                 | ModelOp.Suspend temporary ->
-                    suspendWith temporary (UnixSignal.trySigsuspend main (maskOf temporary) system)
+                    suspendWith
+                        temporary
+                        (UnixSignal.trySigsuspend (Callers.thread main system) (maskOf temporary) system)
                 | ModelOp.Pause ->
                     cover ModelLabel.Pause
-                    suspendWith model.Mask (UnixSignal.tryPause main system)
+                    suspendWith model.Mask (UnixSignal.tryPause (Callers.thread main system) system)
                 | ModelOp.ChangeMask (change, set) ->
-                    match UnixSignal.pthreadSigmask main (how flavour change) (Some (maskOf set)) system with
+                    match
+                        UnixSignal.pthreadSigmask
+                            (Callers.thread main system)
+                            (how flavour change)
+                            (Some (maskOf set))
+                            system
+                    with
                     | Ok (_, after) -> system <- after
                     | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
@@ -1099,7 +1150,7 @@ module TestSigsuspend =
                 | ModelOp.Return ->
                     match model.Frames, SignalState.framesOf main (Lone.proc system).Signals with
                     | (_, saved) :: outer, innermost :: _ ->
-                        system <- UnixSignal.sigreturn main innermost.Id system
+                        system <- UnixSignal.sigreturn (Callers.thread main system) innermost.Id system
 
                         model <-
                             { model with
@@ -1116,7 +1167,13 @@ module TestSigsuspend =
                         not (modelIgnores model signal)
                         || (numbering = SignalNumbering.Linux && blocked)
 
-                    match UnixSignal.tryPthreadKill main (Signal.toRawSignoUnder numbering signal) system with
+                    match
+                        UnixSignal.tryPthreadKill
+                            (Callers.thread helper system)
+                            main
+                            (Signal.toRawSignoUnder numbering signal)
+                            system
+                    with
                     | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> system <- after
                     | other -> failwith $"pthread_kill answered %A{other}"
 
@@ -1158,7 +1215,13 @@ module TestSigsuspend =
                             )
                         | SignalNumbering.Linux -> Set.empty
 
-                    match UnixSignal.trySigprocmask helper (how flavour change) (Some (maskOf set)) system with
+                    match
+                        UnixSignal.trySigprocmask
+                            (Callers.thread helper system)
+                            (how flavour change)
+                            (Some (maskOf set))
+                            system
+                    with
                     | Error (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (thread, signal)) ->
                         (thread, Set.contains signal unblockedForMain) |> shouldEqual (main, true)
                         cover ModelLabel.RefusedSpread
@@ -1269,7 +1332,9 @@ module TestSigsuspend =
     let ``a sigsuspend with no mask to restore is a defect`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
             let asleep =
-                match UnixSignal.trySigsuspend main SignalMask.empty (boot flavour) with
+                let booted = boot flavour
+
+                match UnixSignal.trySigsuspend (Callers.thread main booted) SignalMask.empty booted with
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"sigsuspend: %A{other}"
 
@@ -1288,28 +1353,40 @@ module TestSigsuspend =
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let spawned =
-                match UnixThreadLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
+                let booted = boot flavour
+
+                match UnixThreadLifecycle.trySpawn (Callers.thread main booted) helper (CpuId 0) booted with
                 | Ok (SpawnAnswer.Spawned _, system) -> system
                 | other -> failwith $"spawn: %A{other}"
 
             let blocking =
-                match UnixSignal.pthreadSigmask helper (how flavour SignalMaskChange.SetMask) (Some hup) spawned with
+                match
+                    UnixSignal.pthreadSigmask
+                        (Callers.thread helper spawned)
+                        (how flavour SignalMaskChange.SetMask)
+                        (Some hup)
+                        spawned
+                with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
             let asleep =
-                match UnixSignal.trySigsuspend helper usr1 blocking with
+                match UnixSignal.trySigsuspend (Callers.thread helper blocking) usr1 blocking with
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"sigsuspend: %A{other}"
 
             SignalState.maskToRestore helper (Lone.proc asleep).Signals
             |> shouldEqual (Some hup)
 
-            match UnixThreadLifecycle.tryExitThread helper 0 asleep with
-            | Error (ThreadExitRefusal.Parked (thread, _)) -> thread |> shouldEqual helper
-            | other -> failwith $"a parked thread's exit: %A{other}"
+            let refused =
+                Assert.Throws<InvalidOperationException> (fun () ->
+                    UnixThreadLifecycle.tryExitThread (Callers.thread helper asleep) 0 asleep
+                    |> ignore
+                )
 
-            let ended = UnixThreadLifecycle.exitGroup main 0 asleep
+            refused.Message |> shouldContainText $"thread %d{helper} is parked in"
+
+            let ended = UnixThreadLifecycle.exitGroup (Callers.thread main asleep) 0 asleep
 
             SignalState.threadsWithMasksToRestore ended.FinalProcess.Signals
             |> shouldEqual Set.empty
@@ -1359,32 +1436,53 @@ module TestSigsuspend =
                 | Error e -> failwith $"%s{what}: %A{e}"
 
             let spawned =
-                match UnixThreadLifecycle.trySpawn main helper (CpuId 0) (boot flavour) with
+                let booted = boot flavour
+
+                match UnixThreadLifecycle.trySpawn (Callers.thread main booted) helper (CpuId 0) booted with
                 | Ok (SpawnAnswer.Spawned _, system) -> system
                 | other -> failwith $"spawn: %A{other}"
 
+            let setMask (thread : int) (system : UnixSystem<int, string>) =
+                UnixSignal.pthreadSigmask
+                    (Callers.thread thread system)
+                    (how flavour SignalMaskChange.SetMask)
+                    (Some cont)
+                    system
+
             let blocking =
                 spawned
-                |> UnixSignal.sigaction contSigno (Some disposition)
+                |> (fun system -> UnixSignal.sigaction (Callers.leader system) contSigno (Some disposition) system)
                 |> orFail "sigaction"
-                |> UnixSignal.pthreadSigmask main (how flavour SignalMaskChange.SetMask) (Some cont)
+                |> setMask main
                 |> orFail "pthread_sigmask"
-                |> UnixSignal.pthreadSigmask helper (how flavour SignalMaskChange.SetMask) (Some cont)
+                |> setMask helper
                 |> orFail "pthread_sigmask"
 
             let sent =
-                match UnixSignal.tryKill (ProcessId.toInt32 (UnixSystem.processId blocking)) contSigno blocking with
+                match
+                    UnixSignal.tryKill
+                        (Callers.leader blocking)
+                        (ProcessId.toInt32 (Lone.pid blocking))
+                        contSigno
+                        blocking
+                with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"kill: %A{other}"
 
             let asleep =
-                match UnixSignal.trySigsuspend main cont sent with
+                match UnixSignal.trySigsuspend (Callers.thread main sent) cont sent with
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"sigsuspend: %A{other}"
 
             UnixWait.wakes (Set.singleton main) asleep |> shouldEqual []
 
-            match UnixSignal.trySigprocmask helper (how flavour SignalMaskChange.Unblock) (Some cont) asleep with
+            match
+                UnixSignal.trySigprocmask
+                    (Callers.thread helper asleep)
+                    (how flavour SignalMaskChange.Unblock)
+                    (Some cont)
+                    asleep
+            with
             | Error refusal ->
                 refusal
                 |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (main, Signal.SIGCONT))

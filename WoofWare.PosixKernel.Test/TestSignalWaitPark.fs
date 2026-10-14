@@ -131,7 +131,8 @@ module TestSignalWaitPark =
             // fails loudly rather than guessing.
             let error =
                 Assert.Throws<Exception> (fun () ->
-                    UnixWait.satisfied thread asleep |> ignore<Set<WakePrimitive> option>
+                    UnixWait.satisfied (Callers.thread thread asleep) asleep
+                    |> ignore<Set<WakePrimitive> option>
                 )
 
             error.Message |> shouldContainText "SignalWait"

@@ -710,7 +710,7 @@ module TestFcntlMeasured =
         | other -> failwith $"lseek(%d{fd}): %A{other}"
 
     let private readNonBlocking (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+        match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), _) -> $"ok %d{bytes.Length}"
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), _) -> $"%A{error}"
         | other -> failwith $"read of %d{fd}: %A{other}"
@@ -948,7 +948,7 @@ module TestFcntlMeasured =
                             | Ok (answer, system) -> Some (FcntlWorld.number answer, system)
                             | Error refusal -> failwith $"ftruncate: %A{refusal}"
                         | "read rdwr" ->
-                            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped 4UL system with
+                            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped 4UL system with
                             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                                 Some ($"ok %d{bytes.Length}", system)
                             | other -> failwith $"read: %A{other}"
@@ -1362,7 +1362,7 @@ module TestFcntlMeasured =
             // can, until it has put in the lot.
             while answer.IsNone do
                 system <-
-                    match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 65536UL system with
+                    match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 65536UL system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                     | other -> failwith $"%s{run.Name}: draining: %A{other}"
 

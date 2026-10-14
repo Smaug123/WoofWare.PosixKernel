@@ -670,7 +670,7 @@ module TestSocketOptions =
             | Error refusal -> Error refusal
 
         let read (fd : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) fd UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"%O{platform} fd %d{fd}: expected a read to answer, got %A{other}"
 
@@ -726,7 +726,7 @@ module TestSocketOptions =
             UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped System.UInt32.MaxValue system
 
         let clientRead (client : int) (system : UnixSystem<int, string>) : ReadAnswer =
-            match UnixReadWrite.tryRead 0 client UserBuffer.Mapped 16UL system with
+            match UnixReadWrite.tryRead (Callers.thread 0 system) client UserBuffer.Mapped 16UL system with
             | Ok (ReadOutcome.Answered answer, _) -> answer
             | other -> failwith $"expected the client's read to answer, got %A{other}"
 

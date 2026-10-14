@@ -468,15 +468,24 @@ type internal CallerRequirement =
     /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
     /// thread returning to user mode.
     | Returning
-    /// Any thread of the process, parked or not.
+    /// Any thread of the process, parked or not: what `UnixScheduling.dispatch`
+    /// requires of the thread it reports running.
     | Exists
 
 /// The way into a call, and out of one resumed after it paused to copy from
-/// the caller's memory.
+/// the caller's memory; and the way into a query about one process.
 [<RequireQualifiedAccess>]
 module internal Entry =
 
-    let private require<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// The check `call` makes before its body runs: fails with
+    /// `InvalidOperationException` unless `caller` is a thread of the system's
+    /// process that meets `requirement`. `operation` names the function the
+    /// client called.
+    ///
+    /// For a call that must allocate nothing, which the closures `call` takes
+    /// would make it do: `UnixScheduling.dispatch`, which a client makes
+    /// before every instruction.
+    let admit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (requirement : CallerRequirement)
         (caller : Caller<'Thread>)
@@ -513,7 +522,7 @@ module internal Entry =
         (system : UnixSystem<'Thread, 'Handler>)
         : 'InKernel
         =
-        require operation requirement caller system
+        admit operation requirement caller system
         // `id`: the body runs over the system the call hands back.
         Shape.map id shape (body system)
 
@@ -532,3 +541,23 @@ module internal Entry =
         =
         // `id`: the resumption runs over the system the call hands back.
         Shape.map id shape answer
+
+    /// A question about the process `pid` that no thread of it asks, such as
+    /// which threads it has: fails with `InvalidOperationException` unless
+    /// `pid` is the system's process, and otherwise answers what `body`
+    /// answers for the system. `operation` names the function the client
+    /// called.
+    ///
+    /// The answer holds no system, so nothing is handed back.
+    let query<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (pid : ProcessId)
+        (body : UnixSystem<'Thread, 'Handler> -> 'Answer)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : 'Answer
+        =
+        if pid <> system.Process.ProcessId then
+            invalidOp
+                $"%s{operation}: the question is about process %O{pid}, but the system holds process %O{system.Process.ProcessId} and no other, so it cannot be asked of it (this is a bug in the client)."
+
+        body system

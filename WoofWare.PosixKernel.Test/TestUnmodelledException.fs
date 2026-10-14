@@ -465,11 +465,11 @@ module TestUnmodelledException =
                     agrees
                         SyscallRefusal.kind
                         SyscallRefusal.describe
-                        (fun () -> UnixSystem.tryStep 0 call system)
-                        (fun () -> UnixSystem.step 0 call system)
+                        (fun () -> UnixSystem.tryStep (Callers.thread 0 system) call system)
+                        (fun () -> UnixSystem.step (Callers.thread 0 system) call system)
 
                 let machine = Machines.ofSystem system
-                let pid = UnixSystem.processId system
+                let pid = Lone.pid system
 
                 let unwrap (answer : 'a option) : 'a =
                     match answer with
@@ -582,50 +582,21 @@ module TestUnmodelledException =
 
     [<Test>]
     let ``exitThread throws exactly when tryExitThread refuses`` () : unit =
-        // Thread 0 leads, and thread 2 is parked in an `flock` on an event queue,
-        // so the leader's exit is unmodelled, the parked thread's is a misuse,
-        // and thread 1's is answered.
-        let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
-            let system = booted platform
-
-            let create =
-                match SimulatedUnixPlatform.flavour platform with
-                | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
-                | SimulatedUnixFlavour.Darwin ->
-                    FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
-
-            let fd, registry = create (Lone.fileDescriptors system)
-
-            let queue =
-                match FileDescriptorRegistry.tryFindWithId fd registry with
-                | Some (id, _) -> id
-                | None -> failwith $"fd %d{fd} names no description"
-
-            Lone.withFileDescriptors registry system
-            |> Threads.ensure 1
-            |> Threads.ensure 2
-            |> UnixWait.park
-                2
-                (ParkedSyscall.Flock
-                    {
-                        Requester = queue
-                        Mode = FlockMode.Exclusive
-                    })
+        // Thread 0 leads, so its exit is unmodelled, and thread 1's is answered.
+        // A parked thread's exit is refused before the call, by the caller's
+        // check, which `TestCallerChecks` holds the public function to.
+        let world (platform : SimulatedUnixPlatform) : UnixSystem<int, string> = booted platform |> Threads.ensure 1
 
         covering
             40
-            (Gen.zip platformGen (Gen.choose (0, 2)))
+            (Gen.zip platformGen (Gen.choose (0, 1)))
             (fun (platform, thread) ->
                 let system = world platform
 
                 agrees
                     ThreadExitRefusal.kind
                     ThreadExitRefusal.describe
-                    (fun () -> UnixThreadLifecycle.tryExitThread thread 0 system)
-                    (fun () -> UnixThreadLifecycle.exitThread thread 0 system)
+                    (fun () -> UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system)
+                    (fun () -> UnixThreadLifecycle.exitThread (Callers.thread thread system) 0 system)
             )
-            [
-                Observed.Answered
-                Observed.Refused RefusalKind.Unmodelled
-                Observed.Refused RefusalKind.Misuse
-            ]
+            [ Observed.Answered ; Observed.Refused RefusalKind.Unmodelled ]
