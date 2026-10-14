@@ -24,9 +24,13 @@ module TestCallerChecks =
             Make : Caller<int> -> UnixSystem<int, string> -> unit
         }
 
-    /// One call of each public function of the descriptor and pipe families,
-    /// on the standard streams, which every flavour gives as pipes.
+    /// One call of each public function of the families that take a caller:
+    /// the descriptor and pipe calls on the standard streams, which every
+    /// flavour gives as pipes, and the path calls on the root directory, so
+    /// that a call's `dirfd` is never looked up.
     let private calls : Call list =
+        let root = PathArg.ofText "/"
+
         let running (name : string) (make : Caller<int> -> UnixSystem<int, string> -> unit) : Call =
             {
                 Name = name
@@ -85,6 +89,119 @@ module TestCallerChecks =
                     |> ignore<TerminalAttributesAnswer>
                 )
             running "UnixPipe.pipe2" (fun caller system -> UnixPipe.pipe2 caller 0 UserBuffer.Mapped system |> ignore)
+            running
+                "UnixPathResolution.stat"
+                (fun caller system ->
+                    UnixPathResolution.stat caller SymlinkPolicy.Follow root system
+                    |> ignore<FileStatusAnswer>
+                )
+            running
+                "UnixPathResolution.fstat"
+                (fun caller system -> UnixPathResolution.fstat caller 0 system |> ignore<FileStatusAnswer>)
+            running
+                "UnixPathResolution.fstatat"
+                (fun caller system -> UnixPathResolution.fstatat caller 0 root 0 system |> ignore<FileStatusAnswer>)
+            running
+                "UnixPathResolution.chmod"
+                (fun caller system -> UnixPathResolution.chmod caller root 0o755 system |> ignore)
+            running
+                "UnixPathResolution.fchmod"
+                (fun caller system -> UnixPathResolution.fchmod caller 0 0o600 system |> ignore)
+            running
+                "UnixPathResolution.fchmodat"
+                (fun caller system -> UnixPathResolution.fchmodat caller 0 root 0o755 0 system |> ignore)
+            running
+                "UnixPathResolution.chown"
+                (fun caller system -> UnixPathResolution.chown caller root None None system |> ignore)
+            running
+                "UnixPathResolution.lchown"
+                (fun caller system -> UnixPathResolution.lchown caller root None None system |> ignore)
+            running
+                "UnixPathResolution.fchown"
+                (fun caller system -> UnixPathResolution.fchown caller 0 None None system |> ignore)
+            running
+                "UnixPathResolution.fchownat"
+                (fun caller system -> UnixPathResolution.fchownat caller 0 root None None 0 system |> ignore)
+            running
+                "UnixPathResolution.utimensat"
+                (fun caller system ->
+                    UnixPathResolution.utimensat
+                        caller
+                        0
+                        (NullablePathArgument.NotNull root)
+                        TimesArgument.Null
+                        0
+                        system
+                    |> ignore
+                )
+            running
+                "UnixPathResolution.statfs"
+                (fun caller system ->
+                    UnixPathResolution.statfs caller root system
+                    |> ignore<FileSystemStatisticsAnswer>
+                )
+            running
+                "UnixPathResolution.fstatfs"
+                (fun caller system -> UnixPathResolution.fstatfs caller 0 system |> ignore<FileSystemStatisticsAnswer>)
+            running
+                "UnixPathResolution.getcwd"
+                (fun caller system ->
+                    UnixPathResolution.getcwd caller UserBuffer.Mapped 4096UL system
+                    |> ignore<GetCwdAnswer>
+                )
+            running
+                "UnixPathResolution.chdir"
+                (fun caller system -> UnixPathResolution.chdir caller root system |> ignore)
+            // R_OK.
+            running
+                "UnixPathResolution.access"
+                (fun caller system -> UnixPathResolution.access caller 4 system |> ignore)
+            running
+                "UnixPathResolution.faccessat"
+                (fun caller system -> UnixPathResolution.faccessat caller 0 4 0 system |> ignore)
+            // Internal: `UnixSystem.step`'s way into `faccessat`.
+            running
+                "UnixPathResolution.faccessat"
+                (fun caller system ->
+                    UnixPathResolution.tryFaccessatEager caller 0 root 4 0 system
+                    |> ignore<Result<SyscallAnswer, AccessRefusal>>
+                )
+            running
+                "UnixCredentials.getresuid"
+                (fun caller system ->
+                    UnixCredentials.getresuid caller UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped system
+                    |> ignore<GetIdsAnswer<UserId>>
+                )
+            running
+                "UnixCredentials.getresgid"
+                (fun caller system ->
+                    UnixCredentials.getresgid caller UserBuffer.Mapped UserBuffer.Mapped UserBuffer.Mapped system
+                    |> ignore<GetIdsAnswer<GroupId>>
+                )
+            running
+                "UnixCredentials.setresuid"
+                (fun caller system -> UnixCredentials.setresuid caller None None None system |> ignore)
+            running
+                "UnixCredentials.setresgid"
+                (fun caller system -> UnixCredentials.setresgid caller None None None system |> ignore)
+            running
+                "UnixCredentials.setgroups"
+                (fun caller system -> UnixCredentials.setgroups caller 0 (GroupListWords.Readable []) system |> ignore)
+            running
+                "UnixClock.gettimeofday"
+                (fun caller system -> UnixClock.gettimeofday caller system |> ignore<UnixTimestamp>)
+            running
+                "UnixClock.clockGettime"
+                (fun caller system ->
+                    UnixClock.clockGettime caller 0 system
+                    |> ignore<Result<UnixTimestamp, UnixError>>
+                )
+            running
+                "UnixEntropy.getRandom"
+                (fun caller system -> UnixEntropy.getRandom caller UserBuffer.Mapped 8UL 0u system |> ignore)
+            running
+                "UnixEntropy.getEntropy"
+                (fun caller system -> UnixEntropy.getEntropy caller UserBuffer.Mapped 8UL system |> ignore)
             {
                 Name = "UnixDescriptor.flockAcquire"
                 Requirement = CallerRequirement.Woken

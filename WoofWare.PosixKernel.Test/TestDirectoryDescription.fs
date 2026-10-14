@@ -150,7 +150,13 @@ module TestDirectoryDescription =
         openAt directoryReading "d" system
 
     let private inodeOf (path : string) (system : UnixSystem<int, string>) : InodeNumber =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (rooted path)) system with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader system)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (rooted path))
+                system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Inode
         | other -> failwith $"stat %s{path}: %A{other}"
 

@@ -137,7 +137,9 @@ module TestSymlinkMode =
         |> Lone.restand
 
     let private lstatMode (system : UnixSystem<int, string>) : int =
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.NoFollowFinal (PathArg.ofText "/l") system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode
         | other -> failwith $"%s{context}: lstat(/l) did not report: %A{other}"
 
@@ -153,8 +155,10 @@ module TestSymlinkMode =
         // caller is neither the link's owner nor in its group, so "other"
         // decides.
         let ask (linkBits : int) : SyscallAnswer =
+            let system = systemWithLink darwin linkBits
+
             match
-                UnixPathResolution.tryFaccessatEager -2 (PathArg.ofText "/l") 4 0x20 (systemWithLink darwin linkBits)
+                UnixPathResolution.tryFaccessatEager (Callers.leader system) -2 (PathArg.ofText "/l") 4 0x20 system
             with
             | Ok answer -> answer
             | Error refusal -> failwith $"%s{context}: faccessat was refused: %s{AccessRefusal.describe refusal}"

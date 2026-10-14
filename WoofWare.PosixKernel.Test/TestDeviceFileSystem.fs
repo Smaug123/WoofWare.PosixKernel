@@ -92,7 +92,7 @@ module TestDeviceFileSystem =
             (UnixTimestamp.ofSeconds 1_700_000_000L)
 
     let private stat (path : string) (system : UnixSystem<int, string>) : Result<FileStatusAnswer, StatRefusal> =
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText path) system
+        UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText path) system
 
     let private reported (path : string) (system : UnixSystem<int, string>) : FileStatus =
         match stat path system with
@@ -178,7 +178,11 @@ module TestDeviceFileSystem =
                 status.BirthTime |> shouldEqual None
                 status.FileFlags |> shouldEqual None
 
-                UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofText path)
+                    system
                 |> shouldEqual (Ok (FileStatusAnswer.Reported status))
 
             (reported "/dev/null" system).Inode
@@ -232,14 +236,15 @@ module TestDeviceFileSystem =
 
         (reported "/dev/.." system) |> shouldEqual (reported "/" system)
 
-        let _, system = Answered.chdir (PathArg.ofText "/dev") system
+        let _, system =
+            Answered.chdir (Callers.leader system) (PathArg.ofText "/dev") system
 
         UnixPathResolution.currentDirectoryPath system
         |> shouldEqual (Some (AbsoluteUnixPath.parseOrFail context "/dev"))
 
         (reported "null" system) |> shouldEqual (reported "/dev/null" system)
 
-        let _, system = Answered.chdir (PathArg.ofText "..") system
+        let _, system = Answered.chdir (Callers.leader system) (PathArg.ofText "..") system
 
         UnixPathResolution.currentDirectoryPath system
         |> shouldEqual (Some AbsoluteUnixPath.root)
@@ -274,17 +279,20 @@ module TestDeviceFileSystem =
             )
 
         for path in [ "/dev" ; "/dev/null" ; "/dev/urandom" ] do
-            Answered.statfs (PathArg.ofText path) system |> shouldEqual expected
+            Answered.statfs (Callers.leader system) (PathArg.ofText path) system
+            |> shouldEqual expected
 
         let fd, system =
             match Answered.openPath DirectoryReading.flags (UnixPath.parseOrFail context "/dev") 0 system with
             | SyscallAnswer.Completed fd, system -> int fd, system
             | other -> failwith $"opening /dev: %A{other}"
 
-        UnixPathResolution.fstatfs fd system |> shouldEqual expected
+        UnixPathResolution.fstatfs (Callers.leader system) fd system
+        |> shouldEqual expected
 
         // The root filesystem is not the device filesystem.
-        Answered.statfs (PathArg.ofText "/f") system |> shouldNotEqual expected
+        Answered.statfs (Callers.leader system) (PathArg.ofText "/f") system
+        |> shouldNotEqual expected
 
     // ------------------------------------------------------------- listing
 
@@ -376,7 +384,7 @@ module TestDeviceFileSystem =
         | Error (ReadDirectoryRefusal.DeviceFileSystem _) -> ()
         | other -> failwith $"reading /dev: expected a refusal, got %A{other}"
 
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Error (FStatRefusal.DeviceFileSystemRoot _) -> ()
         | other -> failwith $"fstat of /dev: expected a refusal, got %A{other}"
 
@@ -488,7 +496,9 @@ module TestDeviceFileSystem =
         let unprivileged = booted linux
 
         let sticky =
-            match UnixPathResolution.tryChmod (PathArg.ofText "/") 0o1777 (bootedAsRoot linux) with
+            let root = bootedAsRoot linux
+
+            match UnixPathResolution.tryChmod (Callers.leader root) (PathArg.ofText "/") 0o1777 root with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"chmod / as root: %A{other}"
 
@@ -612,16 +622,18 @@ module TestDeviceFileSystem =
         UnixNamespace.tryReadlink (PathArg.ofText "/dev/null") UserBuffer.Mapped 16 system
         |> shouldEqual (Ok (ReadLinkAnswer.Failed UnixError.EINVAL))
 
-        Answered.chdir (PathArg.ofText "/dev/null") system
+        Answered.chdir (Callers.leader system) (PathArg.ofText "/dev/null") system
         |> failed
         |> shouldEqual (Some UnixError.ENOTDIR)
 
         // Only the owner may change the mode, and root owns it.
-        match UnixPathResolution.tryChmod (PathArg.ofText "/dev/null") 0o666 system with
+        match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText "/dev/null") 0o666 system with
         | Ok answer -> failed answer |> shouldEqual (Some UnixError.EPERM)
         | Error refusal -> failwith $"refused: %s{ChModRefusal.describe refusal}"
 
-        match UnixPathResolution.tryChmod (PathArg.ofText "/dev/null") 0o600 (bootedAsRoot linux) with
+        let root = bootedAsRoot linux
+
+        match UnixPathResolution.tryChmod (Callers.leader root) (PathArg.ofText "/dev/null") 0o600 root with
         | Ok (SyscallAnswer.Completed 0L, changed) -> (reported "/dev/null" changed).Mode |> shouldEqual 0o020600
         | other -> failwith $"chmod /dev/null as root: %A{other}"
 
@@ -735,6 +747,6 @@ module TestDeviceFileSystem =
             | Error (StatRefusal.Path (PathRefusal.UnmodelledFileSystem (_, MountedFileSystem.Devfs))) -> ()
             | other -> failwith $"stat %s{path} on Darwin: expected a refusal, got %A{other}"
 
-        match UnixPathResolution.tryChdir (PathArg.ofText "/dev") system with
+        match UnixPathResolution.tryChdir (Callers.leader system) (PathArg.ofText "/dev") system with
         | Error (PathRefusal.UnmodelledFileSystem _) -> ()
         | other -> failwith $"chdir /dev on Darwin: expected a refusal, got %A{other}"

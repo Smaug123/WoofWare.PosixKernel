@@ -3153,7 +3153,7 @@ module TestVirtualFileSystemAgainstHost =
             )
             |> Lone.restand
 
-        match Answered.chdir (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
+        match Answered.chdir (Callers.leader system) (PathArg.ofPath (UnixPath.parseOrFail "test" relative)) system with
         | SyscallAnswer.Completed 0L, moved ->
             match UnixPathResolution.currentDirectoryPath moved with
             | Some path -> ChDirOutcome.Entered (PathText.ofAbsolute path)

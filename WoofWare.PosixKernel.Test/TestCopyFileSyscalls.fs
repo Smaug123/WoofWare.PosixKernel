@@ -723,6 +723,7 @@ module TestCopyFileSyscalls =
         (system : UnixSystem<int, string>)
         =
         UnixPathResolution.tryUtimensat
+            (Callers.leader system)
             fd
             NullablePathArgument.Null
             (TimesArgument.Fields (fieldsOf access, fieldsOf modification))
@@ -786,7 +787,7 @@ module TestCopyFileSyscalls =
                 match futimens fd atime mtime system with
                 | Ok (SyscallAnswer.Completed 0L, after) ->
                     for pipeEnd in [ readFd ; writeFd ] do
-                        match UnixPathResolution.tryFstat pipeEnd after with
+                        match UnixPathResolution.tryFstat (Callers.leader after) pipeEnd after with
                         | Ok (FileStatusAnswer.Reported status) ->
                             (status.AccessTime, status.ModificationTime) |> shouldEqual (atime, mtime)
                         | other -> failwith $"fd %d{fd}: fstat(%d{pipeEnd}): %A{other}"

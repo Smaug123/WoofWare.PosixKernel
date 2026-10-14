@@ -265,12 +265,17 @@ module TestInotifyDentryMeasured =
                 |> answered "ftruncate"
             )
 
-        op "fchmod" (fun system -> UnixPathResolution.tryFchmod f 0o600 system |> answered "fchmod")
+        op
+            "fchmod"
+            (fun system ->
+                UnixPathResolution.tryFchmod (Callers.leader system) f 0o600 system
+                |> answered "fchmod"
+            )
 
         op
             "fchown"
             (fun system ->
-                UnixPathResolution.tryFchown f (Some UserId.root) (Some (group 0u)) system
+                UnixPathResolution.tryFchown (Callers.leader system) f (Some UserId.root) (Some (group 0u)) system
                 |> answered "fchown"
             )
 
@@ -278,6 +283,7 @@ module TestInotifyDentryMeasured =
             "futimens"
             (fun system ->
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     f
                     NullablePathArgument.Null
                     (TimesArgument.Fields (timespec 1000L 0L, timespec 2000L 0L))
@@ -290,6 +296,7 @@ module TestInotifyDentryMeasured =
             "utimensat-empty-path"
             (fun system ->
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     f
                     (NullablePathArgument.NotNull (PathArg.ofText ""))
                     TimesArgument.Null
@@ -301,7 +308,7 @@ module TestInotifyDentryMeasured =
         op
             "fchmodat-empty-path"
             (fun system ->
-                UnixPathResolution.tryFchmodat f (PathArg.ofText "") 0o644 atEmptyPath system
+                UnixPathResolution.tryFchmodat (Callers.leader system) f (PathArg.ofText "") 0o644 atEmptyPath system
                 |> answered "fchmodat"
             )
 
@@ -309,6 +316,7 @@ module TestInotifyDentryMeasured =
             "fchownat-empty-path"
             (fun system ->
                 UnixPathResolution.tryFchownat
+                    (Callers.leader system)
                     f
                     (PathArg.ofText "")
                     (Some UserId.root)
@@ -439,13 +447,18 @@ module TestInotifyDentryMeasured =
             row "fchmod-after-move"
             system <- rmdir "q/other/d3" system
             row "rmdir"
-            let result, s = UnixPathResolution.tryFchmod dfd 0o755 system |> answered "fchmod"
+
+            let result, s =
+                UnixPathResolution.tryFchmod (Callers.leader system) dfd 0o755 system
+                |> answered "fchmod"
+
             let drained, s = drain instance s
             system <- s
             produced.Add ($"%s{config}-fchmod-after-rmdir", $"%s{result}: %s{drained}")
 
             let result, s =
                 UnixPathResolution.tryUtimensat
+                    (Callers.leader system)
                     dfd
                     NullablePathArgument.Null
                     (TimesArgument.Fields (timespec 1000L 0L, timespec 2000L 0L))

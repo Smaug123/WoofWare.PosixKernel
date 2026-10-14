@@ -1560,7 +1560,9 @@ module TestUnixSystemStep =
     [<Test>]
     let ``fstat reports the fields a kernel knows about a regular file`` () : unit =
         let fd, system = withOpenFile linux
-        let status = UnixPathResolution.tryFstat fd system |> reported
+
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
 
         // `S_IFREG ||| 0o644`, composed by the library so that the two bands are
         // assembled in one place rather than by every client.
@@ -1588,7 +1590,9 @@ module TestUnixSystemStep =
     [<Test>]
     let ``a directory reports its type bits and its mount's size for it`` () : unit =
         let fd, system = withOpenDirectory linux
-        let status = UnixPathResolution.tryFstat fd system |> reported
+
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
 
         status.Mode |> shouldEqual 0o40755
         // Linux's default mount is tmpfs, where an empty directory is 40 bytes.
@@ -1683,12 +1687,16 @@ module TestUnixSystemStep =
         // the epoch, is a distinction no zeroed field could carry.
         let linuxFd, linuxSystem = withOpenFile linux
 
-        (UnixPathResolution.tryFstat linuxFd linuxSystem |> reported).BirthTime
+        (UnixPathResolution.tryFstat (Callers.leader linuxSystem) linuxFd linuxSystem
+         |> reported)
+            .BirthTime
         |> shouldEqual None
 
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        (UnixPathResolution.tryFstat darwinFd darwinSystem |> reported).BirthTime
+        (UnixPathResolution.tryFstat (Callers.leader darwinSystem) darwinFd darwinSystem
+         |> reported)
+            .BirthTime
         |> shouldEqual (Some epoch)
 
     [<Test>]
@@ -1709,7 +1717,9 @@ module TestUnixSystemStep =
             |> Become.rootAgain
             |> Become.fully (Credentials.ofIds (UserId.parseOrFail "test" 41u) (GroupId.parseOrFail "test" 43u) [])
 
-        let status = UnixPathResolution.tryFstat fd system |> reported
+        let status =
+            UnixPathResolution.tryFstat (Callers.leader system) fd system |> reported
+
         status.UserId |> shouldEqual Owners.linuxDefault.User
         status.GroupId |> shouldEqual Owners.linuxDefault.Group
 
@@ -1738,7 +1748,7 @@ module TestUnixSystemStep =
 
     [<Test>]
     let ``fstat of a descriptor that is not open is EBADF`` () : unit =
-        UnixPathResolution.tryFstat 7 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 7 linux
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.EBADF))
 
     [<Test>]
@@ -1755,20 +1765,20 @@ module TestUnixSystemStep =
         // inode to answer them from, or for a launched pipe no owner or
         // timestamps. The launch table's pipes are the machine's first, in
         // descriptor order.
-        UnixPathResolution.tryFstat 0 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 0 linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 0L)))
 
-        UnixPathResolution.tryFstat 1 linux
+        UnixPathResolution.tryFstat (Callers.leader linux) 1 linux
         |> shouldEqual (Error (FStatRefusal.LaunchedPipe (PipeId 1L)))
 
         let queueFd, queueSystem = withEpoll linux
 
-        UnixPathResolution.tryFstat queueFd queueSystem
+        UnixPathResolution.tryFstat (Callers.leader queueSystem) queueFd queueSystem
         |> shouldEqual (Error FStatRefusal.EventQueue)
 
         let socketFd, socketSystem = withSocket linux
 
-        UnixPathResolution.tryFstat socketFd socketSystem
+        UnixPathResolution.tryFstat (Callers.leader socketSystem) socketFd socketSystem
         |> shouldEqual (Error (FStatRefusal.Socket socketZero))
 
     [<Test>]
@@ -1908,9 +1918,13 @@ module TestUnixSystemStep =
 
         let withDescriptor = Lone.withFileDescriptors registry system
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            system
         |> shouldEqual (
-            UnixPathResolution.tryFstat fd withDescriptor
+            UnixPathResolution.tryFstat (Callers.leader withDescriptor) fd withDescriptor
             |> reported
             |> FileStatusAnswer.Reported
             |> Ok
@@ -1925,14 +1939,26 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let _, target, link, system = withTree flavour
 
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/l")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (statPath "/l"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.Inode |> shouldEqual target
                 status.Size |> shouldEqual 3L
                 status.Mode |> shouldEqual 0o100600
             | other -> failwith $"expected a status, got %A{other}"
 
-            match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/l")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofPath (statPath "/l"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.Inode |> shouldEqual link
                 // `/d/inner/t` is ten bytes, which is what `readlink` would copy.
@@ -1946,7 +1972,11 @@ module TestUnixSystemStep =
         // unreachable from a path.
         let _, _, _, system = withTree linux
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/nope")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/nope"))
+            system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -2059,13 +2089,15 @@ module TestUnixSystemStep =
                 | other -> failwith $"expected a failure, got %A{other}"
 
             [
-                (match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath path) system with
+                (match
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath path) system
+                 with
                  | Ok (FileStatusAnswer.Failed error) -> error
                  | other -> failwith $"expected a failure, got %A{other}")
                 Answered.mkdir (PathArg.ofPath path) 0o777 system |> answer
                 Answered.unlink path system |> answer
                 Answered.rmdir path system |> answer
-                Answered.chdir (PathArg.ofPath path) system |> answer
+                Answered.chdir (Callers.leader system) (PathArg.ofPath path) system |> answer
                 Answered.openPath
                     {
                         Access = FileAccessMode.ReadOnly
@@ -2130,7 +2162,9 @@ module TestUnixSystemStep =
                     else
                         UnixError.ENOENT
 
-                match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText text) system with
+                match
+                    UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText text) system
+                with
                 | Ok (FileStatusAnswer.Failed actual) -> actual |> shouldEqual expected
                 | other -> failwith $"expected %O{expected} at %d{length} bytes, got %A{other}"
 
@@ -2151,7 +2185,13 @@ module TestUnixSystemStep =
         let after =
             Answered.mkdir (PathArg.ofPath (statPath "/d")) 0o777 system |> completed
 
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (statPath "/d"))
+                after
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Mode |> shouldEqual 0o40750
         | other -> failwith $"expected a status, got %A{other}"
 
@@ -2172,7 +2212,11 @@ module TestUnixSystemStep =
         Answered.mkdir (PathArg.ofPath (statPath "/dangling")) 0o777 system
         |> failedAs UnixError.EEXIST
 
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/d/inner/gone")) system
+        UnixPathResolution.tryStat
+            (Callers.leader system)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofPath (statPath "/d/inner/gone"))
+            system
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -2181,7 +2225,11 @@ module TestUnixSystemStep =
 
         let after = Answered.unlink (statPath "/d/inner/t") system |> completed
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) after
+        UnixPathResolution.tryStat
+            (Callers.leader after)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
         // The inode is gone too, which is the part `unlink` adds over the
@@ -2209,7 +2257,11 @@ module TestUnixSystemStep =
         let after = Answered.unlink (statPath "/d/inner/t") system |> completed
 
         // The name has gone...
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/t")) after
+        UnixPathResolution.tryStat
+            (Callers.leader after)
+            SymlinkPolicy.Follow
+            (PathArg.ofPath (statPath "/d/inner/t"))
+            after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
         // ...and the inode has not.
@@ -2237,7 +2289,7 @@ module TestUnixSystemStep =
             |> fun system -> Answered.rmdir (statPath "/d/inner") system |> completed
             |> fun system -> Answered.rmdir (statPath "/d") system |> completed
 
-        UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after
+        UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d")) after
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -2306,7 +2358,7 @@ module TestUnixSystemStep =
                 // that returned the untouched system would still match on a row
                 // that failed.
                 Syscall.ChDir (PathArg.ofPath (statPath "/d/inner")),
-                Answered.chdir (PathArg.ofPath (statPath "/d/inner")) system
+                Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/inner")) system
             ] do
             UnixSystem.tryStep leaderThread call system
             |> stepAnswered
@@ -2336,11 +2388,17 @@ module TestUnixSystemStep =
 
         match viaStep with
         | Ok (SyscallAnswer.Completed _, after) ->
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/d/inner/new") after with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader after)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText "/d/inner/new")
+                    after
+            with
             | Ok (FileStatusAnswer.Reported _) -> ()
             | other -> failwith $"/d/inner/new was not created: %A{other}"
 
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/new") after
+            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/new") after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"mkdirat(/d/inner, new) did not create: %A{other}"
 
@@ -2386,7 +2444,7 @@ module TestUnixSystemStep =
 
         match viaStep with
         | Ok (SyscallAnswer.Completed _, after) ->
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/d/inner") after
+            UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.Follow (PathArg.ofText "/d/inner") after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
         | other -> failwith $"unlinkat(/d, inner, AT_REMOVEDIR) did not remove: %A{other}"
 
@@ -4356,6 +4414,16 @@ module TestUnixSystemStep =
         | SyscallAnswer.Completed 0L, system -> system
         | other -> failwith $"could not orphan the current directory: %O{other}"
 
+    /// `getcwd(3)` into `destination`, of room `capacity`, by the leader of the
+    /// only process in `system`.
+    let private getcwdOf
+        (destination : UserBuffer)
+        (capacity : uint64)
+        (system : UnixSystem<int, string>)
+        : Result<GetCwdAnswer, GetCwdRefusal>
+        =
+        UnixPathResolution.tryGetcwd (Callers.leader system) destination capacity system
+
     /// What a successful `getcwd` places: the path and the terminator that makes
     /// nine bytes an exact fit for an eight-byte path.
     let private cwdBytes : ImmutableArray<byte> =
@@ -4367,16 +4435,16 @@ module TestUnixSystemStep =
         for system in [ atInner linux ; atInner darwin ] do
             // Nine bytes: eight of path and the NUL. A caller sizing its buffer
             // by the path alone is one short, which is the next row.
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 9UL system
             |> shouldEqual (Ok (GetCwdAnswer.Reported cwdBytes))
 
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 1000UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 1000UL system
             |> shouldEqual (Ok (GetCwdAnswer.Reported cwdBytes))
 
     [<Test>]
     let ``getcwd needs room for the terminator as well as the path`` () : unit =
         for system in [ atInner linux ; atInner darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 8UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 8UL system
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4386,7 +4454,7 @@ module TestUnixSystemStep =
         // orphaned system too, which is what says this guard comes first: with
         // the current directory removed, `getcwd(buf, 0)` is still EINVAL.
         for system in [ atInner linux ; atInner darwin ; atOrphan linux ; atOrphan darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped 0UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Mapped 0UL system
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EINVAL))
 
     [<Test>]
@@ -4395,7 +4463,7 @@ module TestUnixSystemStep =
         // comparison comes first. Only asserted for the flavour that copies from
         // the kernel; the other one may already have stored by here, which the
         // next row is about.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 8UL (atInner linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 8UL (atInner linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4411,13 +4479,13 @@ module TestUnixSystemStep =
         // Three states, because the refusal has to outrank three different
         // answers: a short path that would be ERANGE, a fitting path that would
         // succeed, and a removed directory that would be ENOENT.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 8UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 8UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atOrphan darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
         // Capacity 2 exactly, which is where the refusal starts and therefore
@@ -4425,7 +4493,7 @@ module TestUnixSystemStep =
         // the removed-directory case that establishes it: measured, that flavour
         // stores its first byte at capacity 2 and dies for an unmapped
         // destination, where capacity 1 is a clean ERANGE.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 2UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 2UL (atOrphan darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
     [<Test>]
@@ -4435,13 +4503,13 @@ module TestUnixSystemStep =
         // for a destination it could not have written — for a path of 1015 bytes
         // and for one of 1026 alike, either side of the threshold above. This is
         // what stops the refusal swallowing the whole entry point.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1UL (atInner darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1UL (atOrphan darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1UL (atOrphan darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 0UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 0UL (atInner darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EINVAL))
 
     [<Test>]
@@ -4453,22 +4521,22 @@ module TestUnixSystemStep =
         // discriminates the two mechanisms where an unmapped address cannot —
         // and `readlink` answers EFAULT on *both* in the same probe, so this is
         // `getcwd`'s own property rather than a general one.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 9UL (atInner linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 9UL (atInner linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.EFAULT))
 
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 9UL (atInner darwin)
+        getcwdOf (UserBuffer.Unmapped 123UL) 9UL (atInner darwin)
         |> shouldEqual (Error GetCwdRefusal.FatalToTheProcess)
 
     [<Test>]
     let ``getcwd refuses a destination whose bytes the caller cannot place`` () : unit =
         for system in [ atInner linux ; atInner darwin ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Opaque 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Opaque 9UL system
             |> shouldEqual (Error (GetCwdRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
             // At the transfer rather than at a screen: neither flavour looks at
             // the destination's address before comparing sizes, so there is no
             // screen for an addressless buffer to reach.
-            UnixPathResolution.tryGetcwd UserBuffer.Addressless 9UL system
+            UnixPathResolution.tryGetcwd (Callers.leader system) UserBuffer.Addressless 9UL system
             |> shouldEqual (Error (GetCwdRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
@@ -4477,10 +4545,10 @@ module TestUnixSystemStep =
         // reaches the length comparison: measured ENOENT at every size from 1
         // up. Darwin's climbs from the root downwards and so needs two bytes
         // before it can start, which makes size 1 ERANGE there.
-        UnixPathResolution.tryGetcwd UserBuffer.Mapped 1UL (atOrphan linux)
+        getcwdOf UserBuffer.Mapped 1UL (atOrphan linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
-        UnixPathResolution.tryGetcwd UserBuffer.Mapped 1UL (atOrphan darwin)
+        getcwdOf UserBuffer.Mapped 1UL (atOrphan darwin)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ERANGE))
 
     [<Test>]
@@ -4493,10 +4561,10 @@ module TestUnixSystemStep =
         // `GetCwdOrphanAnswer.ShortestPathFirst` and
         // https://github.com/Smaug123/WoofWare.PawPrint/blob/6b4aeb4fce455e8c187157ce020d1058fb0821bf/docs/divergences.md
         for capacity in [ 2UL ; 3UL ; 8UL ; 64UL ; 1023UL ; 1024UL ; 1025UL ; 4096UL ] do
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity (atOrphan darwin)
+            getcwdOf UserBuffer.Mapped capacity (atOrphan darwin)
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
-            UnixPathResolution.tryGetcwd UserBuffer.Mapped capacity (atOrphan linux)
+            getcwdOf UserBuffer.Mapped capacity (atOrphan linux)
             |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -4505,7 +4573,7 @@ module TestUnixSystemStep =
         // an unmapped destination there is ENOENT and not EFAULT. That is the
         // pairing for the Darwin row above: the same call, the same destination,
         // and the two flavours differ in whether the destination matters at all.
-        UnixPathResolution.tryGetcwd (UserBuffer.Unmapped 123UL) 1000UL (atOrphan linux)
+        getcwdOf (UserBuffer.Unmapped 123UL) 1000UL (atOrphan linux)
         |> shouldEqual (Ok (GetCwdAnswer.Failed UnixError.ENOENT))
 
     // ---- `open` ------------------------------------------------------------
@@ -4603,7 +4671,11 @@ module TestUnixSystemStep =
 
             answer |> shouldEqual (SyscallAnswer.Failed UnixError.EEXIST)
 
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (statPath "/d/inner/gone")) after
+            UnixPathResolution.tryStat
+                (Callers.leader after)
+                SymlinkPolicy.Follow
+                (PathArg.ofPath (statPath "/d/inner/gone"))
+                after
             |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
     [<Test>]
@@ -5917,10 +5989,20 @@ module TestUnixSystemStep =
             | other -> failwith $"expected a success, got %A{other}"
 
         // The source name is gone and the destination now names what moved.
-        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/f")) moved
+        UnixPathResolution.tryStat
+            (Callers.leader moved)
+            SymlinkPolicy.NoFollowFinal
+            (PathArg.ofPath (statPath "/f"))
+            moved
         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.ENOENT))
 
-        match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (statPath "/victim")) moved with
+        match
+            UnixPathResolution.tryStat
+                (Callers.leader moved)
+                SymlinkPolicy.NoFollowFinal
+                (PathArg.ofPath (statPath "/victim"))
+                moved
+        with
         | Ok (FileStatusAnswer.Reported _) -> ()
         | other -> failwith $"expected /victim to exist, got %A{other}"
 
@@ -6340,7 +6422,7 @@ module TestUnixSystemStep =
     /// directory no path reaches, which the probe writes as
     /// `ok, ... getcwd failed ENOENT`.
     let private changedTo (path : string) (system : UnixSystem<int, string>) : Result<string option, UnixError> =
-        match Answered.chdir (PathArg.ofPath (statPath path)) system with
+        match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath path)) system with
         | SyscallAnswer.Completed 0L, moved ->
             UnixPathResolution.currentDirectoryPath moved
             |> Option.map PathText.ofAbsolute
@@ -6402,7 +6484,7 @@ module TestUnixSystemStep =
         let system = withChDirTree linux
 
         let moved =
-            match Answered.chdir (PathArg.ofPath (statPath "/d/sub")) system with
+            match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/sub")) system with
             | SyscallAnswer.Completed 0L, moved -> moved
             | other -> failwith $"expected a success, got %A{other}"
 
@@ -6417,7 +6499,7 @@ module TestUnixSystemStep =
         UnixPathResolution.statOf held removed |> shouldNotEqual None
 
         let left =
-            match Answered.chdir (PathArg.ofPath (statPath "/")) removed with
+            match Answered.chdir (Callers.leader removed) (PathArg.ofPath (statPath "/")) removed with
             | SyscallAnswer.Completed 0L, left -> left
             | other -> failwith $"expected a success, got %A{other}"
 
@@ -6440,7 +6522,7 @@ module TestUnixSystemStep =
         let system = withChDirTree linux
 
         let inSub =
-            match Answered.chdir (PathArg.ofPath (statPath "/d/sub")) system with
+            match Answered.chdir (Callers.leader system) (PathArg.ofPath (statPath "/d/sub")) system with
             | SyscallAnswer.Completed 0L, moved -> moved
             | other -> failwith $"expected a success, got %A{other}"
 

@@ -951,7 +951,11 @@ module TestPermissionStanding =
 
                 let searched =
                     match
-                        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (path "/d/kid")) system
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.NoFollowFinal
+                            (PathArg.ofPath (path "/d/kid"))
+                            system
                     with
                     | Ok (FileStatusAnswer.Reported _) -> true
                     | Ok (FileStatusAnswer.Failed UnixError.EACCES) -> false
@@ -994,7 +998,13 @@ module TestPermissionStanding =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 darwinCaller vfs
 
         let search (p : string) : UnixError option =
-            match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (path (p + "/nx"))) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofPath (path (p + "/nx")))
+                    system
+            with
             | Ok (FileStatusAnswer.Failed error) -> Some error
             | other -> failwith $"stat: %A{other}"
 
@@ -1303,12 +1313,19 @@ module TestPermissionStanding =
                 "search (stat /d/kid)",
                 fun system ->
                     match
-                        UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofPath (path "/d/kid")) system
+                        UnixPathResolution.tryStat
+                            (Callers.leader system)
+                            SymlinkPolicy.NoFollowFinal
+                            (PathArg.ofPath (path "/d/kid"))
+                            system
                     with
                     | Ok (FileStatusAnswer.Reported _) -> true
                     | Ok (FileStatusAnswer.Failed UnixError.EACCES) -> false
                     | other -> failwith $"stat: %A{other}"
-                "chdir /d", fun system -> Answered.chdir (PathArg.ofPath (path "/d")) system |> succeeds
+                "chdir /d",
+                fun system ->
+                    Answered.chdir (Callers.leader system) (PathArg.ofPath (path "/d")) system
+                    |> succeeds
                 "opendir /d",
                 fun system ->
                     Answered.openPath

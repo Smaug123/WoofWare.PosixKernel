@@ -208,7 +208,7 @@ module TestStartingDirectory =
         | "locked" ->
             let fd, system = opened "d" system
 
-            match UnixPathResolution.tryChmod (PathArg.ofText "d") 0 system with
+            match UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText "d") 0 system with
             | Ok answer -> Some (fd, completed "chmod(d, 0)" answer)
             | Error refusal -> failwith $"%s{context}: chmod was refused: %A{refusal}"
         | "devnull" ->
@@ -282,6 +282,7 @@ module TestStartingDirectory =
                             | Some (dirfd, system) ->
                                 let actual =
                                     UnixPathResolution.tryFaccessatEager
+                                        (Callers.leader system)
                                         dirfd
                                         (pathArgument path envelope.Platform)
                                         0
@@ -422,7 +423,12 @@ module TestStartingDirectory =
                         let flags = if call = "fstatat" then 0 else atSymlinkNoFollow flavour
 
                         let actual =
-                            UnixPathResolution.tryFstatat dirfd (pathArgument path envelope.Platform) flags system
+                            UnixPathResolution.tryFstatat
+                                (Callers.leader system)
+                                dirfd
+                                (pathArgument path envelope.Platform)
+                                flags
+                                system
                             |> renderedStatus
 
                         if actual <> expected then
@@ -553,7 +559,10 @@ module TestStartingDirectory =
 
         replayFlags
             "fstatat"
-            (fun dirfd path flags system -> UnixPathResolution.tryFstatat dirfd path flags system |> renderedStatus)
+            (fun dirfd path flags system ->
+                UnixPathResolution.tryFstatat (Callers.leader system) dirfd path flags system
+                |> renderedStatus
+            )
             expectedRefused
             envelope
 
@@ -610,15 +619,20 @@ module TestStartingDirectory =
 
                     let flags = linuxAtEmptyPath ||| (if label.EndsWith "NOFOLLOW" then 0x100 else 0)
 
-                    let actual = UnixPathResolution.tryFstatat dirfd path flags system
+                    let actual =
+                        UnixPathResolution.tryFstatat (Callers.leader system) dirfd path flags system
 
                     // What `fstat`, or `stat(".")` for AT_FDCWD, reports.
                     let reference =
                         if kind = "cwd" then
-                            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText ".") system
+                            UnixPathResolution.tryStat
+                                (Callers.leader system)
+                                SymlinkPolicy.Follow
+                                (PathArg.ofText ".")
+                                system
                             |> Result.mapError FStatAtRefusal.Stat
                         else
-                            UnixPathResolution.tryFstat dirfd system
+                            UnixPathResolution.tryFstat (Callers.leader system) dirfd system
                             |> Result.mapError FStatAtRefusal.Descriptor
 
                     let ok =
@@ -663,10 +677,16 @@ module TestStartingDirectory =
                         | "rooted f" -> "/c/w/f"
                         | other -> other
 
-                    let without = UnixPathResolution.tryFstatat dirfd (PathArg.ofText path) 0 system
+                    let without =
+                        UnixPathResolution.tryFstatat (Callers.leader system) dirfd (PathArg.ofText path) 0 system
 
                     let flagged =
-                        UnixPathResolution.tryFstatat dirfd (PathArg.ofText path) linuxAtEmptyPath system
+                        UnixPathResolution.tryFstatat
+                            (Callers.leader system)
+                            dirfd
+                            (PathArg.ofText path)
+                            linuxAtEmptyPath
+                            system
 
                     let actual =
                         $"%s{renderedStatus without}/%s{renderedStatus flagged}"
@@ -2385,7 +2405,7 @@ module TestStartingDirectory =
         (flags : int)
         (system : UnixSystem<int, string>)
         =
-        UnixPathResolution.tryFchmodat dirfd path 0o644 flags system
+        UnixPathResolution.tryFchmodat (Callers.leader system) dirfd path 0o644 flags system
         |> renderedChange FChModAtRefusal.describe
 
     /// `fchownat` as the probe called it: (uid_t)-1 and (gid_t)-1.
@@ -2395,7 +2415,7 @@ module TestStartingDirectory =
         (flags : int)
         (system : UnixSystem<int, string>)
         =
-        UnixPathResolution.tryFchownat dirfd path None None flags system
+        UnixPathResolution.tryFchownat (Callers.leader system) dirfd path None None flags system
         |> renderedChange FChOwnAtRefusal.describe
 
     let private replayAttributeChange
@@ -2464,7 +2484,7 @@ module TestStartingDirectory =
         (flags : int)
         (system : UnixSystem<int, string>)
         =
-        UnixPathResolution.tryUtimensat dirfd path TimesArgument.Null flags system
+        UnixPathResolution.tryUtimensat (Callers.leader system) dirfd path TimesArgument.Null flags system
         |> renderedChange UTimensAtRefusal.describe
 
     /// The probe's `utimensat` cells this library does not replay, and why.
@@ -2921,10 +2941,10 @@ module TestStartingDirectory =
             let inCwd = walkSystem platform credentials cwd
 
             let viaStat =
-                UnixPathResolution.tryStat policy argument inCwd
+                UnixPathResolution.tryStat (Callers.leader inCwd) policy argument inCwd
                 |> Result.mapError FStatAtRefusal.Stat
 
-            UnixPathResolution.tryFstatat (atFdCwd flavour) argument flags inCwd
+            UnixPathResolution.tryFstatat (Callers.leader inCwd) (atFdCwd flavour) argument flags inCwd
             |> shouldEqual viaStat
 
             // Opened as root, as the descriptor property above does.
@@ -2959,9 +2979,9 @@ module TestStartingDirectory =
                     }
                 )
 
-            UnixPathResolution.tryFstatat fd argument flags atRoot
+            UnixPathResolution.tryFstatat (Callers.leader atRoot) fd argument flags atRoot
             |> shouldEqual (
-                UnixPathResolution.tryStat policy argument heldInCwd
+                UnixPathResolution.tryStat (Callers.leader heldInCwd) policy argument heldInCwd
                 |> Result.mapError FStatAtRefusal.Stat
             )
 
@@ -3454,20 +3474,26 @@ module TestStartingDirectory =
 
             let inCwd = walkSystem platform credentials cwd
 
-            UnixPathResolution.tryFchmodat (atFdCwd flavour) argument mode 0 inCwd
+            UnixPathResolution.tryFchmodat (Callers.leader inCwd) (atFdCwd flavour) argument mode 0 inCwd
             |> changed
             |> shouldEqual (
-                UnixPathResolution.tryChmod argument mode inCwd
+                UnixPathResolution.tryChmod (Callers.leader inCwd) argument mode inCwd
                 |> Result.mapError FChModAtRefusal.ChMod
                 |> changed
             )
 
             let fd, atRoot, heldInCwd = heldDirectory platform credentials cwd
 
-            UnixPathResolution.tryFchmodat fd argument mode flags atRoot
+            UnixPathResolution.tryFchmodat (Callers.leader atRoot) fd argument mode flags atRoot
             |> changed
             |> shouldEqual (
-                UnixPathResolution.tryFchmodat (atFdCwd flavour) argument mode flags heldInCwd
+                UnixPathResolution.tryFchmodat
+                    (Callers.leader heldInCwd)
+                    (atFdCwd flavour)
+                    argument
+                    mode
+                    flags
+                    heldInCwd
                 |> changed
             )
 
@@ -3507,20 +3533,29 @@ module TestStartingDirectory =
 
             let flags, plain =
                 match policy with
-                | SymlinkPolicy.Follow -> 0, UnixPathResolution.tryChown argument user group inCwd
+                | SymlinkPolicy.Follow ->
+                    0, UnixPathResolution.tryChown (Callers.leader inCwd) argument user group inCwd
                 | SymlinkPolicy.NoFollowFinal ->
-                    atSymlinkNoFollow flavour, UnixPathResolution.tryLchown argument user group inCwd
+                    atSymlinkNoFollow flavour,
+                    UnixPathResolution.tryLchown (Callers.leader inCwd) argument user group inCwd
 
-            UnixPathResolution.tryFchownat (atFdCwd flavour) argument user group flags inCwd
+            UnixPathResolution.tryFchownat (Callers.leader inCwd) (atFdCwd flavour) argument user group flags inCwd
             |> changed
             |> shouldEqual (plain |> Result.mapError FChOwnAtRefusal.ChOwn |> changed)
 
             let fd, atRoot, heldInCwd = heldDirectory platform credentials cwd
 
-            UnixPathResolution.tryFchownat fd argument user group flags atRoot
+            UnixPathResolution.tryFchownat (Callers.leader atRoot) fd argument user group flags atRoot
             |> changed
             |> shouldEqual (
-                UnixPathResolution.tryFchownat (atFdCwd flavour) argument user group flags heldInCwd
+                UnixPathResolution.tryFchownat
+                    (Callers.leader heldInCwd)
+                    (atFdCwd flavour)
+                    argument
+                    user
+                    group
+                    flags
+                    heldInCwd
                 |> changed
             )
 
@@ -3591,10 +3626,16 @@ module TestStartingDirectory =
 
             let fd, atRoot, heldInCwd = heldDirectory platform credentials cwd
 
-            UnixPathResolution.tryUtimensat fd argument times flags atRoot
+            UnixPathResolution.tryUtimensat (Callers.leader atRoot) fd argument times flags atRoot
             |> changed
             |> shouldEqual (
-                UnixPathResolution.tryUtimensat (atFdCwd flavour) argument times flags heldInCwd
+                UnixPathResolution.tryUtimensat
+                    (Callers.leader heldInCwd)
+                    (atFdCwd flavour)
+                    argument
+                    times
+                    flags
+                    heldInCwd
                 |> changed
             )
 
@@ -3674,8 +3715,10 @@ module TestStartingDirectory =
             let empty = NullablePathArgument.NotNull (PathArg.ofText "")
 
             // The whole system, since a pipe's times are not the filesystem's.
-            UnixPathResolution.tryUtimensat fd NullablePathArgument.Null times 0 system
-            |> shouldEqual (UnixPathResolution.tryUtimensat fd empty times linuxAtEmptyPath system)
+            UnixPathResolution.tryUtimensat (Callers.leader system) fd NullablePathArgument.Null times 0 system
+            |> shouldEqual (
+                UnixPathResolution.tryUtimensat (Callers.leader system) fd empty times linuxAtEmptyPath system
+            )
 
         Check.One (config, Prop.forAll (Arb.fromGen heldCase) property)
 
@@ -3724,7 +3767,13 @@ module TestStartingDirectory =
                 | None -> NullablePathArgument.Null
                 | Some path -> NullablePathArgument.NotNull (PathArgumentBytes.Bytes (UnixPath.toByteString path))
 
-            UnixPathResolution.tryUtimensat dirfd argument (TimesArgument.Fields (omit, omit)) flags system
+            UnixPathResolution.tryUtimensat
+                (Callers.leader system)
+                dirfd
+                argument
+                (TimesArgument.Fields (omit, omit))
+                flags
+                system
             |> shouldEqual (Ok (SyscallAnswer.Completed 0L, system))
 
         Check.One (config, Prop.forAll (Arb.fromGen omitCase) property)

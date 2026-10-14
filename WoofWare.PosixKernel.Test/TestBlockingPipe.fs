@@ -2195,7 +2195,7 @@ module TestBlockingPipe =
             }
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"
@@ -2237,7 +2237,7 @@ module TestBlockingPipe =
             }
 
         let times (fd : int) (system : UnixSystem<int, string>) =
-            match UnixPathResolution.tryFstat fd system with
+            match UnixPathResolution.tryFstat (Callers.leader system) fd system with
             | Ok (FileStatusAnswer.Reported status) ->
                 status.AccessTime, status.ModificationTime, status.StatusChangeTime
             | other -> failwith $"%A{other}"

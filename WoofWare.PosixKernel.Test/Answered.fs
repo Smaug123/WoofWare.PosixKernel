@@ -47,21 +47,25 @@ module internal Answered =
         | Ok answer -> answer
         | Error refusal -> failwith $"mkdir was refused: %s{PathRefusal.describe refusal}"
 
+    /// `chdir(2)` by `caller`.
     let chdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match UnixPathResolution.tryChdir path system with
+        match UnixPathResolution.tryChdir caller path system with
         | Ok answer -> answer
         | Error refusal -> failwith $"chdir was refused: %s{PathRefusal.describe refusal}"
 
+    /// `statfs(2)` by `caller`.
     let statfs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
         (system : UnixSystem<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
-        match UnixPathResolution.tryStatfs path system with
+        match UnixPathResolution.tryStatfs caller path system with
         | Ok answer -> answer
         | Error refusal -> failwith $"statfs was refused: %s{PathRefusal.describe refusal}"
 

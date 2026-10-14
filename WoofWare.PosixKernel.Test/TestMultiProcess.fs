@@ -367,8 +367,13 @@ module TestMultiProcess =
     let private mkdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
         Answered.mkdir (PathArg.ofText path) 0o755 view
 
-    let private chdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
-        Answered.chdir (PathArg.ofText path) view
+    let private chdir
+        (pid : ProcessId)
+        (path : string)
+        (view : UnixSystem<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        Answered.chdir (Caller.make pid (Proc.leader pid view)) (PathArg.ofText path) view
 
     let private rmdir (path : string) (view : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
         match UnixNamespace.tryRmdir (PathArg.ofText path) view with
@@ -382,7 +387,7 @@ module TestMultiProcess =
             let a, b = pids.[0], pids.[1]
 
             let _, machine = inProcess a (mkdir "/d") machine
-            let _, machine = inProcess a (chdir "/d") machine
+            let _, machine = inProcess a (chdir a "/d") machine
             let standing = (Proc.state a (viewOf a machine)).CurrentDirectoryInode
 
             let answer, machine = inProcess b (rmdir "/d") machine
@@ -396,7 +401,7 @@ module TestMultiProcess =
             assertClean machine
 
             // Stepping out lets it go.
-            let _, machine = inProcess a (chdir "/") machine
+            let _, machine = inProcess a (chdir a "/") machine
 
             VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
             |> shouldEqual None

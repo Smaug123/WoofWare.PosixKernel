@@ -148,7 +148,13 @@ module BindingProbes =
         | BindingProbeCall.OpenCreate path -> Answered.openPath creating (rooted path) 0o666 system |> fst |> ofAnswer
         | BindingProbeCall.OpenRead path -> Answered.openPath reading (rooted path) 0 system |> fst |> ofAnswer
         | BindingProbeCall.Exists path ->
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted path)) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (rooted path))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported _) -> None
             | Ok (FileStatusAnswer.Failed error) -> Some error
             | Error refusal -> failwith $"stat refused: %s{StatRefusal.describe refusal}"

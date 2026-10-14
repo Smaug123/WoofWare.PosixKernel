@@ -371,7 +371,13 @@ module TestOpenFlagWord =
     /// What became of `f` and `nx`, in the probe's notation.
     let private aftermath (system : UnixSystem<int, string>) : string =
         let size (path : string) : int64 option =
-            match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (PathArg.ofText path) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.NoFollowFinal
+                    (PathArg.ofText path)
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) -> Some status.Size
             | Ok (FileStatusAnswer.Failed _) -> None
             | Error refusal -> failwith $"stat %s{path} was refused: %A{refusal}"

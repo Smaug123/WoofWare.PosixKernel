@@ -1296,23 +1296,23 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.UnlinkAt
         | Syscall.ChDir path ->
-            UnixPathResolution.tryChdir path system
+            UnixPathResolution.tryChdir caller path system
             |> answered
             |> Result.mapError SyscallRefusal.ChDir
         | Syscall.FChModAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFchmodat dirfd path mode flags system
+            UnixPathResolution.tryFchmodat caller dirfd path mode flags system
             |> answered
             |> Result.mapError SyscallRefusal.FChModAt
         | Syscall.FChMod (fd, mode) ->
-            UnixPathResolution.tryFchmod fd mode system
+            UnixPathResolution.tryFchmod caller fd mode system
             |> answered
             |> Result.mapError SyscallRefusal.FChMod
         | Syscall.FChOwnAt (dirfd, path, user, group, flags) ->
-            UnixPathResolution.tryFchownat dirfd path user group flags system
+            UnixPathResolution.tryFchownat caller dirfd path user group flags system
             |> answered
             |> Result.mapError SyscallRefusal.FChOwnAt
         | Syscall.FChOwn (fd, user, group) ->
-            UnixPathResolution.tryFchown fd user group system
+            UnixPathResolution.tryFchown caller fd user group system
             |> answered
             |> Result.mapError SyscallRefusal.FChOwn
         | Syscall.UMask mask ->
@@ -1320,7 +1320,7 @@ module UnixSystem =
 
             Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (PermissionBits.toInt previous))), system)
         | Syscall.FAccessAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFaccessatEager dirfd path mode flags system
+            UnixPathResolution.tryFaccessatEager caller dirfd path mode flags system
             |> Result.map (fun answer -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Access
         | Syscall.SymlinkAt (target, dirfd, path) ->
@@ -1332,7 +1332,7 @@ module UnixSystem =
             |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
             |> Result.mapError SyscallRefusal.Link
         | Syscall.UTimensAt (dirfd, path, times, flags) ->
-            UnixPathResolution.tryUtimensat dirfd path times flags system
+            UnixPathResolution.tryUtimensat caller dirfd path times flags system
             |> answered
             |> Result.mapError SyscallRefusal.UTimensAt
         | Syscall.CopyFileRange (inFd, outFd, length, flags) ->
@@ -1348,15 +1348,15 @@ module UnixSystem =
             |> answered
             |> Result.mapError SyscallRefusal.CloneFile
         | Syscall.SetResUid (real, effective, saved) ->
-            UnixCredentials.trySetresuid real effective saved system
+            UnixCredentials.trySetresuid caller real effective saved system
             |> answered
             |> Result.mapError SyscallRefusal.SetIds
         | Syscall.SetResGid (real, effective, saved) ->
-            UnixCredentials.trySetresgid real effective saved system
+            UnixCredentials.trySetresgid caller real effective saved system
             |> answered
             |> Result.mapError SyscallRefusal.SetIds
         | Syscall.SetGroups (size, words) ->
-            UnixCredentials.trySetgroups size words system
+            UnixCredentials.trySetgroups caller size words system
             |> answered
             |> Result.mapError SyscallRefusal.SetGroups
         | Syscall.InotifyInit1 flags ->

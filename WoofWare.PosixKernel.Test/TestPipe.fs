@@ -129,7 +129,7 @@ module TestPipe =
         | Ok result -> result
 
     let private fstatOrFail (fd : int) (system : UnixSystem<int, string>) : FileStatus =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status
         | other -> failwith $"fstat of fd %d{fd}: %A{other}"
 
@@ -674,7 +674,7 @@ module TestPipe =
                 | PipeOp.FStat fd ->
                     match Map.tryFind fd reference.Fds with
                     | None ->
-                        UnixPathResolution.tryFstat fd system
+                        UnixPathResolution.tryFstat (Callers.leader system) fd system
                         |> shouldEqual (Ok (FileStatusAnswer.Failed UnixError.EBADF))
                     | Some (pipeEnd, _) ->
                         let status = fstatOrFail fd system
@@ -1189,7 +1189,7 @@ module TestPipe =
     let ``fstatfs of a pipe end is the pipe filesystem on Linux and EINVAL on Darwin`` () : unit =
         let (r, _), linux = pipeOrFail 0 (systemOn SimulatedUnixPlatform.linuxX64)
 
-        match UnixPathResolution.fstatfs r linux with
+        match UnixPathResolution.fstatfs (Callers.leader linux) r linux with
         | FileSystemStatisticsAnswer.Reported statistics ->
             FileSystemStatistics.typeFields statistics
             |> shouldEqual (FileSystemTypeFields.Linux 0x50495045L)
@@ -1197,7 +1197,7 @@ module TestPipe =
 
         let (r, _), darwin = pipeOrFail 0 (systemOn SimulatedUnixPlatform.macOsArm64)
 
-        UnixPathResolution.fstatfs r darwin
+        UnixPathResolution.fstatfs (Callers.leader darwin) r darwin
         |> shouldEqual (FileSystemStatisticsAnswer.Failed UnixError.EINVAL)
 
     // --- FIONREAD and the terminal questions ---

@@ -1183,7 +1183,7 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Op.ChDir dir ->
-            UnixPathResolution.tryChdir (PathArg.ofText standing.[dir % standing.Length]) view
+            UnixPathResolution.tryChdir (Caller.make pid thread) (PathArg.ofText standing.[dir % standing.Length]) view
             |> answered
         | Op.EpollCreate ->
             match UnixPoll.tryEpollCreate1 0 view with
@@ -1350,7 +1350,11 @@ module TestMultiProcessFuzz =
                 else
                     files.[path % files.Length]
 
-            UnixPathResolution.tryChmod (PathArg.ofText path) (if directory then 0o755 else 0o644) view
+            UnixPathResolution.tryChmod
+                (Caller.make pid thread)
+                (PathArg.ofText path)
+                (if directory then 0o755 else 0o644)
+                view
             |> answered
         | Op.Unlink path ->
             UnixNamespace.tryUnlink (PathArg.ofText files.[path % files.Length]) view

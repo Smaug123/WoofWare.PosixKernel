@@ -163,7 +163,7 @@ module TestPipeAgainstHost =
         (system : UnixSystem<int, string>)
         : UnixTimestamp * UnixTimestamp * UnixTimestamp
         =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported s) -> s.AccessTime, s.ModificationTime, s.StatusChangeTime
         | other -> failwith $"model fstat of %d{fd}: %A{other}"
 
@@ -278,7 +278,7 @@ module TestPipeAgainstHost =
                 let hostWrite0 = hostStatus hostFds.[1]
 
                 let modelStatus fd =
-                    match UnixPathResolution.tryFstat fd system with
+                    match UnixPathResolution.tryFstat (Callers.leader system) fd system with
                     | Ok (FileStatusAnswer.Reported s) -> s
                     | other -> failwith $"%A{other}"
 

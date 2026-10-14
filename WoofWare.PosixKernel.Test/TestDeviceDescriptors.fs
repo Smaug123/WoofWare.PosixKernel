@@ -143,7 +143,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : ImmutableArray<byte> * UnixSystem<int, string>
         =
-        match UnixEntropy.tryGetRandom 0 UserBuffer.Mapped count 0u system with
+        match UnixEntropy.tryGetRandom (Callers.thread 0 system) UserBuffer.Mapped count 0u system with
         | Ok (GetRandomAnswer.Completed draw, system) -> EntropyDraw.bytes draw, system
         | other -> failwith $"getrandom(%d{count}): expected bytes, got %A{other}"
 
@@ -178,7 +178,11 @@ module TestDeviceDescriptors =
                 }
 
             let before =
-                UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText (pathOf device)) system
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText (pathOf device))
+                    system
 
             let fd, opened = openWith flags (pathOf device) system
             assertSound opened
@@ -193,10 +197,14 @@ module TestDeviceDescriptors =
             | None -> failwith $"fd %d{fd} is not live"
 
             // Nothing about the node moved: not its times, not its size.
-            UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText (pathOf device)) opened
+            UnixPathResolution.tryStat
+                (Callers.leader opened)
+                SymlinkPolicy.Follow
+                (PathArg.ofText (pathOf device))
+                opened
             |> shouldEqual before
 
-            UnixPathResolution.tryFstat fd opened
+            UnixPathResolution.tryFstat (Callers.leader opened) fd opened
             |> Result.mapError (sprintf "%A")
             |> shouldEqual (before |> Result.mapError (sprintf "%A"))
 
@@ -238,7 +246,9 @@ module TestDeviceDescriptors =
         // Root narrows `/dev/null` to 0o600; then the unprivileged user may not
         // open it for any access, and root still may.
         let narrowed =
-            match UnixPathResolution.tryChmod (PathArg.ofText "/dev/null") 0o600 (bootedAs true) with
+            let root = bootedAs true
+
+            match UnixPathResolution.tryChmod (Callers.leader root) (PathArg.ofText "/dev/null") 0o600 root with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"chmod as root: %A{other}"
 
@@ -261,7 +271,9 @@ module TestDeviceDescriptors =
     [<Test>]
     let ``a description that names a node as something it is not breaks the invariants`` () : unit =
         let inodeOf (path : string) =
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText path) booted with
+            match
+                UnixPathResolution.tryStat (Callers.leader booted) SymlinkPolicy.Follow (PathArg.ofText path) booted
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
             | other -> failwith $"stat %s{path}: %A{other}"
 
@@ -319,7 +331,13 @@ module TestDeviceDescriptors =
         // reports one as `ReservedContent`), so a description naming one names
         // a node of some other device.
         let urandom =
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofText "/dev/urandom") booted with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader booted)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofText "/dev/urandom")
+                    booted
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Inode
             | other -> failwith $"stat /dev/urandom: %A{other}"
 
@@ -352,8 +370,8 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            UnixPathResolution.fstatfs fd system
-            |> shouldEqual (Answered.statfs (PathArg.ofText (pathOf device)) system)
+            UnixPathResolution.fstatfs (Callers.leader system) fd system
+            |> shouldEqual (Answered.statfs (Callers.leader system) (PathArg.ofText (pathOf device)) system)
 
     // ------------------------------------------------------------------ read
 

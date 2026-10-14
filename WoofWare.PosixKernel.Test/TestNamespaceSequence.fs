@@ -765,7 +765,7 @@ module TestNamespaceSequence =
                 | CallProgress.Answered answer -> answered answer
                 | CallProgress.NeedsCopyIn paused ->
                     UnixNamespace.cloneFileWithDestination (arg destination) paused |> answered
-        | Op.ChDir path -> UnixPathResolution.chdir (arg path) system |> answered
+        | Op.ChDir path -> UnixPathResolution.chdir (Callers.leader system) (arg path) system |> answered
         | Op.Open (path, variant) ->
             UnixNamespace.openPath system.Leader (openFlags platform variant) (arg path) 0o644 system
             |> openOutcome
@@ -808,13 +808,18 @@ module TestNamespaceSequence =
                 else
                     SymlinkPolicy.NoFollowFinal
 
-            UnixPathResolution.stat policy (arg path) system |> Outcome.Status |> unchanged
+            UnixPathResolution.stat (Callers.leader system) policy (arg path) system
+            |> Outcome.Status
+            |> unchanged
         | Op.FStat fd ->
             match descriptor fd with
             | None -> unchanged Outcome.Skipped
-            | Some fd -> UnixPathResolution.fstat fd system |> Outcome.Status |> unchanged
+            | Some fd ->
+                UnixPathResolution.fstat (Callers.leader system) fd system
+                |> Outcome.Status
+                |> unchanged
         | Op.FStatAt (dir, path, flags) ->
-            UnixPathResolution.fstatat (dirfd dir) (arg path) flags system
+            UnixPathResolution.fstatat (Callers.leader system) (dirfd dir) (arg path) flags system
             |> Outcome.Status
             |> unchanged
         | Op.ReadDir fd ->
@@ -828,26 +833,31 @@ module TestNamespaceSequence =
                     System = after
                 }
         | Op.Getcwd ->
-            UnixPathResolution.getcwd UserBuffer.Mapped 4096UL system
+            UnixPathResolution.getcwd (Callers.leader system) UserBuffer.Mapped 4096UL system
             |> Outcome.WorkingDirectory
             |> unchanged
-        | Op.Chmod (path, mode) -> UnixPathResolution.chmod (arg path) mode system |> answered
+        | Op.Chmod (path, mode) ->
+            UnixPathResolution.chmod (Callers.leader system) (arg path) mode system
+            |> answered
         | Op.FChmod (fd, mode) ->
             match descriptor fd with
             | None -> unchanged Outcome.Skipped
-            | Some fd -> UnixPathResolution.fchmod fd mode system |> answered
+            | Some fd -> UnixPathResolution.fchmod (Callers.leader system) fd mode system |> answered
         | Op.FChmodAt (dir, path, mode, flags) ->
-            UnixPathResolution.fchmodat (dirfd dir) (arg path) mode flags system |> answered
+            UnixPathResolution.fchmodat (Callers.leader system) (dirfd dir) (arg path) mode flags system
+            |> answered
         | Op.FChown (fd, choice) ->
             match descriptor fd with
             | None -> unchanged Outcome.Skipped
             | Some fd ->
                 let user, group = owner choice
-                UnixPathResolution.fchown fd user group system |> answered
+
+                UnixPathResolution.fchown (Callers.leader system) fd user group system
+                |> answered
         | Op.FChownAt (dir, path, choice, flags) ->
             let user, group = owner choice
 
-            UnixPathResolution.fchownat (dirfd dir) (arg path) user group flags system
+            UnixPathResolution.fchownat (Callers.leader system) (dirfd dir) (arg path) user group flags system
             |> answered
         | Op.UTimensAt (dir, path, flags) ->
             let path =
@@ -855,10 +865,10 @@ module TestNamespaceSequence =
                 | None -> NullablePathArgument.Null
                 | Some path -> NullablePathArgument.NotNull (arg path)
 
-            UnixPathResolution.utimensat (dirfd dir) path TimesArgument.Null flags system
+            UnixPathResolution.utimensat (Callers.leader system) (dirfd dir) path TimesArgument.Null flags system
             |> answered
         | Op.FAccessAt (dir, path, mode, flags) ->
-            match UnixPathResolution.faccessat (dirfd dir) mode flags system with
+            match UnixPathResolution.faccessat (Callers.leader system) (dirfd dir) mode flags system with
             | CallProgress.Answered answer -> unchanged (Outcome.Answered answer)
             | CallProgress.NeedsCopyIn paused ->
                 UnixPathResolution.accessWithPath (arg path) paused

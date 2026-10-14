@@ -1072,11 +1072,14 @@ module TestInotifyDelivery =
                 | Form.Dot -> paths.[i] + "/."
                 | Form.Slash -> paths.[i] + "/"
 
-            UnixPathResolution.tryChmod (PathArg.ofText text) mode system |> unrefused
+            UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText text) mode system
+            |> unrefused
         | Op.Chown (i, neither) ->
             let id = if neither then None else Some UserId.root
             let gid = if neither then None else Some (group 0u)
-            UnixPathResolution.tryChown (path i) id gid system |> unrefused
+
+            UnixPathResolution.tryChown (Callers.leader system) (path i) id gid system
+            |> unrefused
         | Op.Utimes (i, times) ->
             let access, modification =
                 match times with
@@ -1085,6 +1088,7 @@ module TestInotifyDelivery =
                 | Times.ModificationOnly -> timespec 0L utimeOmit, timespec 2L 0L
 
             UnixPathResolution.tryUtimensat
+                (Callers.leader system)
                 linuxAtFdCwd
                 (NullablePathArgument.NotNull (path i))
                 (TimesArgument.Fields (access, modification))
@@ -1136,7 +1140,9 @@ module TestInotifyDelivery =
         | Op.Ftruncate slot ->
             UnixDescriptor.tryFtruncate (Callers.leader system) (slotOf slot) 0L system
             |> mustAnswer
-        | Op.Fchmod (slot, mode) -> UnixPathResolution.tryFchmod (slotOf slot) mode system |> mustAnswer
+        | Op.Fchmod (slot, mode) ->
+            UnixPathResolution.tryFchmod (Callers.leader system) (slotOf slot) mode system
+            |> mustAnswer
         | Op.Close slot ->
             UnixDescriptor.tryClose (Callers.leader system) (slotOf slot) system
             |> mustAnswer

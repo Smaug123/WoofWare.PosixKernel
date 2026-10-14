@@ -1372,7 +1372,13 @@ module TestCrossProcess =
             Machines.doIn a (fun view -> Answered.mkdir (PathArg.ofText "/d") 0o755 view |> snd) machine
 
         let machine =
-            Machines.doIn a (fun view -> Answered.chdir (PathArg.ofText "/d") view |> snd) machine
+            Machines.doIn
+                a
+                (fun view ->
+                    Answered.chdir (Caller.make a (Proc.leader a view)) (PathArg.ofText "/d") view
+                    |> snd
+                )
+                machine
 
         let standing = (Proc.state a (Machines.viewOf a machine)).CurrentDirectoryInode
 

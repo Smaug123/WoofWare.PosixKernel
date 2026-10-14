@@ -181,7 +181,9 @@ module TestNameEquivalence =
             | Ok image -> image |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
             | Error fault -> failwith $"Darwin refused the seed: %s{FileSystemSeedFault.describe fault}"
 
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (arg ([ byte '/' ] @ nfd)) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (arg ([ byte '/' ] @ nfd)) system
+        with
         | Error (StatRefusal.Path (PathRefusal.UndecidedNameEquivalence _)) -> ()
         | other -> failwith $"expected the NFD spelling's lookup to be refused, got %A{other}"
 
@@ -200,7 +202,13 @@ module TestNameEquivalence =
         let inodes =
             names
             |> List.map (fun name ->
-                match UnixPathResolution.tryStat SymlinkPolicy.NoFollowFinal (arg ([ byte '/' ] @ name)) system with
+                match
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        SymlinkPolicy.NoFollowFinal
+                        (arg ([ byte '/' ] @ name))
+                        system
+                with
                 | Ok (FileStatusAnswer.Reported status) -> status.Inode
                 | other -> failwith $"stat(/%s{hexOf name}): %A{other}"
             )
@@ -274,7 +282,7 @@ module TestNameEquivalence =
         system
         |> Answered.mkdir (arg (ascii "r")) 0o755
         |> completed
-        |> Answered.chdir (arg (ascii "r"))
+        |> (fun system -> Answered.chdir (Callers.leader system) (arg (ascii "r")) system)
         |> completed
 
     let private create (name : byte list) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
@@ -285,7 +293,7 @@ module TestNameEquivalence =
         errnoOf answer, system
 
     let private statOf (policy : SymlinkPolicy) (path : byte list) (system : UnixSystem<int, string>) =
-        UnixPathResolution.tryStat policy (arg path) system
+        UnixPathResolution.tryStat (Callers.leader system) policy (arg path) system
         |> answered StatRefusal.describe
 
     /// `stat(path)`, as the probe prints it: `same` if it reaches `expected`.
@@ -426,7 +434,10 @@ module TestNameEquivalence =
 
                 answer, "", system
             | "chdir(second)" ->
-                match UnixPathResolution.tryChdir (arg second) system |> answered PathRefusal.describe with
+                match
+                    UnixPathResolution.tryChdir (Callers.leader system) (arg second) system
+                    |> answered PathRefusal.describe
+                with
                 | SyscallAnswer.Completed _ as answer, moved ->
                     let here =
                         match statOf SymlinkPolicy.Follow (ascii ".") moved with
@@ -434,7 +445,7 @@ module TestNameEquivalence =
                         | FileStatusAnswer.Failed error -> failwith $"stat(.): %O{error}"
 
                     let back =
-                        UnixPathResolution.tryChdir (arg (ascii "..")) moved
+                        UnixPathResolution.tryChdir (Callers.leader moved) (arg (ascii "..")) moved
                         |> answered PathRefusal.describe
                         |> completed
 
@@ -447,7 +458,10 @@ module TestNameEquivalence =
                 with
                 | SyscallAnswer.Completed fd as answer, system ->
                     let opened =
-                        match UnixPathResolution.tryFstat (int fd) system |> answered FStatRefusal.describe with
+                        match
+                            UnixPathResolution.tryFstat (Callers.leader system) (int fd) system
+                            |> answered FStatRefusal.describe
+                        with
                         | FileStatusAnswer.Reported status -> which status.Inode
                         | FileStatusAnswer.Failed error -> failwith $"fstat: %O{error}"
 

@@ -277,6 +277,7 @@ module TestUmask =
     let private created (p : string) (system : UnixSystem<int, string>) : int =
         match
             UnixPathResolution.tryStat
+                (Callers.leader system)
                 SymlinkPolicy.NoFollowFinal
                 (PathArg.ofPath (UnixPath.parseOrFail context p))
                 system

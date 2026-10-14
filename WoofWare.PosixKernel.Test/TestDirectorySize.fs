@@ -349,13 +349,15 @@ module TestDirectorySize =
         int fd, system
 
     let private modelSize (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | Ok (FileStatusAnswer.Failed error) -> failwith $"stat d failed with %O{error}"
         | Error refusal -> failwith $"stat d was refused: %s{StatRefusal.describe refusal}"
 
     let private modelFStatSize (fd : int) (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryFstat fd system with
+        match UnixPathResolution.tryFstat (Callers.leader system) fd system with
         | Ok (FileStatusAnswer.Reported status) -> status.Size
         | other -> failwith $"fstat %d{fd}: %A{other}"
 
@@ -536,10 +538,14 @@ module TestDirectorySize =
             // The root is a directory on the same mount, so it is refused too.
             for path in [ "/d" ; "/" ; "/o" ] do
                 for policy in [ SymlinkPolicy.Follow ; SymlinkPolicy.NoFollowFinal ] do
-                    UnixPathResolution.tryStat policy (PathArg.ofPath (UnixPath.parseOrFail context path)) system
+                    UnixPathResolution.tryStat
+                        (Callers.leader system)
+                        policy
+                        (PathArg.ofPath (UnixPath.parseOrFail context path))
+                        system
                     |> shouldEqual (Error (StatRefusal.NfsDirectorySize (inodeOf path)))
 
-            UnixPathResolution.tryFstat fd system
+            UnixPathResolution.tryFstat (Callers.leader system) fd system
             |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
 
             match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 2 system with
@@ -566,7 +572,13 @@ module TestDirectorySize =
             let _, system = modelWith platform EmulatedFileSystemType.Nfs
             let system = applyToModel (DirectorySizeOp.Create "d/f") system
 
-            match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d/f")) system with
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (rooted "d/f"))
+                    system
+            with
             | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual 0L
             | other -> failwith $"stat d/f: %A{other}"
 
@@ -634,7 +646,9 @@ module TestDirectorySize =
             | None -> failwith $"host lseek failed with errno %d{errno}, which has no portable name"
 
     let private modelLinkCount (system : UnixSystem<int, string>) : int64 =
-        match UnixPathResolution.tryStat SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system with
+        match
+            UnixPathResolution.tryStat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofPath (rooted "d")) system
+        with
         | Ok (FileStatusAnswer.Reported status) -> status.LinkCount
         | other -> failwith $"stat d: %A{other}"
 
