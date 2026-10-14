@@ -17,6 +17,7 @@ open WoofWare.PosixKernel
 /// `describe` it promises, and every F# code block runs and prints what its
 /// `// Prints:` trailer says.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestReadme =
 
     let private readme : Lazy<string> =

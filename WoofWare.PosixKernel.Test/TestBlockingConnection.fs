@@ -72,6 +72,7 @@ type BlockingConnectionOp =
 /// shut.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestBlockingConnection =
 
     let private threads : int list = [ 0 ; 1 ; 2 ; 3 ]

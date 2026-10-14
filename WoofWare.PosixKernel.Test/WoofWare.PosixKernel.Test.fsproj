@@ -15,6 +15,7 @@
   <ItemGroup>
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
+    <Compile Include="TestOrder.fs" />
     <Compile Include="Expect.fs" />
     <Compile Include="UnionCaseName.fs" />
     <Compile Include="GraphMutators.fs" />
@@ -140,6 +141,7 @@
     <Compile Include="TestUnixError.fs" />
     <Compile Include="TestUnionCaseName.fs" />
     <Compile Include="TestExpect.fs" />
+    <Compile Include="TestFixtureParallelism.fs" />
     <Compile Include="TestUnixByteString.fs" />
     <Compile Include="TestUnixPath.fs" />
     <Compile Include="TestUnixPathBytes.fs" />

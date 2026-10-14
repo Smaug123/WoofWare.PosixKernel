@@ -25,6 +25,7 @@ open WoofWare.PosixKernel
 /// Touching the real filesystem is fine in a *test*; the prohibition is on the
 /// product, which must never read the host.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestVirtualFileSystemAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]

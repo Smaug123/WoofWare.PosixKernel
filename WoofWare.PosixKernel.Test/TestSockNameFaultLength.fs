@@ -280,6 +280,7 @@ module TestSockNameFaultLength =
 /// own version, read from `uname`. So it holds on whichever kernel it runs on,
 /// on either side of the 6.18 change.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSockNameFaultLengthAgainstHost =
 
     [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]

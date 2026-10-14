@@ -9,6 +9,7 @@ open WoofWare.PosixKernel
 /// exit, or kill themselves, as `wait-status.c` swept, read back by .NET's
 /// `Process.ExitCode` and by a shell's own `$?`.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestProcessTerminationAgainstHost =
 
     /// Run `/bin/sh -c script` and return its exit code as .NET reports it, and its

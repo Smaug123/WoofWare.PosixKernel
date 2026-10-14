@@ -8,6 +8,7 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestProcessId =
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 1000

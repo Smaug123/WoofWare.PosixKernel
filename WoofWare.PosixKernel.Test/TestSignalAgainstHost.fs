@@ -24,6 +24,7 @@ open WoofWare.PosixKernel
 /// handler.
 /// `TestSignal` pins that set from a probe instead.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSignalAgainstHost =
 
     /// `Some name` when `kill -l signo` names a signal, `None` when the shell

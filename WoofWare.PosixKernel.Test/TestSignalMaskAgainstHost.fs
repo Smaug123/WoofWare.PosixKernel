@@ -26,6 +26,10 @@ open WoofWare.PosixKernel
 /// bit `signo - 1`, little-endian — is glibc's `unsigned long` array and
 /// Darwin's `uint32_t` alike, on every architecture .NET supports.
 [<TestFixture>]
+[<NonParallelizable>]
+// Blocks every signal in turn on its worker thread, Linux's SIGRTMIN among
+// them, which the runtime sends a thread to suspend it for a collection: a
+// collection that a test beside it starts would have to wait for the mask.
 module TestSignalMaskAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]

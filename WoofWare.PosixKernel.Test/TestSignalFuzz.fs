@@ -19,6 +19,7 @@ open WoofWare.PosixKernel
 /// host and checks that host's flavour; the corpus replays transcripts measured
 /// on both flavours everywhere.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSignalFuzz =
 
     let private harnessResource = "WoofWare.PosixKernel.Test.signalFuzz.harness.c"

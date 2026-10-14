@@ -14,6 +14,7 @@ open WoofWare.PosixKernel
 /// The P/Invokes take `byte[]` rather than `string`, because the names under
 /// test are not UTF-8 and a `string` could not carry them.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestBindingAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]

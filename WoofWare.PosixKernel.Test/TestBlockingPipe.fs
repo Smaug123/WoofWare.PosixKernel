@@ -43,6 +43,7 @@ type BlockingPipeOp =
 /// measured, or sleeps again at the back.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestBlockingPipe =
 
     let private platforms : SimulatedUnixPlatform list =

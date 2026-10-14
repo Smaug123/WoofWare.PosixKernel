@@ -774,6 +774,7 @@ module internal TcpTransferReference =
 /// `TcpTransfer` held to `TcpTransferReference` over random calls.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestTcpTransfer =
 
     let private ends : ConnectionEnd list =

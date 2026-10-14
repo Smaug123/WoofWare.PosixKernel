@@ -29,6 +29,7 @@ open WoofWare.PosixKernel
 /// copying, which answers `ECONNRESET` without `SIGPIPE` and without sleeping.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestConnectionWriteResetMeasured =
 
     /// One line of a probe output, its tab-separated `key=value` fields by
