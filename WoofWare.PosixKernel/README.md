@@ -723,8 +723,7 @@ let ended =
     | other -> failwith $"thread 0 is still running, so expected the process to continue: %A{other}"
 
 // The client ends the process on its machine, which closes its descriptors.
-let termination, _ =
-    SimulatedMachine.ofSystem (EndedProcess.endedIn ended) |> SimulatedMachine.endProcess ended
+let termination, _ = SimulatedMachine.endLoneProcess ended
 
 printfn "the process ended: shell status %d" (ProcessTermination.shellStatus (SimulatedUnixPlatform.signalNumbering platform) termination)
 
@@ -809,8 +808,7 @@ let pending =
 // default action ends the process.
 match pending |> mask 1 |> returnToUser with
 | ProcessFate.ProcessEnded ended ->
-    let termination, _ =
-        SimulatedMachine.ofSystem (EndedProcess.endedIn ended) |> SimulatedMachine.endProcess ended
+    let termination, _ = SimulatedMachine.endLoneProcess ended
 
     printfn "%A" termination
     printfn "shell status %d" (ProcessTermination.shellStatus numbering termination)
@@ -830,12 +828,13 @@ It throws `InvalidOperationException` for a thread parked in a syscall, and refu
 
 A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last thread, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
-`EndedProcess.processId` is which process it was, and `EndedProcess.endedIn` the view it ended in.
+`EndedProcess.processId` is which process it was.
 Only such a call makes one, and `SimulatedMachine.endProcess` takes nothing else.
 
 `SimulatedMachine.endProcess ended machine` ends the process on the machine: it releases what only the process's calls held, then closes every descriptor in the order each kernel measurably does (Linux drops them lowest first and releases the last let go of first; Darwin closes them highest first), as `close` closes each: sending its peers their FINs, or resets where it left bytes unread, resetting the clients left in its listeners' accept queues, whichever process holds them, and letting its locks, pipes, listeners and event queues go, and removes the process.
 It refuses where a close would: so far, the last close of a connected socket whose `SO_LINGER` would make it wait, and two Darwin closes whose outcome waits on a timer or on the peer's reads.
-A process alone on its machine is ended on the machine `SimulatedMachine.ofSystem (EndedProcess.endedIn ended)` makes of the view the process ended in.
+A client that runs one process as a `UnixSystem`, with no `SimulatedMachine`, ends it with `SimulatedMachine.endLoneProcess ended`, which answers what `endProcess` answers on the machine the process ran alone on: how it ended, and that machine without it.
+Nothing hands back a system from an `EndedProcess`, so no call can be made in a process that has ended.
 
 ## Several processes
 
