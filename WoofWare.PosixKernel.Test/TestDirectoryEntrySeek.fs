@@ -472,8 +472,7 @@ module TestDirectoryEntrySeek =
                         stream
                     | Some (entry, _, next) ->
                         match entry with
-                        | PathComponent.Name _ when current <> stream.LastSeen ->
-                            record Reached.AdvancePastMutation
+                        | PathComponent.Name _ when current <> stream.LastSeen -> record Reached.AdvancePastMutation
                         | _ -> ()
 
                         go
