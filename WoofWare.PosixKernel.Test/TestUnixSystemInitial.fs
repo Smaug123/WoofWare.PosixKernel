@@ -249,7 +249,7 @@ module TestUnixSystemInitial =
         (Lone.proc system).CurrentDirectoryInode
         |> shouldEqual (VirtualFileSystem.root system.Machine.FileSystem)
 
-        UnixPathResolution.currentDirectoryPath system
+        UnixPathResolution.currentDirectoryPath (Lone.pid system) system
         |> shouldEqual (Some AbsoluteUnixPath.root)
 
     /// Every rule at once, which is the cheapest statement that a fresh system
@@ -282,7 +282,7 @@ module TestUnixSystemInitial =
                 actualEnd |> shouldEqual pipeEnd
 
                 (UnixMachineState.pipe pipeId system.Machine).Origin
-                |> shouldEqual (PipeOrigin.Launched (ExternalEndpoint (UnixSystem.processId system, fd), client))
+                |> shouldEqual (PipeOrigin.Launched (ExternalEndpoint (Lone.pid system, fd), client))
             | other -> failwith $"fd %d{fd} is %A{other}, not the %O{pipeEnd} end of a launched pipe"
 
         FileDescriptorRegistry.tryFind 3 (Lone.fileDescriptors system)
@@ -362,10 +362,10 @@ module TestUnixSystemInitial =
                     | PipeOrigin.Launched (endpoint, ClientEnd.Draining), LaunchDescriptor.Drained
                     | PipeOrigin.Launched (endpoint, ClientEnd.ReadEndClosed), LaunchDescriptor.Gone
                     | PipeOrigin.Launched (endpoint, ClientEnd.WriteEndClosed), LaunchDescriptor.Supplied _ ->
-                        endpoint |> shouldEqual (ExternalEndpoint (UnixSystem.processId system, fd))
+                        endpoint |> shouldEqual (ExternalEndpoint (Lone.pid system, fd))
                         expectedUnwritten |> shouldEqual 0
                     | PipeOrigin.Launched (endpoint, ClientEnd.Supplying unwritten), LaunchDescriptor.Supplied bytes ->
-                        endpoint |> shouldEqual (ExternalEndpoint (UnixSystem.processId system, fd))
+                        endpoint |> shouldEqual (ExternalEndpoint (Lone.pid system, fd))
                         unwritten.Length |> shouldEqual expectedUnwritten
 
                         unwritten.ToImmutableArray ()

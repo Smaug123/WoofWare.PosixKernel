@@ -576,8 +576,8 @@ module TestPermissionStanding =
     let private run (call : Call) (system : UnixSystem<int, string>) : Outcome * UnixSystem<int, string> =
         let result =
             match call with
-            | Call.Unlink p -> sticky (UnixNamespace.tryUnlink (PathArg.ofPath (path p)) system)
-            | Call.RmDir p -> sticky (UnixNamespace.tryRmdir (PathArg.ofPath (path p)) system)
+            | Call.Unlink p -> sticky (UnixNamespace.tryUnlink (Callers.leader system) (PathArg.ofPath (path p)) system)
+            | Call.RmDir p -> sticky (UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofPath (path p)) system)
             | Call.Rename (source, destination) ->
                 match Eager.tryRename (argument source) (argument destination) system with
                 | Ok answer -> Ok answer
@@ -1045,7 +1045,7 @@ module TestPermissionStanding =
         openFor FileAccessMode.ReadOnly "/hosts" |> shouldEqual true
         openFor FileAccessMode.WriteOnly "/hosts" |> shouldEqual false
 
-        Answered.mkdir (PathArg.ofPath (path "/wheel0755/x")) 0o755 system
+        Answered.mkdir (Callers.leader system) (PathArg.ofPath (path "/wheel0755/x")) 0o755 system
         |> fst
         |> shouldEqual (SyscallAnswer.Failed UnixError.EACCES)
 
@@ -1149,7 +1149,7 @@ module TestPermissionStanding =
             |> shouldEqual (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated))
         | Ok (answer, _) -> failwith $"ftruncate answered %A{answer}"
 
-        match UnixSystem.tryStep 0 (Syscall.FTruncate (fd, 0L)) opened with
+        match UnixSystem.tryStep (Callers.thread 0 opened) (Syscall.FTruncate (fd, 0L)) opened with
         | Error refusal ->
             refusal
             |> shouldEqual (SyscallRefusal.FTruncate (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated)))
@@ -1193,7 +1193,10 @@ module TestPermissionStanding =
 
         // Darwin's AT_FDCWD, with no flags for unlink and AT_REMOVEDIR for
         // rmdir.
-        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0))
+            system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1211,7 +1214,10 @@ module TestPermissionStanding =
             )
         )
 
-        UnixSystem.tryStep 0 (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80))
+            system
         |> Result.map fst
         |> shouldEqual (
             Error (
@@ -1257,7 +1263,7 @@ module TestPermissionStanding =
                 // only 0o777 of 0o7777 on Linux.
                 let _, system =
                     systemOn SimulatedUnixPlatform.linuxX64 credentials vfs
-                    |> UnixSystem.umask umask
+                    |> fun system -> UnixSystem.umask (Callers.leader system) umask system
 
                 // From the same system each time, which leaves `/p` holding one
                 // entry at most.
@@ -1338,9 +1344,12 @@ module TestPermissionStanding =
                     |> succeeds
                 "open(O_CREAT) /d/new",
                 fun system -> Answered.openPath creating (path "/d/new") 0o600 system |> succeeds
-                "mkdir /d/new", fun system -> Answered.mkdir (PathArg.ofPath (path "/d/new")) 0o755 system |> succeeds
-                "unlink /d/f", fun system -> Answered.unlink (path "/d/f") system |> succeeds
-                "rmdir /d/e", fun system -> Answered.rmdir (path "/d/e") system |> succeeds
+                "mkdir /d/new",
+                fun system ->
+                    Answered.mkdir (Callers.leader system) (PathArg.ofPath (path "/d/new")) 0o755 system
+                    |> succeeds
+                "unlink /d/f", fun system -> Answered.unlink (Callers.leader system) (path "/d/f") system |> succeeds
+                "rmdir /d/e", fun system -> Answered.rmdir (Callers.leader system) (path "/d/e") system |> succeeds
                 "rename /d/f out of /d", renamed "/d/f" "/o/f"
                 "rename into /d", renamed "/o/x" "/d/x"
             ]
@@ -1401,8 +1410,13 @@ module TestPermissionStanding =
                 yield OpenFlagWords.openPath truncating (PathArg.ofPath (path p)) 0 system |> refused
                 yield! throughDescriptor p
             for p in [ "/d/f" ; "/d/e" ] do
-                yield UnixNamespace.tryUnlink (PathArg.ofPath (path p)) system |> refused
-                yield UnixNamespace.tryRmdir (PathArg.ofPath (path p)) system |> refused
+                yield
+                    UnixNamespace.tryUnlink (Callers.leader system) (PathArg.ofPath (path p)) system
+                    |> refused
+
+                yield
+                    UnixNamespace.tryRmdir (Callers.leader system) (PathArg.ofPath (path p)) system
+                    |> refused
             for source, destination in
                 [
                     "/d/f", "/d/g"

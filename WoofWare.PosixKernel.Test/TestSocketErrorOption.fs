@@ -92,7 +92,7 @@ module TestSocketErrorOption =
         let fd, system = stream system
         let system = bindAt fd (loopback listenerPort) system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> fd, system
         | Ok (answer, _) -> failwith $"listen answered %A{answer}"
         | Error refusal -> failwith $"listen refused: %s{ListenRefusal.describe refusal}"

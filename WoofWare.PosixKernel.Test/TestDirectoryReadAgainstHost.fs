@@ -317,7 +317,7 @@ module TestDirectoryReadAgainstHost =
                         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
                     let system =
-                        Answered.mkdir (PathArg.ofPath (rooted "d")) 0o755 system
+                        Answered.mkdir (Callers.leader system) (PathArg.ofPath (rooted "d")) 0o755 system
                         |> completed "mkdir d"
                         |> snd
 
@@ -328,7 +328,11 @@ module TestDirectoryReadAgainstHost =
                                 hostMkdir (Path.Combine (hostD, name), 0o755u)
                                 |> hostSucceeded $"mkdir %s{name}"
 
-                                Answered.mkdir (PathArg.ofPath (rooted $"d/%s{name}")) 0o755 system
+                                Answered.mkdir
+                                    (Callers.leader system)
+                                    (PathArg.ofPath (rooted $"d/%s{name}"))
+                                    0o755
+                                    system
                                 |> completed $"mkdir %s{name}"
                                 |> snd
                             else
@@ -479,7 +483,12 @@ module TestDirectoryReadAgainstHost =
                                             List.rev acc, system
                                         else
 
-                                        match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                                        match
+                                            UnixNamespace.tryReadDirectoryEntry
+                                                (Callers.leader system)
+                                                target.ModelFd
+                                                system
+                                        with
                                         | Ok (ReadDirectoryAnswer.EndOfDirectory, system) -> List.rev acc, system
                                         | Ok (ReadDirectoryAnswer.Entry record, system) ->
                                             let name = record.Name.ToString ()
@@ -541,14 +550,17 @@ module TestDirectoryReadAgainstHost =
                             ||> List.fold (fun system (name, isDirectory) ->
                                 let answer =
                                     if isDirectory then
-                                        Answered.rmdir (rooted $"d/%s{name}") system
+                                        Answered.rmdir (Callers.leader system) (rooted $"d/%s{name}") system
                                     else
-                                        Answered.unlink (rooted $"d/%s{name}") system
+                                        Answered.unlink (Callers.leader system) (rooted $"d/%s{name}") system
 
                                 answer |> completed $"remove %s{name}" |> snd
                             )
 
-                        let system = Answered.rmdir (rooted "d") system |> completed "rmdir d" |> snd
+                        let system =
+                            Answered.rmdir (Callers.leader system) (rooted "d") system
+                            |> completed "rmdir d"
+                            |> snd
 
                         for target in live do
                             let host =
@@ -557,7 +569,9 @@ module TestDirectoryReadAgainstHost =
                                 | Ok records -> failwith $"host read of a removed directory yielded %A{records}"
                                 | Error error -> ReadDirectoryAnswer.Failed error
 
-                            match UnixNamespace.tryReadDirectoryEntry target.ModelFd system with
+                            match
+                                UnixNamespace.tryReadDirectoryEntry (Callers.leader system) target.ModelFd system
+                            with
                             | Ok (model, _) -> model |> shouldEqual host
                             | Error refusal -> failwith $"model read of a removed directory refused: %A{refusal}"
                 finally
@@ -637,7 +651,7 @@ module TestDirectoryReadAgainstHost =
                     | Error error -> ReadDirectoryAnswer.Failed error
 
                 let modelAnswer (fd : int) : ReadDirectoryAnswer =
-                    match UnixNamespace.tryReadDirectoryEntry fd system with
+                    match UnixNamespace.tryReadDirectoryEntry (Callers.leader system) fd system with
                     | Ok (answer, _) -> answer
                     | Error refusal -> failwith $"%A{refusal}"
 

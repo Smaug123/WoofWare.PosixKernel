@@ -89,7 +89,7 @@ module TestWakeCondition =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listenerFd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listenerFd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -161,7 +161,7 @@ module TestWakeCondition =
         let system, _, _ = world
 
         let created (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-            match UnixInotify.tryInotifyInit1 0 system with
+            match UnixInotify.tryInotifyInit1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> created
             | other -> failwith $"creating an inotify instance: %A{other}"
 
@@ -174,7 +174,7 @@ module TestWakeCondition =
             | other -> failwith $"watching the root: %A{other}"
 
         let system =
-            match UnixInotify.tryInotifyRmWatch queuedFd 1 system with
+            match UnixInotify.tryInotifyRmWatch (Callers.leader system) queuedFd 1 system with
             | Ok (SyscallAnswer.Completed 0L, system) -> system
             | other -> failwith $"removing the watch: %A{other}"
 

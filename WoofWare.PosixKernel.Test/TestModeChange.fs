@@ -576,7 +576,7 @@ module TestModeChange =
 
             let inode = inodeAt system.Machine.FileSystem "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
-            let _, unlinked = Answered.unlink (path "/p/f") withFd
+            let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchmodAnswer fd 0o400 unlinked with
             | SyscallAnswer.Completed 0L, after ->
@@ -830,15 +830,21 @@ module TestModeChange =
 
         // A success, so the comparison covers the state the call moves, and a
         // failure.
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/lf"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/lf" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FChModAt (-100, PathArg.ofPath (path "/p/dang"), 0o640, 0))
+            system
         |> answered
         |> shouldEqual (chmodAnswer "/p/dang" 0o640 system)
 
-        UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o604)) withFd
+        UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChMod (fd, 0o604)) withFd
         |> answered
         |> shouldEqual (fchmodAnswer fd 0o604 withFd)
 
@@ -848,7 +854,12 @@ module TestModeChange =
 
         let fd, withFd = opened "/t/f" FileAccessMode.ReadOnly darwin
 
-        match UnixSystem.tryStep 0 (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0)) darwin with
+        match
+            UnixSystem.tryStep
+                (Callers.thread 0 darwin)
+                (Syscall.FChModAt (-2, PathArg.ofPath (path "/t/f"), 0o644, 0))
+                darwin
+        with
         | Error (SyscallRefusal.FChModAt refusal) ->
             Error refusal
             |> shouldEqual (
@@ -858,7 +869,7 @@ module TestModeChange =
             )
         | other -> failwith $"step chmod as Darwin root: %A{other}"
 
-        match UnixSystem.tryStep 0 (Syscall.FChMod (fd, 0o644)) withFd with
+        match UnixSystem.tryStep (Callers.thread 0 withFd) (Syscall.FChMod (fd, 0o644)) withFd with
         | Error (SyscallRefusal.FChMod refusal) ->
             Error refusal
             |> shouldEqual (

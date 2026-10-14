@@ -19,31 +19,37 @@ module internal Answered =
         | Ok answer -> answer
         | Error refusal -> failwith $"open(%O{path}) was refused: %s{OpenRefusal.describe refusal}"
 
+    /// `unlink(2)` by `caller`.
     let unlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (path : UnixPath)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match UnixNamespace.tryUnlink (PathArg.ofPath path) system with
+        match UnixNamespace.tryUnlink caller (PathArg.ofPath path) system with
         | Ok answer -> answer
         | Error refusal -> failwith $"unlink(%O{path}) was refused: %s{RemovalRefusal.describe refusal}"
 
+    /// `rmdir(2)` by `caller`.
     let rmdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (path : UnixPath)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match UnixNamespace.tryRmdir (PathArg.ofPath path) system with
+        match UnixNamespace.tryRmdir caller (PathArg.ofPath path) system with
         | Ok answer -> answer
         | Error refusal -> failwith $"rmdir(%O{path}) was refused: %s{RemovalRefusal.describe refusal}"
 
+    /// `mkdir(2)` by `caller`.
     let mkdir<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (path : PathArgumentBytes)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : SyscallAnswer * UnixSystem<'Thread, 'Handler>
         =
-        match UnixNamespace.tryMkdir path mode system with
+        match UnixNamespace.tryMkdir caller path mode system with
         | Ok answer -> answer
         | Error refusal -> failwith $"mkdir was refused: %s{PathRefusal.describe refusal}"
 

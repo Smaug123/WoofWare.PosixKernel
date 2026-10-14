@@ -106,7 +106,7 @@ module TestCallHolds =
 
             Lone.withFileDescriptors registry system
         | SimulatedUnixFlavour.Darwin ->
-            match UnixKqueue.tryKqueue system with
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
             | Ok (_, system) -> system
             | Error refusal -> failwith $"kqueue: %A{refusal}"
 
@@ -501,7 +501,7 @@ module TestCallHolds =
 
                     let before = ThreadIdAllocator.live system.Machine.ThreadIds
 
-                    match UnixThreadLifecycle.trySpawn parent child (CpuId 0) system with
+                    match UnixThreadLifecycle.trySpawn (Callers.thread parent system) child (CpuId 0) system with
                     | Error refusal -> failwith $"spawn: %s{SpawnRefusal.describe refusal}"
                     | Ok (SpawnAnswer.Failed error, _) -> failwith $"spawn: %O{error}"
                     | Ok (SpawnAnswer.Spawned id, after) ->
@@ -517,9 +517,18 @@ module TestCallHolds =
 
                     if thread = Lone.leader system then
                         system, model
+                    elif (UnixThreadTable.parkedFor thread (Lone.threads system)).IsSome then
+                        // A thread asleep in a call is not making another.
+                        Assert.Throws<System.InvalidOperationException> (fun () ->
+                            UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system
+                            |> ignore
+                        )
+                        |> ignore
+
+                        system, model
                     else
 
-                    match UnixThreadLifecycle.tryExitThread thread 0 system with
+                    match UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system with
                     | Ok (ProcessFate.Continues ((), after)) ->
                         cover Reached.Exit
 
@@ -527,7 +536,6 @@ module TestCallHolds =
                         { model with
                             Tids = Map.remove thread model.Tids
                         }
-                    | Error (ThreadExitRefusal.Parked _) -> system, model
                     | other -> failwith $"exit of %d{thread}: %A{other}"
                 | Op.ExitGroup t ->
                     let thread = liveThread t
@@ -538,7 +546,7 @@ module TestCallHolds =
 
                     // Every thread goes, with the holds its call had and its thread
                     // ID; descriptors are not closed, so what they name stays.
-                    let ended = UnixThreadLifecycle.exitGroup thread 0 system
+                    let ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
 
                     if not model.Holds.IsEmpty then
                         cover Reached.EndedWithHolds

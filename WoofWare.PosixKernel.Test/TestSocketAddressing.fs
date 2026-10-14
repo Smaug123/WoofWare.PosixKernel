@@ -155,7 +155,7 @@ module TestSocketAddressing =
         | Error _ -> Answer.Refused, system
 
     let private listen (fd : int) (system : UnixSystem<int, string>) : Answer * UnixSystem<int, string> =
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> Answer.Succeeded, system
         | Ok (ListenAnswer.Failed error, system) -> Answer.Failed error, system
         | Error _ -> Answer.Refused, system

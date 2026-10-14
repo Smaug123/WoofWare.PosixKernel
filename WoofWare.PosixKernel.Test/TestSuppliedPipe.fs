@@ -441,13 +441,14 @@ module TestSuppliedPipe =
             let system = launch SimulatedUnixPlatform.linuxArm64 (patterned length)
 
             let epoll, system =
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok (epoll, system)) -> epoll, system
                 | other -> failwith $"%s{name}: epoll_create1 answered %A{other}"
 
             let system =
                 match
                     UnixPoll.tryEpollCtl
+                        (Callers.leader system)
                         epoll
                         1
                         0
@@ -458,7 +459,7 @@ module TestSuppliedPipe =
                 | other -> failwith $"%s{name}: the registration answered %A{other}"
 
             let wait (where : string) (system : UnixSystem<int, string>) : uint32 option * UnixSystem<int, string> =
-                match UnixPoll.tryEpollWait 0 epoll 8 UserBuffer.Mapped 0 system with
+                match UnixPoll.tryEpollWait (Callers.thread 0 system) epoll 8 UserBuffer.Mapped 0 system with
                 | Ok (EpollWaitOutcome.Answered [], system) -> None, system
                 | Ok (EpollWaitOutcome.Answered [ 7UL, events ], system) -> Some events, system
                 | other -> failwith $"%s{where}: epoll_wait answered %A{other}"

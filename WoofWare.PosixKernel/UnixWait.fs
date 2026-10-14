@@ -160,9 +160,19 @@ module UnixWait =
 
         asleep
 
-    /// The primitives of the wake condition of the call `thread` is parked in
-    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `thread` is
-    /// not parked in a call, including when the process has no thread by that
+    /// `satisfied` once `Entry` has admitted the process.
+    let private satisfiedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<WakePrimitive> option
+        =
+        Map.tryFind thread system.Threads
+        |> Option.bind UnixThreadState.parkedIn
+        |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
+
+    /// The primitives of the wake condition of the call `caller` is parked in
+    /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `caller` is
+    /// not parked in a call, including when its process has no thread by that
     /// name.
     ///
     /// An empty set means the call would get no further now. A non-empty one
@@ -175,13 +185,11 @@ module UnixWait =
     /// description it names until the call returns, so it is never asked
     /// about a description that has gone.
     let satisfied<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
-        Map.tryFind thread system.Threads
-        |> Option.bind UnixThreadState.parkedIn
-        |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
+        Entry.query "UnixWait.satisfied" (Caller.processId caller) (satisfiedIn (Caller.thread caller)) system
 
     /// The threads of `asleep` that `system` wakes now, in the order they parked,
     /// each with the primitives of its wake condition which hold.

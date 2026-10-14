@@ -256,7 +256,10 @@ module TestInotifyDentryMeasured =
 
         op
             "copy_file_range"
-            (fun system -> UnixReadWrite.tryCopyFileRange src f 3UL 0 system |> answered "copy_file_range")
+            (fun system ->
+                UnixReadWrite.tryCopyFileRange (Callers.leader system) src f 3UL 0 system
+                |> answered "copy_file_range"
+            )
 
         op
             "ftruncate"

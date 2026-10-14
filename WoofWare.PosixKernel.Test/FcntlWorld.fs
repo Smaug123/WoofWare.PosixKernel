@@ -242,7 +242,7 @@ module internal FcntlWorld =
             | other -> failwith $"bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen fd 16 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 16 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen: %A{other}"
 
@@ -280,7 +280,7 @@ module internal FcntlWorld =
 
         let system = connect client port system
 
-        match UnixConnection.tryAccept 0 listenerFd UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
         | other -> failwith $"accept: %A{other}"
 
@@ -295,7 +295,7 @@ module internal FcntlWorld =
             let domain, kind, protocol =
                 NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Default
 
-            match UnixSocket.trySocket domain (kind ||| extra) protocol system with
+            match UnixSocket.trySocket (Callers.leader system) domain (kind ||| extra) protocol system with
             | Ok (Ok created) -> Some created
             | other -> failwith $"socket with 0x%x{extra}: %A{other}"
 
@@ -367,15 +367,15 @@ module internal FcntlWorld =
         | "accepted" -> Some (accepted 5000us false system)
         | "accepted-from-nonblocking" -> Some (accepted 5000us true system)
         | "port" when linux ->
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok created) -> Some created
             | other -> failwith $"epoll_create1(0): %A{other}"
         | "port-cloexec" when linux ->
-            match UnixPoll.tryEpollCreate1 EpollCreateFlags.CloseOnExec system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) EpollCreateFlags.CloseOnExec system with
             | Ok (Ok created) -> Some created
             | other -> failwith $"epoll_create1(EPOLL_CLOEXEC): %A{other}"
         | "port" ->
-            match UnixKqueue.tryKqueue system with
+            match UnixKqueue.tryKqueue (Callers.leader system) system with
             | Ok created -> Some created
             | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
         | "null-rdonly" when linux -> Some (openWith (opening FileAccessMode.ReadOnly) "/dev/null" system)

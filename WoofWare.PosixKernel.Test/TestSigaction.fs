@@ -44,8 +44,8 @@ module TestSigaction =
         : Result<SignalDisposition<string> * UnixSystem<int, string>, UnixError>
         =
         match entry with
-        | Entry.CLibrary -> UnixSignal.sigaction signo action system
-        | Entry.Syscall -> UnixSignal.sigactionSyscall signo action system
+        | Entry.CLibrary -> UnixSignal.sigaction (Callers.leader system) signo action system
+        | Entry.Syscall -> UnixSignal.sigactionSyscall (Callers.leader system) signo action system
 
     /// The highest signal number, written out rather than taken from
     /// `Signal.highestSignoUnder`, so that this oracle and the implementation
@@ -319,7 +319,7 @@ module TestSigaction =
             // Every number now reads back as the oracle says, through the
             // syscall, which answers for every signal Linux has.
             for signo in [ 1 .. highestSigno flavour ] do
-                match UnixSignal.sigactionSyscall signo None finalSystem with
+                match UnixSignal.sigactionSyscall (Callers.leader finalSystem) signo None finalSystem with
                 | Ok (now, _) -> (signo, installedOf now) |> shouldEqual (signo, installedNow finalOracle signo)
                 | Error errno ->
                     (signo, measured flavour Entry.Syscall signo)
@@ -382,7 +382,12 @@ module TestSigaction =
                                 match
                                     systemOn flavour
                                     |> HandlerFrames.enterIn "carrier" leader (Set.singleton signal)
-                                    |> UnixSignal.sigaction signo (Some (toDisposition Disposition.HTr))
+                                    |> fun system ->
+                                        UnixSignal.sigaction
+                                            (Callers.leader system)
+                                            signo
+                                            (Some (toDisposition Disposition.HTr))
+                                            system
                                 with
                                 | Ok (_, system) -> system
                                 | Error errno -> failwith $"%O{flavour} %d{signo}: %O{errno}"
@@ -390,10 +395,12 @@ module TestSigaction =
                             let generated =
                                 let answer =
                                     if threadDirected then
-                                        UnixSignal.tryPthreadKill leader signo caught |> Result.mapError string
+                                        UnixSignal.tryPthreadKill (Callers.leader caught) leader signo caught
+                                        |> Result.mapError string
                                     else
                                         UnixSignal.tryKill
-                                            (ProcessId.toInt32 (UnixSystem.processId caught))
+                                            (Callers.leader caught)
+                                            (ProcessId.toInt32 (Lone.pid caught))
                                             signo
                                             caught
                                         |> Result.mapError string
@@ -409,7 +416,13 @@ module TestSigaction =
                             isPending generated |> shouldEqual true
 
                             let changed =
-                                match UnixSignal.sigaction signo (Some (toDisposition toward)) generated with
+                                match
+                                    UnixSignal.sigaction
+                                        (Callers.leader generated)
+                                        signo
+                                        (Some (toDisposition toward))
+                                        generated
+                                with
                                 | Ok (old, system) ->
                                     old |> shouldEqual (toDisposition Disposition.HTr)
                                     system
@@ -439,7 +452,7 @@ module TestSigaction =
                     match
                         systemOn flavour
                         |> HandlerFrames.enterIn "carrier" leader (Set.singleton signal)
-                        |> UnixSignal.tryPthreadKill leader pendingSigno
+                        |> fun system -> UnixSignal.tryPthreadKill (Callers.leader system) leader pendingSigno system
                     with
                     | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                     | other -> failwith $"generating %d{pendingSigno}: %A{other}"

@@ -627,7 +627,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"bind: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listen: %A{other}"
 
@@ -640,7 +640,7 @@ module TestConnectedTransferAgainstHost =
             | other -> failwith $"connect: %A{other}"
 
         let server, system =
-            match UnixConnection.tryAccept 1 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 1 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
             | other -> failwith $"accept: %A{other}"
 
@@ -738,7 +738,7 @@ module TestConnectedTransferAgainstHost =
         let revents, system =
             match
                 UnixPoll.tryPoll
-                    (Lone.leader system)
+                    (Callers.leader system)
                     [
                         {
                             Fd = fd

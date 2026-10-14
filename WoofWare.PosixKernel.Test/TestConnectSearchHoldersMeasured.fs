@@ -91,7 +91,7 @@ module TestConnectSearchHoldersMeasured =
                 | Ok (BindAnswer.Bound _, system) -> system
                 | other -> failwith $"binding the listener at %d{port}: %A{other}"
 
-            match UnixSocket.tryListen fd 128 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 128 system with
             | Ok (ListenAnswer.Listening _, system) -> fd, system
             | other -> failwith $"listening at %d{port}: %A{other}"
 
@@ -124,7 +124,7 @@ module TestConnectSearchHoldersMeasured =
         | other -> failwith $"connecting fd %d{fd} to %d{port}: %A{other}"
 
     let private acceptOrFail (listener : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
+        match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{listener}: %A{other}"
 
@@ -135,7 +135,7 @@ module TestConnectSearchHoldersMeasured =
 
     /// The endpoint the socket behind `fd` reports, as the probe prints it.
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : string =
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
@@ -143,7 +143,7 @@ module TestConnectSearchHoldersMeasured =
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
 
     let private portOf (fd : int) (system : UnixSystem<int, string>) : uint16 =
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> endpoint.Port
@@ -181,7 +181,7 @@ module TestConnectSearchHoldersMeasured =
             | "L" ->
                 let system = bindOrFail fd at system
 
-                match UnixSocket.tryListen fd 8 system with
+                match UnixSocket.tryListen (Callers.leader system) fd 8 system with
                 | Ok (ListenAnswer.Listening _, system) -> system
                 | other -> failwith $"holder L: listen answered %A{other}"
             | "e"

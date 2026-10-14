@@ -357,7 +357,7 @@ module TestInotifySelfMeasured =
                     child
                     (fun view ->
                         view
-                        |> mkdir "/x" 0o755
+                        |> mkdirIn child "/x" 0o755
                         |> writeFileIn child "/x/a" "a"
                         |> writeFileIn child "/x/b" "b"
                     )
@@ -366,9 +366,9 @@ module TestInotifySelfMeasured =
                 Machines.inProcess
                     parent
                     (fun view ->
-                        let instance, view = init1 nonblock view
-                        let wa, view = watch instance "/x/a" selfEvents view
-                        let wb, view = watch instance "/x/b" selfEvents view
+                        let instance, view = init1In parent nonblock view
+                        let wa, view = watchIn parent instance "/x/a" selfEvents view
+                        let wb, view = watchIn parent instance "/x/b" selfEvents view
                         (instance, wa, wb), view
                     )
                     machine
@@ -381,11 +381,12 @@ module TestInotifySelfMeasured =
                             (view, order)
                             ||> Seq.fold (fun view letter -> openFdIn child readOnly $"/x/%c{letter}" 0 view |> snd)
 
-                        view |> unlink "/x/a" |> unlink "/x/b"
+                        view |> unlinkIn child "/x/a" |> unlinkIn child "/x/b"
                     )
                     machine
 
-            let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf child machine)
+            let ended =
+                UnixThreadLifecycle.exitGroup (Caller.make child 0) 0 (Machines.viewOf child machine)
 
             let machine =
                 match Machines.tryEndProcess ended machine with

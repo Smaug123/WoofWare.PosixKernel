@@ -274,7 +274,7 @@ module TestInotifyAgainstHost =
                                     let host = hostAnswer numbering (nativeint (hostInit1 flags))
 
                                     let model =
-                                        match UnixInotify.tryInotifyInit1 flags system with
+                                        match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
                                         | Ok (Ok (fd, after)) ->
                                             system <- after
                                             Ok (int64 fd)
@@ -305,7 +305,7 @@ module TestInotifyAgainstHost =
                                 let host = hostAnswer numbering (nativeint (hostRmWatch (hostFd, wd)))
 
                                 let model =
-                                    match UnixInotify.tryInotifyRmWatch modelFd wd system with
+                                    match UnixInotify.tryInotifyRmWatch (Callers.leader system) modelFd wd system with
                                     | Ok (answer, after) ->
                                         system <- after
                                         modelAnswer answer
@@ -325,7 +325,7 @@ module TestInotifyAgainstHost =
                                 let model =
                                     match
                                         UnixReadWrite.tryRead
-                                            0
+                                            (Callers.thread 0 system)
                                             modelFd
                                             (if mapped then
                                                  UserBuffer.Mapped
@@ -369,7 +369,7 @@ module TestInotifyAgainstHost =
 
                                 match
                                     UnixPoll.tryPoll
-                                        0
+                                        (Callers.thread 0 system)
                                         [
                                             {
                                                 Fd = modelFd
@@ -534,7 +534,7 @@ module TestInotifyAgainstHost =
                     hostClose fd |> ignore<int>
 
                 let model =
-                    match UnixInotify.tryInotifyInit1 flags system with
+                    match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
                     | Ok (Ok _) -> true
                     | Ok (Error UnixError.EINVAL) -> false
                     | other -> failwith $"0x%x{flags}: %A{other}"

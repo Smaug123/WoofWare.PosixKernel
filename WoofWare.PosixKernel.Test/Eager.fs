@@ -17,7 +17,7 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
-        UnixNamespace.tryRenameat olddirfd oldpath newdirfd system
+        UnixNamespace.tryRenameat (Callers.leader system) olddirfd oldpath newdirfd system
         |> CallProgress.resumeWith (UnixNamespace.tryRenameWithDestination newpath)
 
     /// `rename(2)`: `UnixNamespace.tryRename`, then `tryRenameWithDestination`
@@ -28,7 +28,7 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
-        UnixNamespace.tryRename source system
+        UnixNamespace.tryRename (Callers.leader system) source system
         |> CallProgress.resumeWith (UnixNamespace.tryRenameWithDestination destination)
 
     /// `symlink(2)`: `UnixNamespace.symlink`, then `trySymlinkWithPath` of
@@ -39,7 +39,7 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
-        Ok (UnixNamespace.symlink target system)
+        Ok (UnixNamespace.symlink (Callers.leader system) target system)
         |> CallProgress.resumeWith (UnixNamespace.trySymlinkWithPath path)
 
     /// `link(2)`: `UnixNamespace.tryLink`, then `tryLinkWithDestination` of
@@ -50,7 +50,7 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
-        UnixNamespace.tryLink oldpath system
+        UnixNamespace.tryLink (Callers.leader system) oldpath system
         |> CallProgress.resumeWith (UnixNamespace.tryLinkWithDestination newpath)
 
     /// `access(2)`: `UnixPathResolution.tryAccess`, then `tryAccessWithPath`
@@ -64,8 +64,20 @@ module internal Eager =
         UnixPathResolution.tryAccess (Callers.leader system) mode system
         |> CallProgress.resumeWith (UnixPathResolution.tryAccessWithPath path)
 
-    /// `inotify_add_watch(2)`: `UnixInotify.tryInotifyAddWatch`, then
-    /// `tryInotifyAddWatchWithPath` of `path`.
+    /// `inotify_add_watch(2)` by `caller`: `UnixInotify.tryInotifyAddWatch`,
+    /// then `tryInotifyAddWatchWithPath` of `path`.
+    let tryInotifyAddWatchAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (path : PathArgumentBytes)
+        (mask : uint32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
+        =
+        UnixInotify.tryInotifyAddWatch caller fd mask system
+        |> CallProgress.resumeWith (UnixInotify.tryInotifyAddWatchWithPath path)
+
+    /// `tryInotifyAddWatchAs` the leader of the only process on the machine.
     let tryInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (path : PathArgumentBytes)
@@ -73,5 +85,4 @@ module internal Eager =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
-        UnixInotify.tryInotifyAddWatch fd mask system
-        |> CallProgress.resumeWith (UnixInotify.tryInotifyAddWatchWithPath path)
+        tryInotifyAddWatchAs (Callers.leader system) fd path mask system

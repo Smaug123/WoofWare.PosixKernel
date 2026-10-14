@@ -52,7 +52,7 @@ module DualModeProbe =
         SimulatedUnixPlatform.internetV6AddressFamily libc.Platform
 
     let private socket (libc : Libc) (domain : int) : int =
-        match UnixSocket.trySocket domain sockStream ipProtoTcp libc.System with
+        match UnixSocket.trySocket (Callers.leader libc.System) domain sockStream ipProtoTcp libc.System with
         | Ok (Ok (fd, system)) ->
             libc.System <- system
             fd
@@ -169,7 +169,7 @@ module DualModeProbe =
         | Result.Error refusal -> Answer.Refused (ConnectRefusal.describe refusal)
 
     let private listen (libc : Libc) (fd : int) (backlog : int) : Answer =
-        match UnixSocket.tryListen fd backlog libc.System with
+        match UnixSocket.tryListen (Callers.leader libc.System) fd backlog libc.System with
         | Result.Ok (ListenAnswer.Listening _, system) ->
             libc.System <- system
             Answer.Ok
@@ -192,7 +192,7 @@ module DualModeProbe =
     /// A non-blocking accept, as every accept in the probe is by the time the
     /// listener has nothing queued: the new descriptor, or the errno.
     let private accept (libc : Libc) (fd : int) (cell : uint32) : Result<int * ImmutableArray<byte> * int, Answer> =
-        match UnixConnection.tryAccept 0 fd UserBuffer.Mapped cell libc.System with
+        match UnixConnection.tryAccept (Callers.thread 0 libc.System) fd UserBuffer.Mapped cell libc.System with
         | Result.Ok (AcceptOutcome.Accepted (accepted, copied, reported), system) ->
             libc.System <- system
             Result.Ok (accepted, copied, reported)
@@ -206,14 +206,20 @@ module DualModeProbe =
     /// cell preset to `cell`: the answer, the buffer, and the cell after.
     let private name
         (libc : Libc)
-        (call : int -> UserBuffer -> uint32 -> UnixSystem<int, string> -> Result<GetSockNameAnswer, GetSockNameRefusal>)
+        (call :
+            Caller<int>
+                -> int
+                -> UserBuffer
+                -> uint32
+                -> UnixSystem<int, string>
+                -> Result<GetSockNameAnswer, GetSockNameRefusal>)
         (fd : int)
         (cell : int)
         : Answer * byte[] * int
         =
         let buffer = Array.create 128 0xAAuy
 
-        match call fd UserBuffer.Mapped (uint32 cell) libc.System with
+        match call (Callers.leader libc.System) fd UserBuffer.Mapped (uint32 cell) libc.System with
         | Result.Ok (GetSockNameAnswer.Reported (copied, reported)) ->
             copied.CopyTo (buffer, 0)
             Answer.Ok, buffer, reported
@@ -287,7 +293,13 @@ module DualModeProbe =
         (ports : Ports)
         (output : StringBuilder)
         (label : string)
-        (call : int -> UserBuffer -> uint32 -> UnixSystem<int, string> -> Result<GetSockNameAnswer, GetSockNameRefusal>)
+        (call :
+            Caller<int>
+                -> int
+                -> UserBuffer
+                -> uint32
+                -> UnixSystem<int, string>
+                -> Result<GetSockNameAnswer, GetSockNameRefusal>)
         (fd : int)
         (cell : int)
         : unit
@@ -382,7 +394,7 @@ module DualModeProbe =
 
     /// A one-byte `read`, as `transfer` prints it: the count, or the errno.
     let private readByte (libc : Libc) (fd : int) : string =
-        match UnixReadWrite.tryRead 0 fd UserBuffer.Mapped 1UL libc.System with
+        match UnixReadWrite.tryRead (Callers.thread 0 libc.System) fd UserBuffer.Mapped 1UL libc.System with
         | Result.Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
             libc.System <- system
             $"%d{bytes.Length}"
@@ -466,7 +478,7 @@ module DualModeProbe =
                 | Result.Ok other -> failwith $"DualModeProbe: write answered %A{other}"
 
             let read =
-                match UnixReadWrite.tryRead 0 srv UserBuffer.Mapped 1UL libc.System with
+                match UnixReadWrite.tryRead (Callers.thread 0 libc.System) srv UserBuffer.Mapped 1UL libc.System with
                 | Result.Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
                     libc.System <- system
                     $"%d{bytes.Length} '%c{char bytes.[0]}'"

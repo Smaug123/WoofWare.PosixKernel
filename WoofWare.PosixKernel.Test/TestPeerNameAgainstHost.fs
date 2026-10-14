@@ -404,7 +404,7 @@ module TestPeerNameAgainstHost =
 
             let system = bindTo fd address system
 
-            match UnixSocket.tryListen fd 16 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 16 system with
             | Ok (ListenAnswer.Listening _, system) -> fd, (modelName fd system).Port, system
             | other -> failwith $"the model's listen answered %A{other}"
 
@@ -414,7 +414,7 @@ module TestPeerNameAgainstHost =
             | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
 
         let accept (listener : int) (system : UnixSystem<int, string>) =
-            match UnixConnection.tryAccept 0 listener UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
             | other -> failwith $"the model's accept answered %A{other}"
 
@@ -756,7 +756,7 @@ module TestPeerNameAgainstHost =
             | Destination.Null
             | Destination.Faulting -> None
 
-        match UnixSocket.tryGetpeername fd userBuffer declared system with
+        match UnixSocket.tryGetpeername (Callers.leader system) fd userBuffer declared system with
         | Error refusal -> failwith $"the model refused: %s{GetSockNameRefusal.describe refusal}"
         | Ok (GetSockNameAnswer.Reported (copied, reported)) ->
             {

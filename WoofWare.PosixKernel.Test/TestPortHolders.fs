@@ -567,7 +567,7 @@ module TestPortHolders =
                     | Ok (BindAnswer.Bound _, system) -> system
                     | other -> failwith $"binding listener %d{i}: %A{other}"
 
-                match UnixSocket.tryListen fd backlog system with
+                match UnixSocket.tryListen (Callers.leader system) fd backlog system with
                 | Ok (ListenAnswer.Listening _, system) -> listeners @ [ fd, reuse ], system
                 | other -> failwith $"listener %d{i}: %A{other}"
             )
@@ -906,7 +906,7 @@ module TestPortHolders =
                         "listen search"
                         (fun port -> bindSearchRefusers holders (Ipv4Endpoint.ofParts address port) |> judged walk)
 
-                match UnixSocket.tryListen fd backlog system, expected with
+                match UnixSocket.tryListen (Callers.leader system) fd backlog system, expected with
                 | Ok (ListenAnswer.Listening (SocketAddress.Inet bound), system), Found.Port port when
                     bound = Ipv4Endpoint.ofParts address port
                     ->
@@ -948,7 +948,7 @@ module TestPortHolders =
                         cover $"%s{name} listen: %s{label}"
                 | Judged.Clear -> ()
 
-                match UnixSocket.tryListen fd backlog system, verdict with
+                match UnixSocket.tryListen (Callers.leader system) fd backlog system, verdict with
                 | Ok (ListenAnswer.Listening _, system), Judged.Clear ->
                     withSocket
                         fd
@@ -961,7 +961,7 @@ module TestPortHolders =
                 | Error (ListenRefusal.TimeWait _), Judged.Unknown _ -> walk
                 | other, _ -> fail $"listen answered %s{brief other}; the reference has %A{verdict}"
             | State.Listening _ ->
-                match UnixSocket.tryListen fd backlog system with
+                match UnixSocket.tryListen (Callers.leader system) fd backlog system with
                 | Ok (ListenAnswer.Listening _, system) -> withSocket fd socket system
                 | other -> fail $"a listener's listen answered %s{brief other}"
             | other -> fail $"listen generated on a socket in %A{other}"
@@ -1190,7 +1190,7 @@ module TestPortHolders =
             let id = List.head (queueOf listener walk)
             let listenerFd, reuse = walk.Listeners.[listener]
 
-            match UnixConnection.tryAccept 0 listenerFd UserBuffer.Mapped 16u system with
+            match UnixConnection.tryAccept (Callers.thread 0 system) listenerFd UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (accepted, _, _), system) ->
                 let connection = walk.Connections.[id]
 
@@ -1238,7 +1238,7 @@ module TestPortHolders =
                         }
                     |> exchanged walk
 
-                match UnixConnection.tryShutdown fd 1 system with
+                match UnixConnection.tryShutdown (Callers.leader system) fd 1 system with
                 | Ok (ShutdownAnswer.Shut, system) ->
                     { walk with
                         System = system

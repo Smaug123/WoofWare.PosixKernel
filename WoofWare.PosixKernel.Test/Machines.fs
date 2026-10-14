@@ -81,7 +81,7 @@ module internal Machines =
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (Result<SyscallOutcome, SyscallRefusal<'Thread>> * SimulatedMachine<'Thread, 'Handler>) option
         =
-        SimulatedMachine.tryStep pid thread call machine
+        SimulatedMachine.tryStep (Caller.make pid thread) call machine
 
     /// `UnixSystem.step` of `call` by `thread` of the process `pid`, with a
     /// refusal raised; `None` if no process on `machine` has that ID.
@@ -92,7 +92,7 @@ module internal Machines =
         (machine : SimulatedMachine<'Thread, 'Handler>)
         : (SyscallOutcome * SimulatedMachine<'Thread, 'Handler>) option
         =
-        SimulatedMachine.step pid thread call machine
+        SimulatedMachine.step (Caller.make pid thread) call machine
 
     /// How the process `ended` ended, and `machine` with that process ended
     /// on it and its descriptors closed; or the refusal to end it.
@@ -158,7 +158,7 @@ module internal Machines =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let pids, machine =
-            (([ UnixSystem.processId first ], ofSystem first), [ 2..count ])
+            (([ Lone.pid first ], ofSystem first), [ 2..count ])
             ||> List.fold (fun (pids, machine) _ ->
                 match tryLaunch (launchOn platform) machine with
                 | Ok (pid, machine) -> pids @ [ pid ], machine
@@ -230,7 +230,7 @@ module internal Machines =
             let view = viewOf pid machine
             UnixSystem.checkInvariants view |> shouldEqual []
 
-            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors view)
+            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors pid view)
             |> shouldEqual []
 
             VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem

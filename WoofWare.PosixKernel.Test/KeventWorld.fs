@@ -41,14 +41,26 @@ module KeventWorld =
     /// `idOfIn` the only process on the machine.
     let idOf (fd : int) (system : UnixSystem<int, string>) : OpenFileDescriptionId = idOfIn (Lone.pid system) fd system
 
-    let kqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixKqueue.tryKqueue system with
+    /// A new kqueue, made by `caller`.
+    let kqueueAs (caller : Caller<int>) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixKqueue.tryKqueue caller system with
         | Ok created -> created
         | Error refusal -> failwith $"kqueue: %s{KqueueRefusal.describe refusal}"
 
-    /// A new blocking stream socket.
-    let private blockingStream (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+    /// `kqueueAs` the leader of the process `pid`.
+    let kqueueIn (pid : ProcessId) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        kqueueAs (Caller.make pid (Proc.leader pid system)) system
+
+    /// `kqueueIn` the only process on the machine.
+    let kqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> = kqueueIn (Lone.pid system) system
+
+    /// A new blocking stream socket, made by `caller`.
+    let private blockingStream
+        (caller : Caller<int>)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        NewSocket.createAs caller SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
     /// A new stream socket, which `caller` makes non-blocking when
     /// `nonBlocking`.
@@ -58,7 +70,7 @@ module KeventWorld =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let fd, system = blockingStream system
+        let fd, system = blockingStream caller system
 
         if nonBlocking then
             fd, UnixDescriptor.setNonBlocking caller fd true system |> snd
@@ -78,26 +90,72 @@ module KeventWorld =
     let stream (nonBlocking : bool) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         streamIn (Lone.pid system) nonBlocking system
 
-    let bind (fd : int) (port : uint16) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    /// A bind of `fd` to the loopback address at `port`, by `caller`, which
+    /// must succeed.
+    let private bindAs
+        (caller : Caller<int>)
+        (fd : int)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
         match
-            CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) (loopback port)) system
+            CopyIn.bindAs
+                caller
+                fd
+                UserBuffer.Mapped
+                16u
+                (CopyIn.inet (UnixSystem.platform system) (loopback port))
+                system
         with
         | Ok (BindAnswer.Bound _, system) -> system
         | other -> failwith $"binding fd %d{fd} at port %d{port}: %A{other}"
 
-    let listen (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixSocket.tryListen fd 8 system with
+    /// `bindAs` the leader of the only process on the machine.
+    let bind (fd : int) (port : uint16) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        bindAs (Callers.leader system) fd port system
+
+    /// A listen on `fd`, by `caller`, which must succeed.
+    let private listenAs
+        (caller : Caller<int>)
+        (fd : int)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match UnixSocket.tryListen caller fd 8 system with
         | Ok (ListenAnswer.Listening _, system) -> system
         | other -> failwith $"listening on fd %d{fd}: %A{other}"
 
-    /// A new listener at `port`.
-    let listenerAt (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        let fd, system = blockingStream system
-        fd, system |> bind fd port |> listen fd
+    /// `listenAs` the leader of the only process on the machine.
+    let listen (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        listenAs (Callers.leader system) fd system
 
-    /// A connect of `fd` to `port`, made by `thread`, which must be awake.
+    /// A new listener at `port`, made by `caller`.
+    let listenerAtAs
+        (caller : Caller<int>)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        let fd, system = blockingStream caller system
+        fd, system |> bindAs caller fd port |> listenAs caller fd
+
+    /// `listenerAtAs` the leader of the process `pid`.
+    let listenerAtIn
+        (pid : ProcessId)
+        (port : uint16)
+        (system : UnixSystem<int, string>)
+        : int * UnixSystem<int, string>
+        =
+        listenerAtAs (Caller.make pid (Proc.leader pid system)) port system
+
+    /// `listenerAtIn` the only process on the machine.
+    let listenerAt (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        listenerAtIn (Lone.pid system) port system
+
+    /// A connect of `fd` to `port`, made by `caller`, which must be awake.
     let connectAs
-        (thread : int)
+        (caller : Caller<int>)
         (fd : int)
         (port : uint16)
         (system : UnixSystem<int, string>)
@@ -105,7 +163,7 @@ module KeventWorld =
         =
         match
             CopyIn.connectAs
-                thread
+                caller
                 fd
                 UserBuffer.Mapped
                 16u
@@ -123,7 +181,7 @@ module KeventWorld =
         (system : UnixSystem<int, string>)
         : SyscallAnswer * UnixSystem<int, string>
         =
-        connectAs (Proc.leader pid system) fd port system
+        connectAs (Caller.make pid (Proc.leader pid system)) fd port system
 
     /// `connectIn` the only process on the machine.
     let connect
@@ -143,7 +201,7 @@ module KeventWorld =
         : int * UnixSystem<int, string>
         =
         let fd, system = streamAs caller true system
-        let _, system = connectAs (Caller.thread caller) fd port system
+        let _, system = connectAs caller fd port system
         fd, system
 
     /// `clientAs` the leader of the process `pid`.
@@ -154,11 +212,19 @@ module KeventWorld =
     let client (port : uint16) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         clientIn (Lone.pid system) port system
 
-    /// Accept one connection through `fd`, which must hold one.
-    let accept (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixConnection.tryAccept 1 fd UserBuffer.Mapped 16u system with
+    /// Accept one connection through `fd`, which must hold one, by `caller`.
+    let acceptAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        match UnixConnection.tryAccept caller fd UserBuffer.Mapped 16u system with
         | Ok (AcceptOutcome.Accepted (accepted, _, _), system) -> accepted, system
         | other -> failwith $"accepting on fd %d{fd}: %A{other}"
+
+    /// `acceptAs` thread 1 of the process `pid`.
+    let acceptIn (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        acceptAs (Caller.make pid 1) fd system
+
+    /// `acceptIn` the only process on the machine.
+    let accept (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
+        acceptIn (Lone.pid system) fd system
 
     /// A close of `fd` by `caller`, which must succeed.
     let closeAs (caller : Caller<int>) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -215,9 +281,9 @@ module KeventWorld =
             UserData = userData
         }
 
-    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by thread 4, which no test
-    /// parks.
-    let apply
+    /// `kevent(kq, changes, n, eventlist, nevents, {0,0})`, by `caller`.
+    let applyAs
+        (caller : Caller<int>)
         (kq : int)
         (changes : Kevent list)
         (nevents : int)
@@ -226,7 +292,7 @@ module KeventWorld =
         =
         match
             UnixKqueue.tryKevent
-                4
+                caller
                 kq
                 (List.length changes)
                 changes
@@ -238,7 +304,44 @@ module KeventWorld =
         | Ok answered -> answered
         | Error refusal -> failwith $"kevent refused: %s{KeventRefusal.describe refusal}"
 
-    /// One change and no room, which must succeed: the probe's `reg`.
+    /// `applyAs` thread 4 of the process `pid`, which no test parks.
+    let applyIn
+        (pid : ProcessId)
+        (kq : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (system : UnixSystem<int, string>)
+        : KeventOutcome * UnixSystem<int, string>
+        =
+        applyAs (Caller.make pid 4) kq changes nevents system
+
+    /// `applyIn` the only process on the machine.
+    let apply
+        (kq : int)
+        (changes : Kevent list)
+        (nevents : int)
+        (system : UnixSystem<int, string>)
+        : KeventOutcome * UnixSystem<int, string>
+        =
+        applyIn (Lone.pid system) kq changes nevents system
+
+    /// One change and no room, by thread 4 of the process `pid`, which must
+    /// succeed: the probe's `reg`.
+    let registerIn
+        (pid : ProcessId)
+        (kq : int)
+        (fd : int)
+        (filter : int16)
+        (flags : uint16)
+        (userData : uint64)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        match applyIn pid kq [ change fd filter flags userData ] 0 system with
+        | KeventOutcome.Answered [], system -> system
+        | other, _ -> failwith $"registering fd %d{fd}: %A{other}"
+
+    /// `registerIn` the only process on the machine.
     let register
         (kq : int)
         (fd : int)
@@ -248,9 +351,7 @@ module KeventWorld =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        match apply kq [ change fd filter flags userData ] 0 system with
-        | KeventOutcome.Answered [], system -> system
-        | other, _ -> failwith $"registering fd %d{fd}: %A{other}"
+        registerIn (Lone.pid system) kq fd filter flags userData system
 
     /// The registrations and the queue of the kqueue `kq` names.
     let stateOf (kq : int) (system : UnixSystem<int, string>) : KqueueState =

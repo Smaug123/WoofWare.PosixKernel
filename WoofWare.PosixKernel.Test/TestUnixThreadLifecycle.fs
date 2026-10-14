@@ -66,7 +66,7 @@ module TestUnixThreadLifecycle =
             }
 
     let private exitOrFail (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixThreadLifecycle.tryExitThread thread 0 system with
+        match UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
         | Ok (ProcessFate.ProcessEnded ended) ->
             failwith $"expected the process to carry on, but it ended: %O{ended.Termination}"
@@ -167,8 +167,13 @@ module TestUnixThreadLifecycle =
                 | Some park -> park
                 | None -> failwith "expected thread 2 to be parked"
 
-            UnixThreadLifecycle.tryExitThread 2 0 system
-            |> shouldEqual (Error (ThreadExitRefusal.Parked (2, park)))
+            let refused =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixThreadLifecycle.tryExitThread (Callers.thread 2 system) 0 system |> ignore
+                )
+
+            refused.Message
+            |> shouldContainText $"UnixThreadLifecycle.exitThread: thread 2 is parked in %A{park.Syscall}"
 
     /// The leader and one other thread, which leaves, so that what follows is about
     /// being *last* rather than about being alone from the start. The leader, which
@@ -198,7 +203,7 @@ module TestUnixThreadLifecycle =
             let system = lastThreadStanding platform
 
             for status, kept in [ 0, 0 ; 5, 5 ; 256, 0 ; 263, 7 ; -1, 255 ; System.Int32.MinValue, 0 ] do
-                match UnixThreadLifecycle.tryExitThread 0 status system with
+                match UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) status system with
                 | Ok (ProcessFate.ProcessEnded ended) ->
                     match ended.Termination with
                     | ProcessTermination.Exited exitStatus ->
@@ -216,7 +221,9 @@ module TestUnixThreadLifecycle =
 
     [<Test>]
     let ``on Darwin the last thread's exit is refused`` () : unit =
-        UnixThreadLifecycle.tryExitThread 0 0 (lastThreadStanding SimulatedUnixPlatform.macOsArm64)
+        let standing = lastThreadStanding SimulatedUnixPlatform.macOsArm64
+
+        UnixThreadLifecycle.tryExitThread (Callers.thread 0 standing) 0 standing
         |> shouldEqual (Error (ThreadExitRefusal.LastThreadOnDarwin 0))
 
     [<Test>]
@@ -228,17 +235,20 @@ module TestUnixThreadLifecycle =
             let system, _ = world platform
             let system = system |> withThread 1 |> withThread 2
 
-            UnixThreadLifecycle.tryExitThread 0 0 system
+            UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) 0 system
             |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers 0))
 
             let system = system |> exitOrFail 1
 
-            UnixThreadLifecycle.tryExitThread 0 0 system
+            UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) 0 system
             |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers 0))
 
             let system = system |> exitOrFail 2
 
-            match SimulatedUnixPlatform.flavour platform, UnixThreadLifecycle.tryExitThread 0 0 system with
+            match
+                SimulatedUnixPlatform.flavour platform,
+                UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) 0 system
+            with
             | SimulatedUnixFlavour.Linux, Ok (ProcessFate.ProcessEnded _) -> ()
             | SimulatedUnixFlavour.Darwin, Error (ThreadExitRefusal.LastThreadOnDarwin 0) -> ()
             | flavour, other ->
@@ -252,8 +262,13 @@ module TestUnixThreadLifecycle =
             let system = system |> withThread 1 |> UnixWait.park 0 (flockOn queue)
             let park = UnixThreadTable.parkOf 0 (Lone.threads system) |> Option.get
 
-            UnixThreadLifecycle.tryExitThread 0 0 system
-            |> shouldEqual (Error (ThreadExitRefusal.Parked (0, park)))
+            let refused =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) 0 system |> ignore
+                )
+
+            refused.Message
+            |> shouldContainText $"UnixThreadLifecycle.exitThread: thread 0 is parked in %A{park.Syscall}"
 
     [<Test>]
     let ``exit_group ends the process with the flavour's status, parked threads included`` () : unit =
@@ -280,7 +295,7 @@ module TestUnixThreadLifecycle =
                     }
                 )
 
-            let ended = UnixThreadLifecycle.exitGroup 1 257 system
+            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 1 system) 257 system
 
             let expected =
                 match SimulatedUnixPlatform.flavour platform with
@@ -312,12 +327,18 @@ module TestUnixThreadLifecycle =
             system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
 
         let parked =
-            Assert.Throws<exn> (fun () -> UnixThreadLifecycle.exitGroup 2 0 system |> ignore<EndedProcess<int, string>>)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixThreadLifecycle.exitGroup (Callers.thread 2 system) 0 system
+                |> ignore<EndedProcess<int, string>>
+            )
 
         parked.Message |> shouldContainText "parked"
 
         let unknown =
-            Assert.Throws<exn> (fun () -> UnixThreadLifecycle.exitGroup 3 0 system |> ignore<EndedProcess<int, string>>)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixThreadLifecycle.exitGroup (Callers.thread 3 system) 0 system
+                |> ignore<EndedProcess<int, string>>
+            )
 
         unknown.Message |> shouldContainText "names no thread"
 
@@ -327,8 +348,8 @@ module TestUnixThreadLifecycle =
         let system = system |> withThread 1 |> withThread 2
 
         let exn =
-            Assert.Throws<exn> (fun () ->
-                UnixThreadLifecycle.tryExitThread 3 0 system
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixThreadLifecycle.tryExitThread (Callers.thread 3 system) 0 system
                 |> ignore<Result<ProcessFate<unit, int, string>, ThreadExitRefusal<int>>>
             )
 
@@ -497,7 +518,7 @@ module TestUnixThreadLifecycle =
                     live parent && not (Set.contains parent model.Parked) && not (live child)
                     ->
                     let after =
-                        match UnixThreadLifecycle.trySpawn parent child (CpuId 0) system with
+                        match UnixThreadLifecycle.trySpawn (Callers.thread parent system) child (CpuId 0) system with
                         | Ok (SpawnAnswer.Spawned _, after) -> after
                         | Ok (SpawnAnswer.Failed error, _) ->
                             failwith $"spawning %d{child} from %d{parent} failed with %O{error}"
@@ -553,7 +574,7 @@ module TestUnixThreadLifecycle =
 
                     match
                         UnixSignal.pthreadSigmask
-                            thread
+                            (Callers.thread thread system)
                             block
                             (Some (SignalMask.ofSignals numbering (Set.singleton signal)))
                             system
@@ -589,7 +610,9 @@ module TestUnixThreadLifecycle =
                 | Op.ExitGroup (thread, status) when live thread && not (Set.contains thread model.Parked) ->
                     // An ended process has no state to carry on with, so the run goes on
                     // from the one it ended in, as if the call had not been made.
-                    let ended = UnixThreadLifecycle.exitGroup thread status system
+                    let ended =
+                        UnixThreadLifecycle.exitGroup (Callers.thread thread system) status system
+
                     assertExited platform status system ended
                     cover LifecycleLabel.EndedByExitGroup
 
@@ -598,34 +621,41 @@ module TestUnixThreadLifecycle =
 
                     system, model
                 | Op.Exit (thread, status) when live thread ->
-                    let result = UnixThreadLifecycle.tryExitThread thread status system
+                    let result () =
+                        UnixThreadLifecycle.tryExitThread (Callers.thread thread system) status system
 
                     if Set.contains thread model.Parked then
                         let park = UnixThreadTable.parkOf thread (Lone.threads system) |> Option.get
-                        result |> shouldEqual (Error (ThreadExitRefusal.Parked (thread, park)))
+
+                        let refused =
+                            Assert.Throws<System.InvalidOperationException> (fun () -> result () |> ignore)
+
+                        refused.Message
+                        |> shouldContainText $"thread %d{thread} is parked in %A{park.Syscall}"
+
                         cover LifecycleLabel.RefusedParked
                         system, model
                     elif thread = 0 && model.Live.Count > 1 then
-                        result |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers thread))
+                        result () |> shouldEqual (Error (ThreadExitRefusal.LeaderBeforeOthers thread))
                         cover LifecycleLabel.RefusedLeaderFirst
                         system, model
                     elif model.Live.Count = 1 then
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
-                            match result with
+                            match result () with
                             | Ok (ProcessFate.ProcessEnded ended) -> assertExited platform status system ended
                             | other -> failwith $"expected the last thread's exit to end the process, got %A{other}"
 
                             cover LifecycleLabel.EndedByLastExit
                         | SimulatedUnixFlavour.Darwin ->
-                            result |> shouldEqual (Error (ThreadExitRefusal.LastThreadOnDarwin thread))
+                            result () |> shouldEqual (Error (ThreadExitRefusal.LastThreadOnDarwin thread))
                             cover LifecycleLabel.RefusedLast
 
                         // As for `ExitGroup`: the run goes on from the state before.
                         system, model
                     else
                         let after =
-                            match result with
+                            match result () with
                             | Ok (ProcessFate.Continues ((), after)) -> after
                             | Ok (ProcessFate.ProcessEnded ended) ->
                                 failwith

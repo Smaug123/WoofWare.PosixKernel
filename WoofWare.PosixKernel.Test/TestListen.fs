@@ -87,7 +87,7 @@ module TestListen =
             }
 
     let private listenOrFail (fd : int) (backlog : int) (system : UnixSystem<int, string>) =
-        match UnixSocket.tryListen fd backlog system with
+        match UnixSocket.tryListen (Callers.leader system) fd backlog system with
         | Ok result -> result
         | Error refusal -> failwith $"expected an answer, got a refusal: %s{ListenRefusal.describe refusal}"
 
@@ -352,7 +352,8 @@ module TestListen =
 
             let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system |> shouldEqual (Error refusal)
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
+            |> shouldEqual (Error refusal)
 
     [<TestCaseSource(nameof platforms)>]
     let ``a socket of an unmeasured kind is refused`` (platform : SimulatedUnixPlatform) : unit =
@@ -360,7 +361,7 @@ module TestListen =
             let fd, system =
                 withSocket (SocketId 0L) (socketWith kind None false SocketPhase.Idle) (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredKind (SocketId 0L, kind)))
 
     /// Only `Idle`, `Listening` and `Refused` have measured answers; the rest
@@ -383,7 +384,7 @@ module TestListen =
                     (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false phase)
                     (systemOn platform)
 
-            UnixSocket.tryListen fd 8 system
+            UnixSocket.tryListen (Callers.leader system) fd 8 system
             |> shouldEqual (Error (ListenRefusal.UnmeasuredPhase (SocketId 0L, phase)))
 
     /// A socket whose connect was refused answers EINVAL, whether or not the
@@ -398,7 +399,7 @@ module TestListen =
                     (socketWith SocketKind.Stream (boundAt (loopback 5000us)) false (SocketPhase.Refused error))
                     (systemOn platform)
 
-            match UnixSocket.tryListen fd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 8 system with
             | Ok (answer, after) ->
                 answer |> shouldEqual (ListenAnswer.Failed UnixError.EINVAL)
                 after |> shouldEqual system
@@ -432,7 +433,7 @@ module TestListen =
                 (socketWith SocketKind.Stream (boundAt (loopback 40000us)) false SocketPhase.Idle)
                 system
 
-        match UnixSocket.tryListen fd 8 system with
+        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
         | Ok (ListenAnswer.Listening (SocketAddress.Inet endpoint), after) ->
             endpoint.Address |> shouldEqual Ipv4Address.any
             endpoint.Port |> shouldNotEqual 40000us
@@ -506,4 +507,4 @@ module TestListen =
             | SimulatedUnixFlavour.Linux -> Ok (ListenAnswer.Failed UnixError.EADDRINUSE, system)
             | SimulatedUnixFlavour.Darwin -> Error (ListenRefusal.EphemeralPortsExhausted (40000us, 40000us))
 
-        UnixSocket.tryListen fd 8 system |> shouldEqual expected
+        UnixSocket.tryListen (Callers.leader system) fd 8 system |> shouldEqual expected

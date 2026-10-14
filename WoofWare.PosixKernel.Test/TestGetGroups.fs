@@ -61,7 +61,7 @@ module TestGetGroups =
             UnixDescriptor.effectiveGroupId (Callers.leader system) system
             |> shouldEqual (gid expected)
 
-            match UnixSystem.tryStep 0 Syscall.GetEffectiveGroupId system with
+            match UnixSystem.tryStep (Callers.thread 0 system) Syscall.GetEffectiveGroupId system with
             | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed answer), after) ->
                 answer |> shouldEqual (int64 expected)
                 after |> shouldEqual system

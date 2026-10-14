@@ -49,7 +49,7 @@ module TestKqueue =
         | None -> failwith $"fd %d{fd} names no description"
 
     let private createKqueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixKqueue.tryKqueue system with
+        match UnixKqueue.tryKqueue (Callers.leader system) system with
         | Ok (fd, system) -> fd, system
         | Error refusal -> failwith $"expected a kqueue, got %s{KqueueRefusal.describe refusal}"
 
@@ -81,7 +81,7 @@ module TestKqueue =
         (system : UnixSystem<int, string>)
         : Result<KeventOutcome * UnixSystem<int, string>, KeventRefusal>
         =
-        UnixKqueue.tryKevent thread fd 0 [] 1 UserBuffer.Mapped timeout system
+        UnixKqueue.tryKevent (Callers.thread thread system) fd 0 [] 1 UserBuffer.Mapped timeout system
 
     let private parks (thread : int) (fd : int) (timeout : KeventTimeout) (system : UnixSystem<int, string>) =
         match waits thread fd timeout system with
@@ -89,7 +89,7 @@ module TestKqueue =
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
     let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
-        match UnixKqueue.tryFinishKevent thread system with
+        match UnixKqueue.tryFinishKevent (Callers.thread thread system) system with
         | Ok (outcome, finished) ->
             UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
             outcome, finished
@@ -208,7 +208,7 @@ module TestKqueue =
 
     [<Test>]
     let ``Linux has no kqueue, so kqueue and kevent are refused`` () : unit =
-        UnixKqueue.tryKqueue linux
+        UnixKqueue.tryKqueue (Callers.leader linux) linux
         |> shouldEqual (Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux))
 
         waits 1 3 KeventTimeout.Null linux
@@ -392,7 +392,7 @@ module TestKqueue =
 
                 match
                     UnixKqueue.tryKevent
-                        1
+                        (Callers.thread 1 system)
                         (descriptor fd)
                         nchanges
                         readable
@@ -436,7 +436,7 @@ module TestKqueue =
 
                 match
                     UnixKqueue.tryKevent
-                        2
+                        (Callers.thread 2 system)
                         d
                         nchanges
                         readable
@@ -603,7 +603,15 @@ module TestKqueue =
 
         let property (nchanges : int, readable : Kevent list, nevents : int, timeout : KeventTimeout) : unit =
             let actual =
-                UnixKqueue.tryKevent 1 fd nchanges readable nevents UserBuffer.Mapped timeout system
+                UnixKqueue.tryKevent
+                    (Callers.thread 1 system)
+                    fd
+                    nchanges
+                    readable
+                    nevents
+                    UserBuffer.Mapped
+                    timeout
+                    system
 
             match oracle system nchanges readable nevents timeout, actual with
             | Error expected, actual -> actual |> shouldEqual (Error expected)
@@ -635,7 +643,7 @@ module TestKqueue =
             // Even a readable change, which a kqueue would apply or refuse, is never reached.
             let readable = if nchanges > 0 then [ someChange ] else []
 
-            UnixKqueue.tryKevent 1 fd nchanges readable nevents UserBuffer.Mapped timeout darwin
+            UnixKqueue.tryKevent (Callers.thread 1 darwin) fd nchanges readable nevents UserBuffer.Mapped timeout darwin
             |> shouldEqual (Ok (expected, darwin))
 
         // Standard input, output and error are pipe ends; 7 and -1 are not open.
@@ -683,7 +691,7 @@ module TestKqueue =
 
             let ordinalBefore = (UnixThreadTable.parkOf 1 (Lone.threads parked)).Value.Ordinal
 
-            match UnixKqueue.tryFinishKevent 1 short with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 short) short with
             | Ok (KeventOutcome.WouldBlock _, reparked) ->
                 UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
 
@@ -960,15 +968,19 @@ module TestKqueue =
 
         let both = close k parked |> after 5L
 
-        UnixKqueue.tryFinishKevent 1 both
+        UnixKqueue.tryFinishKevent (Callers.thread 1 both) both
         |> shouldEqual (Error (KeventRefusal.DrainBesideDeadline kqueue))
 
-        match UnixKqueue.tryFinishKevent 1 (signalled 1 (close k parked)) with
+        let signalledDrained = signalled 1 (close k parked)
+
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledDrained) signalledDrained with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the drain to be refused, got %A{other}"
 
-        match UnixKqueue.tryFinishKevent 1 (signalled 1 (after 5L parked)) with
+        let signalledExpired = signalled 1 (after 5L parked)
+
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledExpired) signalledExpired with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the deadline to be refused, got %A{other}"
@@ -1021,13 +1033,23 @@ module TestKqueue =
         exn.Message |> shouldContainText "is parked"
 
         let exn =
-            Assert.Throws<System.InvalidOperationException> (fun () -> UnixKqueue.tryFinishKevent 1 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixKqueue.tryFinishKevent (Callers.thread 1 system) system |> ignore
+            )
 
         exn.Message |> shouldContainText "is not parked"
 
         let exn =
             Assert.Throws<exn> (fun () ->
-                UnixKqueue.tryKevent 1 fd 1 [ someChange ; someChange ] 1 UserBuffer.Mapped KeventTimeout.Null system
+                UnixKqueue.tryKevent
+                    (Callers.thread 1 system)
+                    fd
+                    1
+                    [ someChange ; someChange ]
+                    1
+                    UserBuffer.Mapped
+                    KeventTimeout.Null
+                    system
                 |> ignore
             )
 

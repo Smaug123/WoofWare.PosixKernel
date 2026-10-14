@@ -84,7 +84,9 @@ module TestConnectPark =
 
             OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
             UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
-            UnixWait.satisfied thread asleep |> shouldEqual (Some Set.empty)
+
+            UnixWait.satisfied (Callers.thread thread asleep) asleep
+            |> shouldEqual (Some Set.empty)
 
     [<Test>]
     let ``no park's condition waits for room in an accept queue yet`` () : unit =

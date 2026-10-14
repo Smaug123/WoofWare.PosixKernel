@@ -68,15 +68,14 @@ module TestSignalReceiver =
     let private usr1 (flavour : SimulatedUnixFlavour) : int =
         Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)) Signal.SIGUSR1
 
-    let private self (system : UnixSystem<int, string>) : int32 =
-        ProcessId.toInt32 (UnixSystem.processId system)
+    let private self (system : UnixSystem<int, string>) : int32 = ProcessId.toInt32 (Lone.pid system)
 
     /// The handler frames each of the four threads takes next, in thread order:
     /// `None` for a thread that takes nothing.
     let private takenBy (system : UnixSystem<int, string>) : HandlerFrame<int, string> list option list =
         [ 0..3 ]
         |> List.map (fun thread ->
-            match UnixSignal.tryOnReturnToUser thread system with
+            match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> None
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) -> Some frames
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
@@ -90,7 +89,7 @@ module TestSignalReceiver =
         let system =
             systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) blocking
 
-        match UnixSignal.tryKill (self system) (usr1 flavour) system with
+        match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
             takenBy system
             |> List.indexed
@@ -192,7 +191,7 @@ module TestSignalReceiver =
             let system =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
 
-            match UnixSignal.tryKill (self system) (usr1 flavour) system with
+            match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 SignalState.pending (Lone.proc after).Signals
                 |> shouldEqual
@@ -213,7 +212,7 @@ module TestSignalReceiver =
         for flavour in flavours do
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0 ; 2 ])
 
-            match UnixSignal.tryKill (self system) (usr1 flavour) system with
+            match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
                 ended.Termination
                 |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
@@ -228,7 +227,7 @@ module TestSignalReceiver =
         for flavour in flavours do
             let system = systemWith flavour SignalDisposition.Ignore (Set.ofList [ 0 ; 2 ])
 
-            match flavour, UnixSignal.tryKill (self system) (usr1 flavour) system with
+            match flavour, UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | SimulatedUnixFlavour.Darwin, Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 SignalState.pending (Lone.proc after).Signals |> shouldBeEmpty
             | SimulatedUnixFlavour.Linux, Error refusal ->
@@ -247,7 +246,7 @@ module TestSignalReceiver =
             let system =
                 systemWith flavour (SignalDisposition.Catch (SignalCatch.ofHandler "h")) (Set.ofList [ 0..3 ])
 
-            match UnixSignal.tryKill (self system) (usr1 flavour) system with
+            match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 let after =
                     after
@@ -258,7 +257,7 @@ module TestSignalReceiver =
                     )
 
                 for thread in 0..3 do
-                    match UnixSignal.tryOnReturnToUser thread after with
+                    match UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
                     | Error refusal -> refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
                     | Ok answer -> failwith $"%O{flavour}: thread %d{thread} was answered %A{answer}"
             | other -> failwith $"%O{flavour}: %A{other}"
@@ -304,7 +303,9 @@ module TestSignalReceiver =
             systemWith SimulatedUnixFlavour.Linux (SignalDisposition.Catch (SignalCatch.ofHandler "h")) Set.empty
 
         let exn =
-            Assert.Throws<System.InvalidOperationException> (fun () -> UnixSignal.tryOnReturnToUser 7 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixSignal.tryOnReturnToUser (Callers.thread 7 system) system |> ignore
+            )
 
         exn.Message |> shouldContainText "not one of the process's threads"
 
@@ -322,7 +323,7 @@ module TestSignalReceiver =
         for flavour in flavours do
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0..3 ])
 
-            match UnixSignal.tryKill (self system) (usr1 flavour) system with
+            match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 let after =
                     { after with
@@ -333,7 +334,7 @@ module TestSignalReceiver =
                     }
 
                 for thread in 0..3 do
-                    match flavour, thread, UnixSignal.tryOnReturnToUser thread after with
+                    match flavour, thread, UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
                     | SimulatedUnixFlavour.Linux, 2, Ok (ProcessFate.ProcessEnded ended) ->
                         EndedProcess.termination ended
                         |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
@@ -448,12 +449,12 @@ module TestSignalReceiver =
             | _, SignalMaskChange.SetMask -> failwith "unused"
 
         let resumes (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSignal.tryOnReturnToUser thread system with
+            match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
             | other -> failwith $"%s{row.Line}: thread %d{thread} did not resume: %A{other}"
 
         let mask (thread : int) (change : SignalMaskChange) (system : UnixSystem<int, string>) =
-            match UnixSignal.pthreadSigmask thread (how change) (Some only) system with
+            match UnixSignal.pthreadSigmask (Callers.thread thread system) (how change) (Some only) system with
             | Ok (_, system) -> system
             | Error errno -> failwith $"%s{row.Line}: pthread_sigmask: %O{errno}"
 
@@ -464,7 +465,11 @@ module TestSignalReceiver =
         let booted =
             if row.Caught then
                 match
-                    UnixSignal.sigaction signo (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) booted
+                    UnixSignal.sigaction
+                        (Callers.leader booted)
+                        signo
+                        (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h")))
+                        booted
                 with
                 | Ok (_, system) -> resumes 0 system
                 | Error errno -> failwith $"%s{row.Line}: sigaction: %O{errno}"
@@ -477,15 +482,16 @@ module TestSignalReceiver =
             booted |> mask 0 SignalMaskChange.Block |> resumes 0 |> Threads.spawn 1
 
         let sent =
-            match UnixSignal.kill (ProcessId.toInt32 (UnixSystem.processId blocked)) signo blocked with
+            match UnixSignal.kill (Callers.leader blocked) (ProcessId.toInt32 (Lone.pid blocked)) signo blocked with
             | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> resumes 0 system
             | other -> failwith $"%s{row.Line}: kill: %A{other}"
 
-        (UnixSignal.sigpending 0 sent |> SignalMask.toWord, UnixSignal.sigpending 1 sent |> SignalMask.toWord)
+        (UnixSignal.sigpending (Callers.thread 0 sent) sent |> SignalMask.toWord,
+         UnixSignal.sigpending (Callers.thread 1 sent) sent |> SignalMask.toWord)
         |> shouldEqual (row.MainPending, row.SecondPending)
 
         let returned (thread : int) (system : UnixSystem<int, string>) : Result<UnblockEnd, string> =
-            match UnixSignal.tryOnReturnToUser thread system with
+            match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> Ok UnblockEnd.RanOn
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], _)) when
                 frame.Entry.Signal = row.Signal
@@ -508,7 +514,7 @@ module TestSignalReceiver =
         | "main" -> returned 0 (mask 0 SignalMaskChange.Unblock sent)
         | "second" -> returned 1 (mask 1 SignalMaskChange.Unblock sent)
         | "second-ss" ->
-            match UnixSignal.trySigsuspend 1 SignalMask.empty sent with
+            match UnixSignal.trySigsuspend (Callers.thread 1 sent) SignalMask.empty sent with
             | Ok (SigsuspendOutcome.Failed UnixError.EINTR, interrupted) -> returned 1 interrupted
             | Ok (SigsuspendOutcome.WouldBlock _, asleep) -> returned 0 asleep
             | Ok other -> failwith $"%s{row.Line}: sigsuspend answered %A{other}"
