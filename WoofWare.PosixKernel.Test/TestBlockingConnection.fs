@@ -3050,7 +3050,7 @@ module TestBlockingConnection =
 
     /// A read asleep in one process wakes for bytes another process writes,
     /// and a write asleep in one for room another's read makes, through
-    /// `SimulatedMachine.wakes`; each finishes in its own process's view.
+    /// `Machines.wakes`; each finishes in its own process's view.
     [<Test>]
     let ``transfers asleep in one process wake for another's`` () : unit =
         for platform in Machines.platforms do
@@ -3075,11 +3075,11 @@ module TestBlockingConnection =
 
             let machine = Machines.doIn a (asleepReading 1 client 4096) machine
             let asleep = Map.ofList [ a, Set.singleton 1 ]
-            SimulatedMachine.wakes asleep machine |> shouldEqual []
+            Machines.wakes asleep machine |> shouldEqual []
 
             let machine = Machines.doIn b (fun view -> wrote accepted 100 view |> snd) machine
             Machines.assertClean machine
-            SimulatedMachine.wakes asleep machine |> List.map fst |> shouldEqual [ a, 1 ]
+            Machines.wakes asleep machine |> List.map fst |> shouldEqual [ a, 1 ]
 
             let answer, machine =
                 Machines.inProcess
@@ -3098,13 +3098,13 @@ module TestBlockingConnection =
             let bytes = payload 10 600000
             let machine = Machines.doIn a (asleepWriting 2 client bytes) machine
             let asleep = Map.ofList [ a, Set.singleton 2 ]
-            SimulatedMachine.wakes asleep machine |> shouldEqual []
+            Machines.wakes asleep machine |> shouldEqual []
 
             let rec untilWoken (reads : int) (machine : SimulatedMachine<int, string>) =
                 if reads > 1000 then
                     failwith "the writer never woke"
 
-                match SimulatedMachine.wakes asleep machine with
+                match Machines.wakes asleep machine with
                 | [] -> untilWoken (reads + 1) (Machines.doIn b (fun view -> readNow accepted 4096 view |> snd) machine)
                 | woken -> woken |> List.map fst, machine
 

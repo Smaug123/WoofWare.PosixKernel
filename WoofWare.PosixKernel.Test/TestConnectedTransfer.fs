@@ -1709,7 +1709,7 @@ module TestConnectedTransfer =
             |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
-        SimulatedMachine.wakes asleep machine |> List.map fst
+        Machines.wakes asleep machine |> List.map fst
 
     /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
@@ -1850,7 +1850,7 @@ module TestConnectedTransfer =
                     |> fst
 
                 let machine =
-                    match SimulatedMachine.tryEndProcess ended machine with
+                    match Machines.tryEndProcess ended machine with
                     | Ok (_, machine) -> machine
                     | Error refusal -> failwith $"%A{refusal}"
 

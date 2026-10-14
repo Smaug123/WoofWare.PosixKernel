@@ -305,7 +305,7 @@ module TestCrossProcess =
             |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
             |> Map.ofList
 
-        SimulatedMachine.wakes asleep machine
+        Machines.wakes asleep machine
 
     /// `thread` of `pid` accepts on the blocking listener `listener`, which holds
     /// nothing, and sleeps.
@@ -678,7 +678,7 @@ module TestCrossProcess =
         : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
         =
         let ended = UnixThreadLifecycle.exitGroup 0 status (Machines.viewOf pid machine)
-        SimulatedMachine.tryEndProcess ended machine
+        Machines.tryEndProcess ended machine
 
     let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
         match exitIn pid 0 machine with
@@ -699,12 +699,11 @@ module TestCrossProcess =
             let stale = Machines.viewOf a machine
             let machine = exitedOk a machine
 
-            SimulatedMachine.processIds machine |> shouldEqual (Set.singleton b)
-            SimulatedMachine.focus a machine |> shouldEqual None
+            Machines.processIds machine |> shouldEqual (Set.singleton b)
+            Machines.focus a machine |> shouldEqual None
             Machines.assertClean machine
 
-            let error =
-                Assert.Throws<exn> (fun () -> SimulatedMachine.unfocus stale machine |> ignore)
+            let error = Assert.Throws<exn> (fun () -> Machines.unfocus stale machine |> ignore)
 
             error.Message |> shouldContainText "no process on the machine has ID"
 
@@ -720,7 +719,7 @@ module TestCrossProcess =
         let ended = UnixThreadLifecycle.exitGroup 0 0 stale
 
         let error =
-            Assert.Throws<exn> (fun () -> SimulatedMachine.tryEndProcess ended machine |> ignore)
+            Assert.Throws<exn> (fun () -> Machines.tryEndProcess ended machine |> ignore)
 
         error.Message
         |> shouldContainText "was not focused from the machine as it stands"
@@ -732,14 +731,14 @@ module TestCrossProcess =
             let view = Machines.viewOf pids.[0] machine
             let ended = UnixThreadLifecycle.exitGroup 0 3 view
 
-            match SimulatedMachine.tryEndLoneProcess ended with
+            match Machines.tryEndLoneProcess ended with
             | Ok (termination, after) ->
                 termination |> shouldEqual (EndedProcess.termination ended)
-                SimulatedMachine.processIds after |> shouldBeEmpty
+                Machines.processIds after |> shouldBeEmpty
                 Machines.assertClean after
 
                 // What `endProcess` answers on the machine the view was of.
-                match SimulatedMachine.tryEndProcess ended machine with
+                match Machines.tryEndProcess ended machine with
                 | Ok expected -> (termination, after) |> shouldEqual expected
                 | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
             | Error refusal -> failwith $"endLoneProcess: %s{ProcessEndRefusal.describe refusal}"
@@ -750,7 +749,7 @@ module TestCrossProcess =
         let ended = UnixThreadLifecycle.exitGroup 0 0 (Machines.viewOf pids.[0] machine)
 
         let error =
-            Assert.Throws<exn> (fun () -> SimulatedMachine.tryEndLoneProcess ended |> ignore)
+            Assert.Throws<exn> (fun () -> Machines.tryEndLoneProcess ended |> ignore)
 
         error.Message |> shouldContainText "SimulatedMachine.endLoneProcess"
         error.Message |> shouldContainText "is not alone on its machine"
@@ -1401,8 +1400,8 @@ module TestCrossProcess =
 
             match exitIn pids.[0] 3 machine with
             | Ok (_, machine) ->
-                SimulatedMachine.processIds machine |> shouldEqual Set.empty
-                SimulatedMachine.checkInvariants machine |> shouldEqual []
+                Machines.processIds machine |> shouldEqual Set.empty
+                Machines.checkInvariants machine |> shouldEqual []
                 OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
                 machine.Machine.Sockets |> shouldEqual Map.empty
                 machine.Machine.Connections |> shouldEqual Map.empty
@@ -1453,13 +1452,13 @@ module TestCrossProcess =
                 )
                 machine
 
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
         // a's accepter parks first, then b's, on the one listener; then a
         // connection is queued.
         let machine = machine |> sleepInAccept a 1 listener |> sleepInAccept b 1 shared
         let _, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
-        SimulatedMachine.checkInvariants machine |> shouldEqual []
+        Machines.checkInvariants machine |> shouldEqual []
 
         woken [ a, 1 ; b, 1 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
 
@@ -1581,7 +1580,7 @@ module TestCrossProcess =
             | Ok (WriteStep.ProcessEnded ended) -> ended
             | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
-        match SimulatedMachine.tryEndProcess ended machine with
+        match Machines.tryEndProcess ended machine with
         | Ok (_, machine) ->
             Machines.assertClean machine
             machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
