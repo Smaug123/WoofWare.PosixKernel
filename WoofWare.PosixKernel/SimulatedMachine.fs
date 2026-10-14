@@ -567,6 +567,7 @@ module SimulatedMachine =
     /// what the call did, and the machine after it. `None` if no process on the
     /// machine has that ID.
     /// </summary>
+    /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall, as `UnixSystem.step` says.</exception>
     /// <exception cref="T:System.PlatformNotSupportedException">The machine's flavour has no such call, as `UnixSystem.step` says.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (processId : ProcessId)

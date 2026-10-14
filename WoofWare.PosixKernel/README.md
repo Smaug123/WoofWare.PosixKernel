@@ -570,6 +570,7 @@ A client that holds every argument already, such as a replayer, makes the call t
 
 `UnixSystem.step (thread : 'Thread) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
 Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
+Whatever the call, `getpid` included, `thread` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise.
 Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
 
 ### Checking the tables
