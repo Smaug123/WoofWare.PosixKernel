@@ -94,7 +94,7 @@ module TestImplicitSelfConnectMeasured =
                 | Ok (BindAnswer.Bound _, system) -> system
                 | other -> failwith $"binding the listener: %A{other}"
 
-            match UnixSocket.tryListen fd 64 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 64 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -133,7 +133,7 @@ module TestImplicitSelfConnectMeasured =
             else
                 UnixSocket.tryGetsockname
 
-        match call fd UserBuffer.Mapped 16u system with
+        match call (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
@@ -246,7 +246,7 @@ module TestImplicitSelfConnectMeasured =
             | Row @"^([DN]4) listen -> ([A-Z]+)$" [ row ; measured ] ->
                 let replay = rows.[row]
 
-                match UnixSocket.tryListen replay.Fd 8 replay.System with
+                match UnixSocket.tryListen (Callers.leader replay.System) replay.Fd 8 replay.System with
                 | Ok (ListenAnswer.Listening _, system) ->
                     check row "listen" measured "OK"
 

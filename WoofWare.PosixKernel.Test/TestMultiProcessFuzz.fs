@@ -865,7 +865,7 @@ module TestMultiProcessFuzz =
             | Error _ -> Made.Refused
 
         let poll (entries : PollEntry list) (milliseconds : int) : Made =
-            match UnixPoll.tryPoll thread entries milliseconds view with
+            match UnixPoll.tryPoll (Caller.make pid thread) entries milliseconds view with
             | Ok (PollOutcome.WouldBlock _, after) ->
                 match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Darwin -> cover FuzzLabel.DarwinPollPark
@@ -884,7 +884,7 @@ module TestMultiProcessFuzz =
 
             let writer = peerOwner socketId machine
 
-            match UnixReadWrite.tryRead thread fd UserBuffer.Mapped (uint64 size) view with
+            match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped (uint64 size) view with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 if not bytes.IsEmpty && writer.IsSome && writer <> Some pid then
                     cover FuzzLabel.CrossRead
@@ -908,7 +908,7 @@ module TestMultiProcessFuzz =
         let send (fd : int) (size : int) : Made =
             let bytes = ImmutableArray.Create<byte> (Array.init size byte)
 
-            match WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped bytes view with
+            match WriteOutcomes.admitThenWriteAs (Caller.make pid thread) fd UserBuffer.Mapped bytes view with
             | Ok (WriteStep.Returns (WriteAnswer.Completed written, after)) ->
                 if written < int64 size then
                     cover FuzzLabel.ShortWrite
@@ -933,7 +933,7 @@ module TestMultiProcessFuzz =
             match fd with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixReadWrite.tryRead thread fd UserBuffer.Mapped 4096UL view with
+                match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
                 | Ok (ReadOutcome.WouldBlock _, after) ->
                     cover FuzzLabel.InotifyReadPark
                     Made.Sleeps after
@@ -960,7 +960,7 @@ module TestMultiProcessFuzz =
                 |> List.map (fun entry -> entry.Signal)
                 |> Set.ofList
 
-            match UnixSignal.tryOnReturnToUser thread after with
+            match UnixSignal.tryOnReturnToUser (Caller.make pid thread) after with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) ->
                 due |> shouldEqual Set.empty
                 Made.Answered after
@@ -994,7 +994,7 @@ module TestMultiProcessFuzz =
             let set =
                 SignalMask.ofSignals (UnixSystemState.signalNumbering view) (Set.singleton signal)
 
-            match UnixSignal.pthreadSigmask thread how (Some set) view with
+            match UnixSignal.pthreadSigmask (Caller.make pid thread) how (Some set) view with
             | Ok (_, after) -> returnToUser after
             | Error errno -> failwith $"pthread_sigmask of %O{signal} failed with %O{errno}"
 
@@ -1007,7 +1007,8 @@ module TestMultiProcessFuzz =
                 let port = ports.[port % ports.Length]
 
                 match
-                    CopyIn.bind
+                    CopyIn.bindAs
+                        (Caller.make pid thread)
                         fd
                         UserBuffer.Mapped
                         16u
@@ -1024,7 +1025,7 @@ module TestMultiProcessFuzz =
         | Op.Listen fd ->
             match pick fd (socketsWhere pid boundIdle view) with
             | None -> Made.Answered view
-            | Some fd -> UnixSocket.tryListen fd 8 view |> answered
+            | Some fd -> UnixSocket.tryListen (Caller.make pid thread) fd 8 view |> answered
         | Op.Connect (fd, port) ->
             match pick fd (socketsWhere pid idle view) with
             | None -> Made.Answered view
@@ -1036,7 +1037,7 @@ module TestMultiProcessFuzz =
                 // sleeps: no connect sleeps yet.
                 match
                     CopyIn.connectAs
-                        thread
+                        (Caller.make pid thread)
                         fd
                         UserBuffer.Mapped
                         16u
@@ -1056,7 +1057,7 @@ module TestMultiProcessFuzz =
             match pick fd (socketsWhere pid listening view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixConnection.tryAccept thread fd UserBuffer.Mapped 16u view with
+                match UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped 16u view with
                 | Ok (AcceptOutcome.Accepted _, after) ->
                     cover FuzzLabel.Accept
                     Made.Answered after
@@ -1111,7 +1112,7 @@ module TestMultiProcessFuzz =
             match pick fd (ofKind pid (isPipeEnd PipeEnd.Read) view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixReadWrite.tryRead thread fd UserBuffer.Mapped 4096UL view with
+                match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
                 | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
@@ -1119,8 +1120,8 @@ module TestMultiProcessFuzz =
             match pick fd (ofKind pid (isPipeEnd PipeEnd.Write) view) with
             | None -> Made.Answered view
             | Some fd ->
-                WriteOutcomes.admitThenWrite
-                    thread
+                WriteOutcomes.admitThenWriteAs
+                    (Caller.make pid thread)
                     fd
                     UserBuffer.Mapped
                     (ImmutableArray.Create<byte> (Array.zeroCreate<byte> size))
@@ -1186,7 +1187,7 @@ module TestMultiProcessFuzz =
             UnixPathResolution.tryChdir (Caller.make pid thread) (PathArg.ofText standing.[dir % standing.Length]) view
             |> answered
         | Op.EpollCreate ->
-            match UnixPoll.tryEpollCreate1 0 view with
+            match UnixPoll.tryEpollCreate1 (Caller.make pid thread) 0 view with
             | Ok (Ok (_, after)) -> Made.Answered after
             | Ok (Error _) -> Made.Answered view
             | Error _ -> Made.Refused
@@ -1195,6 +1196,7 @@ module TestMultiProcessFuzz =
             | Some epoll, Some fd ->
                 match
                     UnixPoll.tryEpollCtl
+                        (Caller.make pid thread)
                         epoll
                         1
                         fd
@@ -1217,11 +1219,11 @@ module TestMultiProcessFuzz =
             match pick epoll (ofKind pid isEpoll view) with
             | None -> Made.Answered view
             | Some epoll ->
-                match UnixPoll.tryEpollWait thread epoll 8 UserBuffer.Mapped milliseconds view with
+                match UnixPoll.tryEpollWait (Caller.make pid thread) epoll 8 UserBuffer.Mapped milliseconds view with
                 | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
-        | Op.Kqueue -> Made.Answered (KeventWorld.kqueue view |> snd)
+        | Op.Kqueue -> Made.Answered (KeventWorld.kqueueAs (Caller.make pid thread) view |> snd)
         | Op.KeventAdd (kqueue, fd, write) ->
             match pick kqueue (ofKind pid isKqueue view), pick fd sockets with
             | Some kqueue, Some fd ->
@@ -1229,7 +1231,7 @@ module TestMultiProcessFuzz =
 
                 match
                     UnixKqueue.tryKevent
-                        thread
+                        (Caller.make pid thread)
                         kqueue
                         1
                         [ KeventWorld.change fd filter (KeventFlags.Add ||| KeventFlags.Clear) 0UL ]
@@ -1255,7 +1257,7 @@ module TestMultiProcessFuzz =
                     else
                         KeventTimeout.Readable (0L, int64 milliseconds * 1_000_000L)
 
-                match UnixKqueue.tryKevent thread kqueue 0 [] 8 UserBuffer.Mapped timeout view with
+                match UnixKqueue.tryKevent (Caller.make pid thread) kqueue 0 [] 8 UserBuffer.Mapped timeout view with
                 | Ok (KeventOutcome.WouldBlock _, after) ->
                     cover FuzzLabel.KeventPark
                     Made.Sleeps after
@@ -1299,7 +1301,7 @@ module TestMultiProcessFuzz =
             | Made.Answered blocked ->
                 let signo = Signal.toRawSignoUnder (UnixSystemState.signalNumbering blocked) signal
 
-                match UnixSignal.tryPthreadKill thread signo blocked with
+                match UnixSignal.tryPthreadKill (Caller.make pid thread) thread signo blocked with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, raised))) -> returnToUser raised
                 | other -> failwith $"pthread_kill of a blocked %O{signal} answered %A{other}"
             | made -> made
@@ -1356,7 +1358,7 @@ module TestMultiProcessFuzz =
             | Error _ -> Made.Refused
             | Ok (_, view) ->
 
-            match UnixReadWrite.tryRead thread fd UserBuffer.Mapped 4096UL view with
+            match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
             | Ok (ReadOutcome.WouldBlock _, after) ->
                 cover FuzzLabel.InotifyReadPark
                 Made.Sleeps after
@@ -1378,7 +1380,7 @@ module TestMultiProcessFuzz =
         | Op.Unlink path ->
             UnixNamespace.tryUnlink (Caller.make pid thread) (PathArg.ofText files.[path % files.Length]) view
             |> answered
-        | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup thread status view)
+        | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup (Caller.make pid thread) status view)
 
     /// The call `thread` of the view `view` is asleep in, finished.
     let private finish
@@ -1390,23 +1392,23 @@ module TestMultiProcessFuzz =
         =
         match UnixThreadTable.parkedFor thread (Proc.threads pid view) with
         | Some (ParkedSyscall.Accept _) ->
-            match UnixConnection.tryFinishAccept thread view with
+            match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.EpollWait _) ->
-            match UnixPoll.tryFinishEpollWait thread view with
+            match UnixPoll.tryFinishEpollWait (Caller.make pid thread) view with
             | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Kevent _) ->
-            match UnixKqueue.tryFinishKevent thread view with
+            match UnixKqueue.tryFinishKevent (Caller.make pid thread) view with
             | Ok (KeventOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Poll _)
         | Some (ParkedSyscall.KqueuePoll _) ->
-            match UnixPoll.tryFinishPoll thread view with
+            match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
             | Ok (PollOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1416,12 +1418,12 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.PipeRead _) ->
-            match UnixReadWrite.tryFinishRead thread view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.InotifyRead _) ->
-            match UnixReadWrite.tryFinishRead thread view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), after) ->
                 cover FuzzLabel.InotifyReadFinish
@@ -1429,7 +1431,7 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.ConnectionRead _) ->
-            match UnixReadWrite.tryFinishRead thread view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) ->
                 cover FuzzLabel.ConnectionFinish
@@ -1442,21 +1444,14 @@ module TestMultiProcessFuzz =
                 | Some (ParkedSyscall.ConnectionWrite _) -> true
                 | _ -> false
 
+            // Through `finishWrite`'s public protocol, held to the steps it is
+            // made of.
             let made =
-                match UnixReadWrite.tryAdmitFinishWrite thread view with
-                | Error _ -> Made.Refused
-                | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
-                    UnixReadWrite.tryApplyResumedWrite
-                        thread
-                        into
-                        (ImmutableArray.Create<byte> (Array.init count (fun i -> byte (offset + i))))
-                        admitted
-                    |> ofWrite
-                | Ok (WriteStep.Returns (WriteResumption.Answered _, after))
-                | Ok (WriteStep.ReturnsRaising (_, _, after))
-                | Ok (WriteStep.Restarts after) -> Made.Answered after
-                | Ok (WriteStep.WouldBlock (_, after)) -> Made.Sleeps after
-                | Ok (WriteStep.ProcessEnded ended) -> Made.Ended ended
+                WriteOutcomes.finishWriteAs
+                    (Caller.make pid thread)
+                    (fun offset count -> ImmutableArray.Create<byte> (Array.init count (fun i -> byte (offset + i))))
+                    view
+                |> ofWrite
 
             match made with
             | Made.Answered _ when connection -> cover FuzzLabel.ConnectionFinish
@@ -1464,7 +1459,7 @@ module TestMultiProcessFuzz =
 
             made
         | Some ParkedSyscall.SigSuspend ->
-            match UnixSignal.tryFinishSigsuspend thread view with
+            match UnixSignal.tryFinishSigsuspend (Caller.make pid thread) view with
             | Ok (SigsuspendOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1520,7 +1515,7 @@ module TestMultiProcessFuzz =
             let view = Machines.focus pid machine |> Option.get
             UnixSystem.checkInvariants view |> Expect.empty where
 
-            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors view)
+            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors pid view)
             |> Expect.empty where
 
             VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem
@@ -1637,7 +1632,7 @@ module TestMultiProcessFuzz =
             let before = world.Machine
 
             let machine =
-                Machines.doIn pid (UnixScheduling.dispatch thread (CpuId cpu)) world.Machine
+                Machines.doIn pid (UnixScheduling.dispatch (Caller.make pid thread) (CpuId cpu)) world.Machine
 
             othersUnmoved pid before machine
 
@@ -1773,18 +1768,19 @@ module TestMultiProcessFuzz =
     /// The process's listener at `port`, the flavour's event queue watching
     /// it, and `/f0` open.
     let private prepare (pid : ProcessId) (port : uint16) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let listener, view = KeventWorld.listenerAt port view
+        let listener, view = KeventWorld.listenerAtIn pid port view
 
         let view =
             match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Linux ->
                 let epoll, view =
-                    match UnixPoll.tryEpollCreate1 0 view with
+                    match UnixPoll.tryEpollCreate1 (Caller.make pid (Proc.leader pid view)) 0 view with
                     | Ok (Ok created) -> created
                     | other -> failwith $"epoll_create1: %A{other}"
 
                 match
                     UnixPoll.tryEpollCtl
+                        (Caller.make pid (Proc.leader pid view))
                         epoll
                         1
                         listener
@@ -1794,11 +1790,11 @@ module TestMultiProcessFuzz =
                 | Ok (EpollCtlAnswer.Changed, view) -> view
                 | other -> failwith $"epoll_ctl: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
-                let kq, view = KeventWorld.kqueue view
+                let kq, view = KeventWorld.kqueueIn pid view
 
                 match
                     UnixKqueue.tryKevent
-                        0
+                        (Caller.make pid 0)
                         kq
                         1
                         [
@@ -2000,7 +1996,7 @@ module TestMultiProcessFuzz =
                         pids.[next]
                         (fun view ->
                             let listener = socketsWhere pids.[next] listening view |> List.head
-                            let accepted, view = KeventWorld.accept listener view
+                            let accepted, view = KeventWorld.acceptIn pids.[next] listener view
                             let server = pids.[next]
 
                             UnixDescriptor.setNonBlocking

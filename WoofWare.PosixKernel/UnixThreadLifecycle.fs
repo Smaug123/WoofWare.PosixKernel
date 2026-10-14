@@ -15,8 +15,6 @@ type KillOutcome =
 /// syscall cannot fail.
 [<RequireQualifiedAccess>]
 type internal ThreadExitRefusal<'Thread> =
-    /// The thread is blocked in a syscall, so it cannot be making another one.
-    | Parked of thread : 'Thread * park : ThreadPark
     /// The thread is the process's leader, and other threads live. On both flavours
     /// the process carries on, with a leader that has gone (a zombie thread on
     /// Linux); this library keeps the leader until the process ends.
@@ -31,8 +29,6 @@ module internal ThreadExitRefusal =
     /// A human-readable account of why the exit was refused.
     let describe<'Thread> (refusal : ThreadExitRefusal<'Thread>) : string =
         match refusal with
-        | ThreadExitRefusal.Parked (thread, park) ->
-            $"thread %O{thread} is parked in %A{park.Syscall}, so it cannot be making the thread-exit syscall; whatever ended the thread skipped finishing or abandoning its park"
         | ThreadExitRefusal.LeaderBeforeOthers thread ->
             $"thread %O{thread} is the process's leader, and other threads are still running; this library does not model a process whose leader has exited before them"
         | ThreadExitRefusal.LastThreadOnDarwin thread ->
@@ -41,7 +37,6 @@ module internal ThreadExitRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ThreadExitRefusal<'Thread>) : RefusalKind =
         match refusal with
-        | ThreadExitRefusal.Parked _ -> RefusalKind.Misuse
         | ThreadExitRefusal.LeaderBeforeOthers _ -> RefusalKind.Unmodelled
         | ThreadExitRefusal.LastThreadOnDarwin _ -> RefusalKind.Unmodelled
 
@@ -147,19 +142,13 @@ module UnixThreadLifecycle =
             EndedIn = system
         }
 
-    /// `exitThread`, with a refusal answered as the `Error` rather than raised.
-    let internal tryExitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryExitThread` once `Entry` has admitted its caller.
+    let private tryExitThreadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
-        let state = UnixThreadTable.get thread system.Threads
-
-        match state.Parked with
-        | Some park -> Error (ThreadExitRefusal.Parked (thread, park))
-        | None ->
-
         // Measured on Linux 6.18.5 and Darwin 27.0.0 by
         // `docs/plans/2026-08-23-posix-kernel-extraction/leader-exits-first.c`: the
         // process carries on without its leader, which Linux keeps as a zombie
@@ -183,6 +172,21 @@ module UnixThreadLifecycle =
 
         Ok (ProcessFate.Continues ((), leave thread system))
 
+    /// `exitThread`, with a refusal answered as the `Error` rather than raised.
+    let internal tryExitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (status : int32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
+        =
+        Entry.call
+            "UnixThreadLifecycle.exitThread"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.fate)
+            (tryExitThreadIn (Caller.thread caller) status)
+            system
+
     /// <summary>
     /// The thread-exit syscall: `thread` ends. This is `SYS_exit` on Linux, which is
     /// what `pthread_exit` and a thread's return from its start routine end in; it
@@ -203,28 +207,22 @@ module UnixThreadLifecycle =
     /// </summary>
     /// <exception cref="T:System.InvalidOperationException">The thread is blocked in a syscall, so it cannot be making another one.</exception>
     let exitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : ProcessFate<unit, 'Thread, 'Handler>
         =
-        tryExitThread thread status system
+        tryExitThread caller status system
         |> Refusal.orRaise "UnixThreadLifecycle.exitThread" ThreadExitRefusal.kind ThreadExitRefusal.describe
 
-    /// `spawn`, with a refusal answered as the `Error` rather than raised.
-    let internal trySpawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `trySpawn` once `Entry` has admitted its caller.
+    let private trySpawnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (parent : 'Thread)
         (child : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
-        match (UnixThreadTable.get parent system.Threads).Parked with
-        | Some park ->
-            failwith
-                $"UnixThreadLifecycle.spawn: thread %O{parent} is parked in %A{park.Syscall}, so it cannot be making the clone syscall"
-        | None ->
-
         if Map.containsKey child system.Threads then
             failwith
                 $"UnixThreadLifecycle.spawn: %O{child} already names a thread. A thread is created once, and creating it again would silently discard whatever the first creation recorded (this is a bug in the client)."
@@ -258,12 +256,28 @@ module UnixThreadLifecycle =
             }
         )
 
-    /// `clone(2)` with `CLONE_THREAD`, made by `parent`: a new thread in the process,
+    /// `spawn`, with a refusal answered as the `Error` rather than raised.
+    let internal trySpawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (child : 'Thread)
+        (cpu : CpuId)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
+        =
+        Entry.call
+            "UnixThreadLifecycle.spawn"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (trySpawnIn (Caller.thread caller) child cpu)
+            system
+
+    /// `clone(2)` with `CLONE_THREAD`, made by `caller`: a new thread in the process,
     /// the thread `child`, running on the logical processor `cpu`. This is what
     /// `pthread_create(3)` ends in.
     ///
     /// Answers the thread ID the machine's allocator hands the new thread, one no
-    /// live thread on the machine holds, which starts with a copy of `parent`'s
+    /// live thread on the machine holds, which starts with a copy of the caller's
     /// signal mask and with no signal pending on it alone. On Linux, answers
     /// EAGAIN instead once every thread ID from 300 up to the machine's
     /// `pid_max` is in use, leaving the system as it was.
@@ -271,39 +285,47 @@ module UnixThreadLifecycle =
     /// Refuses a spawn on Darwin once the machine's thread ID counter has
     /// reached the top of its range, which has not been measured.
     ///
-    /// Fails loudly if `parent` names no thread or is parked in a syscall, if
+    /// Fails loudly if `caller` names no thread or is parked in a syscall, if
     /// `child` already names a thread, or if `cpu` is not one of the machine's
     /// processors (`UnixSystem.processorCount`): each is a bug in the client.
     let spawn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (parent : 'Thread)
+        (caller : Caller<'Thread>)
         (child : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
         : SpawnAnswer * UnixSystem<'Thread, 'Handler>
         =
-        trySpawn parent child cpu system
+        trySpawn caller child cpu system
         |> Refusal.orRaise "UnixThreadLifecycle.spawn" SpawnRefusal.kind SpawnRefusal.describe
 
-    /// `exit_group(2)`, made by `thread`: every thread ends at once, parked ones
-    /// included, and the process exits with `status`. This is what `exit(3)` and
-    /// `_exit(2)` end in; Darwin's `_exit(2)` is the same call under another name.
-    ///
-    /// Fails loudly if `thread` names no thread, or is parked in a syscall: a thread
-    /// blocked in one is not making another, so either is a bug in the client.
-    let exitGroup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    /// `exitGroup` once `Entry` has admitted its caller.
+    let private exitGroupIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (status : int32)
         (system : UnixSystem<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
-        match (UnixThreadTable.get thread system.Threads).Parked with
-        | Some park ->
-            failwith
-                $"UnixThreadLifecycle.exitGroup: thread %O{thread} is parked in %A{park.Syscall}, so it cannot be making the exit_group syscall"
-        | None ->
-
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         endProcess (ProcessTermination.Exited (ExitStatus.ofExitArgument flavour status)) system
+
+    /// `exit_group(2)`, made by `caller`: every thread ends at once, parked ones
+    /// included, and the process exits with `status`. This is what `exit(3)` and
+    /// `_exit(2)` end in; Darwin's `_exit(2)` is the same call under another name.
+    ///
+    /// Fails loudly if `caller` names no thread, or is parked in a syscall: a thread
+    /// blocked in one is not making another, so either is a bug in the client.
+    let exitGroup<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (status : int32)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : EndedProcess<'Thread, 'Handler>
+        =
+        Entry.call
+            "UnixThreadLifecycle.exitGroup"
+            CallerRequirement.Running
+            caller
+            Shape.ended
+            (exitGroupIn status)
+            system
 
 /// A signal the kernel generates for a process, as `kill(2)`, `pthread_kill(3)`
 /// and a write that raises `SIGPIPE` do, and what it does to the process at once.

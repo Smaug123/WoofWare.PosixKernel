@@ -95,7 +95,7 @@ module TestRefusedConnectPortMeasured =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen fd 128 system with
+            match UnixSocket.tryListen (Callers.leader system) fd 128 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -158,7 +158,7 @@ module TestRefusedConnectPortMeasured =
         | Error refusal -> failwith $"SO_ERROR refused: %s{SocketOptionRefusal.describe refusal}"
 
     let private nameOf (fd : int) (system : UnixSystem<int, string>) : Ipv4Endpoint =
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 16u system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 16u system with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
             match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
             | Some endpoint -> endpoint
@@ -255,7 +255,7 @@ module TestRefusedConnectPortMeasured =
                         check "bind 127.0.0.1:0" measured (errorName error)
                         system
                     | "3", Matching @"^listen=(\S+)$" [ measured ] ->
-                        match UnixSocket.tryListen fd 8 system with
+                        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
                         | Ok (ListenAnswer.Listening _, system) ->
                             check "listen" measured "OK"
                             system

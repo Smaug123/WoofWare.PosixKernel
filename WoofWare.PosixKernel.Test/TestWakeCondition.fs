@@ -89,7 +89,7 @@ module TestWakeCondition =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listenerFd 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listenerFd 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 

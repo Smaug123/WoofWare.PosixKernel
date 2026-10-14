@@ -110,9 +110,7 @@ module TestLaunchedStreams =
 
     let private deliveredLog (system : UnixSystem<int, string>) : (Stream * byte list) list =
         DeliveryLog.toList system.Machine.Delivered
-        |> List.map (fun delivery ->
-            streamOf (UnixSystem.processId system) delivery.Endpoint, List.ofSeq delivery.Bytes
-        )
+        |> List.map (fun delivery -> streamOf (Lone.pid system) delivery.Endpoint, List.ofSeq delivery.Bytes)
 
     /// One write as a client issues it: admitted, and then given the bytes the
     /// admission asked for. A pipe the process made can lose its reader, and a
@@ -304,7 +302,7 @@ module TestLaunchedStreams =
             | Ok (WriteAnswer.Failed error, after) -> Some (Answer.WriteFailed error, after)
             | Error _ -> None
         | Op.Read (fd, count) ->
-            match UnixReadWrite.tryRead (Lone.leader system) fd UserBuffer.Mapped (uint64 count) system with
+            match UnixReadWrite.tryRead (Callers.leader system) fd UserBuffer.Mapped (uint64 count) system with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 Some (Answer.ReadBytes bytes.Length, after)
             | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Some (Answer.ReadFailed error, after)
@@ -434,7 +432,7 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
@@ -446,6 +444,7 @@ module TestLaunchedStreams =
         let system =
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     1
@@ -489,14 +488,16 @@ module TestLaunchedStreams =
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.Out ||| EpollEvents.EdgeTriggered
 
         for fd in [ 0 ; 1 ; 2 ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Changed, _) -> ()
             | other -> failwith $"fd %d{fd}: %A{other}"
 
@@ -505,7 +506,9 @@ module TestLaunchedStreams =
             | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
             | other -> failwith $"%A{other}"
 
-        match UnixPoll.tryEpollCtl epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system with
+        match
+            UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 readFd (EpollEventArgument.Readable (edge, 0UL)) system
+        with
         | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual readFd
         | other -> failwith $"%A{other}"
 

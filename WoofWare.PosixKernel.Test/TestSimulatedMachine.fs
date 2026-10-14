@@ -101,7 +101,7 @@ module TestSimulatedMachine =
             match pick fd (openFds system) with
             | None -> system
             | Some fd ->
-                match UnixConnection.tryAccept 0 fd UserBuffer.Mapped 16u system with
+                match UnixConnection.tryAccept (Callers.thread 0 system) fd UserBuffer.Mapped 16u system with
                 | Ok (_, system) -> system
                 // Outside what the kernel models, so the step changes nothing.
                 | Error _ -> system
@@ -150,7 +150,7 @@ module TestSimulatedMachine =
             then
                 cover HeldLabel.DuplicatedDescriptor
 
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let machine = SimulatedMachine.ofSystem system
 
             SimulatedMachine.processIds machine |> shouldEqual (Set.singleton pid)
@@ -186,15 +186,15 @@ module TestSimulatedMachine =
     let ``step makes the call in the process's view and writes the view back`` () : unit =
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let machine = SimulatedMachine.ofSystem system
 
             let expected =
-                match UnixSystem.tryStep 0 (Syscall.Dup 1) system with
+                match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.Dup 1) system with
                 | Ok (outcome, view) -> outcome, view
                 | Error refusal -> failwith $"dup: %A{refusal}"
 
-            match SimulatedMachine.tryStep pid 0 (Syscall.Dup 1) machine with
+            match SimulatedMachine.tryStep (Caller.make pid 0) (Syscall.Dup 1) machine with
             | Some (Ok outcome, after) ->
                 outcome |> shouldEqual (fst expected)
 
@@ -204,37 +204,42 @@ module TestSimulatedMachine =
             | other -> failwith $"step: %A{other}"
 
             let other = ProcessId.parseOrFail "test" 7
-            SimulatedMachine.tryStep other 0 (Syscall.Dup 1) machine |> shouldEqual None
+
+            SimulatedMachine.tryStep (Caller.make other 0) (Syscall.Dup 1) machine
+            |> shouldEqual None
 
     [<Test>]
     let ``a refused step leaves the machine itself, so a view focused before it can still be written back`` () : unit =
         // Linux refuses clonefile, which is Darwin's.
         let system = world SimulatedUnixPlatform.linuxX64
-        let pid = UnixSystem.processId system
+        let pid = Lone.pid system
         let machine = SimulatedMachine.ofSystem system
         let pending = SimulatedMachine.focus pid machine |> Option.get
 
         let call = Syscall.CloneFile (PathArg.ofText "/a", PathArg.ofText "/b", 0)
 
-        match SimulatedMachine.tryStep pid 0 call machine with
+        match SimulatedMachine.tryStep (Caller.make pid 0) call machine with
         | Some (Error _, after) ->
             obj.ReferenceEquals (after, machine) |> shouldEqual true
             SimulatedMachine.unfocus pending after |> shouldEqual machine
         | other -> failwith $"expected a refusal, got %A{other}"
 
     [<Test>]
-    let ``step by a name that is no thread of the process throws, and leaves the machine itself`` () : unit =
+    let ``step by a name that is no thread of the process throws`` () : unit =
         for platform in platforms do
             let machine = SimulatedMachine.ofSystem (world platform)
             let pid = machine |> SimulatedMachine.processIds |> Set.minElement
 
-            match SimulatedMachine.tryStep pid 99 Syscall.GetProcessId machine with
-            | Some (Error _, after) -> obj.ReferenceEquals (after, machine) |> shouldEqual true
-            | other -> failwith $"expected a refusal, got %A{other}"
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                SimulatedMachine.tryStep (Caller.make pid 99) Syscall.GetProcessId machine
+                |> ignore
+            )
+            |> ignore
 
             let error =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
-                    SimulatedMachine.step pid 99 Syscall.GetProcessId machine |> ignore
+                    SimulatedMachine.step (Caller.make pid 99) Syscall.GetProcessId machine
+                    |> ignore
                 )
 
             error.Message
@@ -244,7 +249,7 @@ module TestSimulatedMachine =
     let ``unfocus refuses a view once another has been written back`` () : unit =
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let machine = SimulatedMachine.ofSystem system
 
             let first = SimulatedMachine.focus pid machine |> Option.get
@@ -266,13 +271,13 @@ module TestSimulatedMachine =
         // apart.
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let machine = SimulatedMachine.ofSystem system
 
             let first = SimulatedMachine.focus pid machine |> Option.get
             let second = SimulatedMachine.focus pid machine |> Option.get
 
-            let _, first = UnixSystem.umask 0o077 first
+            let _, first = UnixSystem.umask (Callers.leader first) 0o077 first
             let machine = SimulatedMachine.unfocus first machine
 
             obj.ReferenceEquals (machine.Machine, second.Machine) |> shouldEqual true
@@ -290,7 +295,7 @@ module TestSimulatedMachine =
         // done since.
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let root = SimulatedMachine.ofSystem system
 
             let branch (fd : int) =
@@ -313,12 +318,12 @@ module TestSimulatedMachine =
     let ``a machine made of a view accepts that view unchanged`` () : unit =
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
 
             let view =
                 SimulatedMachine.focus pid (SimulatedMachine.ofSystem system) |> Option.get
 
-            let _, view = UnixSystem.umask 0o077 view
+            let _, view = UnixSystem.umask (Callers.leader view) 0o077 view
 
             let remade = SimulatedMachine.ofSystem view
             SimulatedMachine.unfocus view remade |> shouldEqual remade
@@ -360,7 +365,7 @@ module TestSimulatedMachine =
     let ``a process held under a second ID as well is reported by every clause it breaks`` () : unit =
         for platform in platforms do
             let system = world platform
-            let pid = UnixSystem.processId system
+            let pid = Lone.pid system
             let other = ProcessId.parseOrFail "test" 77
             let machine = SimulatedMachine.ofSystem system
 
@@ -412,7 +417,7 @@ module TestSimulatedMachine =
         let listener, system = KeventWorld.listenerAt 8080us KeventWorld.darwin
         let kqueue, system = KeventWorld.kqueue system
         let id = KeventWorld.idOf kqueue system
-        let pid = UnixSystem.processId system
+        let pid = Lone.pid system
         let gone = ProcessId.parseOrFail "test" 9
 
         // Registered through a descriptor that is not open in any table.

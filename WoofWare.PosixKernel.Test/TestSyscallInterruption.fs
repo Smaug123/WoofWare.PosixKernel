@@ -124,7 +124,7 @@ module TestSyscallInterruption =
             | other -> failwith $"binding the listener: %A{other}"
 
         let system =
-            match UnixSocket.tryListen listener 8 system with
+            match UnixSocket.tryListen (Callers.leader system) listener 8 system with
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"listening: %A{other}"
 
@@ -134,12 +134,13 @@ module TestSyscallInterruption =
             | SimulatedUnixFlavour.Linux ->
 
             let epoll, system =
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok (fd, system)) -> fd, system
                 | other -> failwith $"expected an epoll instance, got %A{other}"
 
             match
                 UnixPoll.tryEpollCtl
+                    (Callers.leader system)
                     epoll
                     1
                     listener
@@ -229,7 +230,12 @@ module TestSyscallInterruption =
         | Sleep.Accept ->
             parked
                 "the accept"
-                (UnixConnection.tryAccept thread world.Listener UserBuffer.Mapped 16u world.System)
+                (UnixConnection.tryAccept
+                    (Callers.thread thread world.System)
+                    world.Listener
+                    UserBuffer.Mapped
+                    16u
+                    world.System)
                 (function
                 | AcceptOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -238,7 +244,7 @@ module TestSyscallInterruption =
             parked
                 "the poll"
                 (UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread world.System)
                     [
                         {
                             Fd = world.Listener
@@ -255,7 +261,7 @@ module TestSyscallInterruption =
             parked
                 "the poll of nothing"
                 (UnixPoll.tryPoll
-                    thread
+                    (Callers.thread thread world.System)
                     [
                         {
                             Fd = -1
@@ -271,7 +277,13 @@ module TestSyscallInterruption =
         | Sleep.EpollWait milliseconds ->
             parked
                 "the epoll_wait"
-                (UnixPoll.tryEpollWait thread world.Epoll 8 UserBuffer.Mapped milliseconds world.System)
+                (UnixPoll.tryEpollWait
+                    (Callers.thread thread world.System)
+                    world.Epoll
+                    8
+                    UserBuffer.Mapped
+                    milliseconds
+                    world.System)
                 (function
                 | EpollWaitOutcome.WouldBlock _ -> true
                 | _ -> false
@@ -289,14 +301,19 @@ module TestSyscallInterruption =
         | Sleep.Accept
         | Sleep.Poll _
         | Sleep.EpollWait _ ->
+            // The holder makes the socket and connects: the leader may be the
+            // sleeper, and a thread asleep in one call makes no other.
             let client, system =
-                NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
+                NewSocket.createAs
+                    (Callers.thread holder system)
+                    SocketDomain.Inet
+                    SocketKind.Stream
+                    SocketProtocol.Tcp
+                    system
 
-            // The holder connects: the leader may be the sleeper, and a thread
-            // asleep in one call makes no other.
             match
                 CopyIn.connectAs
-                    holder
+                    (Callers.thread holder system)
                     client
                     UserBuffer.Mapped
                     16u
@@ -326,7 +343,7 @@ module TestSyscallInterruption =
             | Error (FLockRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.Accept ->
-            match UnixConnection.tryFinishAccept thread system with
+            match UnixConnection.tryFinishAccept (Callers.thread thread system) system with
             | Ok (AcceptOutcome.Accepted _, system) -> Ending.Completed, system
             | Ok (AcceptOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
             | Ok (AcceptOutcome.Restarts, system) -> Ending.Restart, system
@@ -335,7 +352,7 @@ module TestSyscallInterruption =
             | other -> unexpected other
         | Sleep.Poll _
         | Sleep.PollOfNothing ->
-            match UnixPoll.tryFinishPoll thread system with
+            match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
             | Ok (PollOutcome.Answered (_, count), system) when count > 0 -> Ending.Completed, system
             | Ok (PollOutcome.Answered (_, 0), system) -> Ending.TimedOut, system
             | Ok (PollOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
@@ -343,7 +360,7 @@ module TestSyscallInterruption =
             | Error (PollRefusal.Interruption refusal) -> Ending.Refused refusal, system
             | other -> unexpected other
         | Sleep.EpollWait _ ->
-            match UnixPoll.tryFinishEpollWait thread system with
+            match UnixPoll.tryFinishEpollWait (Callers.thread thread system) system with
             | Ok (EpollWaitOutcome.Answered (_ :: _), system) -> Ending.Completed, system
             | Ok (EpollWaitOutcome.Answered [], system) -> Ending.TimedOut, system
             | Ok (EpollWaitOutcome.Failed UnixError.EINTR, system) -> Ending.Eintr, system
@@ -640,7 +657,7 @@ module TestSyscallInterruption =
                     )
                     |> Set.ofList
 
-                match UnixSignal.tryOnReturnToUser thread after with
+                match UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> caught |> shouldEqual Set.empty
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) ->
                     frames
@@ -933,10 +950,10 @@ module TestSyscallInterruption =
                     }
                 )
 
-            let self = ProcessId.toInt32 (UnixSystem.processId system)
+            let self = ProcessId.toInt32 (Lone.pid system)
 
             let system =
-                match UnixSignal.tryKill self 10 system with
+                match UnixSignal.tryKill (Callers.thread 1 system) self 10 system with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
@@ -952,7 +969,9 @@ module TestSyscallInterruption =
             |> send 0 [ Sent.Caught (Signal.SIGUSR1, true) ]
 
         let thrown =
-            Assert.Throws<System.InvalidOperationException> (fun () -> UnixSignal.tryOnReturnToUser 0 system |> ignore)
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system |> ignore
+            )
 
         thrown.Message |> shouldContainText "asleep"
 

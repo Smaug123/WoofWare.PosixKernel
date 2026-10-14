@@ -219,7 +219,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.write thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.write (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofWrite where
 
     /// `thread` reads up to `count` bytes through `fd`.
@@ -231,7 +231,7 @@ module TestNonBlockingAsleepMeasured =
         (system : UnixSystem<int, string>)
         : Step * UnixSystem<int, string>
         =
-        UnixReadWrite.read thread fd UserBuffer.Mapped (uint64 count) system
+        UnixReadWrite.read (Callers.thread thread system) fd UserBuffer.Mapped (uint64 count) system
         |> ofRead where
 
     /// `thread` makes the transfer's call of `count` bytes through `fd`.
@@ -252,19 +252,20 @@ module TestNonBlockingAsleepMeasured =
     /// The woken sleeper's call, finished.
     let private finish (where : string) (transfer : Transfer) (system : UnixSystem<int, string>) =
         if isWrite transfer then
-            UnixReadWrite.finishWrite sleeper system |> ofWrite where
+            UnixReadWrite.finishWrite (Callers.thread sleeper system) system
+            |> ofWrite where
         else
-            UnixReadWrite.finishRead sleeper system |> ofRead where
+            UnixReadWrite.finishRead (Callers.thread sleeper system) system |> ofRead where
 
     /// The sleeper returns to user mode: every handler it takes runs and
     /// returns. How many ran.
     let rec private returnToUser (where : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match UnixSignal.onReturnToUser sleeper system with
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
         | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> 0, system
         | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system) ->
             let system =
                 (system, frames)
-                ||> List.fold (fun system frame -> UnixSignal.sigreturn sleeper frame.Id system)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
 
             let more, system = returnToUser where system
             List.length frames + more, system
@@ -395,7 +396,7 @@ module TestNonBlockingAsleepMeasured =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
 
         let system =
-            match UnixSignal.pthreadKill sleeper signo system with
+            match UnixSignal.pthreadKill (Callers.leader system) sleeper signo system with
             | Ok (ProcessFate.Continues (_, system)) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 

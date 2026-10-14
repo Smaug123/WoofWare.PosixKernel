@@ -1225,19 +1225,25 @@ module TestAccess =
         let system =
             systemOn SimulatedUnixPlatform.linuxX64 credentials "/b" (screenTree (InodeOwner.ofProcess credentials))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_f", 4, 0)) system
+        UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_f", 4, 0)) system
         |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), system))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_z", 4, 0)) system
+        UnixSystem.tryStep (Callers.thread 0 system) (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_z", 4, 0)) system
         |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EACCES), system))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_nx", 0, 0x200)) system
+        UnixSystem.tryStep
+            (Callers.thread 0 system)
+            (Syscall.FAccessAt (linuxAtFdCwd, bytes "screen_nx", 0, 0x200))
+            system
         |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ENOENT), system))
 
         let darwin =
             systemOn SimulatedUnixPlatform.macOsArm64 u501 "/b" (screenTree (owner 501u 20u))
 
-        UnixSystem.tryStep 0 (Syscall.FAccessAt (darwinAtFdCwd, bytes "screen_f", 0, 0x800)) darwin
+        UnixSystem.tryStep
+            (Callers.thread 0 darwin)
+            (Syscall.FAccessAt (darwinAtFdCwd, bytes "screen_f", 0, 0x800))
+            darwin
         |> shouldEqual (
             Error (
                 SyscallRefusal.Access (

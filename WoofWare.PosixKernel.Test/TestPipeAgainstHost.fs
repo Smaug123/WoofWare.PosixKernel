@@ -425,7 +425,9 @@ module TestPipeAgainstHost =
                                 else
                                     hostReadAt (hostFd, 8n, unativeint count)
 
-                            match UnixReadWrite.tryRead (Lone.leader system) modelFd buffer (uint64 count) system with
+                            match
+                                UnixReadWrite.tryRead (Callers.leader system) modelFd buffer (uint64 count) system
+                            with
                             | Ok (ReadOutcome.WouldBlock _, _) ->
                                 // The host would sleep: asked without blocking,
                                 // it must find nothing to take.

@@ -800,7 +800,7 @@ module TestAttributeChangeAt =
                 | other -> failwith $"%s{context}: pipe2: %A{other}"
             | "socket" -> Some (NewSocket.create SocketDomain.Unix SocketKind.Stream SocketProtocol.Default system)
             | "epoll" ->
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok created) -> Some created
                 | other -> failwith $"%s{context}: epoll_create1: %A{other}"
             | "devnull" -> Some (opened "/dev/null" system)
@@ -1357,7 +1357,11 @@ module TestAttributeChangeAt =
                 for row in fchmodatRows resource "UMASK" do
                     let caller = callerOf platform row.[0]
                     let umask = Convert.ToInt32 (row.[2], 8)
-                    let _, system = boot caller |> dropped caller |> UnixSystem.umask umask
+
+                    let _, system =
+                        boot caller
+                        |> dropped caller
+                        |> fun system -> UnixSystem.umask (Callers.leader system) umask system
 
                     let actual =
                         match

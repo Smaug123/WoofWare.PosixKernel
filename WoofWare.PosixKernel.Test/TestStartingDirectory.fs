@@ -220,11 +220,11 @@ module TestStartingDirectory =
         | "eventq" ->
             match flavour with
             | SimulatedUnixFlavour.Linux ->
-                match UnixPoll.tryEpollCreate1 0 system with
+                match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
                 | Ok (Ok created) -> Some created
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             | SimulatedUnixFlavour.Darwin ->
-                match UnixKqueue.tryKqueue system with
+                match UnixKqueue.tryKqueue (Callers.leader system) system with
                 | Ok created -> Some created
                 | Error refusal -> failwith $"%s{context}: kqueue was refused: %A{refusal}"
         | other -> failwith $"%s{context}: the probe has no dirfd kind called %s{other}"
@@ -3754,7 +3754,7 @@ module TestStartingDirectory =
                 | Ok (Pipe2Answer.Created (readFd, _), system) -> readFd, system
                 | other -> failwith $"%s{context}: pipe2 did not make a pipe: %A{other}"
             elif held = "epoll" then
-                match UnixPoll.tryEpollCreate1 0 asRoot with
+                match UnixPoll.tryEpollCreate1 (Callers.leader asRoot) 0 asRoot with
                 | Ok (Ok created) -> created
                 | other -> failwith $"%s{context}: epoll_create1 did not make an instance: %A{other}"
             else

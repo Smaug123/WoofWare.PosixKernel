@@ -997,5 +997,8 @@ module TestLink =
                     | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
                     | Error refusal -> Error (SyscallRefusal.Link refusal)
 
-                UnixSystem.tryStep 0 (Syscall.LinkAt (atFdCwd, text source, atFdCwd, text dest, 0)) system
+                UnixSystem.tryStep
+                    (Callers.thread 0 system)
+                    (Syscall.LinkAt (atFdCwd, text source, atFdCwd, text dest, 0))
+                    system
                 |> shouldEqual direct

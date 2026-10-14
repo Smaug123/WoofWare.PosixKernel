@@ -258,7 +258,7 @@ module TestSocketAddress =
             failwith
                 $"%s{call} on a %O{domain} socket answered %s{SocketAddress.toString answered}, which is not in the socket's own family"
 
-        match UnixSocket.tryGetsockname fd UserBuffer.Mapped 128u system with
+        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 128u system with
         | Ok (GetSockNameAnswer.Reported (copiedOut, _)) ->
             Seq.toArray copiedOut |> shouldEqual (encoded platform answered)
         | other -> failwith $"getsockname after %s{call} answered %A{other}"
@@ -337,7 +337,7 @@ module TestSocketAddress =
                     match fdOf slot fds with
                     | None -> fds, system
                     | Some fd ->
-                        match UnixSocket.tryListen fd 4 system with
+                        match UnixSocket.tryListen (Callers.leader system) fd 4 system with
                         | Ok (ListenAnswer.Listening answered, system) ->
                             seen.Listens <- seen.Listens + 1
                             checkAnswer seen "listen" fd answered system

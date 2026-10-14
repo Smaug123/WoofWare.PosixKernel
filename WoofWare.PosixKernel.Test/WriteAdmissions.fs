@@ -158,10 +158,29 @@ module internal WriteOutcomes =
 
         actual
 
-    /// A whole `write(2)` by `thread` of `bytes` from `buffer`, through the
+    /// A whole `write(2)` by `caller` of `bytes` from `buffer`, through the
     /// library's public protocol (`UnixReadWrite.write`, and if it stops at the
     /// copy, `writeWithBytes` of the bytes `PausedWrite.copyRange` names),
     /// held to `stepsThenWrite`, which makes the same write a step at a time.
+    let admitThenWriteAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (buffer : UserBuffer)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        =
+        let actual =
+            UnixReadWrite.tryWrite caller fd buffer (uint64 bytes.Length) system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixReadWrite.tryWriteWithBytes (copied "write" (PausedWrite.copyRange paused) bytes) paused
+            )
+            |> Result.map stepOf
+
+        agreeing "write" (stepsThenWrite (Caller.thread caller) fd buffer bytes system) actual
+
+    /// `admitThenWriteAs` the thread `thread` of the only process on the
+    /// machine.
     let admitThenWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -170,18 +189,31 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
+        admitThenWriteAs (Callers.thread thread system) fd buffer bytes system
+
+    /// A whole `send(2)` by `caller` with the raw flag word `flags`, through the
+    /// library's public protocol, as `admitThenWriteAs` makes a `write(2)`, held
+    /// to `stepsThenSend`.
+    let admitThenSendAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (buffer : UserBuffer)
+        (bytes : ImmutableArray<byte>)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        =
         let actual =
-            UnixReadWrite.tryWrite thread fd buffer (uint64 bytes.Length) system
+            UnixReadWrite.trySend caller fd buffer (uint64 bytes.Length) flags system
             |> CallProgress.resumeWith (fun paused ->
-                UnixReadWrite.tryWriteWithBytes (copied "write" (PausedWrite.copyRange paused) bytes) paused
+                UnixReadWrite.trySendWithBytes (copied "send" (PausedSend.copyRange paused) bytes) paused
             )
             |> Result.map stepOf
 
-        agreeing "write" (stepsThenWrite thread fd buffer bytes system) actual
+        agreeing "send" (stepsThenSend (Caller.thread caller) fd buffer bytes flags system) actual
 
-    /// A whole `send(2)` by `thread` with the raw flag word `flags`, through the
-    /// library's public protocol, as `admitThenWrite` makes a `write(2)`, held
-    /// to `stepsThenSend`.
+    /// `admitThenSendAs` the thread `thread` of the only process on the
+    /// machine.
     let admitThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -191,14 +223,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
-        let actual =
-            UnixReadWrite.trySend thread fd buffer (uint64 bytes.Length) flags system
-            |> CallProgress.resumeWith (fun paused ->
-                UnixReadWrite.trySendWithBytes (copied "send" (PausedSend.copyRange paused) bytes) paused
-            )
-            |> Result.map stepOf
-
-        agreeing "send" (stepsThenSend thread fd buffer bytes flags system) actual
+        admitThenSendAs (Callers.thread thread system) fd buffer bytes flags system
 
     /// The woken `write` or `send` of `thread`, finished a step at a time:
     /// `UnixReadWrite.tryAdmitFinishWrite`, and if it says to transfer,
@@ -223,19 +248,19 @@ module internal WriteOutcomes =
         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
         | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
 
-    /// The woken `write` or `send` of `thread`, finished through the library's
+    /// The woken `write` or `send` of `caller`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
     /// copy, `writeWithBytes` of `bytesAt offset count` for the range
     /// `PausedWrite.copyRange` names), held to `stepsThenFinishWrite`.
     /// `bytesAt` must answer exactly `count` bytes.
-    let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    let finishWriteAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
-            UnixReadWrite.tryFinishWrite thread system
+            UnixReadWrite.tryFinishWrite caller system
             |> CallProgress.resumeWith (fun paused ->
                 let range = PausedWrite.copyRange paused
 
@@ -246,11 +271,30 @@ module internal WriteOutcomes =
             )
             |> Result.map stepOf
 
-        agreeing "finishWrite" (stepsThenFinishWrite thread bytesAt system) actual
+        agreeing "finishWrite" (stepsThenFinishWrite (Caller.thread caller) bytesAt system) actual
 
-    /// A whole `write(2)` by `thread` of `bytes`, `admitThenWrite` from a
+    /// `finishWriteAs` the thread `thread` of the only process on the machine.
+    let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (bytesAt : int -> int -> ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        =
+        finishWriteAs (Callers.thread thread system) bytesAt system
+
+    /// A whole `write(2)` by `caller` of `bytes`, `admitThenWriteAs` from a
     /// mapped buffer: every answer the call gives, or the bytes the call takes
     /// and what it does with them.
+    let writeBytesAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (fd : int)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        =
+        admitThenWriteAs caller fd UserBuffer.Mapped bytes system
+
+    /// `writeBytesAs` the thread `thread` of the only process on the machine.
     let writeBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -258,7 +302,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        admitThenWrite thread fd UserBuffer.Mapped bytes system
+        writeBytesAs (Callers.thread thread system) fd bytes system
 
     /// A whole `send(2)` by `thread` of `bytes` with the raw flag word `flags`,
     /// `admitThenSend` from a mapped buffer.
@@ -294,12 +338,12 @@ module internal WriteOutcomes =
         admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system
         |> returned
 
-    /// A whole `pwrite(2)` by `thread` of `bytes` from a mapped buffer at
-    /// `offset`, through the library's public protocol (`UnixReadWrite.pwrite`,
-    /// and if it stops at the copy, `pwriteWithBytes` of the bytes
-    /// `PausedPWrite.copyRange` names), held to the same call made a step at
-    /// a time (`tryAdmitPWrite`, then `tryApplyPWrite` with the decision it
-    /// made).
+    /// A whole `pwrite(2)` by the thread `thread` of the only process on the
+    /// machine, of `bytes` from a mapped buffer at `offset`, through the
+    /// library's public protocol (`UnixReadWrite.pwrite`, and if it stops at
+    /// the copy, `pwriteWithBytes` of the bytes `PausedPWrite.copyRange`
+    /// names), held to the same call made a step at a time (`tryAdmitPWrite`,
+    /// then `tryApplyPWrite` with the decision it made).
     let admitThenPwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -319,7 +363,13 @@ module internal WriteOutcomes =
                 UnixReadWrite.tryApplyPWrite fd offset into (ImmutableArray.Create (bytes, 0, count)) system
 
         let actual =
-            UnixReadWrite.tryPwrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system
+            UnixReadWrite.tryPwrite
+                (Callers.thread thread system)
+                fd
+                UserBuffer.Mapped
+                (uint64 bytes.Length)
+                offset
+                system
             |> CallProgress.resumeWith (fun paused ->
                 UnixReadWrite.tryPwriteWithBytes (copied "pwrite" (PausedPWrite.copyRange paused) bytes) paused
             )

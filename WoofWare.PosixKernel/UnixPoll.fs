@@ -459,8 +459,8 @@ module UnixPoll =
                 $"UnixPoll.epollWait: fd %d{fd} names a kqueue, which a Linux-flavoured kernel cannot hold (this is a bug in the caller's state construction)."
         | OpenFileTarget.Epoll _ -> Ok (Ok epoll)
 
-    /// `epollCtl`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryEpollCtl` once `Entry` has admitted its caller.
+    let private tryEpollCtlIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epfd : int)
         (op : int)
         (fd : int)
@@ -732,6 +732,24 @@ module UnixPoll =
         else
             failed EpollCtlError.UnrecognisedOperation
 
+    /// `epollCtl`, with a refusal answered as the `Error` rather than raised.
+    let internal tryEpollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (epfd : int)
+        (op : int)
+        (fd : int)
+        (event : EpollEventArgument)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollCtlAnswer * UnixSystem<'Thread, 'Handler>, EpollCtlRefusal>
+        =
+        Entry.call
+            "UnixPoll.epollCtl"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryEpollCtlIn epfd op fd event)
+            system
+
     /// <summary>
     /// `epoll_ctl(2)`: apply `op` to the interest table of the epoll instance
     /// `epfd` names, for the target `fd` names, with the `event` the caller
@@ -757,6 +775,7 @@ module UnixPoll =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollCtl<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (epfd : int)
         (op : int)
         (fd : int)
@@ -764,7 +783,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : EpollCtlAnswer * UnixSystem<'Thread, 'Handler>
         =
-        tryEpollCtl epfd op fd event system
+        tryEpollCtl caller epfd op fd event system
         |> Refusal.orRaise "UnixPoll.epollCtl" EpollCtlRefusal.kind EpollCtlRefusal.describe
 
     // Linux's `<poll.h>` numbering: the bits a Linux-flavoured `poll(2)` reads
@@ -1354,19 +1373,33 @@ module UnixPoll =
                 UnixWait.parkWaiting thread parkedAgain system
             )
 
-    /// `poll`, with a refusal answered as the `Error` rather than raised.
-    let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryPoll` once `Entry` has admitted its caller.
+    let private tryPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
         =
-        UnixThreadTable.requireIssuer "UnixPoll.poll" thread system.Threads
-
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
         | SimulatedUnixFlavour.Darwin -> darwinPoll thread entries milliseconds system
+
+    /// `poll`, with a refusal answered as the `Error` rather than raised.
+    let internal tryPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (entries : PollEntry list)
+        (milliseconds : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        =
+        Entry.call
+            "UnixPoll.poll"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryPollIn (Caller.thread caller) entries milliseconds)
+            system
 
     /// `poll(2)`: what each entry reports, and how many entries carry anything;
     /// or, when nothing does and the timeout lets it, the calling thread sleeps.
@@ -1400,9 +1433,9 @@ module UnixPoll =
     /// negative timeout other than -1.
     ///
     /// `milliseconds` is read as the flavour reads it. Zero answers now. A
-    /// positive timeout, when nothing is reported, parks `thread` until something
-    /// is or `milliseconds` have passed on the machine's monotonic clock,
-    /// whichever is first; at the deadline and not before, the call finishes
+    /// positive timeout, when nothing is reported, parks the caller's thread
+    /// until something is or `milliseconds` have passed on the machine's
+    /// monotonic clock, whichever is first; at the deadline and not before, the call finishes
     /// with 0. -1 is infinite on both, and under Linux so is every negative
     /// timeout. A wait with nothing to watch and no deadline parks until a
     /// signal ends it. A foreign-function layer that screens some negative
@@ -1411,20 +1444,20 @@ module UnixPoll =
     /// A poll with anything to report is answered at every timeout. The system
     /// comes back unchanged unless the thread parked.
     ///
-    /// `thread` must not already be parked: a thread blocks in one syscall at a
-    /// time, and a parked `poll` is finished with `finishPoll`.
+    /// The caller's thread must not already be parked: a thread blocks in one
+    /// syscall at a time, and a parked `poll` is finished with `finishPoll`.
     let poll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (entries : PollEntry list)
         (milliseconds : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryPoll thread entries milliseconds system
+        tryPoll caller entries milliseconds system
         |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
 
-    /// `finishPoll`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishPoll` once `Entry` has admitted its caller.
+    let private tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
@@ -1455,7 +1488,21 @@ module UnixPoll =
             thread
             system.Threads
 
-    /// Finish the `poll` `thread` parked in, as a woken real poll does, and
+    /// `finishPoll`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        =
+        Entry.call
+            "UnixPoll.finishPoll"
+            CallerRequirement.Woken
+            caller
+            (Shape.result Shape.withSystem)
+            (tryFinishPollIn (Caller.thread caller))
+            system
+
+    /// Finish the `poll` `caller` parked in, as a woken real poll does, and
     /// answer.
     ///
     /// **Under Linux** it scans the entries the call was made with, not
@@ -1477,17 +1524,17 @@ module UnixPoll =
     /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
     ///
-    /// `thread` must be parked in a `poll`.
+    /// `caller` must be parked in a `poll`.
     let finishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : PollOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishPoll thread system
+        tryFinishPoll caller system
         |> Refusal.orRaise "UnixPoll.finishPoll" PollRefusal.kind PollRefusal.describe
 
-    /// `epollCreate1`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryEpollCreate1` once `Entry` has admitted its caller.
+    let private tryEpollCreate1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
@@ -1530,6 +1577,21 @@ module UnixPoll =
 
         Ok (Ok (fd, UnixSystemState.withFileDescriptors registry system))
 
+    /// `epollCreate1`, with a refusal answered as the `Error` rather than raised.
+    let internal tryEpollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
+        =
+        Entry.call
+            "UnixPoll.epollCreate1"
+            CallerRequirement.Running
+            caller
+            (Shape.result (Shape.result Shape.withSystem))
+            (tryEpollCreate1In flags)
+            system
+
     /// <summary>
     /// `epoll_create1(2)`: create an epoll instance and a descriptor onto it, the
     /// lowest one not in use.
@@ -1542,11 +1604,12 @@ module UnixPoll =
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollCreate1<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<int * UnixSystem<'Thread, 'Handler>, UnixError>
         =
-        tryEpollCreate1 flags system
+        tryEpollCreate1 caller flags system
         |> Refusal.orRaise "UnixPoll.epollCreate1" EpollCreateRefusal.kind EpollCreateRefusal.describe
 
     /// Whether the events `delivered` can be copied out to `buffer`: a call
@@ -1588,8 +1651,8 @@ module UnixPoll =
 
         EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system
 
-    /// `epollWait`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryEpollWait` once `Entry` has admitted its caller.
+    let private tryEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (epfd : int)
         (maxEvents : int)
@@ -1598,8 +1661,6 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
         =
-        UnixThreadTable.requireIssuer "UnixPoll.epollWait" thread system.Threads
-
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollWaitRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
@@ -1625,8 +1686,26 @@ module UnixPoll =
         | Error () -> Error (EpollWaitRefusal.DeadlineBeyondClock (now, milliseconds))
         | Ok deadline -> Ok (parkEpollWait thread epoll maxEvents buffer deadline system)
 
+    /// `epollWait`, with a refusal answered as the `Error` rather than raised.
+    let internal tryEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (epfd : int)
+        (maxEvents : int)
+        (buffer : UserBuffer)
+        (milliseconds : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
+        =
+        Entry.call
+            "UnixPoll.epollWait"
+            CallerRequirement.Running
+            caller
+            (Shape.result Shape.withSystem)
+            (tryEpollWaitIn (Caller.thread caller) epfd maxEvents buffer milliseconds)
+            system
+
     /// <summary>
-    /// `epoll_wait(2)`, made by `thread`: take up to `maxEvents` events off the
+    /// `epoll_wait(2)`, made by `caller`: take up to `maxEvents` events off the
     /// epoll instance `epfd` names, sleeping for up to `milliseconds` if it has
     /// none.
     ///
@@ -1642,9 +1721,9 @@ module UnixPoll =
     /// not; the entries a full `maxEvents` spared stay pending in order. A wait
     /// that finds something answers it
     /// whatever the timeout. One that finds nothing answers no events at once
-    /// for a timeout of 0; parks `thread` for a positive timeout until an event is
-    /// deliverable or `milliseconds` have passed on the machine's monotonic
-    /// clock; and parks it until an event is deliverable for any negative
+    /// for a timeout of 0; parks the caller's thread for a positive timeout
+    /// until an event is deliverable or `milliseconds` have passed on the
+    /// machine's monotonic clock; and parks it until an event is deliverable for any negative
     /// timeout, which is infinite. A parked wait is finished with
     /// `finishEpollWait`. The walk's consumption stands whether or not the call
     /// then sleeps.
@@ -1657,12 +1736,12 @@ module UnixPoll =
     /// Of several threads parked on one epoll instance, one event wakes one of them (see
     /// `UnixWait.wakes`).
     ///
-    /// `thread` must not already be parked. Under the Darwin flavour every call
-    /// is refused: Darwin has no epoll.
+    /// The caller's thread must not already be parked. Under the Darwin flavour
+    /// every call is refused: Darwin has no epoll.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let epollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (epfd : int)
         (maxEvents : int)
         (buffer : UserBuffer)
@@ -1670,7 +1749,7 @@ module UnixPoll =
         (system : UnixSystem<'Thread, 'Handler>)
         : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryEpollWait thread epfd maxEvents buffer milliseconds system
+        tryEpollWait caller epfd maxEvents buffer milliseconds system
         |> Refusal.orRaise "UnixPoll.epollWait" EpollWaitRefusal.kind EpollWaitRefusal.describe
 
     let private finishEpollWaitHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1714,8 +1793,8 @@ module UnixPoll =
                 "UnixPoll.finishEpollWait: an epoll_wait restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
         | Ok None -> Ok (parkEpollWait thread parked.Epoll parked.MaxEvents parked.Buffer parked.Deadline system)
 
-    /// `finishEpollWait`, with a refusal answered as the `Error` rather than raised.
-    let internal tryFinishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryFinishEpollWait` once `Entry` has admitted its caller.
+    let private tryFinishEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
@@ -1733,8 +1812,22 @@ module UnixPoll =
             outcome, ObjectLifetime.releaseUnreferencedUnrefusable "UnixPoll.finishEpollWait" held after
         )
 
+    /// `finishEpollWait`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
+        =
+        Entry.call
+            "UnixPoll.finishEpollWait"
+            CallerRequirement.Woken
+            caller
+            (Shape.result Shape.withSystem)
+            (tryFinishEpollWaitIn (Caller.thread caller))
+            system
+
     /// <summary>
-    /// Finish the wait on an epoll instance that `thread` is parked in: walk
+    /// Finish the wait on an epoll instance that `caller` is parked in: walk
     /// the epoll instance again, as a woken real wait does, and answer.
     ///
     /// Delivers from the epoll instance the call was made on and with the `maxEvents` it
@@ -1755,13 +1848,13 @@ module UnixPoll =
     /// Delivering events copies them out to the buffer the call was made with;
     /// see `epollWait` for the buffers that refuses.
     ///
-    /// `thread` must be parked in an `epoll_wait`.
+    /// `caller` must be parked in an `epoll_wait`.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let finishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
         =
-        tryFinishEpollWait thread system
+        tryFinishEpollWait caller system
         |> Refusal.orRaise "UnixPoll.finishEpollWait" EpollWaitRefusal.kind EpollWaitRefusal.describe

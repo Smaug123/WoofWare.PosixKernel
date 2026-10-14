@@ -325,7 +325,7 @@ module TestInotifyAgainstHost =
                                 let model =
                                     match
                                         UnixReadWrite.tryRead
-                                            0
+                                            (Callers.thread 0 system)
                                             modelFd
                                             (if mapped then
                                                  UserBuffer.Mapped
@@ -369,7 +369,7 @@ module TestInotifyAgainstHost =
 
                                 match
                                     UnixPoll.tryPoll
-                                        0
+                                        (Callers.thread 0 system)
                                         [
                                             {
                                                 Fd = modelFd

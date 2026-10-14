@@ -520,7 +520,7 @@ module TestPipe =
                             UserBuffer.Unmapped 8UL
 
                     let actual =
-                        UnixReadWrite.tryRead (Lone.leader system) fd buffer (uint64 count) system
+                        UnixReadWrite.tryRead (Callers.leader system) fd buffer (uint64 count) system
 
                     match Map.tryFind fd reference.Fds with
                     | None
@@ -1064,12 +1064,12 @@ module TestPipe =
         for platform in platforms do
             let (r, w), system = pipeOrFail 0 (systemOn platform)
 
-            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
             // A NULL buffer is not consulted before the read sleeps.
-            match UnixReadWrite.tryRead (Lone.leader system) r (UserBuffer.Unmapped 0UL) 10UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r (UserBuffer.Unmapped 0UL) 10UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1261,7 +1261,7 @@ module TestPipe =
             answer 99 system |> shouldEqual UnixError.EBADF
 
             let socket domain kind system =
-                match UnixSocket.trySocket domain kind 0 system with
+                match UnixSocket.trySocket (Callers.leader system) domain kind 0 system with
                 | Ok (Ok (fd, system)) -> fd, system
                 | other -> failwith $"%A{other}"
 
@@ -1310,22 +1310,28 @@ module TestPipe =
         let (r, w), system = pipeOrFail 0 (systemOn SimulatedUnixPlatform.linuxX64)
 
         let epoll, system =
-            match UnixPoll.tryEpollCreate1 0 system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (epoll, system)) -> epoll, system
             | other -> failwith $"%A{other}"
 
         let edge = EpollEvents.In ||| EpollEvents.EdgeTriggered
 
         for fd in [ r ; w ] do
-            match UnixPoll.tryEpollCtl epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 1 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Error (EpollCtlRefusal.PipeTarget refused) -> refused |> shouldEqual fd
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollCtl epoll 2 fd (EpollEventArgument.Readable (edge, 0UL)) system with
+            match
+                UnixPoll.tryEpollCtl (Callers.leader system) epoll 2 fd (EpollEventArgument.Readable (edge, 0UL)) system
+            with
             | Ok (EpollCtlAnswer.Failed EpollCtlError.NotRegistered, _) -> ()
             | other -> failwith $"%A{other}"
 
-            match UnixPoll.tryEpollWait 1 fd 1 UserBuffer.Mapped 0 (Threads.ensure 1 system) with
+            let system = Threads.ensure 1 system
+
+            match UnixPoll.tryEpollWait (Callers.thread 1 system) fd 1 UserBuffer.Mapped 0 system with
             | Ok (EpollWaitOutcome.Failed UnixError.EINVAL, _) -> ()
             | other -> failwith $"%A{other}"
 
@@ -1349,7 +1355,7 @@ module TestPipe =
             let system = closeOrFail w system
 
             // The dup holds the write end open: an empty read is not end of file.
-            match UnixReadWrite.tryRead (Lone.leader system) r UserBuffer.Mapped 1UL system with
+            match UnixReadWrite.tryRead (Callers.leader system) r UserBuffer.Mapped 1UL system with
             | Ok (ReadOutcome.WouldBlock _, _) -> ()
             | other -> failwith $"%A{other}"
 
