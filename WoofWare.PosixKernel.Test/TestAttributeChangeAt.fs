@@ -1141,7 +1141,7 @@ module TestAttributeChangeAt =
 
                 let access =
                     match
-                        UnixPathResolution.tryFaccessatEager
+                        Eager.tryFaccessatAs
                             (Callers.leader system)
                             (atFdCwd caller)
                             (PathArg.ofText "lf")

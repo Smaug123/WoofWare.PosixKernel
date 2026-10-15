@@ -3828,7 +3828,7 @@ module TestUnixSystemStep =
 
     /// One call of each shape `step` dispatches: answered at once whatever the
     /// state, lifted from its own function's answer, one that can block, one
-    /// `step` does not make yet, and one reserved.
+    /// that copies a buffer in, and one reserved.
     let private callsOfEveryShape : Syscall<int, string> list =
         [
             Syscall.GetProcessId
@@ -3836,7 +3836,7 @@ module TestUnixSystemStep =
             Syscall.Close 2
             Syscall.Dup 0
             Syscall.FLock (0, 2)
-            Syscall.FStat 0
+            Syscall.Write (1, CopiedArgument.Readable (ImmutableArray.Create<byte> 0uy), 1UL)
             Syscall.Nanosleep NanosleepArguments.NanosleepArguments
         ]
 

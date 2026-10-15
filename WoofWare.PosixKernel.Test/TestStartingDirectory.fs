@@ -282,7 +282,7 @@ module TestStartingDirectory =
                             | None -> yield $"%s{kind} %s{path}: no such dirfd could be made"
                             | Some (dirfd, system) ->
                                 let actual =
-                                    UnixPathResolution.tryFaccessatEager
+                                    Eager.tryFaccessatAs
                                         (Callers.leader system)
                                         dirfd
                                         (pathArgument path envelope.Platform)
@@ -325,7 +325,7 @@ module TestStartingDirectory =
                     | None -> yield $"%s{kind} %s{path}: no such dirfd could be made"
                     | Some (dirfd, system) ->
                         let actual =
-                            UnixNamespace.trySymlinkatEager
+                            Eager.trySymlinkatAs
                                 (Callers.leader system)
                                 (PathArg.ofText "target")
                                 dirfd
@@ -372,7 +372,7 @@ module TestStartingDirectory =
                         let actual =
                             match side with
                             | "old" ->
-                                UnixNamespace.tryLinkatEager
+                                Eager.tryLinkatAs
                                     (Callers.leader system)
                                     dirfd
                                     p
@@ -381,14 +381,7 @@ module TestStartingDirectory =
                                     0
                                     system
                             | _ ->
-                                UnixNamespace.tryLinkatEager
-                                    (Callers.leader system)
-                                    atFdCwd
-                                    (PathArg.ofText "f2")
-                                    dirfd
-                                    p
-                                    0
-                                    system
+                                Eager.tryLinkatAs (Callers.leader system) atFdCwd (PathArg.ofText "f2") dirfd p 0 system
                             |> renderedLink
 
                         if actual <> expected then
