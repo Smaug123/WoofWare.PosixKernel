@@ -16,6 +16,11 @@ type internal SyscallInterruptionRefusal =
     /// whichever of the two reached the sleeping thread first, which this
     /// library does not record.
     | SignalBesideCompletion of flavour : SimulatedUnixFlavour
+    /// A signal woke the thread asleep in the syscall, and by the time the
+    /// syscall is finished the thread would take no signal as it returned to
+    /// user mode: another thread has discarded the signal, or the thread
+    /// blocks it. Whether the syscall then ends or sleeps on is unmeasured.
+    | WakingSignalGone
 
 [<RequireQualifiedAccess>]
 module internal SyscallInterruptionRefusal =
@@ -29,6 +34,8 @@ module internal SyscallInterruptionRefusal =
             $"the first signal a thread asleep in a syscall would take is %O{signal}, at a default disposition that terminates, stops or continues the process, and what that does to the syscall is unmeasured."
         | SyscallInterruptionRefusal.SignalBesideCompletion flavour ->
             $"a thread asleep in a syscall has both the syscall's own answer and a signal with a handler waiting for it. Under the %O{flavour} flavour the kernel answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
+        | SyscallInterruptionRefusal.WakingSignalGone ->
+            "a signal woke a thread asleep in a syscall, and by the time the syscall was finished the thread would take no signal as it returned to user mode: another thread had discarded the signal, or the thread blocked it. Whether the syscall then ends with EINTR or sleeps on is unmeasured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallInterruptionRefusal) : RefusalKind =
@@ -36,6 +43,7 @@ module internal SyscallInterruptionRefusal =
         | SyscallInterruptionRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
         | SyscallInterruptionRefusal.DefaultAction _ -> RefusalKind.Unmodelled
         | SyscallInterruptionRefusal.SignalBesideCompletion _ -> RefusalKind.Unmodelled
+        | SyscallInterruptionRefusal.WakingSignalGone -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `sigsuspend(2)` or `pause(2)`, or the
 /// finishing of one: something it does not model, rather than an error a
@@ -388,6 +396,8 @@ module SyscallInterruption =
     /// How the syscall `parked` records ends under `flavour` if a signal
     /// interrupted it and, by the time its thread returns to user mode, no
     /// handler runs: the signal has been discarded, or the thread blocks it.
+    /// `ofPark` asks it too, of a call a signal woke whose signal has gone by
+    /// the time the call is finished.
     let internal withoutHandler (flavour : SimulatedUnixFlavour) (parked : ParkedSyscall) : UnhandledInterruption =
         // Measured on Linux 6.18.5 and Darwin 27.0.0
         // (`docs/probes/disposition-before-return`, the held `ign` rows): the
@@ -484,34 +494,43 @@ module SyscallInterruption =
             | SignalDelivery.DefaultContinue signal -> signal, None
 
         {
-            Signal = signal
+            Signal = Some signal
             Rule = rule
             Unhandled = withoutHandler flavour parked
             AtInterruption = atInterruption
         }
 
     /// How a signal interrupts the syscall `thread` is asleep in, if one does
-    /// now: `None` when returning to user mode now would take no signal. The
-    /// thread's return to user mode decides how the syscall then ends, from
-    /// the signals as they are at that return.
+    /// now: `None` when none does, and the finishing call goes on as if no
+    /// signal had come. The thread's return to user mode decides how an
+    /// interrupted syscall ends, from the signals as they are at that return.
+    ///
+    /// A signal interrupts the syscall when the thread would take one as it
+    /// returned to user mode now. When it would take none, but a signal woke
+    /// it (`ParkState.Woken` for `WakePrimitive.SignalDeliverable`), the
+    /// syscall ends as `withoutHandler` says a return that runs no handler
+    /// ends it: interrupted where that fails it with `EINTR`; not, so that it
+    /// sleeps on, where that restarts it; and refused where that is
+    /// unmeasured.
     ///
     /// A finishing call asks this only once it has found that the syscall has
     /// nothing else to answer: a wait whose own condition holds answers that,
     /// and the handlers run as it returns.
     ///
-    /// Fails loudly if `thread` is not asleep in a syscall.
+    /// Fails loudly if `thread` is not parked in a syscall, and woken.
     let internal ofPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<Interruption option, SyscallInterruptionRefusal>
         =
-        let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some parked -> parked
+        let park =
+            match UnixThreadTable.parkOf thread system.Threads with
+            | Some park -> park
             | None ->
                 failwith
                     $"SyscallInterruption.ofPark: thread %O{thread} is not asleep in a syscall, so no signal can interrupt one (this is a bug in the caller)."
 
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         let threads = system.Threads |> Map.keys |> Set.ofSeq
 
         // Only asked: the walk's own state is dropped. The thread returns to
@@ -526,6 +545,50 @@ module SyscallInterruption =
                 system.Process.Signals
         with
         | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
-        | Ok (None, _) -> Ok None
-        | Ok (Some delivery, _) ->
-            Ok (Some (interruptionOf (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) parked delivery))
+        | Ok (Some delivery, _) -> Ok (Some (interruptionOf flavour park.Syscall delivery))
+        | Ok (None, _) ->
+
+        match park.State with
+        | ParkState.Woken fired when Set.contains WakePrimitive.SignalDeliverable fired ->
+            // Measured on Linux 6.18.5 and Darwin 27.0.0
+            // (`docs/probes/disposition-before-return`, the held `ign` rows): a
+            // caught signal woke the sleeper, and another thread ignored it
+            // before the sleeper ran. No handler ran. Linux's epoll_wait
+            // (`linux call=epoll`) and Darwin's poll and kevent (`darwin
+            // call=poll`, `darwin call=kevent`) failed with EINTR, and every
+            // other call went on sleeping, under SA_RESTART and without.
+            //
+            // The probe made the change before the woken sleeper ran at all, so
+            // both before its call was finished and before it returned to user
+            // mode. So one measurement covers a change made before the finish,
+            // decided here, and one made between the finish and the return,
+            // which `withoutHandler` decides at the return; both follow its
+            // table. The rows say which calls fail rather than sleep on, and
+            // not why, and nothing here supposes a reason.
+            //
+            // Sleeping on is the restart those rows saw, made without a return
+            // to user mode: the park keeps the call's arguments and its
+            // deadline, as Linux's restart of a `poll` with a timeout keeps
+            // what is left of it (`RestartsWithRemainingTime`). Where the end
+            // is unmeasured (a wait with a timeout), so is whether the call
+            // sleeps on.
+            match withoutHandler flavour park.Syscall with
+            | UnhandledInterruption.Ends InterruptedCall.FailsWithEintr ->
+                Ok (
+                    Some
+                        {
+                            Signal = None
+                            Rule = ruleOf flavour park.Syscall
+                            Unhandled = UnhandledInterruption.Ends InterruptedCall.FailsWithEintr
+                            AtInterruption = Some InterruptedCall.FailsWithEintr
+                        }
+                )
+            | UnhandledInterruption.Ends InterruptedCall.Restarts
+            | UnhandledInterruption.RestartsWithRemainingTime -> Ok None
+            | UnhandledInterruption.Unmeasured -> Error SyscallInterruptionRefusal.WakingSignalGone
+        // Whatever woke the thread was its call's own condition, which the
+        // finishing call has found gone again.
+        | ParkState.Woken _ -> Ok None
+        | ParkState.Asleep ->
+            failwith
+                $"SyscallInterruption.ofPark: thread %O{thread} is asleep in %A{park.Syscall}, and only a woken thread's call is finished (this is a bug in the caller)."

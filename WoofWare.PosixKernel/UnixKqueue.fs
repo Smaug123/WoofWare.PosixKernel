@@ -915,12 +915,15 @@ module UnixKqueue =
     /// Answers `EBADF` when a close has drained the kqueue; the events it has to
     /// report (as `kevent` reports them), up to the call's `nevents`; no events
     /// when the deadline has passed; `Interrupted` when the thread would take a
-    /// signal as it returned to user mode; and otherwise re-parks the thread on
+    /// signal as it returned to user mode, or when a signal woke the thread and
+    /// has gone since (another thread ignored it), whose return then fails the
+    /// call with `EINTR`; and otherwise re-parks the thread on
     /// the same kqueue and deadline. Refused, since Darwin answers whichever
     /// reached the sleeping thread first and this library does not record which
     /// did: a drain beside an expired deadline or an event, an event beside an
     /// expired deadline, and a signal pending beside any answer but
-    /// `Interrupted`.
+    /// `Interrupted`. Refused too, since it is unmeasured: a call with a
+    /// timeout whose waking signal has gone.
     /// An answer clears the park, and with it the call's hold on the kqueue,
     /// which goes then if no descriptor names it any more.
     ///
