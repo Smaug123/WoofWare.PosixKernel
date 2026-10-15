@@ -622,6 +622,21 @@ module TestStepOracle =
         | Ok (ProcessFate.ProcessEnded _)
         | Error _ -> None
 
+    /// `system` once every thread that owes a return to user mode has made it
+    /// (`returned`), as a client returns a thread before its next call where
+    /// another thread's call made a signal deliverable to it. `None` where a
+    /// return ends or stops the process, or is refused.
+    let private owingReturned (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
+        (Some system, Lone.threads system |> Map.keys |> List.ofSeq)
+        ||> List.fold (fun system thread ->
+            system
+            |> Option.bind (fun system ->
+                match UnixThreadTable.owedBy thread (Lone.threads system) with
+                | Some _ -> returned (Callers.thread thread system) system
+                | None -> Some system
+            )
+        )
+
     // ------------------------------------------------------------- worlds
 
     let private name (text : string) : DirectoryEntryName =
@@ -1965,9 +1980,9 @@ module TestStepOracle =
                 Map.find (SimulatedUnixPlatform.flavour platform, privileged, threadCount) worlds.Value
 
             // The prefix moves the world through the calls' own functions,
-            // made by the leader, each followed by its return to user mode,
-            // keeping whatever answered without parking or ending the
-            // process.
+            // made by the leader, each followed by its return to user mode, and
+            // that of any other thread the call made a signal deliverable to,
+            // keeping whatever answered without parking or ending the process.
             let system =
                 (start, prefix)
                 ||> List.fold (fun system call ->
@@ -1976,11 +1991,21 @@ module TestStepOracle =
                     try
                         match reference leader call system with
                         | Ok stepped ->
-                            carriedOn stepped |> Option.bind (returned leader) |> Option.defaultValue system
+                            carriedOn stepped
+                            |> Option.bind (returned leader)
+                            |> Option.bind owingReturned
+                            |> Option.defaultValue system
                         | Error _ -> system
                     with _ ->
                         system
                 )
+
+            // So the call is made by a thread that owes no return, and step
+            // and the call's own function are compared on what the call does,
+            // rather than on both refusing it.
+            match Map.tryFind caller (Lone.threads system) with
+            | Some state -> state.Owes |> shouldEqual None
+            | None -> ()
 
             let caller = Callers.thread caller system
 
