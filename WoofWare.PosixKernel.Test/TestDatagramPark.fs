@@ -94,7 +94,7 @@ module TestDatagramPark =
                             ParkedDatagramSend.Socket = socket
                         }
                 ] do
-                let asleep = Lone.UnixWait.park thread parked awake
+                let asleep = Lone.Parking.park thread parked awake
 
                 asleep
                 |> UnixSystem.checkInvariants

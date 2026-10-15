@@ -421,7 +421,7 @@ module TestThreadIds =
         fails (spawn 1 0 system) "already names a thread"
 
         let parked =
-            Lone.UnixWait.park
+            Lone.Parking.park
                 1
                 (ParkedSyscall.Poll
                     {

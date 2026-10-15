@@ -999,7 +999,7 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
 
     /// Finish the Linux-flavoured `poll` `thread` is parked in: see `finishPoll`.
     let private finishLinuxPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1065,7 +1065,7 @@ module UnixPoll =
 
             Ok (
                 PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain system
+                Parking.parkWaiting thread parkedAgain system
             )
 
     // Darwin's limits on how many entries one call takes (`OPEN_MAX` and
@@ -1316,7 +1316,7 @@ module UnixPoll =
                 Machine = machine
             }
 
-        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+        Ok (PollOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
 
     /// Finish the Darwin-flavoured `poll` `thread` is parked in: see `finishPoll`.
     let private finishDarwinPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1377,7 +1377,7 @@ module UnixPoll =
 
             Ok (
                 PollOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain system
+                Parking.parkWaiting thread parkedAgain system
             )
 
     /// `tryPoll` once `Entry` has admitted its caller.
@@ -1660,7 +1660,7 @@ module UnixPoll =
                     Deadline = deadline
                 }
 
-        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system
+        EpollWaitOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system
 
     /// `tryEpollWait` once `Entry` has admitted its caller.
     let private tryEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

@@ -243,7 +243,7 @@ module TestBootImage =
 
         for declaring, name in
             [
-                "WoofWare.PosixKernel.UnixWait", "park"
+                "WoofWare.PosixKernel.Parking", "park"
                 "WoofWare.PosixKernel.UnixThreadTable", "unpark"
             ] do
             match named declaring name with

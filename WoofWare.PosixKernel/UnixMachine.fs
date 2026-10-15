@@ -68,7 +68,7 @@ type internal UnixMachineState =
             /// `NextSocketId` gives.
             NextPollQueueId : PollQueueId
             /// The ordinal the next park of any thread records as its
-            /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `UnixWait.park`.
+            /// `ThreadPark.Ordinal`. Monotonic, and bumped only by `Parking.park`.
             ///
             /// The machine's rather than a process's, because what a kernel orders
             /// by park is a wait queue on a kernel object, and processes can share

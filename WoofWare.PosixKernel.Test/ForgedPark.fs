@@ -9,7 +9,7 @@ module ForgedPark =
 
     /// `system` with the unparked thread `thread` parked in `parked`, at the next
     /// park ordinal, holding those of the descriptions it names that the open
-    /// file table holds. `UnixWait.park` refuses a park on a description the
+    /// file table holds. `Parking.park` refuses a park on a description the
     /// table does not hold, which is exactly the park a test of
     /// `ParkedOnAbsentDescription` needs.
     let onAbsent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

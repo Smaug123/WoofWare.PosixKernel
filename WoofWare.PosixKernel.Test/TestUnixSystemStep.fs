@@ -4066,7 +4066,7 @@ module TestUnixSystemStep =
     let private parkedInEpollWait (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         let system = withThread 7 system
 
-        Lone.UnixWait.park
+        Lone.Parking.park
             7
             (ParkedSyscall.EpollWait
                 {
@@ -4387,7 +4387,7 @@ module TestUnixSystemStep =
         (system, waiters)
         ||> List.fold (fun system thread ->
             withThread thread system
-            |> Lone.UnixWait.park
+            |> Lone.Parking.park
                 thread
                 (ParkedSyscall.EpollWait
                     {
@@ -4439,7 +4439,7 @@ module TestUnixSystemStep =
 
         // Woken, and then beaten to the event, which a re-park is.
         let reparked =
-            Lone.UnixWait.park
+            Lone.Parking.park
                 9
                 (ParkedSyscall.EpollWait
                     {

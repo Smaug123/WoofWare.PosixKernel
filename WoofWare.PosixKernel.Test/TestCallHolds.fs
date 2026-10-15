@@ -285,7 +285,7 @@ module TestCallHolds =
                     [ id ]
                 )
 
-    /// `thread` parked in `parked`, as `UnixWait.park` parks it; a Darwin poll
+    /// `thread` parked in `parked`, as `Parking.park` parks it; a Darwin poll
     /// first makes the kqueue it holds, empty, as the call does before it
     /// sleeps, unless the thread is already asleep in one, whose it keeps.
     let private park
@@ -298,7 +298,7 @@ module TestCallHolds =
         | ParkedSyscall.KqueuePoll poll ->
             match UnixThreadTable.parkedFor thread (Lone.threads system) with
             | Some (ParkedSyscall.KqueuePoll existing) ->
-                Lone.UnixWait.park
+                Lone.Parking.park
                     thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
@@ -315,7 +315,7 @@ module TestCallHolds =
                         }
                         system.Machine
 
-                Lone.UnixWait.park
+                Lone.Parking.park
                     thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
@@ -324,7 +324,7 @@ module TestCallHolds =
                     { system with
                         Machine = machine
                     }
-        | _ -> Lone.UnixWait.park thread parked system
+        | _ -> Lone.Parking.park thread parked system
 
     // Which syscall a park is of: its case's name, which no two cases share.
     let private kindOf (parked : ParkedSyscall) : string =

@@ -719,7 +719,7 @@ module TestEpollWait =
                         | Some _ -> ForgedPark.woken park.Waiter system
                         | None -> system
 
-                    Lone.UnixWait.park
+                    Lone.Parking.park
                         park.Waiter
                         (ParkedSyscall.EpollWait
                             {

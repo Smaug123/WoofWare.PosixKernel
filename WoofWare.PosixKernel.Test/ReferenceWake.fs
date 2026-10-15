@@ -58,7 +58,7 @@ module internal ReferenceWake =
             )
             |> Seq.collect (fun (_, state) ->
                 match state.Parked with
-                | Some park -> UnixWait.exclusiveQueuesOfPark machine park.Syscall
+                | Some park -> Parking.exclusiveQueuesOfPark machine park.Syscall
                 | None -> []
             )
             |> Set.ofSeq
@@ -69,7 +69,7 @@ module internal ReferenceWake =
                 fired
                 |> Set.toList
                 |> List.choose (fun primitive ->
-                    UnixWait.exclusiveQueueOf machine primitive
+                    Parking.exclusiveQueueOf machine primitive
                     |> Option.map (fun queue -> queue, (ordinal, thread))
                 )
             )
@@ -95,7 +95,7 @@ module internal ReferenceWake =
         |> List.filter (fun (_, thread, fired) ->
             fired
             |> Set.exists (fun primitive ->
-                match UnixWait.exclusiveQueueOf machine primitive with
+                match Parking.exclusiveQueueOf machine primitive with
                 | Some queue -> Map.tryFind queue chosen = Some thread
                 | None -> true
             )

@@ -90,7 +90,7 @@ on the *machine*, because an idle processor is a truthful reading of an absent
 key, and because a machine's processes share its processors. Keying it by
 processor makes two threads on one processor unrepresentable, and "is T running" is
 derived from it (`UnixScheduling.runningOn`), never stored beside it. Every way a
-thread stops running (a dispatch elsewhere, a park in `UnixWait.park`, an exit, a
+thread stops running (a dispatch elsewhere, a park in `Parking.park`, an exit, a
 process ending) must take it out of the map; `TestUnixScheduling` holds that to a
 reference that reads it off the event history.
 

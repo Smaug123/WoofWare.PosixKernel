@@ -1062,7 +1062,7 @@ module TestKqueue =
         let kqueue = idOf k system
 
         let forged (park : ParkedKevent) (system : UnixSystem<int, string>) =
-            UnixSystem.checkInvariants (Lone.UnixWait.park 1 (ParkedSyscall.Kevent park) system)
+            UnixSystem.checkInvariants (Lone.Parking.park 1 (ParkedSyscall.Kevent park) system)
 
         let honest =
             {
@@ -1095,7 +1095,7 @@ module TestKqueue =
 
         // ...which a drain excuses: the descriptor it entered through may have gone.
         let d, withDup = dup k system
-        let drained = close k (Lone.UnixWait.park 1 (ParkedSyscall.Kevent honest) withDup)
+        let drained = close k (Lone.Parking.park 1 (ParkedSyscall.Kevent honest) withDup)
         UnixSystem.checkInvariants drained |> shouldEqual []
         ignore<int> d
 
