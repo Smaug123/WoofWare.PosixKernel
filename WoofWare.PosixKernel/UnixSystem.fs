@@ -71,16 +71,43 @@ type internal SyscallRefusal<'Thread> =
     | PWrite of PWriteRefusal
     | CopyFileRange of CopyFileRangeRefusal
     | Pipe2 of Pipe2Refusal
+    | Socket of SocketRefusal
     | Bind of BindRefusal
     | Connect of ConnectRefusal
+    | Listen of ListenRefusal
+    | Accept of AcceptRefusal
+    | Shutdown of ShutdownRefusal
+    | GetSockName of GetSockNameRefusal
+    | GetPeerName of GetSockNameRefusal
     | SetSockOpt of SocketOptionRefusal
     | GetSockOpt of SocketOptionRefusal
+    | Poll of PollRefusal
+    | EpollCreate1 of EpollCreateRefusal
+    | EpollCtl of EpollCtlRefusal
+    | EpollWait of EpollWaitRefusal
+    | Kqueue of KqueueRefusal
+    | Kevent of KeventRefusal
     | InotifyInit1 of InotifyRefusal
     | InotifyAddWatch of InotifyAddWatchRefusal
     | InotifyRmWatch of InotifyRefusal
+    | Kill of KillRefusal
+    | PthreadKill of ThreadKillRefusal
+    | SigProcMask of SigprocmaskRefusal<'Thread>
+    | SigSuspend of SigsuspendRefusal
+    | RtSigSuspend of SigsuspendRefusal
+    | Pause of SigsuspendRefusal
+    | ClockGetTime of ClockGettimeRefusal
+    | GetRandom of GetRandomRefusal
+    | GetEntropy of GetEntropyRefusal
+    | GetResUid of GetIdsRefusal
+    | GetResGid of GetIdsRefusal
     | SetResUid of SetIdsRefusal
     | SetResGid of SetIdsRefusal
     | SetGroups of SetGroupsRefusal
+    | Spawn of SpawnRefusal<'Thread>
+    | ExitThread of ThreadExitRefusal<'Thread>
+    | ExitGroup of ProcessEndRefusal
+    | GetCpu of GetCpuRefusal
     /// The call is `call`, a reserved case: this library does not model the
     /// call it names yet.
     | Reserved of call : string
@@ -151,16 +178,43 @@ module internal SyscallRefusal =
         | SyscallRefusal.PWrite refusal -> $"pwrite: %s{PWriteRefusal.describe refusal}"
         | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
         | SyscallRefusal.Pipe2 refusal -> $"pipe2: %s{Pipe2Refusal.describe refusal}"
+        | SyscallRefusal.Socket refusal -> $"socket: %s{SocketRefusal.describe refusal}"
         | SyscallRefusal.Bind refusal -> $"bind: %s{BindRefusal.describe refusal}"
         | SyscallRefusal.Connect refusal -> $"connect: %s{ConnectRefusal.describe refusal}"
+        | SyscallRefusal.Listen refusal -> $"listen: %s{ListenRefusal.describe refusal}"
+        | SyscallRefusal.Accept refusal -> $"accept: %s{AcceptRefusal.describe refusal}"
+        | SyscallRefusal.Shutdown refusal -> $"shutdown: %s{ShutdownRefusal.describe refusal}"
+        | SyscallRefusal.GetSockName refusal -> $"getsockname: %s{GetSockNameRefusal.describe refusal}"
+        | SyscallRefusal.GetPeerName refusal -> $"getpeername: %s{GetSockNameRefusal.describe refusal}"
         | SyscallRefusal.SetSockOpt refusal -> $"setsockopt: %s{SocketOptionRefusal.describe refusal}"
         | SyscallRefusal.GetSockOpt refusal -> $"getsockopt: %s{SocketOptionRefusal.describe refusal}"
+        | SyscallRefusal.Poll refusal -> $"poll: %s{PollRefusal.describe refusal}"
+        | SyscallRefusal.EpollCreate1 refusal -> $"epoll_create1: %s{EpollCreateRefusal.describe refusal}"
+        | SyscallRefusal.EpollCtl refusal -> $"epoll_ctl: %s{EpollCtlRefusal.describe refusal}"
+        | SyscallRefusal.EpollWait refusal -> $"epoll_wait: %s{EpollWaitRefusal.describe refusal}"
+        | SyscallRefusal.Kqueue refusal -> $"kqueue: %s{KqueueRefusal.describe refusal}"
+        | SyscallRefusal.Kevent refusal -> $"kevent: %s{KeventRefusal.describe refusal}"
         | SyscallRefusal.InotifyInit1 refusal -> $"inotify_init1: %s{InotifyRefusal.describe refusal}"
         | SyscallRefusal.InotifyAddWatch refusal -> $"inotify_add_watch: %s{InotifyAddWatchRefusal.describe refusal}"
         | SyscallRefusal.InotifyRmWatch refusal -> $"inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
+        | SyscallRefusal.Kill refusal -> $"kill: %s{KillRefusal.describe refusal}"
+        | SyscallRefusal.PthreadKill refusal -> $"pthread_kill: %s{ThreadKillRefusal.describe refusal}"
+        | SyscallRefusal.SigProcMask refusal -> $"sigprocmask: %s{SigprocmaskRefusal.describe refusal}"
+        | SyscallRefusal.SigSuspend refusal -> $"sigsuspend: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.RtSigSuspend refusal -> $"rt_sigsuspend: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.Pause refusal -> $"pause: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.ClockGetTime refusal -> $"clock_gettime: %s{ClockGettimeRefusal.describe refusal}"
+        | SyscallRefusal.GetRandom refusal -> $"getrandom: %s{GetRandomRefusal.describe refusal}"
+        | SyscallRefusal.GetEntropy refusal -> $"getentropy: %s{GetEntropyRefusal.describe refusal}"
+        | SyscallRefusal.GetResUid refusal -> $"getresuid: %s{GetIdsRefusal.describe refusal}"
+        | SyscallRefusal.GetResGid refusal -> $"getresgid: %s{GetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetResUid refusal -> $"setresuid: %s{SetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetResGid refusal -> $"setresgid: %s{SetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetGroups refusal -> $"setgroups: %s{SetGroupsRefusal.describe refusal}"
+        | SyscallRefusal.Spawn refusal -> $"clone(CLONE_THREAD): %s{SpawnRefusal.describe refusal}"
+        | SyscallRefusal.ExitThread refusal -> $"exit: %s{ThreadExitRefusal.describe refusal}"
+        | SyscallRefusal.ExitGroup refusal -> $"exit_group: %s{ProcessEndRefusal.describe refusal}"
+        | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
         | SyscallRefusal.Reserved call ->
             $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
         | SyscallRefusal.Unwired (call, stage) ->
@@ -228,16 +282,43 @@ module internal SyscallRefusal =
         | SyscallRefusal.PWrite inner -> PWriteRefusal.kind inner
         | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
         | SyscallRefusal.Pipe2 inner -> Pipe2Refusal.kind inner
+        | SyscallRefusal.Socket inner -> SocketRefusal.kind inner
         | SyscallRefusal.Bind inner -> BindRefusal.kind inner
         | SyscallRefusal.Connect inner -> ConnectRefusal.kind inner
+        | SyscallRefusal.Listen inner -> ListenRefusal.kind inner
+        | SyscallRefusal.Accept inner -> AcceptRefusal.kind inner
+        | SyscallRefusal.Shutdown inner -> ShutdownRefusal.kind inner
+        | SyscallRefusal.GetSockName inner -> GetSockNameRefusal.kind inner
+        | SyscallRefusal.GetPeerName inner -> GetSockNameRefusal.kind inner
         | SyscallRefusal.SetSockOpt inner -> SocketOptionRefusal.kind inner
         | SyscallRefusal.GetSockOpt inner -> SocketOptionRefusal.kind inner
+        | SyscallRefusal.Poll inner -> PollRefusal.kind inner
+        | SyscallRefusal.EpollCreate1 inner -> EpollCreateRefusal.kind inner
+        | SyscallRefusal.EpollCtl inner -> EpollCtlRefusal.kind inner
+        | SyscallRefusal.EpollWait inner -> EpollWaitRefusal.kind inner
+        | SyscallRefusal.Kqueue inner -> KqueueRefusal.kind inner
+        | SyscallRefusal.Kevent inner -> KeventRefusal.kind inner
         | SyscallRefusal.InotifyInit1 inner -> InotifyRefusal.kind inner
         | SyscallRefusal.InotifyAddWatch inner -> InotifyAddWatchRefusal.kind inner
         | SyscallRefusal.InotifyRmWatch inner -> InotifyRefusal.kind inner
+        | SyscallRefusal.Kill inner -> KillRefusal.kind inner
+        | SyscallRefusal.PthreadKill inner -> ThreadKillRefusal.kind inner
+        | SyscallRefusal.SigProcMask inner -> SigprocmaskRefusal.kind inner
+        | SyscallRefusal.SigSuspend inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.RtSigSuspend inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.Pause inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.ClockGetTime inner -> ClockGettimeRefusal.kind inner
+        | SyscallRefusal.GetRandom inner -> GetRandomRefusal.kind inner
+        | SyscallRefusal.GetEntropy inner -> GetEntropyRefusal.kind inner
+        | SyscallRefusal.GetResUid inner -> GetIdsRefusal.kind inner
+        | SyscallRefusal.GetResGid inner -> GetIdsRefusal.kind inner
         | SyscallRefusal.SetResUid inner -> SetIdsRefusal.kind inner
         | SyscallRefusal.SetResGid inner -> SetIdsRefusal.kind inner
         | SyscallRefusal.SetGroups inner -> SetGroupsRefusal.kind inner
+        | SyscallRefusal.Spawn inner -> SpawnRefusal.kind inner
+        | SyscallRefusal.ExitThread inner -> ThreadExitRefusal.kind inner
+        | SyscallRefusal.ExitGroup inner -> ProcessEndRefusal.kind inner
+        | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
         | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
         | SyscallRefusal.Unwired _ -> RefusalKind.Unmodelled
 
@@ -1608,7 +1689,10 @@ module UnixSystem =
             UnixPipe.tryPipe2 caller flags destination system
             |> Result.map SteppedCall.Pipe2
             |> Result.mapError SyscallRefusal.Pipe2
-        | Syscall.Socket _ -> unwired "Syscall.Socket" WiringStage.S3
+        | Syscall.Socket (domain, socketType, protocol) ->
+            UnixSocket.trySocket caller domain socketType protocol system
+            |> Result.map SteppedCall.Socket
+            |> Result.mapError SyscallRefusal.Socket
         | Syscall.Bind (fd, address, declaredLength) ->
             CopiedArgument.copyBytes
                 "UnixSystem.step of Syscall.Bind"
@@ -1627,11 +1711,26 @@ module UnixSystem =
                 (fun address -> UnixConnection.tryConnect caller fd address declaredLength system)
             |> Result.map SteppedCall.Connect
             |> Result.mapError SyscallRefusal.Connect
-        | Syscall.Listen _ -> unwired "Syscall.Listen" WiringStage.S3
-        | Syscall.Accept _ -> unwired "Syscall.Accept" WiringStage.S3
-        | Syscall.Shutdown _ -> unwired "Syscall.Shutdown" WiringStage.S3
-        | Syscall.GetSockName _ -> unwired "Syscall.GetSockName" WiringStage.S3
-        | Syscall.GetPeerName _ -> unwired "Syscall.GetPeerName" WiringStage.S3
+        | Syscall.Listen (fd, backlog) ->
+            UnixSocket.tryListen caller fd backlog system
+            |> Result.map SteppedCall.Listen
+            |> Result.mapError SyscallRefusal.Listen
+        | Syscall.Accept (fd, destination, declaredLength) ->
+            UnixConnection.tryAccept caller fd destination declaredLength system
+            |> Result.map SteppedCall.Accept
+            |> Result.mapError SyscallRefusal.Accept
+        | Syscall.Shutdown (fd, how) ->
+            UnixConnection.tryShutdown caller fd how system
+            |> Result.map SteppedCall.Shutdown
+            |> Result.mapError SyscallRefusal.Shutdown
+        | Syscall.GetSockName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetsockname caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetSockName
+            |> Result.mapError SyscallRefusal.GetSockName
+        | Syscall.GetPeerName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetpeername caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetPeerName
+            |> Result.mapError SyscallRefusal.GetPeerName
         | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->
             CopiedArgument.copyBytes
                 "UnixSystem.step of Syscall.SetSockOpt"
@@ -1649,14 +1748,32 @@ module UnixSystem =
                 (fun length -> UnixSocket.tryGetsockopt caller fd level optionName value length system)
             |> Result.map SteppedCall.GetSockOpt
             |> Result.mapError SyscallRefusal.GetSockOpt
-        | Syscall.Poll _ -> unwired "Syscall.Poll" WiringStage.S3
+        | Syscall.Poll (entries, milliseconds) ->
+            UnixPoll.tryPoll caller entries milliseconds system
+            |> Result.map SteppedCall.Poll
+            |> Result.mapError SyscallRefusal.Poll
         | Syscall.Select _ -> reserved "Syscall.Select"
         | Syscall.PSelect _ -> reserved "Syscall.PSelect"
-        | Syscall.EpollCreate1 _ -> unwired "Syscall.EpollCreate1" WiringStage.S3
-        | Syscall.EpollCtl _ -> unwired "Syscall.EpollCtl" WiringStage.S3
-        | Syscall.EpollWait _ -> unwired "Syscall.EpollWait" WiringStage.S3
-        | Syscall.Kqueue -> unwired "Syscall.Kqueue" WiringStage.S3
-        | Syscall.Kevent _ -> unwired "Syscall.Kevent" WiringStage.S3
+        | Syscall.EpollCreate1 flags ->
+            UnixPoll.tryEpollCreate1 caller flags system
+            |> Result.map SteppedCall.EpollCreate1
+            |> Result.mapError SyscallRefusal.EpollCreate1
+        | Syscall.EpollCtl (epfd, op, fd, event) ->
+            UnixPoll.tryEpollCtl caller epfd op fd event system
+            |> Result.map SteppedCall.EpollCtl
+            |> Result.mapError SyscallRefusal.EpollCtl
+        | Syscall.EpollWait (epfd, buffer, maxEvents, milliseconds) ->
+            UnixPoll.tryEpollWait caller epfd maxEvents buffer milliseconds system
+            |> Result.map SteppedCall.EpollWait
+            |> Result.mapError SyscallRefusal.EpollWait
+        | Syscall.Kqueue ->
+            UnixKqueue.tryKqueue caller system
+            |> Result.map SteppedCall.Kqueue
+            |> Result.mapError SyscallRefusal.Kqueue
+        | Syscall.Kevent (kq, changes, nchanges, eventlist, nevents, timeout) ->
+            UnixKqueue.tryKevent caller kq nchanges changes nevents eventlist timeout system
+            |> Result.map SteppedCall.Kevent
+            |> Result.mapError SyscallRefusal.Kevent
         | Syscall.InotifyInit1 flags ->
             UnixInotify.tryInotifyInit1 caller flags system
             |> Result.map SteppedCall.InotifyInit1
@@ -1670,31 +1787,68 @@ module UnixSystem =
             UnixInotify.tryInotifyRmWatch caller fd wd system
             |> Result.map SteppedCall.InotifyRmWatch
             |> Result.mapError SyscallRefusal.InotifyRmWatch
-        | Syscall.Kill _ -> unwired "Syscall.Kill" WiringStage.S3
-        | Syscall.PthreadKill _ -> unwired "Syscall.PthreadKill" WiringStage.S3
-        | Syscall.SigAction _ -> unwired "Syscall.SigAction" WiringStage.S3
-        | Syscall.SigActionSyscall _ -> unwired "Syscall.SigActionSyscall" WiringStage.S3
-        | Syscall.PthreadSigMask _ -> unwired "Syscall.PthreadSigMask" WiringStage.S3
-        | Syscall.SigProcMask _ -> unwired "Syscall.SigProcMask" WiringStage.S3
-        | Syscall.RtSigProcMask _ -> unwired "Syscall.RtSigProcMask" WiringStage.S3
-        | Syscall.SigPending -> unwired "Syscall.SigPending" WiringStage.S3
-        | Syscall.SigSuspend _ -> unwired "Syscall.SigSuspend" WiringStage.S3
-        | Syscall.RtSigSuspend _ -> unwired "Syscall.RtSigSuspend" WiringStage.S3
-        | Syscall.Pause -> unwired "Syscall.Pause" WiringStage.S3
-        | Syscall.SigReturn _ -> unwired "Syscall.SigReturn" WiringStage.S3
+        | Syscall.Kill (pid, signo) ->
+            UnixSignal.tryKill caller pid signo system
+            |> Result.map SteppedCall.Kill
+            |> Result.mapError SyscallRefusal.Kill
+        | Syscall.PthreadKill (target, signo) ->
+            UnixSignal.tryPthreadKill caller target signo system
+            |> Result.map SteppedCall.PthreadKill
+            |> Result.mapError SyscallRefusal.PthreadKill
+        | Syscall.SigAction (signo, newAction) ->
+            Ok (SteppedCall.SigAction (UnixSignal.sigaction caller signo newAction system))
+        | Syscall.SigActionSyscall (signo, newAction) ->
+            Ok (SteppedCall.SigActionSyscall (UnixSignal.sigactionSyscall caller signo newAction system))
+        | Syscall.PthreadSigMask (how, set) ->
+            Ok (SteppedCall.PthreadSigMask (UnixSignal.pthreadSigmask caller how set system))
+        | Syscall.SigProcMask (how, set) ->
+            UnixSignal.trySigprocmask caller how set system
+            |> Result.map SteppedCall.SigProcMask
+            |> Result.mapError SyscallRefusal.SigProcMask
+        | Syscall.RtSigProcMask (how, set, sigsetSize) ->
+            Ok (SteppedCall.RtSigProcMask (UnixSignal.rtSigprocmask caller how set sigsetSize system))
+        | Syscall.SigPending -> Ok (SteppedCall.SigPending (UnixSignal.sigpending caller system))
+        | Syscall.SigSuspend mask ->
+            UnixSignal.trySigsuspend caller mask system
+            |> Result.map SteppedCall.SigSuspend
+            |> Result.mapError SyscallRefusal.SigSuspend
+        | Syscall.RtSigSuspend (mask, sigsetSize) ->
+            UnixSignal.tryRtSigsuspend caller mask sigsetSize system
+            |> Result.map SteppedCall.RtSigSuspend
+            |> Result.mapError SyscallRefusal.RtSigSuspend
+        | Syscall.Pause ->
+            UnixSignal.tryPause caller system
+            |> Result.map SteppedCall.Pause
+            |> Result.mapError SyscallRefusal.Pause
+        | Syscall.SigReturn frame -> Ok (SteppedCall.SigReturn (UnixSignal.sigreturn caller frame system))
         | Syscall.SigWait _ -> reserved "Syscall.SigWait"
         | Syscall.SigWaitInfo _ -> reserved "Syscall.SigWaitInfo"
         | Syscall.SigTimedWait _ -> reserved "Syscall.SigTimedWait"
-        | Syscall.ClockGetTime _ -> unwired "Syscall.ClockGetTime" WiringStage.S3
-        | Syscall.GetTimeOfDay -> unwired "Syscall.GetTimeOfDay" WiringStage.S3
+        | Syscall.ClockGetTime clockId ->
+            UnixClock.tryClockGettime caller clockId system
+            |> Result.map SteppedCall.ClockGetTime
+            |> Result.mapError SyscallRefusal.ClockGetTime
+        | Syscall.GetTimeOfDay -> Ok (SteppedCall.GetTimeOfDay (UnixClock.gettimeofday caller system))
         | Syscall.Nanosleep _ -> reserved "Syscall.Nanosleep"
         | Syscall.ClockNanosleep _ -> reserved "Syscall.ClockNanosleep"
-        | Syscall.GetRandom _ -> unwired "Syscall.GetRandom" WiringStage.S3
-        | Syscall.GetEntropy _ -> unwired "Syscall.GetEntropy" WiringStage.S3
+        | Syscall.GetRandom (buffer, count, flags) ->
+            UnixEntropy.tryGetRandom caller buffer count flags system
+            |> Result.map SteppedCall.GetRandom
+            |> Result.mapError SyscallRefusal.GetRandom
+        | Syscall.GetEntropy (buffer, length) ->
+            UnixEntropy.tryGetEntropy caller buffer length system
+            |> Result.map SteppedCall.GetEntropy
+            |> Result.mapError SyscallRefusal.GetEntropy
         | Syscall.GetProcessId -> Ok (SteppedCall.GetProcessId (processId caller system))
         | Syscall.UMask mask -> Ok (SteppedCall.UMask (umask caller mask system))
-        | Syscall.GetResUid _ -> unwired "Syscall.GetResUid" WiringStage.S3
-        | Syscall.GetResGid _ -> unwired "Syscall.GetResGid" WiringStage.S3
+        | Syscall.GetResUid (real, effective, saved) ->
+            UnixCredentials.tryGetresuid caller real effective saved system
+            |> Result.map SteppedCall.GetResUid
+            |> Result.mapError SyscallRefusal.GetResUid
+        | Syscall.GetResGid (real, effective, saved) ->
+            UnixCredentials.tryGetresgid caller real effective saved system
+            |> Result.map SteppedCall.GetResGid
+            |> Result.mapError SyscallRefusal.GetResGid
         | Syscall.SetResUid (real, effective, saved) ->
             UnixCredentials.trySetresuid caller real effective saved system
             |> Result.map SteppedCall.SetResUid
@@ -1707,10 +1861,22 @@ module UnixSystem =
             UnixCredentials.trySetgroups caller size words system
             |> Result.map SteppedCall.SetGroups
             |> Result.mapError SyscallRefusal.SetGroups
-        | Syscall.Spawn _ -> unwired "Syscall.Spawn" WiringStage.S3
-        | Syscall.ExitThread _ -> unwired "Syscall.ExitThread" WiringStage.S3
-        | Syscall.ExitGroup _ -> unwired "Syscall.ExitGroup" WiringStage.S3
-        | Syscall.GetCpu -> unwired "Syscall.GetCpu" WiringStage.S3
+        | Syscall.Spawn (child, cpu) ->
+            UnixThreadLifecycle.trySpawn caller child cpu system
+            |> Result.map SteppedCall.Spawn
+            |> Result.mapError SyscallRefusal.Spawn
+        | Syscall.ExitThread status ->
+            UnixThreadLifecycle.tryExitThread caller status system
+            |> Result.map SteppedCall.ExitThread
+            |> Result.mapError SyscallRefusal.ExitThread
+        | Syscall.ExitGroup status ->
+            UnixThreadLifecycle.tryExitGroup caller status system
+            |> Result.map SteppedCall.ExitGroup
+            |> Result.mapError SyscallRefusal.ExitGroup
+        | Syscall.GetCpu ->
+            UnixScheduling.tryGetcpu caller system
+            |> Result.map SteppedCall.GetCpu
+            |> Result.mapError SyscallRefusal.GetCpu
 
     /// <summary>
     /// Make the call `call` names, by `caller`, through that call's own
@@ -1732,23 +1898,26 @@ module UnixSystem =
     ///
     /// `caller` must be a thread of one of the system's processes, parked in no
     /// syscall and owing no return to user mode, whatever the call, as the
-    /// call's own function requires.
+    /// call's own function requires. A call whose own function fails loudly on
+    /// arguments no client following its documentation passes, such as a
+    /// `SigReturn` of a frame that is not the thread's innermost, fails so
+    /// through `step` too.
+    ///
+    /// A call that can end the process answers as its own function does: the
+    /// `ProcessFate` of `Kill`, `PthreadKill` and `ExitThread` is
+    /// `ProcessFate.ProcessEnded` when the call ended it, and `ExitGroup`
+    /// answers how the process ended beside the system without it. A
+    /// `SigSuspend`, `RtSigSuspend` or `Pause` may answer
+    /// `SigsuspendOutcome.Interrupted`, and the thread then owes its return to
+    /// user mode, as after the call made through its own function.
     ///
     /// A reserved case (`Syscall.Nanosleep`, `ClockNanosleep`, `Select`,
     /// `PSelect`, `SigWait`, `SigWaitInfo`, `SigTimedWait`, `RecvFrom`,
     /// `RecvMsg`, `SendTo` and `SendMsg`) is refused: this library does not
-    /// model those calls yet. In this version `step` does not yet make
-    /// `Socket`, `Listen`, `Accept`, `Shutdown`, `GetSockName`, `GetPeerName`,
-    /// `Poll`, `EpollCreate1`, `EpollCtl`, `EpollWait`, `Kqueue`, `Kevent`,
-    /// `Kill`, `PthreadKill`, `SigAction`, `SigActionSyscall`,
-    /// `PthreadSigMask`, `SigProcMask`, `RtSigProcMask`, `SigPending`,
-    /// `SigSuspend`, `RtSigSuspend`, `Pause`, `SigReturn`, `ClockGetTime`,
-    /// `GetTimeOfDay`, `GetRandom`, `GetEntropy`, `GetResUid`, `GetResGid`,
-    /// `Spawn`, `ExitThread`, `ExitGroup` or `GetCpu`, and refuses each; each
-    /// of those calls is made through its own function meanwhile.
+    /// model those calls yet.
     /// </remarks>
     /// <exception cref="T:System.InvalidOperationException">`caller` is not a thread of one of the system's processes, or is asleep in another syscall, or owes a return to user mode. A `CopiedArgument.Readable` buffer ends before the bytes the call copies from it do, or is the default `ImmutableArray`.</exception>
-    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give.</exception>
+    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`, nor `getresuid` nor `getresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give. This kernel is not Linux-flavoured, and only Linux has epoll. This kernel is not Darwin-flavoured, and only Darwin has kqueue. The simulated kernel has no `getrandom` system call, or no `getentropy` system call. This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (call : Syscall<'Thread, 'Handler>)
