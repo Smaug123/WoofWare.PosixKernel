@@ -43,15 +43,19 @@ type internal UnhandledInterruption =
 type internal Interruption =
     {
         /// The first signal the thread would have taken had it returned to user
-        /// mode as the call was interrupted.
-        Signal : Signal
+        /// mode as the call was interrupted: `None` where it would have taken
+        /// none, the signal that woke the call having gone by the time the call
+        /// was finished.
+        Signal : Signal option
         /// How the call ends if a handler runs as the thread returns.
         Rule : SignalRestartRule
         /// How the call ends if no handler runs as the thread returns.
         Unhandled : UnhandledInterruption
         /// How the call would have ended had the thread returned to user mode
-        /// as it was interrupted: `None` where that return would have run no
-        /// handler, or handlers that disagree under `SA_RESTART`.
+        /// as it was interrupted: as the handlers it would have run say, or, had
+        /// it taken no signal, as `Unhandled` says. `None` where that return
+        /// would have applied a default rather than run a handler, or run
+        /// handlers that disagree under `SA_RESTART`.
         AtInterruption : InterruptedCall option
     }
 

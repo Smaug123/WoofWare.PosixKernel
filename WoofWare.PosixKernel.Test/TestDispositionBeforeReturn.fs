@@ -15,10 +15,12 @@ open WoofWare.PosixKernel
 /// h1, with `SA_RESTART` or without) whose disposition the main thread then
 /// changed before the sleeper ran: left as it was, ignored, reset to its
 /// default (which terminates), or swapped for handler h2 with the other
-/// `SA_RESTART`. Every row is replayed here twice: with the change made after
-/// the woken sleeper's call has answered `Interrupted` and before its return
-/// to user mode, where this library decides the call's end; and with the
-/// change made before the call is finished, as the probe made it.
+/// `SA_RESTART`. Every row is replayed here three times: with the change made
+/// after the woken sleeper's call has answered `Interrupted` and before its
+/// return to user mode, where this library decides the call's end; with the
+/// change made after the sleeper is woken and before its call is finished, as
+/// the probe made it; and with the change made before the client's sweep has
+/// woken the sleeper.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestDispositionBeforeReturn =
@@ -155,6 +157,12 @@ module TestDispositionBeforeReturn =
     // Each call, made asleep as the probe made it
     // ------------------------------------------------------------------
 
+    /// `system` once the leader has sent the sleeper SIGUSR1.
+    let private signalled (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match UnixSignal.tryPthreadKill (Callers.leader system) sleeper (usr1 system) system with
+        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | other -> failwith $"pthread_kill: %A{other}"
+
     let private pipe (system : UnixSystem<int, string>) : int * int * UnixSystem<int, string> =
         match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (r, w), system) -> r, w, system
@@ -215,10 +223,13 @@ module TestDispositionBeforeReturn =
         | ReadOutcome.WouldBlock _ -> true
         | _ -> false
 
-    /// `system` with the sleeper asleep in `call`, made on `flavour`.
-    let private asleepIn
+    /// `system` with the sleeper asleep in `call`, made on `flavour`; a
+    /// `poll`, `epoll_wait` or `kevent` with a timeout of `milliseconds`, or
+    /// none for -1, and every other call with none.
+    let private asleepWithTimeoutIn
         (flavour : SimulatedUnixFlavour)
         (call : string)
+        (milliseconds : int)
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
@@ -258,7 +269,7 @@ module TestDispositionBeforeReturn =
                         Events = 0x0001s
                     }
                 ]
-                -1
+                milliseconds
                 system
             |> sleeps
                 "poll"
@@ -292,7 +303,7 @@ module TestDispositionBeforeReturn =
                 | Ok (EpollCtlAnswer.Changed, system) -> system
                 | other -> failwith $"epoll_ctl: %A{other}"
 
-            UnixPoll.tryEpollWait (s system) epoll 1 UserBuffer.Mapped -1 system
+            UnixPoll.tryEpollWait (s system) epoll 1 UserBuffer.Mapped milliseconds system
             |> sleeps
                 "epoll_wait"
                 (fun outcome ->
@@ -319,7 +330,13 @@ module TestDispositionBeforeReturn =
                 | KeventOutcome.Answered [], system -> system
                 | other, _ -> failwith $"registering EVFILT_READ: %A{other}"
 
-            UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped KeventTimeout.Null system
+            let timeout =
+                if milliseconds < 0 then
+                    KeventTimeout.Null
+                else
+                    KeventTimeout.Readable (int64 (milliseconds / 1000), int64 (milliseconds % 1000) * 1_000_000L)
+
+            UnixKqueue.tryKevent (s system) kq 0 [] 1 UserBuffer.Mapped timeout system
             |> sleeps
                 "kevent"
                 (fun outcome ->
@@ -396,6 +413,33 @@ module TestDispositionBeforeReturn =
             UnixReadWrite.tryRead (s system) fd UserBuffer.Mapped 4096UL system
             |> sleeps "inotify read" readParks
         | _ -> failwith $"%O{flavour} has no call %s{call} here"
+
+    /// `system` with the sleeper asleep in `call`, made on `flavour`, with no
+    /// timeout.
+    let private asleepIn
+        (flavour : SimulatedUnixFlavour)
+        (call : string)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        asleepWithTimeoutIn flavour call -1 system
+
+    /// A machine of `flavour` whose sleeper is asleep in `call`, with a
+    /// timeout of `milliseconds` where `asleepWithTimeoutIn` gives it one, and
+    /// SIGUSR1 caught by h1, installed with `SA_RESTART` or not as `restart`
+    /// says.
+    let private asleep
+        (flavour : SimulatedUnixFlavour)
+        (call : string)
+        (restart : bool)
+        (milliseconds : int)
+        : UnixSystem<int, string>
+        =
+        UnixSystem.initial<int, string> (platformOf flavour)
+        |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        |> Threads.spawn sleeper
+        |> install (handler "h1" restart)
+        |> asleepWithTimeoutIn flavour call milliseconds
 
     /// How the woken sleeper's call finished: `Interrupted`, or asleep again.
     [<RequireQualifiedAccess>]
@@ -475,12 +519,17 @@ module TestDispositionBeforeReturn =
             Seen.Killed
         | Settled.Refused refusal -> Seen.Refused refusal
 
-    /// Whether the change comes after the woken sleeper's call has answered
-    /// (`AfterFinish`), or before it is finished, as the probe made it.
+    /// When the change comes: after the woken sleeper's call has answered
+    /// (`AfterFinish`); after the client's sweep has woken the sleeper and
+    /// before its call is finished (`BeforeFinish`), which is where the probe
+    /// made it, a real kernel waking the sleeper as the signal is sent; or
+    /// before that sweep (`BeforeWake`), which only a client that skips the
+    /// sweep after the `pthread_kill` reaches.
     [<RequireQualifiedAccess>]
     type private Window =
         | AfterFinish
         | BeforeFinish
+        | BeforeWake
 
     /// What this library answers for `row`, with the change made in `window`.
     let private replay (window : Window) (row : Row) : Seen =
@@ -491,37 +540,38 @@ module TestDispositionBeforeReturn =
             | Change.Default -> install SignalDisposition.Default system
             | Change.Swap -> install (handler "h2" (not row.Restart)) system
 
-        let system =
-            UnixSystem.initial<int, string> (platformOf row.Flavour)
-            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Threads.spawn sleeper
-            |> install (handler "h1" row.Restart)
-            |> asleepIn row.Flavour row.Call
+        let system = asleep row.Flavour row.Call row.Restart -1 |> signalled
 
-        let system =
-            match UnixSignal.tryPthreadKill (Callers.leader system) sleeper (usr1 system) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
-            | other -> failwith $"pthread_kill: %A{other}"
-
-        let system = Woken.thread sleeper system
-
-        match window with
-        | Window.AfterFinish ->
+        let finished (system : UnixSystem<int, string>) : Seen =
             match finish row.Call system with
-            | Finished.Interrupted system -> returned (change system)
-            | Finished.SleepsOn -> failwith "the signal woke the sleeper, which slept on"
-        | Window.BeforeFinish ->
-            match finish row.Call (change system) with
             | Finished.Interrupted system -> returned system
             // Nothing the sleeper takes is left, so it goes on sleeping, no
             // handler run.
             | Finished.SleepsOn -> Seen.Restarts None
 
+        match window with
+        | Window.AfterFinish ->
+            match finish row.Call (Woken.thread sleeper system) with
+            | Finished.Interrupted system -> returned (change system)
+            | Finished.SleepsOn -> failwith "the signal woke the sleeper, which slept on"
+        | Window.BeforeFinish -> finished (change (Woken.thread sleeper system))
+        | Window.BeforeWake ->
+            let system = change system
+            let woken, system = UnixWait.wake system
+
+            if woken |> List.exists (fun (caller, _) -> caller = Callers.thread sleeper system) then
+                finished system
+            else
+                // Nothing woke the sleeper, which sleeps on, no handler run.
+                Seen.Restarts None
+
     /// What this library answers for `row`, with the change made in `window`,
     /// where that is not what the probe saw.
     let private divergent (window : Window) (row : Row) : Seen option =
         let darwinChanged =
-            Seen.Refused (ReturnToUserRefusal.ChangedSinceInterruption (Signal.SIGUSR1, SimulatedUnixFlavour.Darwin))
+            Seen.Refused (
+                ReturnToUserRefusal.ChangedSinceInterruption (Some Signal.SIGUSR1, SimulatedUnixFlavour.Darwin)
+            )
 
         let restartable =
             [ "read" ; "write" ; "flock" ; "accept" ; "tcp-read" ; "tcp-write" ]
@@ -543,17 +593,19 @@ module TestDispositionBeforeReturn =
             Some darwinChanged
         | Window.AfterFinish, SimulatedUnixFlavour.Darwin, Change.Swap when List.contains row.Call restartable ->
             Some darwinChanged
-        // With the signal ignored before the woken sleeper ran, the sleeper
-        // finds nothing to take and sleeps on, where Linux's epoll_wait and
-        // Darwin's poll and kevent fail with EINTR, no handler run.
-        | Window.BeforeFinish, SimulatedUnixFlavour.Linux, Change.Ignore when row.Call = "epoll" ->
+        // A real kernel wakes the sleeper as the signal is sent, and this
+        // library as the client's sweep finds it deliverable. With the signal
+        // ignored before that sweep, nothing wakes the sleeper, which sleeps
+        // on, where Linux's epoll_wait and Darwin's poll and kevent fail with
+        // EINTR. Every other call sleeps on either way.
+        | Window.BeforeWake, SimulatedUnixFlavour.Linux, Change.Ignore when row.Call = "epoll" ->
             Some (Seen.Restarts None)
-        | Window.BeforeFinish, SimulatedUnixFlavour.Darwin, Change.Ignore when row.Call = "poll" || row.Call = "kevent" ->
+        | Window.BeforeWake, SimulatedUnixFlavour.Darwin, Change.Ignore when row.Call = "poll" || row.Call = "kevent" ->
             Some (Seen.Restarts None)
         | _ -> None
 
     [<TestCaseSource(nameof flavours)>]
-    let ``every held row of the probe replays, changed after the call answers or before``
+    let ``every held row of the probe replays, changed after the call answers, before, or before the wake``
         (flavour : SimulatedUnixFlavour)
         : unit
         =
@@ -570,7 +622,7 @@ module TestDispositionBeforeReturn =
 
         let mismatches =
             [
-                for window in [ Window.AfterFinish ; Window.BeforeFinish ] do
+                for window in [ Window.AfterFinish ; Window.BeforeFinish ; Window.BeforeWake ] do
                     for row in rows do
                         let expected = divergent window row |> Option.defaultValue row.Seen
                         let actual = replay window row
@@ -607,7 +659,7 @@ module TestDispositionBeforeReturn =
             seen
             |> shouldEqual (
                 Seen.Refused (
-                    ReturnToUserRefusal.ChangedSinceInterruption (Signal.SIGUSR1, SimulatedUnixFlavour.Darwin)
+                    ReturnToUserRefusal.ChangedSinceInterruption (Some Signal.SIGUSR1, SimulatedUnixFlavour.Darwin)
                 )
             )
 
@@ -635,12 +687,7 @@ module TestDispositionBeforeReturn =
             |> asleepIn SimulatedUnixFlavour.Linux "pause"
 
         let system =
-            match UnixSignal.tryPthreadKill (Callers.leader system) sleeper (usr1 system) system with
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
-            | other -> failwith $"pthread_kill: %A{other}"
-
-        let system =
-            match finish "pause" (Woken.thread sleeper system) with
+            match finish "pause" (Woken.thread sleeper (signalled system)) with
             | Finished.Interrupted system -> install SignalDisposition.Ignore system
             | Finished.SleepsOn -> failwith "the signal woke the sleeper, which slept on"
 
@@ -658,3 +705,105 @@ module TestDispositionBeforeReturn =
                 |> shouldEqual (Some ParkedSyscall.SigSuspend)
             | other -> failwith $"the pause made again: %A{other}"
         | other -> failwith $"the return: %A{other}"
+
+    /// The sleeper asleep in `call` on `flavour` with a timeout of a second,
+    /// and the deadline it waits for.
+    let private asleepForASecond (flavour : SimulatedUnixFlavour) (call : string) : UnixSystem<int, string> * int64 =
+        let system = asleep flavour call false 1000
+
+        match UnixWait.deadlines system with
+        | [ deadline ] -> system, deadline
+        | other -> failwith $"expected the %s{call} to wait for one deadline, got %A{other}"
+
+    /// `system` once SIGUSR1 has woken the sleeper and the leader has then
+    /// ignored it, before the sleeper's call is finished.
+    let private wokenThenIgnored (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        signalled system |> Woken.thread sleeper |> install SignalDisposition.Ignore
+
+    [<TestCaseSource(nameof flavours)>]
+    let ``a call whose waking signal is ignored before it is finished sleeps again there, or is interrupted to fail``
+        (flavour : SimulatedUnixFlavour)
+        : unit
+        =
+        // A call the probe saw sleep on is put back to sleep by its finishing
+        // call, which is its restart, rather than interrupted for its return
+        // to restart it; one the probe saw fail with EINTR is interrupted.
+        let ignored = rows flavour |> List.filter (fun row -> row.Change = Change.Ignore)
+
+        // A control, so that this cannot pass by reading no rows: every call
+        // under both flags.
+        ignored.Length
+        |> shouldEqual (
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> 22
+            | SimulatedUnixFlavour.Darwin -> 20
+        )
+
+        let mismatches =
+            [
+                for row in ignored do
+                    let finished =
+                        asleep row.Flavour row.Call row.Restart -1
+                        |> wokenThenIgnored
+                        |> finish row.Call
+
+                    match row.Seen, finished with
+                    | Seen.Restarts None, Finished.SleepsOn
+                    | Seen.Eintr None, Finished.Interrupted _ -> ()
+                    | seen, Finished.SleepsOn -> yield $"%s{row.Line}: the probe saw %A{seen}, and it slept again"
+                    | seen, Finished.Interrupted _ ->
+                        yield $"%s{row.Line}: the probe saw %A{seen}, and it was interrupted"
+            ]
+
+        mismatches |> shouldEqual []
+
+    [<Test>]
+    let ``a Linux poll with a timeout, its waking signal ignored before it is finished, sleeps on to its deadline``
+        ()
+        : unit
+        =
+        // Linux restarts such a poll with what is left of its timeout
+        // (`SyscallInterruption.withoutHandler`), which sleeping on to the
+        // same deadline is.
+        let system, deadline = asleepForASecond SimulatedUnixFlavour.Linux "poll"
+        let system = wokenThenIgnored system
+
+        match UnixPoll.tryFinishPoll (Callers.thread sleeper system) system with
+        | Ok (PollOutcome.WouldBlock _, system) -> UnixWait.deadlines system |> shouldEqual [ deadline ]
+        | other -> failwith $"finishing the poll: %A{other}"
+
+    /// Each flavour's waits that fail with `EINTR` once their waking signal
+    /// has gone, which `docs/probes/disposition-before-return` measured only
+    /// without a timeout.
+    let private timedUnmeasured : TestCaseData list =
+        [
+            SimulatedUnixFlavour.Linux, "epoll"
+            SimulatedUnixFlavour.Darwin, "poll"
+            SimulatedUnixFlavour.Darwin, "kevent"
+        ]
+        |> List.map (fun (flavour, call) -> TestCaseData (flavour, call))
+
+    [<TestCaseSource(nameof timedUnmeasured)>]
+    let ``a timed wait the probe measured untimed, its waking signal ignored before it is finished, is refused``
+        (flavour : SimulatedUnixFlavour, call : string)
+        : unit
+        =
+        let system = asleepForASecond flavour call |> fst |> wokenThenIgnored
+        let s = Callers.thread sleeper system
+
+        let refusal =
+            match call with
+            | "epoll" ->
+                match UnixPoll.tryFinishEpollWait s system with
+                | Error (EpollWaitRefusal.Interruption refusal) -> refusal
+                | other -> failwith $"finishing the epoll_wait: %A{other}"
+            | "poll" ->
+                match UnixPoll.tryFinishPoll s system with
+                | Error (PollRefusal.Interruption refusal) -> refusal
+                | other -> failwith $"finishing the poll: %A{other}"
+            | _ ->
+                match UnixKqueue.tryFinishKevent s system with
+                | Error (KeventRefusal.Interruption refusal) -> refusal
+                | other -> failwith $"finishing the kevent: %A{other}"
+
+        refusal |> shouldEqual SyscallInterruptionRefusal.WakingSignalGone
