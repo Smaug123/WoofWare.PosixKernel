@@ -83,13 +83,13 @@ module TestListenerTeardown =
         let value = OptionValue.ofLinger onOff seconds
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | Ok SetSockOptAdmission.NoCopy
             | Ok (SetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+        Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
 
     let private lingerZero (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match setLinger fd 1 0 system with
@@ -305,7 +305,7 @@ module TestListenerTeardown =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals
@@ -524,7 +524,7 @@ module TestListenerTeardown =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals

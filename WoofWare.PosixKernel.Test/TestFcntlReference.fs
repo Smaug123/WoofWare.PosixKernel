@@ -571,7 +571,7 @@ module TestFcntlReference =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals

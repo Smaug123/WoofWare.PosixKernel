@@ -316,7 +316,7 @@ module TestUnconnectedSocketTransfer =
         // endpoint.
         let system =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     socketId
                     false
                     16u
@@ -336,7 +336,7 @@ module TestUnconnectedSocketTransfer =
         |> Option.map _.Endpoint
         |> shouldEqual (Some (loopbackAt 0us))
 
-        match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
+        match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd UserBuffer.Mapped 1UL system with
         | Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EDESTADDRREQ), after)) ->
             let low, high = system.Machine.EphemeralPortRange
 
@@ -366,7 +366,7 @@ module TestUnconnectedSocketTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "on SIGPIPE"))
                         proc.Signals
@@ -483,7 +483,7 @@ module TestUnconnectedSocketTransfer =
             | Error (ReadRefusal.DatagramSleep _), Seen.Sleeps -> true
             | _ -> false
         | Call.Write count ->
-            let admitted = UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system
+            let admitted = Lone.UnixReadWrite.tryAdmitWrite 1 fd UserBuffer.Mapped count system
 
             // The whole `write`, through its paused call and a step at a time,
             // answers as its admission does, for a count the caller could hold

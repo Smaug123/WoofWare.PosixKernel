@@ -754,7 +754,14 @@ module TestSocketOptions =
 
         let short =
             Assert.Throws<exn> (fun () ->
-                UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 8u (Some (OptionValue.ofInt 1)) system
+                Lone.UnixSocket.trySetsockoptBytes
+                    fd
+                    level
+                    name
+                    UserBuffer.Mapped
+                    8u
+                    (Some (OptionValue.ofInt 1))
+                    system
                 |> ignore<_>
             )
 

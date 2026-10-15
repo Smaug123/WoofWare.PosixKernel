@@ -223,7 +223,7 @@ module TestPipeAgainstHost =
                         { proc with
                             Signals =
                                 SignalState.setDisposition
-                                    (UnixSystemState.signalNumbering system)
+                                    (Lone.UnixSystemState.signalNumbering system)
                                     Signal.SIGPIPE
                                     SignalDisposition.Ignore
                                     proc.Signals
@@ -346,7 +346,7 @@ module TestPipeAgainstHost =
                             // `None` for a write that sleeps.
                             let model =
                                 match
-                                    UnixReadWrite.tryAdmitWrite
+                                    Lone.UnixReadWrite.tryAdmitWrite
                                         (Lone.leader system)
                                         modelFd
                                         buffer
@@ -545,7 +545,9 @@ module TestPipeAgainstHost =
                                     FileDescriptorRegistry.tryFindId modelFd (Lone.fileDescriptors system)
                                     |> Option.get
 
-                                let model = int16 (LinuxReadiness.ofDescription id system) &&& (0x1c7s ||| 0x18s)
+                                let model =
+                                    int16 (Lone.LinuxReadiness.ofDescription id system) &&& (0x1c7s ||| 0x18s)
+
                                 let host = hostLevel hostFd
 
                                 if model <> host then

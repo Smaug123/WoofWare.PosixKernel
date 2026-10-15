@@ -280,7 +280,7 @@ module TestLaunchedStreams =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -328,7 +328,7 @@ module TestLaunchedStreams =
         | Op.Poll fd ->
             match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
             | None -> Some (Answer.Level 0u, system)
-            | Some id -> Some (Answer.Level (LinuxReadiness.ofDescription id system), system)
+            | Some id -> Some (Answer.Level (Lone.LinuxReadiness.ofDescription id system), system)
         | Op.Pipe2 ->
             match
                 UnixPipe.tryPipe2
@@ -455,7 +455,7 @@ module TestLaunchedStreams =
             | other -> failwith $"%A{other}"
 
         let reported (system : UnixSystem<int, string>) : bool * UnixSystem<int, string> =
-            let rows, system = EpollReadyList.drain queueId 4 system
+            let rows, system = Lone.EpollReadyList.drain queueId 4 system
             not rows.IsEmpty, system
 
         let atAdd, system = reported system

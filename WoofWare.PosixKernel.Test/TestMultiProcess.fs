@@ -7,8 +7,8 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Several processes on one `SimulatedMachine`, each making its syscalls in its
-/// own view: the kernel chooses each later process's ID, the processes share
+/// Several processes in one `UnixSystem`, each call naming its caller's
+/// process: the kernel chooses each later process's ID, the processes share
 /// the machine's ports, filesystem and pipes and nothing of each other's own
 /// state, and every invariant holds after every call.
 [<TestFixture>]
@@ -22,11 +22,7 @@ module TestMultiProcess =
 
     /// A machine of `platform` with `count` processes, the first booted and
     /// the rest launched, and their process IDs in that order.
-    let private machineOf
-        (platform : SimulatedUnixPlatform)
-        (count : int)
-        : ProcessId list * SimulatedMachine<int, string>
-        =
+    let private machineOf (platform : SimulatedUnixPlatform) (count : int) : ProcessId list * UnixSystem<int, string> =
         let first =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -40,7 +36,7 @@ module TestMultiProcess =
             | Error refusal -> failwith $"launch: %s{ProcessCreationRefusal.describe refusal}"
         )
 
-    let private viewOf (pid : ProcessId) (machine : SimulatedMachine<int, string>) : UnixSystem<int, string> =
+    let private viewOf (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         match Machines.focus pid machine with
         | Some view -> view
         | None -> failwith $"no process %O{pid}"
@@ -49,24 +45,14 @@ module TestMultiProcess =
     let private inProcess
         (pid : ProcessId)
         (f : UnixSystem<int, string> -> 'a * UnixSystem<int, string>)
-        (machine : SimulatedMachine<int, string>)
-        : 'a * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : 'a * UnixSystem<int, string>
         =
         match Machines.inView pid f machine with
         | Some answered -> answered
         | None -> failwith $"no process %O{pid}"
 
-    let private assertClean (machine : SimulatedMachine<int, string>) : unit =
-        Machines.checkInvariants machine |> shouldEqual []
-
-        for pid in Machines.processIds machine do
-            let view = viewOf pid machine
-            // A view of a machine with other processes checks only what one
-            // process can check truthfully, which must hold too.
-            UnixSystem.checkInvariants view |> shouldEqual []
-
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem
-            |> shouldEqual []
+    let private assertClean (machine : UnixSystem<int, string>) : unit = Machines.assertClean machine
 
     let private platforms : SimulatedUnixPlatform list =
         [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ]
@@ -99,7 +85,6 @@ module TestMultiProcess =
         ProcessId.toInt32 pid |> shouldEqual 4244
 
         let view = viewOf pid machine
-        UnixSystem.processIds view |> shouldEqual (Set.singleton pid)
 
         UnixThreadState.osThreadId (UnixThreadTable.get 0 (Proc.threads pid view))
         |> OsThreadId.toUInt64
@@ -419,79 +404,30 @@ module TestMultiProcess =
             assertClean machine
 
     [<Test>]
-    let ``a view is refused once another process's view has been written back`` () : unit =
-        let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
-        let first = viewOf pids.[0] machine
-        let second = viewOf pids.[1] machine
-
-        let _, second = KeventWorld.dupIn pids.[1] 1 second
-        let machine' = Machines.unfocus second machine
-
-        let error = Assert.Throws<exn> (fun () -> Machines.unfocus first machine' |> ignore)
-
-        error.Message
-        |> shouldContainText "was not focused from the machine as it stands"
-
-        // ...and the written-back process's change is the only one.
-        Proc.state pids.[1] (viewOf pids.[1] machine')
-        |> shouldEqual (Proc.state pids.[1] second)
-
-        machine'.Processes.[pids.[0]] |> shouldEqual machine.Processes.[pids.[0]]
-
-    [<Test>]
-    let ``a view's process is held by the machine, by identity, until its own process's change is written back``
-        ()
-        : unit
-        =
-        let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
-        let first = viewOf pids.[0] machine
-        let second = viewOf pids.[1] machine
-
-        Machines.holdsProcessOf first machine |> shouldEqual true
-
-        // Another process's change goes stale only the machine in `first`.
-        let _, second = KeventWorld.dupIn pids.[1] 1 second
-        let machine = Machines.unfocus second machine
-        Machines.holdsProcessOf first machine |> shouldEqual true
-
-        // A change of `first`'s own process, written back from another view of it, is one
-        // `first` never saw.
-        let _, machine = inProcess pids.[0] (KeventWorld.dupIn pids.[0] 1) machine
-        Machines.holdsProcessOf first machine |> shouldEqual false
-
-        // A process the machine does not hold.
-        let otherPids, other = machineOf SimulatedUnixPlatform.linuxX64 3
-
-        Machines.holdsProcessOf (viewOf otherPids.[2] other) machine
-        |> shouldEqual false
-
-    [<Test>]
-    let ``pid_max may be lowered past another process's live thread ID from one process's view`` () : unit =
+    let ``pid_max may be lowered past another process's live thread ID`` () : unit =
         let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
 
         // The second process's leader is 4243. Linux keeps a live ID that a
         // lowered pid_max no longer admits (`pid-max-below-live.c`), so a write
-        // at or below it from the first process's view takes, and leaves the
-        // machine as consistent as it found it.
+        // at or below it takes, and leaves the machine as consistent as it
+        // found it.
         ProcessId.toInt32 pids.[1] |> shouldEqual 4243
 
         let (), lowered =
             inProcess pids.[0] (fun view -> (), UnixSystem.writePidMaxSysctl context 4243 view) machine
 
         assertClean lowered
-        lowered.Processes.[pids.[1]] |> shouldEqual machine.Processes.[pids.[1]]
+        Proc.state pids.[1] lowered |> shouldEqual (Proc.state pids.[1] machine)
+        Proc.threads pids.[1] lowered |> shouldEqual (Proc.threads pids.[1] machine)
 
     [<Test>]
-    let ``a view checks only what it can see truthfully, and the machine checks the rest`` () : unit =
-        let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
-        let view = viewOf pids.[0] machine
+    let ``a process ID recorded as live that no process has is reported`` () : unit =
+        let _, machine = machineOf SimulatedUnixPlatform.linuxX64 2
 
-        // Clean, though the machine records the other process's thread and
-        // process IDs, its holds and its current directory.
-        UnixSystem.checkInvariants view |> shouldEqual []
+        // Clean, the machine recording each process's thread and process IDs,
+        // its holds and its current directory.
+        UnixSystem.checkInvariants machine |> shouldEqual []
 
-        // A process ID recorded as live that no process has: the view cannot
-        // tell it from the other process's, and the machine can.
         let ghost = ProcessId.parseOrFail context 77
 
         let forged =
@@ -502,15 +438,8 @@ module TestMultiProcess =
                     }
             }
 
-        UnixSystem.checkInvariants (viewOf pids.[0] forged) |> shouldEqual []
-
         Machines.checkInvariants forged
-        |> shouldEqual
-            [
-                SimulatedMachineDefect.Machine (
-                    UnixSystemDefect.LiveProcessIdsMismatch (Set.singleton ghost, Set.empty)
-                )
-            ]
+        |> shouldEqual [ UnixSystemDefect.LiveProcessIdsMismatch (Set.singleton ghost, Set.empty) ]
 
     [<Test>]
     let ``the machine reports a current directory hold no process stands in, and a missing one`` () : unit =
@@ -525,7 +454,4 @@ module TestMultiProcess =
             }
 
         Machines.checkInvariants short
-        |> shouldEqual
-            [
-                SimulatedMachineDefect.Machine (UnixSystemDefect.CurrentDirectoryHoldMismatch (root, 1, 2))
-            ]
+        |> shouldEqual [ UnixSystemDefect.CurrentDirectoryHoldMismatch (root, 1, 2) ]

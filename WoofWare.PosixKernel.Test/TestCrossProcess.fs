@@ -5,8 +5,8 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// What one process on a `SimulatedMachine` does to another through the
-/// machine they share: a connection or a close in one waking a call asleep in
+/// What one process in a `UnixSystem` does to another through the machine
+/// they share: a connection or a close in one waking a call asleep in
 /// another, a kqueue or a Darwin `poll` in one seeing a socket event another
 /// caused, and one process's end closing everything it held.
 [<TestFixture>]
@@ -83,8 +83,8 @@ module TestCrossProcess =
         (pid : ProcessId)
         (kq : int)
         (room : int)
-        (machine : SimulatedMachine<int, string>)
-        : Kevent list * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : Kevent list * UnixSystem<int, string>
         =
         Machines.inProcess
             pid
@@ -206,8 +206,8 @@ module TestCrossProcess =
         (pid : ProcessId)
         (thread : int)
         (entries : PollEntry list)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         Machines.doIn
             pid
@@ -222,8 +222,8 @@ module TestCrossProcess =
     let private finishPoll
         (pid : ProcessId)
         (thread : int)
-        (machine : SimulatedMachine<int, string>)
-        : PollOutcome * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : PollOutcome * UnixSystem<int, string>
         =
         Machines.inProcess
             pid
@@ -245,14 +245,14 @@ module TestCrossProcess =
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         Machines.assertClean machine
 
-        UnixWait.wakes (Set.singleton 1) (Machines.viewOf b machine) |> shouldEqual []
+        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine |> shouldEqual []
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         client |> shouldEqual listener
         Machines.assertClean machine
 
-        UnixWait.wakes (Set.singleton 1) (Machines.viewOf b machine)
-        |> shouldEqual [ 1, Set.singleton WakePrimitive.KqueuePollReportable ]
+        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
         outcome |> shouldEqual (PollOutcome.Answered ([ pollIn ], 1))
@@ -276,8 +276,8 @@ module TestCrossProcess =
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
-        UnixWait.wakes (Set.singleton 1) (Machines.viewOf b machine)
-        |> shouldEqual [ 1, Set.singleton WakePrimitive.KqueuePollReportable ]
+        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
         outcome |> shouldEqual (PollOutcome.Answered ([ pollIn ||| pollHup ], 1))
@@ -306,7 +306,7 @@ module TestCrossProcess =
 
     let private woken
         (asleep : (ProcessId * int) list)
-        (machine : SimulatedMachine<int, string>)
+        (machine : UnixSystem<int, string>)
         : ((ProcessId * int) * Set<WakePrimitive>) list
         =
         let asleep =
@@ -323,8 +323,8 @@ module TestCrossProcess =
         (pid : ProcessId)
         (thread : int)
         (listener : int)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         Machines.doIn
             pid
@@ -338,8 +338,8 @@ module TestCrossProcess =
     let private finishAccept
         (pid : ProcessId)
         (thread : int)
-        (machine : SimulatedMachine<int, string>)
-        : AcceptOutcome * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : AcceptOutcome * UnixSystem<int, string>
         =
         Machines.inProcess
             pid
@@ -690,15 +690,15 @@ module TestCrossProcess =
     let private exitIn
         (pid : ProcessId)
         (status : int32)
-        (machine : SimulatedMachine<int, string>)
-        : Result<ProcessTermination * SimulatedMachine<int, string>, ProcessEndRefusal>
+        (machine : UnixSystem<int, string>)
+        : Result<ProcessTermination * UnixSystem<int, string>, ProcessEndRefusal>
         =
         let ended =
             UnixThreadLifecycle.exitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
 
         Machines.tryEndProcess ended machine
 
-    let private exitedOk (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
+    let private exitedOk (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         match exitIn pid 0 machine with
         | Ok (ProcessTermination.Exited _, machine) -> machine
         | Ok (other, _) -> failwith $"endProcess: the process ended by %O{other}, not by its exit"
@@ -718,37 +718,22 @@ module TestCrossProcess =
         | other -> failwith $"dup2 %d{oldFd} %d{newFd}: %A{other}"
 
     [<Test>]
-    let ``an ended process is gone from the machine, its views with it`` () : unit =
+    let ``an ended process is gone from the machine, and no call can be made in it`` () : unit =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 2
             let a, b = pids.[0], pids.[1]
-            let stale = Machines.viewOf a machine
             let machine = exitedOk a machine
 
             Machines.processIds machine |> shouldEqual (Set.singleton b)
             Machines.focus a machine |> shouldEqual None
             Machines.assertClean machine
 
-            let error = Assert.Throws<exn> (fun () -> Machines.unfocus stale machine |> ignore)
+            let error =
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixSystem.step (Caller.make a 0) Syscall.GetProcessId machine |> ignore
+                )
 
-            error.Message |> shouldContainText "no process on the machine has ID"
-
-    [<Test>]
-    let ``a process's end is refused from a view the machine has moved on from`` () : unit =
-        let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
-        let a, b = pids.[0], pids.[1]
-        let stale = Machines.viewOf a machine
-
-        let machine =
-            Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd) machine
-
-        let ended = UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 stale
-
-        let error =
-            Assert.Throws<exn> (fun () -> Machines.tryEndProcess ended machine |> ignore)
-
-        error.Message
-        |> shouldContainText "was not focused from the machine as it stands"
+            error.Message |> shouldContainText $"holds no process %O{a}"
 
     [<Test>]
     let ``a process alone on its machine ends on the machine it ran on, leaving no process`` () : unit =
@@ -762,28 +747,10 @@ module TestCrossProcess =
                 termination |> shouldEqual (EndedProcess.termination ended)
                 Machines.processIds after |> shouldBeEmpty
                 Machines.assertClean after
-
-                // What `endProcess` answers on the machine the view was of.
-                match Machines.tryEndProcess ended machine with
-                | Ok expected -> (termination, after) |> shouldEqual expected
-                | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
-            | Error refusal -> failwith $"endLoneProcess: %s{ProcessEndRefusal.describe refusal}"
-
-    [<Test>]
-    let ``a process that ended beside others is not ended as a lone one`` () : unit =
-        let pids, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 2
-
-        let ended =
-            UnixThreadLifecycle.exitGroup (Caller.make pids.[0] 0) 0 (Machines.viewOf pids.[0] machine)
-
-        let error =
-            Assert.Throws<exn> (fun () -> Machines.tryEndLoneProcess ended |> ignore)
-
-        error.Message |> shouldContainText "SimulatedMachine.endLoneProcess"
-        error.Message |> shouldContainText "is not alone on its machine"
+            | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
 
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
-    let private deliveries (machine : SimulatedMachine<int, string>) : (ExternalEndpoint * byte list) list =
+    let private deliveries (machine : UnixSystem<int, string>) : (ExternalEndpoint * byte list) list =
         DeliveryLog.toList machine.Machine.Delivered
         |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
 
@@ -792,8 +759,8 @@ module TestCrossProcess =
         (pid : ProcessId)
         (fd : int)
         (text : string)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         let bytes = ImmutableArray.CreateRange (System.Text.Encoding.ASCII.GetBytes text)
 
@@ -854,7 +821,7 @@ module TestCrossProcess =
                 let listener, machine =
                     Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
 
-                let connect (target : int) (machine : SimulatedMachine<int, string>) =
+                let connect (target : int) (machine : UnixSystem<int, string>) =
                     let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
                     let machine = Machines.doIn a (dup2 a client target) machine
 
@@ -921,7 +888,7 @@ module TestCrossProcess =
                                 )
                                 machine
 
-                        let report (machine : SimulatedMachine<int, string>) =
+                        let report (machine : UnixSystem<int, string>) =
                             Machines.inProcess
                                 b
                                 (fun view ->
@@ -947,7 +914,7 @@ module TestCrossProcess =
                                 )
                                 machine
 
-                        let report (machine : SimulatedMachine<int, string>) =
+                        let report (machine : UnixSystem<int, string>) =
                             let events, machine = reported b kq 8 machine
                             events |> List.map (fun event -> event.UserData), machine
 
@@ -1129,7 +1096,7 @@ module TestCrossProcess =
                     machine
 
             // What the queue reports at once, in b's view.
-            let drain (machine : SimulatedMachine<int, string>) : string list * SimulatedMachine<int, string> =
+            let drain (machine : UnixSystem<int, string>) : string list * UnixSystem<int, string> =
                 Machines.inProcess
                     b
                     (fun view ->
@@ -1318,7 +1285,7 @@ module TestCrossProcess =
                         )
                         machine
 
-                let events (machine : SimulatedMachine<int, string>) : string list * SimulatedMachine<int, string> =
+                let events (machine : UnixSystem<int, string>) : string list * UnixSystem<int, string> =
                     Machines.inProcess
                         parent
                         (fun view ->
@@ -1651,7 +1618,7 @@ module TestCrossProcess =
         Machines.assertClean machine
 
         let ended =
-            match UnixReadWrite.tryAdmitFinishWrite 1 (Machines.viewOf a machine) with
+            match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
             | Ok (WriteStep.ProcessEnded ended) -> ended
             | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
@@ -1701,7 +1668,7 @@ module TestCrossProcess =
         | other -> failwith $"inotify_add_watch(%s{path}): %A{other}"
 
     /// The bytes the instance `fd` of `pid` holds, as `FIONREAD` reports them.
-    let private queuedBytes (pid : ProcessId) (fd : int) (machine : SimulatedMachine<int, string>) : int =
+    let private queuedBytes (pid : ProcessId) (fd : int) (machine : UnixSystem<int, string>) : int =
         let view = Machines.viewOf pid machine
 
         match UnixDescriptor.tryBytesAvailable (Caller.make pid (Proc.leader pid view)) fd UserBuffer.Mapped view with

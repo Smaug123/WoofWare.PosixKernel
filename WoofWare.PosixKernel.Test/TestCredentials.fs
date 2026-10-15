@@ -300,4 +300,7 @@ module TestCredentials =
             }
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.TooManySupplementaryGroups (limit + 1, limit) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.TooManySupplementaryGroups (UnixSystem.defaultProcessId, limit + 1, limit)
+            ]

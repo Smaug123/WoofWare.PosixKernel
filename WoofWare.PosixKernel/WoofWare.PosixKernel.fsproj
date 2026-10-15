@@ -117,11 +117,10 @@
         <Compile Include="UnixEntropy.fs" />
         <Compile Include="UnixNamespace.fs" />
         <Compile Include="UnixCredentials.fs" />
-        <Compile Include="UnixSystem.fs" />
         <Compile Include="ProcessLaunch.fs" />
+        <Compile Include="UnixSystem.fs" />
         <Compile Include="UnixBootImage.fs" />
         <Compile Include="UnixSignal.fs" />
-        <Compile Include="SimulatedMachine.fs" />
         <EmbeddedResource Include="version.json" />
         <EmbeddedResource Include="SurfaceBaseline.txt" />
     </ItemGroup>

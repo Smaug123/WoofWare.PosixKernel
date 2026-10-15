@@ -572,7 +572,7 @@ module TestEphemeralPorts =
     /// Whether the socket behind `fd` reports a port its refused connect gave
     /// back.
     let private givenBack (fd : int) (run : Run) : bool =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors run.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
             |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))

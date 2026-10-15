@@ -469,8 +469,8 @@ module TestBind =
             if blocking then
                 system
             else
-                UnixSystemState.withFileDescriptors
-                    (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+                Lone.UnixSystemState.withFileDescriptors
+                    (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
                     system
 
         let expected =
@@ -573,7 +573,7 @@ module TestBind =
 
         let e =
             Assert.Throws<System.InvalidOperationException> (fun () ->
-                UnixSocket.tryBindBytes fd UserBuffer.Mapped exactLength ImmutableArray.Empty system
+                Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped exactLength ImmutableArray.Empty system
                 |> ignore<_>
             )
 

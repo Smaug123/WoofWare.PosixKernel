@@ -350,7 +350,7 @@ module TestSigcontGeneration =
             | None -> Ok r
             | Some _ ->
 
-            match UnixWait.wakes (Set.singleton row.Sleeper) r.System with
+            match Lone.wakes (Set.singleton row.Sleeper) r.System with
             | [] -> Ok r
             | _ ->
 

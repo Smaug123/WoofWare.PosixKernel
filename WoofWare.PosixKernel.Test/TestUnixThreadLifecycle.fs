@@ -34,7 +34,7 @@ module TestUnixThreadLifecycle =
     /// `system` with `entry` generated, without deciding whether it takes
     /// effect at once (`SignalState.enqueue`).
     let private enqueueIn (entry : PendingSignal<int>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        mapSignals (SignalState.enqueue (UnixSystemState.signalNumbering system) entry) system
+        mapSignals (SignalState.enqueue (Lone.UnixSystemState.signalNumbering system) entry) system
 
     /// A system with one epoll instance (a kqueue on Darwin), which a thread can park on
     /// in `flock`, and that instance's description.
@@ -160,7 +160,7 @@ module TestUnixThreadLifecycle =
             let system, queue = world platform
 
             let system =
-                system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
+                system |> withThread 1 |> withThread 2 |> Lone.UnixWait.park 2 (flockOn queue)
 
             let park =
                 match UnixThreadTable.parkOf 2 (Lone.threads system) with
@@ -259,7 +259,7 @@ module TestUnixThreadLifecycle =
         // The park is the first thing a thread in a syscall is refused for, whoever it is.
         for platform in platforms do
             let system, queue = world platform
-            let system = system |> withThread 1 |> UnixWait.park 0 (flockOn queue)
+            let system = system |> withThread 1 |> Lone.UnixWait.park 0 (flockOn queue)
             let park = UnixThreadTable.parkOf 0 (Lone.threads system) |> Option.get
 
             let refused =
@@ -280,7 +280,7 @@ module TestUnixThreadLifecycle =
                 |> withThread 1
                 |> withThread 2
                 |> withThread 3
-                |> UnixWait.park 3 (flockOn queue)
+                |> Lone.UnixWait.park 3 (flockOn queue)
                 |> HandlerFrames.enterIn "h" 2 (Set.singleton Signal.SIGUSR2)
                 |> enqueueIn (
                     {
@@ -324,7 +324,7 @@ module TestUnixThreadLifecycle =
         let system, queue = world SimulatedUnixPlatform.linuxX64
 
         let system =
-            system |> withThread 1 |> withThread 2 |> UnixWait.park 2 (flockOn queue)
+            system |> withThread 1 |> withThread 2 |> Lone.UnixWait.park 2 (flockOn queue)
 
         let parked =
             Assert.Throws<System.InvalidOperationException> (fun () ->
@@ -549,7 +549,7 @@ module TestUnixThreadLifecycle =
 
                     match
                         HandlerFrames.tryEnter
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             "h"
                             (Lone.leader system)
                             threads
@@ -565,7 +565,7 @@ module TestUnixThreadLifecycle =
                     ->
                     mapSignals (HandlerFrames.leave thread) system, model
                 | Op.Mask (thread, signal) when live thread && not (Set.contains thread model.Parked) ->
-                    let numbering = UnixSystemState.signalNumbering system
+                    let numbering = Lone.UnixSystemState.signalNumbering system
 
                     let block =
                         match numbering with
@@ -598,12 +598,12 @@ module TestUnixThreadLifecycle =
                         system,
                     model
                 | Op.Park thread when live thread ->
-                    UnixWait.park thread (flockOn queue) system,
+                    Lone.UnixWait.park thread (flockOn queue) system,
                     { model with
                         Parked = Set.add thread model.Parked
                     }
                 | Op.Unpark thread when live thread ->
-                    UnixParkState.unpark thread system,
+                    Lone.UnixParkState.unpark thread system,
                     { model with
                         Parked = Set.remove thread model.Parked
                     }

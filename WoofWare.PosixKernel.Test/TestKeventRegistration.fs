@@ -851,7 +851,7 @@ module TestKeventRegistration =
             let system =
                 system |> parkIn 1 kq KeventTimeout.Null |> parkIn 2 kq KeventTimeout.Null
 
-            UnixWait.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
+            Lone.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
 
             let flags =
                 if clear then
@@ -862,11 +862,11 @@ module TestKeventRegistration =
             let system = KeventWorld.register kq listener KeventFilter.Read flags 9UL system
 
             // Registered, but nothing is ready: nobody wakes.
-            UnixWait.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
+            Lone.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
 
             let _, system = KeventWorld.client 5000us system
 
-            UnixWait.wakes (Set.ofList [ 1 ; 2 ]) system
+            Lone.wakes (Set.ofList [ 1 ; 2 ]) system
             |> shouldEqual
                 [
                     1, Set.singleton (WakePrimitive.KqueueEventDeliverable kqueueId)
@@ -895,7 +895,7 @@ module TestKeventRegistration =
             | Ok (KeventOutcome.WouldBlock _, reparked) when clear ->
                 // Taken: the other sleeper walks an empty queue and sleeps again.
                 (KeventWorld.stateOf kq reparked).Active |> shouldEqual []
-                UnixWait.wakes (Set.singleton 1) reparked |> shouldEqual []
+                Lone.wakes (Set.singleton 1) reparked |> shouldEqual []
             | Ok (KeventOutcome.Answered [ event ], _) when not clear ->
                 // Without EV_CLEAR the registration stays queued while ready.
                 event |> shouldEqual expected
@@ -965,11 +965,11 @@ module TestKeventRegistration =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1

@@ -35,7 +35,7 @@ module TestEntry =
                 UnixSystem.initial platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
                 |> Threads.spawn 1
-                |> UnixWait.park 1 ParkedSyscall.SigSuspend
+                |> Lone.UnixWait.park 1 ParkedSyscall.SigSuspend
 
             flavour, system, [ 0, ThreadState.Unparked ; 1, ThreadState.Parked ; 7, ThreadState.Absent ]
         )
@@ -65,25 +65,39 @@ module TestEntry =
     let private operation : string = "TestEntry.call"
 
     /// One way into a call: `Enter` makes the call through `Entry.call` with
-    /// one shape, with a body that hands `seen` the system it is given and
+    /// one shape, with a body that hands `seen` the view it is given and
     /// answers something no other call could, and says whether the call
-    /// answered exactly that.
+    /// answered exactly that, each view in it put back into the kernel.
     type private Way =
         {
             Name : string
             Enter :
-                CallerRequirement -> Caller<int> -> UnixSystem<int, string> -> (UnixSystem<int, string> -> unit) -> bool
+                CallerRequirement
+                    -> Caller<int>
+                    -> UnixSystem<int, string>
+                    -> (ProcessView<int, string> -> unit)
+                    -> bool
         }
 
-    /// A system other than `system`, for a body to answer with.
-    let private changed (system : UnixSystem<int, string>) : UnixSystem<int, string> = UnixSystem.advanceClock 1L system
+    /// A view other than `view`, for a body to answer with.
+    let private changed (view : ProcessView<int, string>) : ProcessView<int, string> =
+        { view with
+            Scheduling = UnixSchedulingState.advanceClock 1L view.Scheduling
+        }
 
     let private same<'T when 'T : not struct> (expected : 'T) (actual : 'T) : bool =
         obj.ReferenceEquals (expected, actual)
 
-    /// The process `system` holds, ended.
-    let private ended (system : UnixSystem<int, string>) : EndedProcess<int, string> =
-        UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) system
+    /// Whether `left` is the kernel `answered`, the view a body answered with,
+    /// puts back into: a new value, with the view's process and machine.
+    let private putBack (answered : ProcessView<int, string> option ref) (left : UnixSystem<int, string>) : bool =
+        match answered.Value with
+        | Some view -> left = ProcessView.unfocus view
+        | None -> false
+
+    /// The process `view` is the view of, ended.
+    let private ended (view : ProcessView<int, string>) : EndedProcess<int, string> =
+        UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) view
 
     let private ways : Way list =
         [
@@ -98,8 +112,8 @@ module TestEntry =
                             requirement
                             caller
                             Shape.answer
-                            (fun system ->
-                                seen system
+                            (fun view ->
+                                seen view
                                 sentinel
                             )
                             system
@@ -109,26 +123,43 @@ module TestEntry =
                 Name = "system"
                 Enter =
                     fun requirement caller system seen ->
-                        let after = changed system
+                        let answered = ref None
 
                         Entry.call
                             operation
                             requirement
                             caller
                             Shape.system
-                            (fun system ->
-                                seen system
-                                after
+                            (fun view ->
+                                seen view
+                                answered.Value <- Some (changed view)
+                                answered.Value.Value
                             )
                             system
-                        |> same after
+                        |> putBack answered
+            }
+            {
+                Name = "system, unchanged"
+                Enter =
+                    fun requirement caller system seen ->
+                        Entry.call
+                            operation
+                            requirement
+                            caller
+                            Shape.system
+                            (fun view ->
+                                seen view
+                                view
+                            )
+                            system
+                        |> same system
             }
             {
                 Name = "withSystem"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
-                        let after = changed system
+                        let answered = ref None
 
                         let answer, left =
                             Entry.call
@@ -136,20 +167,21 @@ module TestEntry =
                                 requirement
                                 caller
                                 Shape.withSystem
-                                (fun system ->
-                                    seen system
-                                    sentinel, after
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (changed view)
+                                    sentinel, answered.Value.Value
                                 )
                                 system
 
-                        same sentinel answer && same after left
+                        same sentinel answer && putBack answered left
             }
             {
                 Name = "result withSystem, Ok"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
-                        let after = changed system
+                        let answered = ref None
 
                         match
                             Entry.call
@@ -157,13 +189,14 @@ module TestEntry =
                                 requirement
                                 caller
                                 (Shape.result Shape.withSystem)
-                                (fun system ->
-                                    seen system
-                                    Ok (sentinel, after)
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (changed view)
+                                    Ok (sentinel, answered.Value.Value)
                                 )
                                 system
                         with
-                        | Ok (answer, left) -> same sentinel answer && same after left
+                        | Ok (answer, left) -> same sentinel answer && putBack answered left
                         | Error (_ : obj) -> false
             }
             {
@@ -178,8 +211,8 @@ module TestEntry =
                                 requirement
                                 caller
                                 (Shape.result Shape.withSystem)
-                                (fun system ->
-                                    seen system
+                                (fun view ->
+                                    seen view
                                     Error sentinel
                                 )
                                 system
@@ -192,7 +225,7 @@ module TestEntry =
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
-                        let after = changed system
+                        let answered = ref None
 
                         match
                             Entry.call
@@ -200,20 +233,21 @@ module TestEntry =
                                 requirement
                                 caller
                                 Shape.fate
-                                (fun system ->
-                                    seen system
-                                    ProcessFate.Continues (sentinel, after)
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (changed view)
+                                    ViewFate.Continues (sentinel, answered.Value.Value)
                                 )
                                 system
                         with
-                        | ProcessFate.Continues (outcome, left) -> same sentinel outcome && same after left
+                        | ProcessFate.Continues (outcome, left) -> same sentinel outcome && putBack answered left
                         | ProcessFate.ProcessEnded _ -> false
             }
             {
                 Name = "fate, ProcessEnded"
                 Enter =
                     fun requirement caller system seen ->
-                        let ended = ended system
+                        let answered = ref None
 
                         match
                             Entry.call
@@ -221,39 +255,41 @@ module TestEntry =
                                 requirement
                                 caller
                                 Shape.fate
-                                (fun system ->
-                                    seen system
-                                    ProcessFate.ProcessEnded ended
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (ended view)
+                                    ViewFate.ProcessEnded answered.Value.Value
                                 )
                                 system
                         with
                         | ProcessFate.Continues ((_ : obj), _) -> false
-                        | ProcessFate.ProcessEnded answered -> same ended answered
+                        | ProcessFate.ProcessEnded ended -> same answered.Value.Value ended
             }
             {
                 Name = "ended"
                 Enter =
                     fun requirement caller system seen ->
-                        let ended = ended system
+                        let answered = ref None
 
                         Entry.call
                             operation
                             requirement
                             caller
                             Shape.ended
-                            (fun system ->
-                                seen system
-                                ended
+                            (fun view ->
+                                seen view
+                                answered.Value <- Some (ended view)
+                                answered.Value.Value
                             )
                             system
-                        |> same ended
+                        |> same answered.Value.Value
             }
             {
                 Name = "progress withSystem, Answered"
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
-                        let after = changed system
+                        let answered = ref None
 
                         match
                             Entry.call
@@ -261,13 +297,14 @@ module TestEntry =
                                 requirement
                                 caller
                                 (Shape.progress Shape.withSystem)
-                                (fun system ->
-                                    seen system
-                                    CallProgress.Answered (sentinel, after)
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (changed view)
+                                    CallProgress.Answered (sentinel, answered.Value.Value)
                                 )
                                 system
                         with
-                        | CallProgress.Answered (answer, left) -> same sentinel answer && same after left
+                        | CallProgress.Answered (answer, left) -> same sentinel answer && putBack answered left
                         | CallProgress.NeedsCopyIn (_ : obj) -> false
             }
             {
@@ -282,8 +319,8 @@ module TestEntry =
                                 requirement
                                 caller
                                 (Shape.progress Shape.withSystem)
-                                (fun system ->
-                                    seen system
+                                (fun view ->
+                                    seen view
                                     CallProgress.NeedsCopyIn sentinel
                                 )
                                 system
@@ -296,7 +333,7 @@ module TestEntry =
                 Enter =
                     fun requirement caller system seen ->
                         let sentinel = obj ()
-                        let after = changed system
+                        let answered = ref None
 
                         match
                             Entry.call
@@ -304,13 +341,15 @@ module TestEntry =
                                 requirement
                                 caller
                                 (Shape.result (Shape.result Shape.fate))
-                                (fun system ->
-                                    seen system
-                                    Ok (Ok (ProcessFate.Continues (sentinel, after)))
+                                (fun view ->
+                                    seen view
+                                    answered.Value <- Some (changed view)
+                                    Ok (Ok (ViewFate.Continues (sentinel, answered.Value.Value)))
                                 )
                                 system
                         with
-                        | Ok (Ok (ProcessFate.Continues (outcome, left))) -> same sentinel outcome && same after left
+                        | Ok (Ok (ProcessFate.Continues (outcome, left))) ->
+                            same sentinel outcome && putBack answered left
                         | Ok (Ok (ProcessFate.ProcessEnded _))
                         | Ok (Error (_ : UnixError))
                         | Error (_ : obj) -> false
@@ -318,12 +357,14 @@ module TestEntry =
         ]
 
     /// Every requirement, through `Entry.call` with every shape, of a caller in
-    /// the system's own process and in another, naming a thread in each state.
-    /// A caller in another process is refused whatever its thread, before its
-    /// thread is asked about; one in the system's own is refused exactly where
-    /// `refusal` says. A refused call throws `InvalidOperationException`, naming the
-    /// operation and why, and never runs the body; an admitted one runs it once,
-    /// on the system it was given, and answers exactly what it answered.
+    /// the system's own process and in one it does not hold, naming a thread in
+    /// each state. A caller in a process the system does not hold is refused
+    /// whatever its thread, before its thread is asked about; one in the
+    /// system's own is refused exactly where `refusal` says. A refused call
+    /// throws `InvalidOperationException`, naming the operation and why, and
+    /// never runs the body; an admitted one runs it once, on the view of the
+    /// caller's process, and answers exactly what it answered, each view put
+    /// back.
     [<Test>]
     let ``each way in admits exactly the callers its requirement allows, and answers what the body answers`` () : unit =
         let mismatches =
@@ -341,11 +382,11 @@ module TestEntry =
 
                                     let expected =
                                         if pid <> own then
-                                            Some "but the system holds process"
+                                            Some "but the system holds no process"
                                         else
                                             refusal requirement state
 
-                                    let seen = ResizeArray<UnixSystem<int, string>> ()
+                                    let seen = ResizeArray<ProcessView<int, string>> ()
 
                                     let outcome =
                                         try
@@ -355,9 +396,9 @@ module TestEntry =
 
                                     match expected, outcome with
                                     | None, Ok passedThrough ->
-                                        if seen.Count <> 1 || not (same system seen.[0]) then
+                                        if seen.Count <> 1 || seen.[0] <> Proc.view own system then
                                             yield
-                                                $"%s{case}: admitted, but the body ran %d{seen.Count} times, not once on the system given"
+                                                $"%s{case}: admitted, but the body ran %d{seen.Count} times, not once on the view of the caller's process"
 
                                         if not passedThrough then
                                             yield $"%s{case}: admitted, but did not answer what the body answered"
@@ -379,20 +420,22 @@ module TestEntry =
 
         mismatches |> shouldEqual []
 
-    /// A resumed call answers what its resumption gave, with each system in
-    /// it the one the resumption left, in every shape a resumption answers.
+    /// A resumed call answers what its resumption gave, with each view in it
+    /// put back into the kernel as the resumption left it, in every shape a
+    /// resumption answers.
     [<Test>]
     let ``a resumed call answers what its resumption gave`` () : unit =
         for flavour, system, _ in systems () do
             let sentinel = obj ()
-            let after = changed system
-            let ended = ended system
+            let after = changed (Lone.view system)
+            let answered = ref (Some after)
+            let ended = ended (Lone.view system)
 
             let answers : (string * bool) list =
                 [
                     "withSystem",
                     (let answer, left = Entry.resume Shape.withSystem (sentinel, after)
-                     same sentinel answer && same after left)
+                     same sentinel answer && putBack answered left)
 
                     "result (progress withSystem), Answered",
                     (match
@@ -400,7 +443,7 @@ module TestEntry =
                             (Shape.result (Shape.progress Shape.withSystem))
                             (Ok (CallProgress.Answered (sentinel, after)))
                      with
-                     | Ok (CallProgress.Answered (answer, left)) -> same sentinel answer && same after left
+                     | Ok (CallProgress.Answered (answer, left)) -> same sentinel answer && putBack answered left
                      | Ok (CallProgress.NeedsCopyIn (_ : obj))
                      | Error (_ : obj) -> false)
 
@@ -409,20 +452,20 @@ module TestEntry =
                         Entry.resume
                             (Shape.result (Shape.progress Shape.withSystem))
                             (Ok (CallProgress.NeedsCopyIn sentinel)
-                            : Result<CallProgress<obj, obj * UnixSystem<int, string>>, obj>)
+                            : Result<CallProgress<obj, obj * ProcessView<int, string>>, obj>)
                      with
                      | Ok (CallProgress.NeedsCopyIn paused) -> same sentinel paused
                      | Ok (CallProgress.Answered ((_ : obj), _))
                      | Error (_ : obj) -> false)
 
                     "result fate, Continues",
-                    (match Entry.resume (Shape.result Shape.fate) (Ok (ProcessFate.Continues (sentinel, after))) with
-                     | Ok (ProcessFate.Continues (outcome, left)) -> same sentinel outcome && same after left
+                    (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.Continues (sentinel, after))) with
+                     | Ok (ProcessFate.Continues (outcome, left)) -> same sentinel outcome && putBack answered left
                      | Ok (ProcessFate.ProcessEnded _)
                      | Error (_ : obj) -> false)
 
                     "result fate, ProcessEnded",
-                    (match Entry.resume (Shape.result Shape.fate) (Ok (ProcessFate.ProcessEnded ended)) with
+                    (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.ProcessEnded ended)) with
                      | Ok (ProcessFate.ProcessEnded answered) -> same ended answered
                      | Ok (ProcessFate.Continues ((_ : obj), _))
                      | Error (_ : obj) -> false)

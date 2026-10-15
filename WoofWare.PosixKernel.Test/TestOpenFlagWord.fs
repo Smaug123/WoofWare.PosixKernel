@@ -499,9 +499,9 @@ module TestOpenFlagWord =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>
         =
-        match UnixPathResolution.copyIn path system with
+        match Lone.UnixPathResolution.copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
-        | Ok path -> UnixNamespace.openPathParsed AtDirectory.CurrentDirectory flags path 0o644 system
+        | Ok path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory flags path 0o644 system
 
     [<Test>]
     let ``every request the parsed entry point took decodes from its word`` () : unit =

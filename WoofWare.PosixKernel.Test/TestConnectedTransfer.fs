@@ -42,7 +42,7 @@ module TestConnectedTransfer =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -95,7 +95,7 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
         =
         WriteOutcomes.admitThenWriteAs
             (Caller.make pid (Proc.leader pid system))
@@ -109,7 +109,7 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
         =
         sendIn (Lone.pid system) fd count system
 
@@ -263,7 +263,10 @@ module TestConnectedTransfer =
 
     [<Test>]
     let ``a blocking transfer that would sleep sleeps, and one that need not is answered`` () : unit =
-        let sleeps (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) : unit =
+        let sleeps
+            (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+            : unit
+            =
             match outcome with
             | Ok (WriteStep.WouldBlock _) -> ()
             | other -> failwith $"expected the write to sleep, got %A{other}"
@@ -333,7 +336,7 @@ module TestConnectedTransfer =
             |> Result.map fst
             |> shouldEqual (Ok (WriteAnswer.Completed 0L))
 
-            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
+            Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 0UL system
             |> Result.map (fun outcome ->
                 match outcome with
                 | WriteStep.Returns (admission, _) -> admission
@@ -342,7 +345,7 @@ module TestConnectedTransfer =
             |> shouldEqual (Ok (WriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
             // Something to copy.
-            UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
+            Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) client unmapped 10UL system
             |> shouldEqual (Error (WriteRefusal.ConnectionFault (socketOf client system)))
 
             let system = sentAll server 10 system
@@ -746,11 +749,11 @@ module TestConnectedTransfer =
         let length = uint32 value.Length
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
             | other -> failwith $"admitting SO_LINGER on fd %d{fd}: %A{other}"
 
-        match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
+        match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
         | Ok (SetSockOptAnswer.Set, system) -> system
         | other -> failwith $"setting SO_LINGER on fd %d{fd}: %A{other}"
 
@@ -1057,11 +1060,11 @@ module TestConnectedTransfer =
                 let reuse = SimulatedUnixPlatform.reuseAddressOption platform
 
                 let setsockopt, system =
-                    match UnixSocket.tryAdmitSetSockOpt keep level reuse UserBuffer.Mapped 4u system with
+                    match Lone.UnixSocket.tryAdmitSetSockOpt keep level reuse UserBuffer.Mapped 4u system with
                     | Ok (SetSockOptAdmission.Answered error) -> Some error, system
                     | Ok (SetSockOptAdmission.Transfer _) ->
                         match
-                            UnixSocket.trySetsockoptBytes
+                            Lone.UnixSocket.trySetsockoptBytes
                                 keep
                                 level
                                 reuse
@@ -1505,10 +1508,12 @@ module TestConnectedTransfer =
                 let value = Some (OptionValue.ofInt (if before then 0 else 1))
 
                 let flipped =
-                    match UnixSocket.tryAdmitSetSockOpt client level name UserBuffer.Mapped 4u system with
+                    match Lone.UnixSocket.tryAdmitSetSockOpt client level name UserBuffer.Mapped 4u system with
                     | Ok (SetSockOptAdmission.Answered _) -> Ok ("-1", system)
                     | Ok (SetSockOptAdmission.Transfer _) ->
-                        match UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u value system with
+                        match
+                            Lone.UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u value system
+                        with
                         | Ok (SetSockOptAnswer.Set, system) -> Ok ("0", system)
                         | Ok (SetSockOptAnswer.Failed _, system) -> Ok ("-1", system)
                         | Error refusal -> Error refusal
@@ -1521,7 +1526,9 @@ module TestConnectedTransfer =
                     // Setting the value it has changes no copy, and is served.
                     let unchanged = Some (OptionValue.ofInt (if before then 1 else 0))
 
-                    match UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u unchanged system with
+                    match
+                        Lone.UnixSocket.trySetsockoptBytes client level name UserBuffer.Mapped 4u unchanged system
+                    with
                     | Ok (SetSockOptAnswer.Set, _) -> ()
                     | other -> failwith $"Linux %s{row}: setting the value it has answered %A{other}"
                 | Error refusal -> failwith $"%A{flavour} %s{row}: refused %A{refusal}"
@@ -1716,8 +1723,8 @@ module TestConnectedTransfer =
     let private across
         (a : ProcessId)
         (b : ProcessId)
-        (machine : SimulatedMachine<int, string>)
-        : int * int * SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : int * int * UnixSystem<int, string>
         =
         let listener, machine =
             Machines.inProcess b (KeventWorld.listenerAtIn b port) machine
@@ -1738,11 +1745,7 @@ module TestConnectedTransfer =
 
         client, accepted, machine
 
-    let private woken
-        (asleep : (ProcessId * int) list)
-        (machine : SimulatedMachine<int, string>)
-        : (ProcessId * int) list
-        =
+    let private woken (asleep : (ProcessId * int) list) (machine : UnixSystem<int, string>) : (ProcessId * int) list =
         let asleep =
             asleep
             |> List.groupBy fst
@@ -1758,8 +1761,8 @@ module TestConnectedTransfer =
         (thread : int)
         (fd : int)
         (what : char)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         Machines.doIn
             pid
@@ -1862,7 +1865,7 @@ module TestConnectedTransfer =
             woken [ b, 1 ] machine |> shouldEqual []
 
             // `a` drains until `b`'s end has room by its flavour's rule.
-            let rec drain (reads : int) (machine : SimulatedMachine<int, string>) =
+            let rec drain (reads : int) (machine : UnixSystem<int, string>) =
                 if reads = 0 then
                     failwith "the drain never woke the writer"
                 else

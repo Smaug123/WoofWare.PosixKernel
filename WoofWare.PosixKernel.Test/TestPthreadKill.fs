@@ -175,13 +175,15 @@ module TestPthreadKill =
                     else
                         match
                             SignalState.generate
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
                                 leader
                                 (Set.ofList [ leader ; worker ])
                                 {
                                     Signal =
-                                        match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
+                                        match
+                                            Signal.ofRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signo
+                                        with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueSome target
@@ -261,7 +263,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         signal
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         proc.Signals
@@ -284,7 +286,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     HandlerFrames.enterVia
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         carrier
                         "carrier"
                         (Lone.leader system)
@@ -510,7 +512,7 @@ module TestPthreadKill =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 signal
                                 SignalDisposition.Default
                                 proc.Signals

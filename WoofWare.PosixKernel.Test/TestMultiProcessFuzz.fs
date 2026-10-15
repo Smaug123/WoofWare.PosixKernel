@@ -7,18 +7,17 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Random interleavings of several processes' syscalls on one
-/// `SimulatedMachine`, each made by one of its process's threads in that
-/// process's view, with the machine's own steps between them: a wake pass that
-/// finishes the calls it wakes, each in its own process's view, the clock
+/// Random interleavings of several processes' syscalls in one `UnixSystem`,
+/// each made by one of its process's threads, with the machine's own steps
+/// between them: a wake pass that finishes the calls it wakes, the clock
 /// moving on, and a process ending.
 ///
-/// After every step: every invariant holds, the machine's, each view's and each
-/// view's descriptor table's; no pipe is named in two processes' tables; and
-/// no slot but the stepping process's has moved, except where the step is the
-/// machine's (a wake pass finishes calls in whichever processes they are in,
-/// one process at a time, and each finish moves its own process's slot
-/// alone; a process's end removes its own). After a call, the calling
+/// After every step: every invariant holds, the system's and the
+/// filesystem's; no pipe is named in two processes' tables; and no process but
+/// the stepping one has moved, except where the step is the machine's (a wake
+/// pass finishes calls in whichever processes they are in, one at a time, and
+/// each finish moves its own process alone; a process's end removes its
+/// own). After a call, the calling
 /// process's new descriptors are the lowest its own table had free, whatever
 /// the other processes hold. A client whose connection waited in a listener's
 /// queue is reset exactly when the step released the listener, by a close or
@@ -753,7 +752,7 @@ module TestMultiProcessFuzz =
 
     /// The process whose descriptors name the socket at the other end of the
     /// connected socket `socketId`, if one is.
-    let private peerOwner (socketId : SocketId) (machine : SimulatedMachine<int, string>) : ProcessId option =
+    let private peerOwner (socketId : SocketId) (machine : UnixSystem<int, string>) : ProcessId option =
         let view =
             Machines.focus (Seq.head (Machines.processIds machine)) machine |> Option.get
 
@@ -768,9 +767,8 @@ module TestMultiProcessFuzz =
             match UnixMachineState.socketHoldingEnd connection other view.Machine with
             | None -> None
             | Some peer ->
-                machine.Processes
-                |> Map.toSeq
-                |> Seq.tryPick (fun (pid, _) ->
+                UnixSystem.processIds machine
+                |> Seq.tryPick (fun pid ->
                     let names =
                         fdsOf pid (Machines.focus pid machine |> Option.get)
                         |> Map.exists (fun _ target -> target = OpenFileTarget.Socket peer)
@@ -780,10 +778,9 @@ module TestMultiProcessFuzz =
 
     /// The process whose descriptors name a socket bound at `port` in the
     /// listening phase, if any.
-    let private listenerOwner (port : uint16) (machine : SimulatedMachine<int, string>) : ProcessId option =
-        machine.Processes
-        |> Map.toSeq
-        |> Seq.tryPick (fun (pid, _) ->
+    let private listenerOwner (port : uint16) (machine : UnixSystem<int, string>) : ProcessId option =
+        UnixSystem.processIds machine
+        |> Seq.tryPick (fun pid ->
             let view = Machines.focus pid machine |> Option.get
 
             fdsOf pid view
@@ -837,7 +834,10 @@ module TestMultiProcessFuzz =
         /// The library refused it, which changes nothing.
         | Refused
 
-    let private ofWrite (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) : Made =
+    let private ofWrite
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        : Made
+        =
         match outcome with
         | Error _ -> Made.Refused
         | Ok (WriteStep.Returns (_, view))
@@ -846,11 +846,106 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
         | Ok (WriteStep.ProcessEnded ended) -> Made.Ended ended
 
+    /// `bytes`, for a transcript: how many, and a checksum of them.
+    let private bytesText (bytes : ImmutableArray<byte>) : string =
+        let sum = Seq.fold (fun (sum : int) (b : byte) -> sum * 31 + int b) 17 bytes
+        $"%d{bytes.Length} bytes, checksum %d{sum}"
+
+    /// What a read answered, for a transcript.
+    let private readText (outcome : ReadOutcome) : string =
+        match outcome with
+        | ReadOutcome.Answered (ReadAnswer.Completed bytes) -> $"read %s{bytesText bytes}"
+        | outcome -> $"%A{outcome}"
+
+    /// What a call that can end the process did to it, for a transcript.
+    let private fateText<'Outcome> (fate : ProcessFate<'Outcome, int, string>) : string =
+        match fate with
+        | ProcessFate.Continues (outcome, _) -> $"continues %A{outcome}"
+        | ProcessFate.ProcessEnded ended -> $"ends %A{EndedProcess.termination ended}"
+
+    /// What a write answered, for a transcript.
+    let private writeText
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        : string
+        =
+        match outcome with
+        | Error refusal -> $"refused %A{refusal}"
+        | Ok (WriteStep.Returns (answer, _)) -> $"returns %A{answer}"
+        | Ok (WriteStep.ReturnsRaising (answer, signal, _)) -> $"returns %A{answer} raising %A{signal}"
+        | Ok (WriteStep.WouldBlock (condition, _)) -> $"sleeps %A{condition}"
+        | Ok (WriteStep.Restarts _) -> "restarts"
+        | Ok (WriteStep.ProcessEnded ended) -> $"ends %A{EndedProcess.termination ended}"
+
+    /// `result`, having written to `log` what it answered, without the system.
+    let private logged<'a, 'r>
+        (log : string -> unit)
+        (result : Result<'a * UnixSystem<int, string>, 'r>)
+        : Result<'a * UnixSystem<int, string>, 'r>
+        =
+        match result with
+        | Ok (answer, _) -> log $"  %A{answer}"
+        | Error refusal -> log $"  refused %A{refusal}"
+
+        result
+
+    /// `logged`, for a read.
+    let private loggedRead<'r>
+        (log : string -> unit)
+        (result : Result<ReadOutcome * UnixSystem<int, string>, 'r>)
+        : Result<ReadOutcome * UnixSystem<int, string>, 'r>
+        =
+        match result with
+        | Ok (outcome, _) -> log $"  %s{readText outcome}"
+        | Error refusal -> log $"  refused %A{refusal}"
+
+        result
+
+    /// `logged`, for a write.
+    let private loggedWrite
+        (log : string -> unit)
+        (result : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        =
+        log $"  %s{writeText result}"
+        result
+
+    /// `logged`, for a call that can end the process.
+    let private loggedFate<'Outcome, 'r>
+        (log : string -> unit)
+        (result : Result<ProcessFate<'Outcome, int, string>, 'r>)
+        : Result<ProcessFate<'Outcome, int, string>, 'r>
+        =
+        match result with
+        | Ok fate -> log $"  %s{fateText fate}"
+        | Error refusal -> log $"  refused %A{refusal}"
+
+        result
+
+    /// `logged`, for a call that answers an errno as its `Error`, or what it
+    /// made and the system.
+    let private loggedMade<'a, 'r>
+        (log : string -> unit)
+        (result : Result<Result<'a * UnixSystem<int, string>, UnixError>, 'r>)
+        : Result<Result<'a * UnixSystem<int, string>, UnixError>, 'r>
+        =
+        match result with
+        | Ok (Ok (made, _)) -> log $"  made %A{made}"
+        | Ok (Error error) -> log $"  failed %A{error}"
+        | Error refusal -> log $"  refused %A{refusal}"
+
+        result
+
+    /// `answer`, having written to `log` what it answered, without the system.
+    let private said<'a> (log : string -> unit) (answer : 'a * UnixSystem<int, string>) : 'a * UnixSystem<int, string> =
+        log $"  %A{fst answer}"
+        answer
+
     /// One call by `thread` of the process `pid`, in its view `view`, on `machine`
     /// as it stood before.
     let private call
         (cover : FuzzLabel -> unit)
-        (machine : SimulatedMachine<int, string>)
+        (log : string -> unit)
+        (machine : UnixSystem<int, string>)
         (pid : ProcessId)
         (thread : int)
         (op : Op)
@@ -861,12 +956,15 @@ module TestMultiProcessFuzz =
         let sockets = ofKind pid isSocket view
 
         let answered (result : Result<'a * UnixSystem<int, string>, 'r>) : Made =
-            match result with
+            match logged log result with
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
 
         let poll (entries : PollEntry list) (milliseconds : int) : Made =
-            match UnixPoll.tryPoll (Caller.make pid thread) entries milliseconds view with
+            match
+                UnixPoll.tryPoll (Caller.make pid thread) entries milliseconds view
+                |> logged log
+            with
             | Ok (PollOutcome.WouldBlock _, after) ->
                 match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Darwin -> cover FuzzLabel.DarwinPollPark
@@ -885,7 +983,10 @@ module TestMultiProcessFuzz =
 
             let writer = peerOwner socketId machine
 
-            match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped (uint64 size) view with
+            match
+                UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped (uint64 size) view
+                |> loggedRead log
+            with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                 if not bytes.IsEmpty && writer.IsSome && writer <> Some pid then
                     cover FuzzLabel.CrossRead
@@ -909,7 +1010,10 @@ module TestMultiProcessFuzz =
         let send (fd : int) (size : int) : Made =
             let bytes = ImmutableArray.Create<byte> (Array.init size byte)
 
-            match WriteOutcomes.admitThenWriteAs (Caller.make pid thread) fd UserBuffer.Mapped bytes view with
+            match
+                WriteOutcomes.admitThenWriteAs (Caller.make pid thread) fd UserBuffer.Mapped bytes view
+                |> loggedWrite log
+            with
             | Ok (WriteStep.Returns (WriteAnswer.Completed written, after)) ->
                 if written < int64 size then
                     cover FuzzLabel.ShortWrite
@@ -934,7 +1038,10 @@ module TestMultiProcessFuzz =
             match fd with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
+                match
+                    UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view
+                    |> loggedRead log
+                with
                 | Ok (ReadOutcome.WouldBlock _, after) ->
                     cover FuzzLabel.InotifyReadPark
                     Made.Sleeps after
@@ -961,7 +1068,7 @@ module TestMultiProcessFuzz =
                 |> List.map (fun entry -> entry.Signal)
                 |> Set.ofList
 
-            match UnixSignal.tryOnReturnToUser (Caller.make pid thread) after with
+            match UnixSignal.tryOnReturnToUser (Caller.make pid thread) after |> loggedFate log with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) ->
                 due |> shouldEqual Set.empty
                 Made.Answered after
@@ -993,14 +1100,22 @@ module TestMultiProcessFuzz =
                 | SignalMaskChange.SetMask -> block + 2
 
             let set =
-                SignalMask.ofSignals (UnixSystemState.signalNumbering view) (Set.singleton signal)
+                SignalMask.ofSignals (Lone.UnixSystemState.signalNumbering view) (Set.singleton signal)
 
-            match UnixSignal.pthreadSigmask (Caller.make pid thread) how (Some set) view with
+            match
+                UnixSignal.pthreadSigmask (Caller.make pid thread) how (Some set) view
+                |> logged log
+            with
             | Ok (_, after) -> returnToUser after
             | Error errno -> failwith $"pthread_sigmask of %O{signal} failed with %O{errno}"
 
         match op with
-        | Op.Socket nonBlocking -> Made.Answered (KeventWorld.streamAs (Caller.make pid thread) nonBlocking view |> snd)
+        | Op.Socket nonBlocking ->
+            Made.Answered (
+                KeventWorld.streamAs (Caller.make pid thread) nonBlocking view
+                |> said log
+                |> snd
+            )
         | Op.Bind (fd, port) ->
             match pick fd (socketsWhere pid unbound view) with
             | None -> Made.Answered view
@@ -1015,6 +1130,7 @@ module TestMultiProcessFuzz =
                         16u
                         (CopyIn.inet (UnixSystem.platform view) (KeventWorld.loopback port))
                         view
+                    |> logged log
                 with
                 | Ok (BindAnswer.Failed UnixError.EADDRINUSE, after) ->
                     if not (holdsPort pid port view) then
@@ -1044,6 +1160,7 @@ module TestMultiProcessFuzz =
                         16u
                         (CopyIn.inet (UnixSystem.platform view) (KeventWorld.loopback port))
                         view
+                    |> logged log
                 with
                 | Ok (outcome, after) ->
                     match outcome, owner with
@@ -1058,7 +1175,10 @@ module TestMultiProcessFuzz =
             match pick fd (socketsWhere pid listening view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped 16u view with
+                match
+                    UnixConnection.tryAccept (Caller.make pid thread) fd UserBuffer.Mapped 16u view
+                    |> logged log
+                with
                 | Ok (AcceptOutcome.Accepted _, after) ->
                     cover FuzzLabel.Accept
                     Made.Answered after
@@ -1068,7 +1188,12 @@ module TestMultiProcessFuzz =
         | Op.MakeNonBlocking fd ->
             match pick fd (socketsWhere pid connected view) with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view |> snd)
+            | Some fd ->
+                Made.Answered (
+                    UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view
+                    |> said log
+                    |> snd
+                )
         | Op.Receive (fd, size, nonBlocking) ->
             match pick fd (connectedFds pid nonBlocking view) with
             | None -> Made.Answered view
@@ -1092,7 +1217,12 @@ module TestMultiProcessFuzz =
         | Op.MakeNonBlockingThrough port ->
             match connectedThrough pid port view with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view |> snd)
+            | Some fd ->
+                Made.Answered (
+                    UnixDescriptor.setNonBlocking (Caller.make pid thread) fd true view
+                    |> said log
+                    |> snd
+                )
         | Op.ReceiveNewest size ->
             match newestConnected pid view with
             | None -> Made.Answered view
@@ -1113,7 +1243,10 @@ module TestMultiProcessFuzz =
             match pick fd (ofKind pid (isPipeEnd PipeEnd.Read) view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
+                match
+                    UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view
+                    |> loggedRead log
+                with
                 | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
@@ -1127,6 +1260,7 @@ module TestMultiProcessFuzz =
                     UserBuffer.Mapped
                     (ImmutableArray.Create<byte> (Array.zeroCreate<byte> size))
                     view
+                |> loggedWrite log
                 |> ofWrite
         | Op.Open path ->
             // `OpenOutcomes.answered` fails the run if the open sleeps: nothing
@@ -1146,12 +1280,12 @@ module TestMultiProcessFuzz =
         | Op.Dup fd ->
             match pick fd any with
             | None -> Made.Answered view
-            | Some fd -> Made.Answered (Answered.dup (Caller.make pid thread) fd view |> snd)
+            | Some fd -> Made.Answered (Answered.dup (Caller.make pid thread) fd view |> said log |> snd)
         | Op.Flock (fd, operation) ->
             match pick fd (ofKind pid isFile view) with
             | None -> Made.Answered view
             | Some fd ->
-                match UnixDescriptor.tryFlock (Caller.make pid thread) fd operation view with
+                match UnixDescriptor.tryFlock (Caller.make pid thread) fd operation view |> logged log with
                 | Ok (SyscallOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
@@ -1167,16 +1301,21 @@ module TestMultiProcessFuzz =
                         AtDirectory.CurrentDirectory
                         SymlinkPolicy.NoFollowFinal
                         (UnixPath.parseOrFail "test" path)
-                        view
+                        (Proc.view pid view)
                 with
                 | Ok inode -> Some inode
                 | Error _ -> None
 
-            match UnixNamespace.tryRmdir (Caller.make pid thread) (PathArg.ofText path) view with
+            match
+                UnixNamespace.tryRmdir (Caller.make pid thread) (PathArg.ofText path) view
+                |> logged log
+            with
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 let standsElsewhere =
-                    machine.Processes
-                    |> Map.exists (fun other slot -> other <> pid && Some slot.Process.CurrentDirectoryInode = inode)
+                    UnixSystem.processIds machine
+                    |> Seq.exists (fun other ->
+                        other <> pid && Some (Proc.state other machine).CurrentDirectoryInode = inode
+                    )
 
                 if standsElsewhere then
                     cover FuzzLabel.CrossRmDirOfStanding
@@ -1188,7 +1327,7 @@ module TestMultiProcessFuzz =
             UnixPathResolution.tryChdir (Caller.make pid thread) (PathArg.ofText standing.[dir % standing.Length]) view
             |> answered
         | Op.EpollCreate ->
-            match UnixPoll.tryEpollCreate1 (Caller.make pid thread) 0 view with
+            match UnixPoll.tryEpollCreate1 (Caller.make pid thread) 0 view |> loggedMade log with
             | Ok (Ok (_, after)) -> Made.Answered after
             | Ok (Error _) -> Made.Answered view
             | Error _ -> Made.Refused
@@ -1209,6 +1348,7 @@ module TestMultiProcessFuzz =
                             0UL
                         ))
                         view
+                    |> logged log
                 with
                 | Ok (EpollCtlAnswer.Changed, after) ->
                     cover FuzzLabel.EpollAdd
@@ -1220,11 +1360,14 @@ module TestMultiProcessFuzz =
             match pick epoll (ofKind pid isEpoll view) with
             | None -> Made.Answered view
             | Some epoll ->
-                match UnixPoll.tryEpollWait (Caller.make pid thread) epoll 8 UserBuffer.Mapped milliseconds view with
+                match
+                    UnixPoll.tryEpollWait (Caller.make pid thread) epoll 8 UserBuffer.Mapped milliseconds view
+                    |> logged log
+                with
                 | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
                 | Ok (_, after) -> Made.Answered after
                 | Error _ -> Made.Refused
-        | Op.Kqueue -> Made.Answered (KeventWorld.kqueueAs (Caller.make pid thread) view |> snd)
+        | Op.Kqueue -> Made.Answered (KeventWorld.kqueueAs (Caller.make pid thread) view |> said log |> snd)
         | Op.KeventAdd (kqueue, fd, write) ->
             match pick kqueue (ofKind pid isKqueue view), pick fd sockets with
             | Some kqueue, Some fd ->
@@ -1240,6 +1383,7 @@ module TestMultiProcessFuzz =
                         UserBuffer.Mapped
                         (KeventTimeout.Readable (0L, 0L))
                         view
+                    |> logged log
                 with
                 | Ok (KeventOutcome.Answered [], after) ->
                     cover FuzzLabel.KeventAdd
@@ -1258,7 +1402,10 @@ module TestMultiProcessFuzz =
                     else
                         KeventTimeout.Readable (0L, int64 milliseconds * 1_000_000L)
 
-                match UnixKqueue.tryKevent (Caller.make pid thread) kqueue 0 [] 8 UserBuffer.Mapped timeout view with
+                match
+                    UnixKqueue.tryKevent (Caller.make pid thread) kqueue 0 [] 8 UserBuffer.Mapped timeout view
+                    |> logged log
+                with
                 | Ok (KeventOutcome.WouldBlock _, after) ->
                     cover FuzzLabel.KeventPark
                     Made.Sleeps after
@@ -1300,15 +1447,25 @@ module TestMultiProcessFuzz =
 
             match mask SignalMaskChange.Block signal view with
             | Made.Answered blocked ->
-                let signo = Signal.toRawSignoUnder (UnixSystemState.signalNumbering blocked) signal
+                let signo =
+                    Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering blocked) signal
 
-                match UnixSignal.tryPthreadKill (Caller.make pid thread) thread signo blocked with
+                let killed = UnixSignal.tryPthreadKill (Caller.make pid thread) thread signo blocked
+
+                match killed with
+                | Ok (Ok fate) -> log $"  %s{fateText fate}"
+                | other -> log $"  %A{other}"
+
+                match killed with
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, raised))) -> returnToUser raised
                 | other -> failwith $"pthread_kill of a blocked %O{signal} answered %A{other}"
             | made -> made
         | Op.Unblock signal -> mask SignalMaskChange.Unblock fatal.[signal % fatal.Length] view
         | Op.InotifyInit nonBlocking ->
-            match UnixInotify.tryInotifyInit1 (Caller.make pid thread) (if nonBlocking then 0x800 else 0) view with
+            match
+                UnixInotify.tryInotifyInit1 (Caller.make pid thread) (if nonBlocking then 0x800 else 0) view
+                |> loggedMade log
+            with
             | Ok (Ok (_, after)) -> Made.Answered after
             | Ok (Error _) -> Made.Answered view
             | Error _ -> Made.Refused
@@ -1343,7 +1500,7 @@ module TestMultiProcessFuzz =
                     view
                 |> answered
         | Op.InotifyAwait dir ->
-            match UnixInotify.tryInotifyInit1 (Caller.make pid thread) 0 view with
+            match UnixInotify.tryInotifyInit1 (Caller.make pid thread) 0 view |> loggedMade log with
             | Error _ -> Made.Refused
             | Ok (Error _) -> Made.Answered view
             | Ok (Ok (fd, view)) ->
@@ -1355,11 +1512,15 @@ module TestMultiProcessFuzz =
                     (PathArg.ofText standing.[dir % standing.Length])
                     inotifyEvents
                     view
+                |> logged log
             with
             | Error _ -> Made.Refused
             | Ok (_, view) ->
 
-            match UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view with
+            match
+                UnixReadWrite.tryRead (Caller.make pid thread) fd UserBuffer.Mapped 4096UL view
+                |> loggedRead log
+            with
             | Ok (ReadOutcome.WouldBlock _, after) ->
                 cover FuzzLabel.InotifyReadPark
                 Made.Sleeps after
@@ -1381,11 +1542,15 @@ module TestMultiProcessFuzz =
         | Op.Unlink path ->
             UnixNamespace.tryUnlink (Caller.make pid thread) (PathArg.ofText files.[path % files.Length]) view
             |> answered
-        | Op.Exit status -> Made.Ended (UnixThreadLifecycle.exitGroup (Caller.make pid thread) status view)
+        | Op.Exit status ->
+            let ended = UnixThreadLifecycle.exitGroup (Caller.make pid thread) status view
+            log $"  ends %A{EndedProcess.termination ended}"
+            Made.Ended ended
 
     /// The call `thread` of the view `view` is asleep in, finished.
     let private finish
         (cover : FuzzLabel -> unit)
+        (log : string -> unit)
         (pid : ProcessId)
         (thread : int)
         (view : UnixSystem<int, string>)
@@ -1393,38 +1558,38 @@ module TestMultiProcessFuzz =
         =
         match UnixThreadTable.parkedFor thread (Proc.threads pid view) with
         | Some (ParkedSyscall.Accept _) ->
-            match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
+            match UnixConnection.tryFinishAccept (Caller.make pid thread) view |> logged log with
             | Ok (AcceptOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.EpollWait _) ->
-            match UnixPoll.tryFinishEpollWait (Caller.make pid thread) view with
+            match UnixPoll.tryFinishEpollWait (Caller.make pid thread) view |> logged log with
             | Ok (EpollWaitOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Kevent _) ->
-            match UnixKqueue.tryFinishKevent (Caller.make pid thread) view with
+            match UnixKqueue.tryFinishKevent (Caller.make pid thread) view |> logged log with
             | Ok (KeventOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Poll _)
         | Some (ParkedSyscall.KqueuePoll _) ->
-            match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
+            match UnixPoll.tryFinishPoll (Caller.make pid thread) view |> logged log with
             | Ok (PollOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.Flock _) ->
-            match UnixDescriptor.tryFlockAcquire (Caller.make pid thread) view with
+            match UnixDescriptor.tryFlockAcquire (Caller.make pid thread) view |> logged log with
             | Ok (SyscallOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.PipeRead _) ->
-            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view |> loggedRead log with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.InotifyRead _) ->
-            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view |> loggedRead log with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), after) ->
                 cover FuzzLabel.InotifyReadFinish
@@ -1432,7 +1597,7 @@ module TestMultiProcessFuzz =
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
         | Some (ParkedSyscall.ConnectionRead _) ->
-            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view with
+            match UnixReadWrite.tryFinishRead (Caller.make pid thread) view |> loggedRead log with
             | Ok (ReadOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) ->
                 cover FuzzLabel.ConnectionFinish
@@ -1452,6 +1617,7 @@ module TestMultiProcessFuzz =
                     (Caller.make pid thread)
                     (fun offset count -> ImmutableArray.Create<byte> (Array.init count (fun i -> byte (offset + i))))
                     view
+                |> loggedWrite log
                 |> ofWrite
 
             match made with
@@ -1460,7 +1626,7 @@ module TestMultiProcessFuzz =
 
             made
         | Some ParkedSyscall.SigSuspend ->
-            match UnixSignal.tryFinishSigsuspend (Caller.make pid thread) view with
+            match UnixSignal.tryFinishSigsuspend (Caller.make pid thread) view |> logged log with
             | Ok (SigsuspendOutcome.WouldBlock _, after) -> Made.Sleeps after
             | Ok (_, after) -> Made.Answered after
             | Error _ -> Made.Refused
@@ -1488,7 +1654,7 @@ module TestMultiProcessFuzz =
     /// Everything the run tracks besides the machine.
     type private World =
         {
-            Machine : SimulatedMachine<int, string>
+            Machine : UnixSystem<int, string>
             /// The processes still on the machine, in launch order.
             Live : ProcessId list
             /// The threads held asleep in a call.
@@ -1508,19 +1674,11 @@ module TestMultiProcessFuzz =
     let private wakeable (world : World) : Map<ProcessId * int, Set<WakePrimitive>> =
         Machines.wakes (asleepByProcess world.Asleep) world.Machine |> Map.ofList
 
-    let private assertClean (machine : SimulatedMachine<int, string>) : unit =
-        Machines.checkInvariants machine |> Expect.empty (fun () -> "the machine")
+    let private assertClean (machine : UnixSystem<int, string>) : unit =
+        Machines.checkInvariants machine |> Expect.empty (fun () -> "the system")
 
-        for pid in Machines.processIds machine do
-            let where () : string = $"process %O{pid}"
-            let view = Machines.focus pid machine |> Option.get
-            UnixSystem.checkInvariants view |> Expect.empty where
-
-            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors pid view)
-            |> Expect.empty where
-
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem
-            |> Expect.empty where
+        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes machine) machine.Machine.FileSystem
+        |> Expect.empty (fun () -> "the filesystem")
 
         // Nothing passes a descriptor to another process, so each pipe's ends
         // are one process's.
@@ -1544,18 +1702,20 @@ module TestMultiProcessFuzz =
     /// Every slot but `except`'s is as it was.
     let private othersUnmoved
         (except : ProcessId)
-        (before : SimulatedMachine<int, string>)
-        (after : SimulatedMachine<int, string>)
+        (before : UnixSystem<int, string>)
+        (after : UnixSystem<int, string>)
         : unit
         =
-        for KeyValue (pid, slot) in after.Processes do
+        for pid in UnixSystem.processIds after do
             if pid <> except then
-                slot |> Expect.equal (fun () -> $"process %O{pid}") before.Processes.[pid]
+                after.Processes.[ProcessId.toInt32 pid]
+                |> Expect.equal (fun () -> $"process %O{pid}") before.Processes.[ProcessId.toInt32 pid]
 
     /// `made`, by `thread` of `pid`, written into `world`: a view written back,
     /// the thread asleep, or the process ended.
     let private settle
         (cover : FuzzLabel -> unit)
+        (log : string -> unit)
         (pid : ProcessId)
         (thread : int)
         (made : Made)
@@ -1579,13 +1739,15 @@ module TestMultiProcessFuzz =
             }
         | Made.Ended ended ->
             match Machines.tryEndProcess ended world.Machine with
-            | Error _ ->
+            | Error refusal ->
+                log $"  end refused %A{refusal}"
                 cover FuzzLabel.ExitRefusal
                 world
-            | Ok (_, machine) ->
+            | Ok (termination, machine) ->
+                log $"  ended %A{termination}"
                 cover FuzzLabel.Exit
                 othersUnmoved pid world.Machine machine
-                machine.Processes.ContainsKey pid |> shouldEqual false
+                UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
 
                 {
                     Machine = machine
@@ -1594,7 +1756,7 @@ module TestMultiProcessFuzz =
                     Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
                 }
 
-    let private step (cover : FuzzLabel -> unit) (world : World) (next : Step) : World =
+    let private step (cover : FuzzLabel -> unit) (log : string -> unit) (world : World) (next : Step) : World =
         match next with
         | Step.Advance milliseconds ->
             match world.Live with
@@ -1644,6 +1806,8 @@ module TestMultiProcessFuzz =
             let woken =
                 Machines.wakes (asleepByProcess world.Asleep) world.Machine |> List.map fst
 
+            log $"  woken %A{woken}"
+
             let world =
                 { world with
                     Asleep = Set.difference world.Asleep (Set.ofList woken)
@@ -1664,7 +1828,10 @@ module TestMultiProcessFuzz =
 
                 let before = world.Machine
 
-                let made = finish cover pid thread (Machines.focus pid world.Machine |> Option.get)
+                log $"  finish %O{pid} %d{thread}"
+
+                let made =
+                    finish cover log pid thread (Machines.focus pid world.Machine |> Option.get)
 
                 match made with
                 | Made.Refused ->
@@ -1678,12 +1845,12 @@ module TestMultiProcessFuzz =
                     | Made.Answered _ -> cover FuzzLabel.Finish
                     | _ -> ()
 
-                    let world = settle cover pid thread made world
+                    let world = settle cover log pid thread made world
 
                     // A finish whose process's end was refused leaves the thread
                     // parked, woken still, for a later pass.
                     let world =
-                        match Map.tryFind pid world.Machine.Processes with
+                        match Map.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
                         | Some slot when
                             (UnixThreadTable.parkedFor thread slot.Threads).IsSome
                             && not (Set.contains (pid, thread) world.Asleep)
@@ -1693,7 +1860,7 @@ module TestMultiProcessFuzz =
                             }
                         | _ -> world
 
-                    if world.Machine.Processes.ContainsKey pid then
+                    if UnixSystem.processIds world.Machine |> Set.contains pid then
                         othersUnmoved pid before world.Machine
 
                     assertClean world.Machine
@@ -1724,7 +1891,8 @@ module TestMultiProcessFuzz =
                 |> Map.keys
                 |> Set.ofSeq
 
-            let world = settle cover pid thread (call cover before pid thread op view) world
+            let world =
+                settle cover log pid thread (call cover log before pid thread op view) world
 
             // A call in this process, its end included, that made a call
             // asleep in another wakeable.
@@ -1741,7 +1909,7 @@ module TestMultiProcessFuzz =
 
                         cover (FuzzLabel.CrossWakeKind kind)
 
-            match Map.tryFind pid world.Machine.Processes with
+            match Map.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
             | None -> world
             | Some _ ->
 
@@ -1842,11 +2010,10 @@ module TestMultiProcessFuzz =
         }
 
     /// Every connection waiting in a listener's queue on `machine`.
-    let private queuedClients (machine : SimulatedMachine<int, string>) : QueuedClient list =
+    let private queuedClients (machine : UnixSystem<int, string>) : QueuedClient list =
         let ownerOf (socket : SocketId) : ProcessId option =
-            machine.Processes
-            |> Map.toSeq
-            |> Seq.tryPick (fun (pid, _) ->
+            UnixSystem.processIds machine
+            |> Seq.tryPick (fun pid ->
                 let names =
                     fdsOf pid (Machines.focus pid machine |> Option.get)
                     |> Map.exists (fun _ target -> target = OpenFileTarget.Socket socket)
@@ -1893,7 +2060,7 @@ module TestMultiProcessFuzz =
     let private checkQueuedClients
         (cover : FuzzLabel -> unit)
         (queued : QueuedClient list)
-        (after : SimulatedMachine<int, string>)
+        (after : UnixSystem<int, string>)
         : QueuedClient list
         =
         queued
@@ -1950,12 +2117,23 @@ module TestMultiProcessFuzz =
                 true
         )
 
+    /// `next`, for a transcript: its kind, and for a call, the process, the
+    /// thread and the kind of call. Its arguments follow from the case, and
+    /// `%A` of every step would make the oracle slow.
+    let private stepText (next : Step) : string =
+        match next with
+        | Step.Call (proc, thread, op) -> "Call " + string proc + " " + string thread + " " + UnionCaseName.ofValue op
+        | Step.WakePass finishing -> "WakePass " + string finishing
+        | Step.Advance milliseconds -> "Advance " + string milliseconds
+        | Step.Dispatch (proc, thread, cpu) -> "Dispatch " + string proc + " " + string thread + " " + string cpu
+
     /// `case` run on a machine `configure` made, with `observe` shown each
     /// step and the world it left.
     let private runObserving
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
         (observe : Step -> World -> unit)
         (cover : FuzzLabel -> unit)
+        (log : string -> unit)
         (case : Case)
         : unit
         =
@@ -2032,7 +2210,8 @@ module TestMultiProcessFuzz =
                 else
                     wakeable before |> Map.keys |> Set.ofSeq
 
-            let world = step cover before next
+            log (stepText next)
+            let world = step cover log before next
             assertClean world.Machine
 
             let reset = checkQueuedClients cover queued world.Machine
@@ -2061,7 +2240,7 @@ module TestMultiProcessFuzz =
         |> ignore
 
     let private run (cover : FuzzLabel -> unit) (case : Case) : unit =
-        runObserving smallBuffers (fun _ _ -> ()) cover case
+        runObserving smallBuffers (fun _ _ -> ()) cover ignore case
 
     [<Test>]
     let ``random interleavings of several processes' calls, wakes and ends keep every invariant and touch no other process``
@@ -2124,7 +2303,7 @@ module TestMultiProcessFuzz =
         coverage.Count FuzzLabel.Refusal * 10
         |> shouldBeSmallerThan (coverage.Count FuzzLabel.Call)
 
-    /// What a remembering sweep (`SimulatedMachine.wakesRemembering`) did at a
+    /// What a remembering sweep (`UnixWait.wakesRemembering`) did at a
     /// step, each counted every time a step reaches it.
     [<RequireQualifiedAccess>]
     type private MemoLabel =
@@ -2193,12 +2372,14 @@ module TestMultiProcessFuzz =
                 let machine = world.Machine
                 let full = Machines.wakes asleep machine
 
+                let callers = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
+
                 let skips, readsSame =
                     match memo.Value.Remembered with
                     | ValueNone -> false, false
                     | ValueSome remembered ->
-                        WakeSweepMemo.covers remembered asleep machine.Machine machine.Scheduling machine.Processes,
-                        WakeSweepMemo.readsSame remembered asleep machine.Machine machine.Processes
+                        WakeSweepMemo.covers remembered callers machine.Machine machine.Scheduling machine.Processes,
+                        WakeSweepMemo.readsSame remembered callers machine.Machine machine.Processes
 
                 let answer, next = Machines.wakesRemembering memo.Value asleep machine
                 answer |> shouldEqual full
@@ -2235,7 +2416,7 @@ module TestMultiProcessFuzz =
                 memo.Value <- next
                 lastSkipped.Value <- skips
 
-            runObserving twoProcessors observe ignore case
+            runObserving twoProcessors observe ignore ignore case
 
         let coverage =
             CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen memoCaseGen) property
@@ -2252,3 +2433,131 @@ module TestMultiProcessFuzz =
         coverage.Count MemoLabel.ClockOnlyWake |> shouldBeGreaterThan 17
         coverage.Count MemoLabel.DeadlineWakeAfterSkip |> shouldBeGreaterThan 11
         coverage.Count MemoLabel.SyscallWakeAfterSkip |> shouldBeGreaterThan 59
+
+    /// How many cases of `caseGen`'s fixed sample the oracle replays: every one
+    /// the first property counts its coverage over.
+    let private oracleCases : int = 1500
+
+    /// The embedded reference the oracle holds the library to.
+    let private oracleResource : string =
+        "WoofWare.PosixKernel.Test.multiProcessOracle.answers.txt"
+
+    /// What `case` answered, step by step: each step, what each call and finish
+    /// in it answered, which threads each wake pass woke, how each ended
+    /// process ended or that its end was refused, and after the step, each
+    /// live process's descriptors with the kind of thing each names, and the
+    /// kind of call each of its threads is parked in. Systems are left out, so
+    /// the transcript says nothing about how the library holds its state.
+    let private transcriptOf (case : Case) : string =
+        let builder = System.Text.StringBuilder ()
+        let log (line : string) : unit = builder.AppendLine line |> ignore
+        log $"%A{case.Platform} %d{case.Processes} %b{case.Prepared}"
+
+        // Case names rather than `%A`, which would make the oracle take
+        // minutes: each call's answer is written in full already.
+        let observe (_ : Step) (world : World) : unit =
+            for pid in world.Live do
+                let view = Machines.focus pid world.Machine |> Option.get
+                builder.Append("  ").Append(ProcessId.toInt32 pid).Append (':') |> ignore
+
+                for KeyValue (fd, target) in fdsOf pid view do
+                    builder.Append(' ').Append(fd).Append('=').Append (UnionCaseName.ofValue target)
+                    |> ignore
+
+                builder.Append (';') |> ignore
+
+                for KeyValue (thread, state) in Proc.threads pid view do
+                    let parked =
+                        match UnixThreadState.parkedIn state with
+                        | None -> "running"
+                        | Some parked -> UnionCaseName.ofValue parked
+
+                    builder.Append(' ').Append(thread).Append('=').Append (parked) |> ignore
+
+                builder.AppendLine () |> ignore
+
+        runObserving smallBuffers observe ignore log case
+        builder.ToString ()
+
+    /// The transcript of each case of the fixed sample the oracle replays, in
+    /// the order they are drawn.
+    let private oracleTranscripts () : string list =
+        let transcripts = ResizeArray<string> ()
+        CoverageSample.replay oracleCases (Arb.fromGen caseGen) (fun case -> transcripts.Add (transcriptOf case))
+        List.ofSeq transcripts
+
+    let private sha256 (text : string) : string =
+        System.Security.Cryptography.SHA256.HashData (System.Text.Encoding.UTF8.GetBytes text)
+        |> System.Convert.ToHexString
+
+    /// Each case's index and the hash of its transcript, as the reference
+    /// records them.
+    let private recordedOracle () : Map<int, string> =
+        let assembly = System.Reflection.Assembly.GetExecutingAssembly ()
+
+        use stream =
+            match assembly.GetManifestResourceStream oracleResource with
+            | null -> failwith $"embedded resource %s{oracleResource} not found"
+            | stream -> stream
+
+        use reader = new System.IO.StreamReader (stream)
+
+        reader.ReadToEnd().Split '\n'
+        |> Array.filter (fun line -> line <> "" && not (line.StartsWith '#'))
+        |> Array.map (fun line ->
+            match line.Split '\t' with
+            | [| index ; hash |] -> int index, hash
+            | _ -> failwith $"not a line of the oracle's reference: %s{line}"
+        )
+        |> Map.ofArray
+
+    /// The oracle for how the library holds several processes: the fixed
+    /// sample's interleavings, each run as the first property runs it, answer
+    /// exactly what the reference records. A difference names the cases whose
+    /// transcripts moved; set `POSIXKERNEL_ORACLE_DUMP` to a directory and run
+    /// `Update multi-process oracle` on the commit that recorded the reference
+    /// and on this one to compare them line by line.
+    [<Test>]
+    let ``the fixed sample's interleavings answer what the recorded reference says`` () : unit =
+        let recorded = recordedOracle ()
+        recorded.Count |> shouldEqual oracleCases
+
+        let moved =
+            oracleTranscripts ()
+            |> List.mapi (fun index transcript -> index, sha256 transcript)
+            |> List.filter (fun (index, hash) -> Map.tryFind index recorded <> Some hash)
+            |> List.map fst
+
+        moved |> shouldEqual []
+
+    /// Rewrites the oracle's reference from the library as built, and, if
+    /// `POSIXKERNEL_ORACLE_DUMP` names a directory, writes each case's
+    /// transcript there as `<index>.txt`.
+    [<Test ; Explicit>]
+    let ``Update multi-process oracle`` () : unit =
+        let transcripts = oracleTranscripts ()
+
+        match System.Environment.GetEnvironmentVariable "POSIXKERNEL_ORACLE_DUMP" with
+        | null
+        | "" -> ()
+        | directory ->
+            System.IO.Directory.CreateDirectory directory |> ignore
+
+            transcripts
+            |> List.iteri (fun index transcript ->
+                System.IO.File.WriteAllText (System.IO.Path.Combine (directory, $"%d{index}.txt"), transcript)
+            )
+
+        let lines =
+            [
+                "# TestMultiProcessFuzz's oracle: the SHA-256 of the transcript (transcriptOf) of each case of"
+                "# caseGen's fixed sample (CoverageSample's seed, the first 1500 cases), as the library answered"
+                "# them when this file was written. index<TAB>hash"
+            ]
+            @ (transcripts
+               |> List.mapi (fun index transcript -> $"%d{index}\t%s{sha256 transcript}"))
+
+        System.IO.File.WriteAllText (
+            System.IO.Path.Combine (__SOURCE_DIRECTORY__, "multiProcessOracle", "answers.txt"),
+            String.concat "\n" lines + "\n"
+        )

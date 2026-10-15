@@ -327,7 +327,7 @@ module TestSockOpt =
             let level, optionName = numbered platform Option.ReuseAddress
 
             let attempt fd buffer length =
-                UnixSocket.tryAdmitSetSockOpt fd level optionName buffer length system
+                Lone.UnixSocket.tryAdmitSetSockOpt fd level optionName buffer length system
 
             attempt socketFd UserBuffer.Opaque 4u
             |> shouldEqual (Error (SocketOptionRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
@@ -370,14 +370,14 @@ module TestSockOpt =
                     UserBuffer.Opaque, BufferRefusal.OpaqueAtTransfer
                     UserBuffer.Addressless, BufferRefusal.AddresslessAtTransfer
                 ] do
-                UnixSocket.tryAdmitGetSockOpt socketFd level optionName UserBuffer.Mapped buffer system
+                Lone.UnixSocket.tryAdmitGetSockOpt socketFd level optionName UserBuffer.Mapped buffer system
                 |> shouldEqual (Error (SocketOptionRefusal.Buffer refusal))
 
-                UnixSocket.tryAdmitGetSockOpt closedFd level optionName UserBuffer.Mapped buffer system
+                Lone.UnixSocket.tryAdmitGetSockOpt closedFd level optionName UserBuffer.Mapped buffer system
                 |> shouldEqual (Ok (GetSockOptAdmission.Answered UnixError.EBADF))
 
             let get value declaredLength =
-                UnixSocket.tryGetsockoptLength
+                Lone.UnixSocket.tryGetsockoptLength
                     socketFd
                     level
                     optionName
@@ -402,7 +402,13 @@ module TestSockOpt =
             | SimulatedUnixFlavour.Darwin ->
                 // Whether the length cell is read at all turns on whether the
                 // value buffer is null, which an addressless one cannot say.
-                UnixSocket.tryAdmitGetSockOpt socketFd level optionName UserBuffer.Addressless UserBuffer.Mapped system
+                Lone.UnixSocket.tryAdmitGetSockOpt
+                    socketFd
+                    level
+                    optionName
+                    UserBuffer.Addressless
+                    UserBuffer.Mapped
+                    system
                 |> shouldEqual (Error (SocketOptionRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
     /// Every phase this kernel models, measured through a `setsockopt` of 1 and
@@ -697,7 +703,7 @@ module TestSockOpt =
 
             let tooMuch =
                 Assert.Throws<exn> (fun () ->
-                    UnixSocket.trySetsockoptBytes
+                    Lone.UnixSocket.trySetsockoptBytes
                         socketFd
                         level
                         optionName
@@ -712,7 +718,7 @@ module TestSockOpt =
 
             let tooLittle =
                 Assert.Throws<exn> (fun () ->
-                    UnixSocket.trySetsockoptBytes socketFd level optionName UserBuffer.Mapped 4u None system
+                    Lone.UnixSocket.trySetsockoptBytes socketFd level optionName UserBuffer.Mapped 4u None system
                     |> ignore<_>
                 )
 
@@ -720,7 +726,14 @@ module TestSockOpt =
 
             let lengthNotRead =
                 Assert.Throws<exn> (fun () ->
-                    UnixSocket.tryGetsockoptLength socketFd level optionName UserBuffer.Mapped null' (Some 4u) system
+                    Lone.UnixSocket.tryGetsockoptLength
+                        socketFd
+                        level
+                        optionName
+                        UserBuffer.Mapped
+                        null'
+                        (Some 4u)
+                        system
                     |> ignore<_>
                 )
 
@@ -728,7 +741,7 @@ module TestSockOpt =
 
             let lengthRead =
                 Assert.Throws<exn> (fun () ->
-                    UnixSocket.tryGetsockoptLength
+                    Lone.UnixSocket.tryGetsockoptLength
                         socketFd
                         level
                         optionName

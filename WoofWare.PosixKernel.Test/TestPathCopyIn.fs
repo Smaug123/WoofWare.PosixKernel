@@ -500,7 +500,7 @@ module TestPathCopyIn =
                 changing
                     $"mkdir 0o%o{mode}"
                     (fun path system -> UnixNamespace.tryMkdir (Callers.leader system) path mode system)
-                    (fun path -> UnixNamespace.mkdirParsed AtDirectory.CurrentDirectory path mode)
+                    (fun path -> Lone.UnixNamespace.mkdirParsed AtDirectory.CurrentDirectory path mode)
             )
 
         let flagsGen =
@@ -530,7 +530,7 @@ module TestPathCopyIn =
                 changing
                     $"open %A{openFlags}"
                     (fun path -> OpenFlagWords.openPath openFlags path 0o640)
-                    (fun path -> UnixNamespace.openPathParsed AtDirectory.CurrentDirectory openFlags path 0o640)
+                    (fun path -> Lone.UnixNamespace.openPathParsed AtDirectory.CurrentDirectory openFlags path 0o640)
             )
 
     [<Test>]
@@ -539,14 +539,14 @@ module TestPathCopyIn =
             changing
                 "unlink"
                 (fun path system -> UnixNamespace.tryUnlink (Callers.leader system) path system)
-                (UnixNamespace.unlinkParsed AtDirectory.CurrentDirectory)
+                (Lone.UnixNamespace.unlinkParsed AtDirectory.CurrentDirectory)
         )
 
         holds (
             changing
                 "rmdir"
                 (fun path system -> UnixNamespace.tryRmdir (Callers.leader system) path system)
-                (UnixNamespace.rmdirParsed AtDirectory.CurrentDirectory)
+                (Lone.UnixNamespace.rmdirParsed AtDirectory.CurrentDirectory)
         )
 
     [<Test>]
@@ -557,7 +557,7 @@ module TestPathCopyIn =
                     $"chmod 0o%o{mode}"
                     (fun path system -> UnixPathResolution.tryChmod (Callers.leader system) path mode system)
                     (fun path ->
-                        UnixPathResolution.chmodParsed AtDirectory.CurrentDirectory SymlinkPolicy.Follow path mode
+                        Lone.UnixPathResolution.chmodParsed AtDirectory.CurrentDirectory SymlinkPolicy.Follow path mode
                     )
             )
 
@@ -567,7 +567,7 @@ module TestPathCopyIn =
                     $"chown %A{user}"
                     (fun path system -> UnixPathResolution.tryChown (Callers.leader system) path user group system)
                     (fun path ->
-                        UnixPathResolution.chownParsed
+                        Lone.UnixPathResolution.chownParsed
                             AtDirectory.CurrentDirectory
                             SymlinkPolicy.Follow
                             path
@@ -581,7 +581,7 @@ module TestPathCopyIn =
                     $"lchown %A{user}"
                     (fun path system -> UnixPathResolution.tryLchown (Callers.leader system) path user group system)
                     (fun path ->
-                        UnixPathResolution.chownParsed
+                        Lone.UnixPathResolution.chownParsed
                             AtDirectory.CurrentDirectory
                             SymlinkPolicy.NoFollowFinal
                             path
@@ -594,7 +594,7 @@ module TestPathCopyIn =
             changing
                 "chdir"
                 (fun path system -> UnixPathResolution.tryChdir (Callers.leader system) path system)
-                UnixPathResolution.chdirParsed
+                Lone.UnixPathResolution.chdirParsed
         )
 
     [<Test>]
@@ -604,7 +604,7 @@ module TestPathCopyIn =
                 {
                     Name = $"stat %A{policy}"
                     Bytes = fun path system -> UnixPathResolution.tryStat (Callers.leader system) policy path system
-                    Parsed = UnixPathResolution.statParsed AtDirectory.CurrentDirectory policy
+                    Parsed = Lone.UnixPathResolution.statParsed AtDirectory.CurrentDirectory policy
                     FailedWithoutChange = fun error _ answer -> answer = Ok (FileStatusAnswer.Failed error)
                 }
 
@@ -612,7 +612,7 @@ module TestPathCopyIn =
             {
                 Name = "statfs"
                 Bytes = fun path system -> UnixPathResolution.tryStatfs (Callers.leader system) path system
-                Parsed = UnixPathResolution.statfsParsed
+                Parsed = Lone.UnixPathResolution.statfsParsed
                 FailedWithoutChange = fun error _ answer -> answer = Ok (FileSystemStatisticsAnswer.Failed error)
             }
 
@@ -630,7 +630,7 @@ module TestPathCopyIn =
                                 UnixNamespace.tryReadlink (Callers.leader system) path destination capacity system
                         Parsed =
                             fun path ->
-                                UnixNamespace.readlinkParsed AtDirectory.CurrentDirectory path destination capacity
+                                Lone.UnixNamespace.readlinkParsed AtDirectory.CurrentDirectory path destination capacity
                         FailedWithoutChange = fun error _ answer -> answer = Ok (ReadLinkAnswer.Failed error)
                     }
 

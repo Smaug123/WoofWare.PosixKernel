@@ -4,9 +4,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// `SimulatedMachine.wakesRemembering` sweeps again when something a wake
+/// `UnixWait.wakesRemembering` sweeps again when something a wake
 /// condition reads has changed, even where nothing but that one input has.
-/// `TestMultiProcessFuzz` holds it to `SimulatedMachine.wakes` over random
+/// `TestMultiProcessFuzz` holds it to `UnixWait.wakes` over random
 /// interleavings; each test here changes one input of the memo's alone, as no
 /// random interleaving does, and checks that the memo does not answer.
 ///
@@ -28,7 +28,7 @@ module TestWakeSweepMemo =
     let private remembering
         (memo : WakeSweepMemo<int, string>)
         (asleep : Map<ProcessId, Set<int>>)
-        (machine : SimulatedMachine<int, string>)
+        (machine : UnixSystem<int, string>)
         : ((ProcessId * int) * Set<WakePrimitive>) list * WakeSweepMemo<int, string>
         =
         let woken, memo = Machines.wakesRemembering memo asleep machine
@@ -40,8 +40,8 @@ module TestWakeSweepMemo =
         (pid : ProcessId)
         (thread : int)
         (listener : int)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         Machines.doIn
             pid
@@ -96,7 +96,9 @@ module TestWakeSweepMemo =
         LanguagePrimitives.PhysicalEquality signalled.Machine machine.Machine
         |> shouldEqual true
 
-        LanguagePrimitives.PhysicalEquality signalled.Processes.[pid].Threads machine.Processes.[pid].Threads
+        LanguagePrimitives.PhysicalEquality
+            signalled.Processes.[ProcessId.toInt32 pid].Threads
+            machine.Processes.[ProcessId.toInt32 pid].Threads
         |> shouldEqual true
 
         remembering memo asleep signalled
@@ -106,7 +108,7 @@ module TestWakeSweepMemo =
     /// One process whose threads 0 and 1 sleep in `accept` on its listener, which
     /// holds a connection; the sweep has woken thread 0, whose call has not yet
     /// finished, so thread 1 waits behind it. The process's ID, and the machine.
-    let private behindAWokenAccepter () : ProcessId * SimulatedMachine<int, string> =
+    let private behindAWokenAccepter () : ProcessId * UnixSystem<int, string> =
         let pids, machine = Machines.withThreads linux 1 3
         let pid = pids.[0]
 
@@ -130,17 +132,13 @@ module TestWakeSweepMemo =
     /// `machine` with thread 0 of `pid` unparked in the thread table alone, as its
     /// finished `accept` leaves it: a forged state, whose open file table still
     /// counts the park's hold.
-    let private finishedInThreadsAlone
-        (pid : ProcessId)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
-        =
-        let slot = machine.Processes.[pid]
+    let private finishedInThreadsAlone (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
+        let slot = machine.Processes.[ProcessId.toInt32 pid]
 
         { machine with
             Processes =
                 Map.add
-                    pid
+                    (ProcessId.toInt32 pid)
                     { slot with
                         Threads = UnixThreadTable.unpark 0 slot.Threads
                     }
@@ -172,7 +170,8 @@ module TestWakeSweepMemo =
         // waits behind it.
         let withCopy =
             { finished with
-                Processes = Map.add other machine.Processes.[pid] finished.Processes
+                Processes =
+                    Map.add (ProcessId.toInt32 other) machine.Processes.[ProcessId.toInt32 pid] finished.Processes
             }
 
         let woken, memo = remembering WakeSweepMemo.empty asleep withCopy
@@ -190,8 +189,8 @@ module TestWakeSweepMemo =
             { finished with
                 Processes =
                     Map.add
-                        (ProcessId.parseOrFail "TestWakeSweepMemo" 9998)
-                        { machine.Processes.[pid] with
+                        9998
+                        { machine.Processes.[ProcessId.toInt32 pid] with
                             Threads = Map.empty
                         }
                         finished.Processes
@@ -227,7 +226,7 @@ module TestWakeSweepMemo =
             Machines.inProcess pid (KeventWorld.listenerAtIn pid 8080us) machine
 
         // Threads 0 and 1 poll the idle listener, for 5 ms and for 10 ms.
-        let pollFor (thread : int) (milliseconds : int) (machine : SimulatedMachine<int, string>) =
+        let pollFor (thread : int) (milliseconds : int) (machine : UnixSystem<int, string>) =
             Machines.doIn
                 pid
                 (fun view ->
@@ -310,13 +309,13 @@ module TestWakeSweepMemo =
 
         // The process's threads, the same threads in another map: the memo does not answer, and the
         // sweep wakes nobody, so the memo remembers it afresh.
-        let slot = machine.Processes.[pid]
+        let slot = machine.Processes.[ProcessId.toInt32 pid]
 
         let copied =
             { machine with
                 Processes =
                     Map.add
-                        pid
+                        (ProcessId.toInt32 pid)
                         { slot with
                             Threads = Map.ofList (Map.toList slot.Threads)
                         }

@@ -294,7 +294,7 @@ module TestSockaddrDecoding =
             let fd, system = setUp case.Platform case.Socket case.Closed
 
             let throughBytes =
-                UnixSocket.tryBindBytes
+                Lone.UnixSocket.tryBindBytes
                     fd
                     case.Buffer
                     case.Length
@@ -302,11 +302,13 @@ module TestSockaddrDecoding =
                     system
 
             let throughOracle =
-                match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd case.Buffer case.Length system with
+                match
+                    Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd case.Buffer case.Length system
+                with
                 | Error refusal -> Error (BindRefusal.Copy refusal)
                 | Ok (SockaddrCopyAdmission.Answered error) -> Ok (BindAnswer.Failed error, system)
                 | Ok (SockaddrCopyAdmission.Transfer length) ->
-                    UnixSocket.bindDecoded fd case.Length (Oracle.decode case.Platform case.Blob length) system
+                    Lone.UnixSocket.bindDecoded fd case.Length (Oracle.decode case.Platform case.Blob length) system
 
             throughBytes |> shouldEqual throughOracle
 
@@ -318,7 +320,7 @@ module TestSockaddrDecoding =
             let fd, system = setUp case.Platform case.Socket case.Closed
 
             let throughBytes =
-                UnixConnection.tryConnectBytes
+                Lone.UnixConnection.tryConnectBytes
                     fd
                     case.Buffer
                     case.Length
@@ -326,7 +328,9 @@ module TestSockaddrDecoding =
                     system
 
             let throughOracle =
-                match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd case.Buffer case.Length system with
+                match
+                    Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd case.Buffer case.Length system
+                with
                 | Error refusal -> Error (ConnectRefusal.Copy refusal)
                 | Ok (SockaddrCopyAdmission.Answered error) -> Ok (SyscallAnswer.Failed error, system)
                 | Ok (SockaddrCopyAdmission.Transfer length) ->
@@ -338,7 +342,7 @@ module TestSockaddrDecoding =
                     let nonBlocking =
                         (FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system)).Value.NonBlocking
 
-                    UnixConnection.connectDecoded
+                    Lone.UnixConnection.connectDecoded
                         socketId
                         nonBlocking
                         case.Length
@@ -361,9 +365,9 @@ module TestSockaddrDecoding =
 
             let length = UnixSocket.mappedCopyLength case.Platform case.Length
 
-            UnixConnection.connectSocket socketId false case.Length (CopyIn.prefix case.Blob length) system
+            Lone.UnixConnection.connectSocket socketId false case.Length (CopyIn.prefix case.Blob length) system
             |> shouldEqual (
-                UnixConnection.connectDecoded
+                Lone.UnixConnection.connectDecoded
                     socketId
                     false
                     case.Length
@@ -420,26 +424,26 @@ module TestSockaddrDecoding =
 
             for passed in [ 15 ; 17 ; 0 ] do
                 (fun () ->
-                    UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
+                    Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore
                 )
                 |> shouldFail
 
                 (fun () ->
-                    UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
+                    Lone.UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore
                 )
                 |> shouldFail
 
             // A call the admission answers copies nothing, so it takes nothing.
             (fun () ->
-                UnixSocket.tryBindBytes 99 UserBuffer.Mapped 16u (CopyIn.prefix blob 16) system
+                Lone.UnixSocket.tryBindBytes 99 UserBuffer.Mapped 16u (CopyIn.prefix blob 16) system
                 |> ignore
             )
             |> shouldFail
 
             (fun () ->
-                UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u ImmutableArray<byte>.Empty system
+                Lone.UnixSocket.tryBindBytes fd UserBuffer.Mapped 16u ImmutableArray<byte>.Empty system
                 |> ignore
             )
             |> shouldFail

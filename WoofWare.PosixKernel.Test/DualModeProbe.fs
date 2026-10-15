@@ -65,11 +65,11 @@ module DualModeProbe =
         let length = uint32 bytes.Length
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length libc.System with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length libc.System with
             | Result.Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create<byte> (bytes, 0, count))
             | _ -> None
 
-        match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied libc.System with
+        match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied libc.System with
         | Result.Ok (SetSockOptAnswer.Set, system) ->
             libc.System <- system
             Answer.Ok
@@ -83,11 +83,13 @@ module DualModeProbe =
 
     let private getInt (libc : Libc) (fd : int) (level : int) (name : int) : Answer * int =
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped libc.System with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped libc.System with
             | Result.Ok GetSockOptAdmission.ReadLength -> Some 4u
             | _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read libc.System with
+        match
+            Lone.UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read libc.System
+        with
         | Result.Ok (GetSockOptAnswer.Reported bytes, system) ->
             libc.System <- system
             Answer.Ok, SimulatedUnixPlatform.decodeCInt libc.Platform bytes 0
@@ -1070,7 +1072,7 @@ module DualModeProbe =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (UnixSystemState.signalNumbering libc.System)
+                            (Lone.UnixSystemState.signalNumbering libc.System)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals

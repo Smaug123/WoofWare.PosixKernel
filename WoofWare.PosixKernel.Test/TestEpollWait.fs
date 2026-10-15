@@ -232,7 +232,7 @@ module TestEpollWait =
         | other -> failwith $"expected the wait to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match UnixWait.wakes (Set.singleton thread) system with
+        match Lone.wakes (Set.singleton thread) system with
         | [] -> None
         | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
@@ -388,7 +388,7 @@ module TestEpollWait =
                 UnixThreadTable.parkedFor thread (Lone.threads answered) |> shouldEqual None
                 // The walk consumed the stale entry even though it delivered nothing.
                 pendingEntries answered |> shouldEqual 0
-                answered |> shouldEqual (snd (EpollReadyList.drain queueId 8 stale))
+                answered |> shouldEqual (snd (Lone.EpollReadyList.drain queueId 8 stale))
             | other -> failwith $"expected no events, got %A{other}"
 
         Check.One (config, Prop.forAll (Arb.fromGen start) property)
@@ -414,14 +414,14 @@ module TestEpollWait =
                 )
             )
 
-            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
+            Lone.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
 
             // One nanosecond short: nothing wakes it, and a finish attempted anyway sleeps
             // again on the same deadline.
             let short = after (deadline - 1L - now) parked
             woken short |> shouldEqual None
             let reparked = reparks short
-            UnixWait.deadlines (Set.singleton thread) reparked |> shouldEqual [ deadline ]
+            Lone.deadlines (Set.singleton thread) reparked |> shouldEqual [ deadline ]
 
             // At the deadline: woken by it, and finished with no events.
             let expired = after (deadline - now) parked
@@ -449,7 +449,7 @@ module TestEpollWait =
                 Interruptible.condition (WakeCondition.Primitive (WakePrimitive.EpollEventDeliverable queueId))
             )
 
-            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
+            Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
 
             match UnixThreadTable.parkedFor thread (Lone.threads parked) with
             | Some (ParkedSyscall.EpollWait wait) ->
@@ -529,7 +529,7 @@ module TestEpollWait =
 
         pendingEntries reparked |> shouldEqual 0
 
-        UnixWait.deadlines (Set.singleton thread) reparked
+        Lone.deadlines (Set.singleton thread) reparked
         |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
         let ordinalAfter =
@@ -707,7 +707,7 @@ module TestEpollWait =
             let system =
                 (system, parks)
                 ||> List.fold (fun system park ->
-                    UnixWait.park
+                    Lone.UnixWait.park
                         park.Waiter
                         (ParkedSyscall.EpollWait
                             {
@@ -776,6 +776,6 @@ module TestEpollWait =
                         None
                 )
 
-            UnixWait.wakes asleep system |> shouldEqual expected
+            Lone.wakes asleep system |> shouldEqual expected
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 1000, Prop.forAll (Arb.fromGen gen) property)

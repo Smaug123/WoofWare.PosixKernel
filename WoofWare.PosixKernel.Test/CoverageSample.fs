@@ -88,6 +88,24 @@ module CoverageSample =
         Check.One (config, property ignore)
         coverage
 
+    /// Calls `record` with each case of the fixed sample `arbitrary` generates
+    /// for a `config` of `count` tests, in the order they are drawn: the cases
+    /// `check` counts coverage over for `Config.QuickThrowOnFailure.WithMaxTest
+    /// count`, and nothing besides.
+    let replay<'a> (count : int) (arbitrary : Arbitrary<'a>) (record : 'a -> unit) : unit =
+        let config =
+            Config.QuickThrowOnFailure
+                .WithMaxTest(count)
+                .WithReplay (
+                    Some
+                        {
+                            Rnd = seed
+                            Size = None
+                        }
+                )
+
+        Check.One (config, Prop.forAll arbitrary record)
+
     /// `checkProperty` over the cases `arbitrary` generates.
     let check<'a, 'label, 'testable when 'label : equality>
         (config : Config)

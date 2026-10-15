@@ -529,7 +529,7 @@ module TestTransferCounts =
             let actual =
                 // A pwrite's admission says what a write's does, but for the
                 // sleeping write, which a file never makes.
-                match UnixReadWrite.tryAdmitPWrite 0 fd case.Buffer case.Count offset system with
+                match Lone.UnixReadWrite.tryAdmitPWrite 0 fd case.Buffer case.Count offset system with
                 | Ok (PWriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
                 | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
                 | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device)) ->
@@ -794,14 +794,14 @@ module TestTransferCounts =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 Signal.SIGPIPE
                                 SignalDisposition.Ignore
                                 proc.Signals
                     }
                 )
 
-            match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system with
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered (WriteAnswer.Failed error), signal, _)) when
                 signal.Signal = Signal.SIGPIPE
                 ->
@@ -819,7 +819,7 @@ module TestTransferCounts =
             | Ok other -> failwith $"unexpected write outcome %A{other}"
             | Error _ -> Seen.Refused
         | "pwrite" ->
-            match UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
             | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count

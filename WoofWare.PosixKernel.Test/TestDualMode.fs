@@ -37,7 +37,7 @@ module TestDualMode =
         let name = SimulatedUnixPlatform.ipv6OnlyOption platform
 
         match
-            UnixSocket.trySetsockoptBytes
+            Lone.UnixSocket.trySetsockoptBytes
                 fd
                 level
                 name
@@ -115,7 +115,7 @@ module TestDualMode =
         let socketId = socketIdOf client system
 
         let viaSocket =
-            UnixConnection.connectSocket socketId false 28u (CopyIn.mapped platform 28u blob) system
+            Lone.UnixConnection.connectSocket socketId false 28u (CopyIn.mapped platform 28u blob) system
 
         let viaDescriptor = CopyIn.connect client UserBuffer.Mapped 28u blob system
         viaSocket |> shouldEqual viaDescriptor

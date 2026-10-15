@@ -6,8 +6,8 @@ namespace WoofWare.PosixKernel
 type internal KillRefusal =
     /// A positive process ID other than the calling process's own. A real
     /// kernel's answer depends on whether that process exists and on what the
-    /// signal does to it, and a process's view holds no other process: sending
-    /// a signal to another process is not modelled.
+    /// signal does to it, and sending a signal to another process is not
+    /// modelled.
     | OtherProcess of pid : int32
     /// Zero or a negative number: a process group, or every process the caller
     /// may signal.
@@ -180,7 +180,7 @@ module UnixSignal =
         (pid : int32)
         (signo : int32)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, KillRefusal>
+        : Result<Result<ViewFate<KillOutcome, 'Thread, 'Handler>, UnixError>, KillRefusal>
         =
         let self = ProcessId.toInt32 system.Process.ProcessId
 
@@ -197,7 +197,7 @@ module UnixSignal =
         elif ProcessSignal.isInit system then
             Error KillRefusal.InitProcess
         elif signo = 0 then
-            Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)))
+            Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system)))
         else
 
         match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
@@ -299,7 +299,7 @@ module UnixSignal =
     let private tryOnReturnToUserIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
+        : Result<ViewFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         SignalState.onReturnToUser
             (UnixSystemState.signalNumbering system)
@@ -312,18 +312,18 @@ module UnixSignal =
             let after = UnixSystemState.withSignals signals system
 
             match delivery with
-            | None -> ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)
+            | None -> ViewFate.Continues (ReturnToUserOutcome.Resumes, after)
             | Some (SignalDelivery.RunHandlers frames) ->
-                ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)
+                ViewFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)
             | Some (SignalDelivery.DefaultStop signal) ->
-                ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after)
+                ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after)
             | Some (SignalDelivery.DefaultContinue signal) ->
-                ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after)
+                ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after)
             | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)) ->
                 // Ended as the walk left it: the signal that kills it is taken,
                 // so it is not pending in the process's final state, as one
                 // `kill` applies at once never is.
-                ProcessFate.ProcessEnded (
+                ViewFate.ProcessEnded (
                     UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) after
                 )
         )
@@ -469,7 +469,7 @@ module UnixSignal =
         (target : 'Thread)
         (signo : int32)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, ThreadKillRefusal>
+        : Result<Result<ViewFate<KillOutcome, 'Thread, 'Handler>, UnixError>, ThreadKillRefusal>
         =
         if not (Map.containsKey target system.Threads) then
             failwith
@@ -487,7 +487,7 @@ module UnixSignal =
         if ProcessSignal.isInit system then
             Error ThreadKillRefusal.InitProcess
         elif signo = 0 then
-            Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)))
+            Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system)))
         else
 
         match Signal.ofRawSignoUnder numbering signo with

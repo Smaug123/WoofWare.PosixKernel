@@ -601,7 +601,7 @@ module TestDarwinPoll =
         | other -> failwith $"poll of %A{entries} did not park: %A{other}"
 
     let private wakes (condition : WakeCondition) (system : UnixSystem<int, string>) : bool =
-        not (Set.isEmpty (WakeCondition.satisfied poller condition system))
+        not (Set.isEmpty (Lone.WakeCondition.satisfied poller condition system))
 
     let private finish (system : UnixSystem<int, string>) : Result<PollOutcome * UnixSystem<int, string>, PollRefusal> =
         UnixPoll.tryFinishPoll (Callers.thread poller system) system
@@ -682,7 +682,7 @@ module TestDarwinPoll =
         finishAnswer both |> shouldEqual ([ pollIn ||| pollOut ||| pollHup ], 1)
 
         // A poll made in that final state.
-        let fresh = UnixParkState.unpark poller both
+        let fresh = Lone.UnixParkState.unpark poller both
 
         answered [ entry socket (pollIn ||| pollOut) ] fresh
         |> shouldEqual ([ pollIn ||| pollHup ], 1)
@@ -788,7 +788,7 @@ module TestDarwinPoll =
         |> Map.containsKey acceptedId
         |> shouldEqual false
 
-        let fresh = UnixParkState.unpark poller closed
+        let fresh = Lone.UnixParkState.unpark poller closed
 
         answered [ entry client pollIn ] fresh
         |> shouldEqual ([ pollIn ||| pollHup ], 1)
@@ -913,7 +913,10 @@ module TestDarwinPoll =
             }
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedKqueuePollActivationMissed (poller, (listener, KqueueFilter.Read))
+                UnixSystemDefect.ParkedKqueuePollActivationMissed (
+                    Callers.ofDefault poller,
+                    (listener, KqueueFilter.Read)
+                )
             ]
 
     [<Test>]
@@ -950,7 +953,7 @@ module TestDarwinPoll =
 
         // Gone from the machine while the park names it.
         UnixSystem.checkInvariants (withQueues Map.empty next)
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentPollQueue (poller, queueId) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentPollQueue (Callers.ofDefault poller, queueId) ]
 
         // A second one no park names.
         let (PollQueueId n) = next
@@ -975,7 +978,10 @@ module TestDarwinPoll =
                     parked.Machine.PollQueues)
                 next
         )
-        |> shouldEqual [ UnixSystemDefect.PollQueueOfAnotherProcess (poller, queueId, other) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.PollQueueOfAnotherProcess (Callers.ofDefault poller, queueId, other)
+            ]
 
         // A socket's filter attached to no socket.
         let detached =
@@ -993,7 +999,7 @@ module TestDarwinPoll =
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
-                    poller,
+                    Callers.ofDefault poller,
                     (listener, KqueueFilter.Read),
                     None,
                     Some socket
@@ -1001,6 +1007,6 @@ module TestDarwinPoll =
             ]
 
         // ...and the park's end lets it go.
-        let finished = UnixParkState.unpark poller parked
+        let finished = Lone.UnixParkState.unpark poller parked
         finished.Machine.PollQueues |> shouldEqual Map.empty
         sound finished

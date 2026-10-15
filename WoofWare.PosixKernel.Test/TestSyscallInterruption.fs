@@ -384,7 +384,7 @@ module TestSyscallInterruption =
     /// `sent`, installed and then generated for `thread` alone: the system's
     /// signals, and how many of them are now pending.
     let private send (thread : int) (sent : Sent list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let numbering = UnixSystemState.signalNumbering system
+        let numbering = Lone.UnixSystemState.signalNumbering system
 
         let signals =
             ((Lone.proc system).Signals, sent)
@@ -612,7 +612,7 @@ module TestSyscallInterruption =
 
             // A sleeper wakes exactly when its finishing call has something to
             // say other than "sleep again".
-            let woken = UnixWait.wakes (Set.singleton thread) system |> List.map fst
+            let woken = Lone.wakes (Set.singleton thread) system |> List.map fst
             woken |> shouldEqual (if expected = Ending.Reparked then [] else [ thread ])
 
             let ending, after = finish thread sleep system
@@ -940,7 +940,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -957,7 +957,7 @@ module TestSyscallInterruption =
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
-            UnixWait.wakes (Set.singleton 0) system
+            Lone.wakes (Set.singleton 0) system
             |> shouldEqual [ 0, Set.singleton WakePrimitive.SignalDeliverable ]
 
             fst (finish 0 Sleep.Accept system) |> shouldEqual expected
@@ -988,7 +988,7 @@ module TestSyscallInterruption =
                     { proc with
                         Signals =
                             SignalState.enqueue
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 {
                                     Signal = Signal.SIGCONT
                                     Target = ValueSome 1
@@ -997,7 +997,7 @@ module TestSyscallInterruption =
                     }
                 )
 
-        UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+        Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
 
         fst (finish 1 Sleep.Accept system)
         |> shouldEqual (Ending.Refused (SyscallInterruptionRefusal.DefaultAction Signal.SIGCONT))

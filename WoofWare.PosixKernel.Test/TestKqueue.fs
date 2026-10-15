@@ -97,7 +97,7 @@ module TestKqueue =
             failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
 
     let private woken (asleep : int list) (system : UnixSystem<int, string>) : (int * Set<WakePrimitive>) list =
-        UnixWait.wakes (Set.ofList asleep) system
+        Lone.wakes (Set.ofList asleep) system
 
     /// `system` with a caught SIGUSR1 pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -107,11 +107,11 @@ module TestKqueue =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -682,7 +682,7 @@ module TestKqueue =
                 )
             )
 
-            UnixWait.deadlines (Set.singleton 1) parked |> shouldEqual [ deadline ]
+            Lone.deadlines (Set.singleton 1) parked |> shouldEqual [ deadline ]
 
             // One nanosecond short: nothing wakes it, and a finish attempted anyway parks again
             // on the same deadline, behind every other park.
@@ -693,7 +693,7 @@ module TestKqueue =
 
             match UnixKqueue.tryFinishKevent (Callers.thread 1 short) short with
             | Ok (KeventOutcome.WouldBlock _, reparked) ->
-                UnixWait.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
+                Lone.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
 
                 (UnixThreadTable.parkOf 1 (Lone.threads reparked)).Value.Ordinal
                 |> shouldBeGreaterThan ordinalBefore
@@ -746,7 +746,7 @@ module TestKqueue =
                 }
         | other -> failwith $"expected a kevent park, got %A{other}"
 
-        UnixWait.deadlines (Set.singleton 1) parked |> shouldEqual []
+        Lone.deadlines (Set.singleton 1) parked |> shouldEqual []
         woken [ 1 ] (after 1_000_000_000_000_000L parked) |> shouldEqual []
 
     [<Test>]
@@ -1061,7 +1061,7 @@ module TestKqueue =
         let kqueue = idOf k system
 
         let forged (park : ParkedKevent) (system : UnixSystem<int, string>) =
-            UnixSystem.checkInvariants (UnixWait.park 1 (ParkedSyscall.Kevent park) system)
+            UnixSystem.checkInvariants (Lone.UnixWait.park 1 (ParkedSyscall.Kevent park) system)
 
         let honest =
             {
@@ -1079,7 +1079,7 @@ module TestKqueue =
                 MaxEvents = 0
             }
             system
-        |> shouldEqual [ UnixSystemDefect.ParkedKeventCountNotPositive (1, 0) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedKeventCountNotPositive (Callers.ofDefault 1, 0) ]
 
         // Entered through stdin, which names a pipe end, not the kqueue.
         forged
@@ -1089,12 +1089,12 @@ module TestKqueue =
             system
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedKeventDescriptorRebound (1, 0, kqueue, Some (idOf 0 system))
+                UnixSystemDefect.ParkedKeventDescriptorRebound (Callers.ofDefault 1, 0, kqueue, Some (idOf 0 system))
             ]
 
         // ...which a drain excuses: the descriptor it entered through may have gone.
         let d, withDup = dup k system
-        let drained = close k (UnixWait.park 1 (ParkedSyscall.Kevent honest) withDup)
+        let drained = close k (Lone.UnixWait.park 1 (ParkedSyscall.Kevent honest) withDup)
         UnixSystem.checkInvariants drained |> shouldEqual []
         ignore<int> d
 
@@ -1107,7 +1107,7 @@ module TestKqueue =
         |> shouldEqual
             [
                 UnixSystemDefect.ParkedKeventOnNonKqueue (
-                    1,
+                    Callers.ofDefault 1,
                     idOf 0 system,
                     (FileDescriptorRegistry.tryFindTarget 0 (Lone.fileDescriptors system)).Value
                 )

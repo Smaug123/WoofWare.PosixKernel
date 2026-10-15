@@ -68,7 +68,7 @@ Two rules for adding a configuration knob:
   it starts on.
 - **How a process starts is a `ProcessLaunch`, not a boot-image setter.** The
   first process (`UnixBootImage.boot`) and every later one
-  (`SimulatedMachine.launch`) start from one, so a per-process knob goes on
+  (`UnixSystem.launch`) start from one, so a per-process knob goes on
   `ProcessLaunch` and a machine knob on `UnixBootImage`. The kernel chooses a
   later process's ID; only the first one's is configuration.
 

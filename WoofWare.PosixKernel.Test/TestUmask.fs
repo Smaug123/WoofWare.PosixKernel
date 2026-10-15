@@ -256,7 +256,9 @@ module TestUmask =
                     if bits &&& ~~~(measuredWidth platform) = 0 then
                         []
                     else
-                        [ UnixSystemDefect.UmaskNotOfPlatform (mode bits, platform) ]
+                        [
+                            UnixSystemDefect.UmaskNotOfPlatform (UnixSystem.defaultProcessId, mode bits, platform)
+                        ]
 
                 UnixSystem.checkInvariants forged |> shouldEqual expected
 

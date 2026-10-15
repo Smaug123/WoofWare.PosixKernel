@@ -86,7 +86,7 @@ module TestCallHolds =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                 }
@@ -298,7 +298,7 @@ module TestCallHolds =
         | ParkedSyscall.KqueuePoll poll ->
             match UnixThreadTable.parkedFor thread (Lone.threads system) with
             | Some (ParkedSyscall.KqueuePoll existing) ->
-                UnixWait.park
+                Lone.UnixWait.park
                     thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
@@ -315,7 +315,7 @@ module TestCallHolds =
                         }
                         system.Machine
 
-                UnixWait.park
+                Lone.UnixWait.park
                     thread
                     (ParkedSyscall.KqueuePoll
                         { poll with
@@ -324,7 +324,7 @@ module TestCallHolds =
                     { system with
                         Machine = machine
                     }
-        | _ -> UnixWait.park thread parked system
+        | _ -> Lone.UnixWait.park thread parked system
 
     // Which syscall a park is of: its case's name, which no two cases share.
     let private kindOf (parked : ParkedSyscall) : string =
@@ -406,7 +406,7 @@ module TestCallHolds =
                                 existing |> Option.map ParkedSyscall.descriptions |> Option.defaultValue []
 
                             park thread parked system
-                            |> ObjectLifetime.releaseUnreferencedUnrefusable "test" released,
+                            |> Lone.ObjectLifetime.releaseUnreferencedUnrefusable "test" released,
                             { model with
                                 Holds = Map.add thread held model.Holds
                             }
@@ -422,8 +422,8 @@ module TestCallHolds =
                         let before = OpenFileTable.descriptions system.Machine.OpenFiles |> Map.count
 
                         let after =
-                            UnixParkState.unpark thread system
-                            |> ObjectLifetime.releaseUnreferencedUnrefusable "test" held
+                            Lone.UnixParkState.unpark thread system
+                            |> Lone.ObjectLifetime.releaseUnreferencedUnrefusable "test" held
 
                         if OpenFileTable.descriptions after.Machine.OpenFiles |> Map.count < before then
                             cover Reached.DestroyedAtUnpark

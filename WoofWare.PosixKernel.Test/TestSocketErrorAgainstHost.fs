@@ -339,7 +339,7 @@ module TestSocketErrorAgainstHost =
         let lengthBuffer = userBuffer lengthCell
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level optionName (userBuffer value) lengthBuffer system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName (userBuffer value) lengthBuffer system with
             | Ok GetSockOptAdmission.ReadLength -> Some declaredLength
             | Ok GetSockOptAdmission.SkipLength
             | Ok (GetSockOptAdmission.Answered _)
@@ -351,7 +351,7 @@ module TestSocketErrorAgainstHost =
             | Buffer.Null
             | Buffer.Faulting -> None
 
-        match UnixSocket.tryGetsockoptLength fd level optionName (userBuffer value) lengthBuffer read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level optionName (userBuffer value) lengthBuffer read system with
         | Error refusal -> failwith $"the model refused SO_ERROR: %s{SocketOptionRefusal.describe refusal}"
         | Ok (GetSockOptAnswer.Failed (error, overwritten), system) ->
             {

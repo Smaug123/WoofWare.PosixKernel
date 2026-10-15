@@ -105,8 +105,8 @@ module TestImplicitSelfConnectMeasured =
 
         if nonBlocking then
             fd,
-            UnixSystemState.withFileDescriptors
-                (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+            Lone.UnixSystemState.withFileDescriptors
+                (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
                 system
         else
             fd, system

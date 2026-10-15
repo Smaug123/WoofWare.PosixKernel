@@ -764,7 +764,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -780,7 +780,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -1483,7 +1483,7 @@ module TestInotifyMeasured =
         let afterPread = $"FIONREAD=%s{fionread fd system}"
 
         let pwrite =
-            match UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 1UL 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 1UL 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> $"-1 %O{error}"
             | other -> failwith $"%A{other}"
 

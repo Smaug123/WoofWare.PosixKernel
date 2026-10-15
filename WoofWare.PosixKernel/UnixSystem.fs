@@ -204,17 +204,14 @@ module internal SyscallRefusal =
 /// could be in, and which the operations here exist to keep unreachable.
 /// `UnixSystem.checkInvariants` returns these.
 ///
-/// Separate from `FileDescriptorRegistryDefect` and `VirtualFileSystemDefect`
-/// because every case here is a claim about *two* tables at once, and neither
-/// of those modules can see the other's: each is defined in a file that
-/// compiles before this one.
+/// Separate from `VirtualFileSystemDefect` because every case here is a claim
+/// about *two* tables at once, which that module cannot see: it is defined in
+/// a file that compiles before this one. A descriptor table's own defects are
+/// reported inside one of these.
 ///
 /// Some cases concern the machine, and read facts that every process on it
-/// contributes to: `UnixSystem.checkInvariants` reports those of a process
-/// alone on its machine, and `SimulatedMachine.checkInvariants` those of a
-/// machine holding several (inside a `SimulatedMachineDefect`). The rest
-/// concern one process's view of the machine, and
-/// `UnixSystem.checkViewInvariants` reports those.
+/// contributes to; the rest concern one process, and name it, or the thread
+/// they concern by its `Caller`.
 ///
 /// A defect is a bug in this library, and its cases are not public: a client
 /// reports one with `UnixSystemDefect.describe`, and has no reason to branch on
@@ -245,7 +242,7 @@ type UnixSystemDefect<'Thread> =
     /// Deliberately *not* "the inode is reachable from the root": a real process
     /// keeps its current directory alive after the last name for it has gone,
     /// and the held inode is what expresses that.
-    | CurrentDirectoryIsNotADirectory of inode : InodeNumber
+    | CurrentDirectoryIsNotADirectory of processId : ProcessId * inode : InodeNumber
     /// A live open file description names an inode the filesystem does not
     /// hold, so reading or `fstat`ing that descriptor would fail.
     ///
@@ -338,7 +335,7 @@ type UnixSystemDefect<'Thread> =
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
     /// without the park being consulted.
-    | ParkedOnAbsentDescription of thread : 'Thread * description : OpenFileDescriptionId
+    | ParkedOnAbsentDescription of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// An open file description survives that no descriptor names and no
     /// syscall in flight holds (`ParkedSyscall.descriptions`). A real kernel
     /// frees a file when its last reference goes, so this is a leak: a close,
@@ -360,31 +357,37 @@ type UnixSystemDefect<'Thread> =
     | LingeringSocketHeldOnlyByCalls of description : OpenFileDescriptionId * socket : SocketId
     /// A thread is parked in an `epoll_wait` on a description that is not an
     /// epoll instance, which no wait could have produced.
-    | ParkedEpollWaitOnNonEpoll of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedEpollWaitOnNonEpoll of
+        thread : Caller<'Thread> *
+        description : OpenFileDescriptionId *
+        target : OpenFileTarget
     /// A thread is parked in a `kevent` on a description that is not a kqueue,
     /// which no wait could have produced and on which `UnixWait.wakes`
     /// crashes.
-    | ParkedKeventOnNonKqueue of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedKeventOnNonKqueue of
+        thread : Caller<'Thread> *
+        description : OpenFileDescriptionId *
+        target : OpenFileTarget
     /// A thread is parked in a `kevent` on a kqueue that has not been drained,
     /// and the descriptor the call was made through no longer names that
     /// kqueue (`current` is what it names now). Closing that descriptor drains
     /// the kqueue, so this is a park recorded without `kevent` or a descriptor
     /// closed around it.
     | ParkedKeventDescriptorRebound of
-        thread : 'Thread *
+        thread : Caller<'Thread> *
         fd : int *
         kqueue : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// A thread is parked in a `kevent` for `maxEvents` events, which is not
     /// positive: such a call returns at once.
-    | ParkedKeventCountNotPositive of thread : 'Thread * maxEvents : int
+    | ParkedKeventCountNotPositive of thread : Caller<'Thread> * maxEvents : int
     /// The process's descriptor `fd` names, or a `kevent` wait of one of its
     /// threads made through `fd` sleeps on, the kqueue `kqueue`, which the
     /// process `owner` owns (`KqueueState.Owner`). A kqueue's registrations
-    /// name descriptors in its owner's table, so this process's view would
-    /// read them against the wrong one; and only the process that created a
-    /// kqueue has a descriptor onto it.
-    | KqueueOfAnotherProcess of fd : int * kqueue : OpenFileDescriptionId * owner : ProcessId
+    /// name descriptors in its owner's table, so this process would read
+    /// them against the wrong one; and only the process that created a kqueue
+    /// has a descriptor onto it.
+    | KqueueOfAnotherProcess of processId : ProcessId * fd : int * kqueue : OpenFileDescriptionId * owner : ProcessId
     /// An open file description names an object this flavour's kernel does
     /// not have: an epoll instance or a device under Darwin, or a kqueue under
     /// Linux.
@@ -395,10 +398,14 @@ type UnixSystemDefect<'Thread> =
     /// A descriptor is open at or above the bound this kernel assumes the
     /// process's `RLIMIT_NOFILE` reaches (`SimulatedUnixPlatform.descriptorBound`),
     /// which no call hands out.
-    | DescriptorAtOrAboveBound of fd : int * bound : int
+    | DescriptorAtOrAboveBound of processId : ProcessId * fd : int * bound : int
     /// A descriptor's flags are the other flavour's, not those of the
     /// machine's `flavour` (`DescriptorFlags.flavour`).
-    | DescriptorFlagsNotOfFlavour of fd : int * flags : DescriptorFlags * flavour : SimulatedUnixFlavour
+    | DescriptorFlagsNotOfFlavour of
+        processId : ProcessId *
+        fd : int *
+        flags : DescriptorFlags *
+        flavour : SimulatedUnixFlavour
     /// A description's status is the other flavour's, not that of the
     /// machine's `flavour` (`OpenFileStatus.flavour`).
     | StatusNotOfFlavour of
@@ -410,13 +417,13 @@ type UnixSystemDefect<'Thread> =
     | FlockHeldNotRecorded of description : OpenFileDescriptionId
     /// A thread is parked in a `poll` watching an event queue, which `poll`
     /// refuses before it parks and whose readiness is not modelled.
-    | ParkedPollOnEventQueue of thread : 'Thread * description : OpenFileDescriptionId
+    | ParkedPollOnEventQueue of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread's parked `poll` watches `fd` on the description it named when
     /// the call went to sleep, and `fd` now names `current` instead. `close`
     /// refuses to close a descriptor a parked poll watches, so this is a park
     /// recorded without `poll` or a descriptor closed around it.
     | ParkedPollDescriptorRebound of
-        thread : 'Thread *
+        thread : Caller<'Thread> *
         fd : int *
         watched : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
@@ -425,18 +432,18 @@ type UnixSystemDefect<'Thread> =
     /// whose filters are modelled or a pipe. Closing a descriptor removes its
     /// registrations, a poll registers on nothing else, and a regular file's
     /// filters are always ready, so they report before the call can sleep.
-    | ParkedKqueuePollRegistrationTarget of thread : 'Thread * fd : int * target : OpenFileTarget option
+    | ParkedKqueuePollRegistrationTarget of thread : Caller<'Thread> * fd : int * target : OpenFileTarget option
     /// A thread's parked Darwin `poll` attributes the registration `key` to
     /// entry `entry`, which the call does not have.
-    | ParkedKqueuePollEntryOutOfRange of thread : 'Thread * key : (int * KqueueFilter) * entry : int
+    | ParkedKqueuePollEntryOutOfRange of thread : Caller<'Thread> * key : (int * KqueueFilter) * entry : int
     /// A thread's parked Darwin `poll` lists `key` as activated where the list
     /// may not hold it: `key` is not registered, is listed twice, or is not a
     /// socket's filter (see `PollQueue.Active`).
-    | ParkedKqueuePollActiveMalformed of thread : 'Thread * key : (int * KqueueFilter)
+    | ParkedKqueuePollActiveMalformed of thread : Caller<'Thread> * key : (int * KqueueFilter)
     /// A thread's parked Darwin `poll` registers the socket filter `key`, which is
     /// ready, and does not list it as activated: whatever made it ready did not
     /// activate it, so the call would sleep through what a real one wakes for.
-    | ParkedKqueuePollActivationMissed of thread : 'Thread * key : (int * KqueueFilter)
+    | ParkedKqueuePollActivationMissed of thread : Caller<'Thread> * key : (int * KqueueFilter)
     /// A thread's parked Darwin `poll` registers the filter `key` as attached to
     /// the socket `attached` (`None`: to none), through a descriptor naming the
     /// socket `named` (`None`: something other than a socket). A poll attaches
@@ -444,16 +451,16 @@ type UnixSystemDefect<'Thread> =
     /// names, and closing the descriptor removes the filter, so the two agree
     /// for as long as it lasts.
     | ParkedKqueuePollAttachedElsewhere of
-        thread : 'Thread *
+        thread : Caller<'Thread> *
         key : (int * KqueueFilter) *
         attached : SocketId option *
         named : SocketId option
     /// A thread is parked in a Darwin `poll` whose kqueue (`ParkedKqueuePoll.Queue`)
     /// is not on the machine. The park holds it until the park ends.
-    | ParkedOnAbsentPollQueue of thread : 'Thread * queue : PollQueueId
+    | ParkedOnAbsentPollQueue of thread : Caller<'Thread> * queue : PollQueueId
     /// A thread is parked in a Darwin `poll` whose kqueue another process,
     /// `owner`, made. A poll's kqueue is its own call's.
-    | PollQueueOfAnotherProcess of thread : 'Thread * queue : PollQueueId * owner : ProcessId
+    | PollQueueOfAnotherProcess of thread : Caller<'Thread> * queue : PollQueueId * owner : ProcessId
     /// The machine holds a sleeping Darwin poll's kqueue that `parks` parks
     /// name, rather than exactly one: it is made as its call sleeps, and
     /// destroyed as the park naming it ends.
@@ -464,11 +471,11 @@ type UnixSystemDefect<'Thread> =
     /// A thread is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedAcceptOnNonListener of thread : 'Thread * description : OpenFileDescriptionId
+    | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
     /// accept asleep on it, and `accept` refuses to sleep on one.
-    | ParkedAcceptOnDrainedListener of thread : 'Thread * description : OpenFileDescriptionId
+    | ParkedAcceptOnDrainedListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// Under Darwin, a thread is asleep in an `accept`, or a pipe or connection
     /// transfer, made through `fd`, which no longer names the description the
     /// call sleeps on
@@ -476,14 +483,14 @@ type UnixSystemDefect<'Thread> =
     /// so this is a park recorded without the syscall or a descriptor closed
     /// around it.
     | ParkedCallDescriptorRebound of
-        thread : 'Thread *
+        thread : Caller<'Thread> *
         fd : int *
         description : OpenFileDescriptionId *
         current : OpenFileDescriptionId option
     /// Under Linux, a thread's `accept`, or pipe or connection transfer, records
     /// that a close has ended it (`SleepTarget.EndedByClose`), which only
     /// Darwin's close does.
-    | ParkedCallEndedByCloseUnderLinux of thread : 'Thread
+    | ParkedCallEndedByCloseUnderLinux of thread : Caller<'Thread>
     /// Under Linux, a listener records that a close has drained it
     /// (`ListenState.Drained`), which only Darwin's close does.
     | ListenerDrainedUnderLinux of socket : SocketId
@@ -491,29 +498,29 @@ type UnixSystemDefect<'Thread> =
     /// names something other than the pipe end the call needs, which no such
     /// call could have produced and on which `UnixWait.wakes` crashes.
     | ParkedPipeTransferOnWrongTarget of
-        thread : 'Thread *
+        thread : Caller<'Thread> *
         description : OpenFileDescriptionId *
         target : OpenFileTarget
     /// A thread is asleep in a pipe transfer whose progress no call could have
     /// made: a read of nothing, or a write of `count` bytes with `written` of
     /// them in, where a sleeping write has put in at least none and fewer than
     /// all.
-    | ParkedPipeTransferProgress of thread : 'Thread * count : int * written : int
+    | ParkedPipeTransferProgress of thread : Caller<'Thread> * count : int * written : int
     /// A thread is asleep in a `read`, `recv`, `write` or `send` of a connected
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
     /// `UnixWait.wakes` crashes.
-    | ParkedConnectionTransferOnNonConnection of thread : 'Thread * description : OpenFileDescriptionId
+    | ParkedConnectionTransferOnNonConnection of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`
     /// bytes with `written` of them taken, where a sleeping write has taken at
     /// least none and fewer than all.
-    | ParkedConnectionTransferProgress of thread : 'Thread * count : int * written : int
+    | ParkedConnectionTransferProgress of thread : Caller<'Thread> * count : int * written : int
     /// A thread's park records an ordinal at or above the next one to mint, so
     /// some future park would repeat it, and the two waiters' order would be
     /// unspecified.
-    | ParkOrdinalNotFresh of next : ParkOrdinal * thread : 'Thread * ordinal : ParkOrdinal
+    | ParkOrdinalNotFresh of next : ParkOrdinal * thread : Caller<'Thread> * ordinal : ParkOrdinal
     /// Two threads' parks record the same ordinal. Ordinals are minted from one
     /// monotonic counter, so a duplicate means two parks were stamped with one
     /// mint.
@@ -544,23 +551,23 @@ type UnixSystemDefect<'Thread> =
     /// is what a later `bind` or `connect` completes.
     | BoundToPortZero of socket : SocketId
     /// A thread the table does not hold has handler frames.
-    | HandlerFramesWithoutThread of thread : 'Thread
+    | HandlerFramesWithoutThread of thread : Caller<'Thread>
     /// A thread the table does not hold has a signal mask.
-    | MaskWithoutThread of thread : 'Thread
+    | MaskWithoutThread of thread : Caller<'Thread>
     /// A thread the table does not hold has a mask for a `sigsuspend(2)` to
     /// restore.
-    | MaskToRestoreWithoutThread of thread : 'Thread
+    | MaskToRestoreWithoutThread of thread : Caller<'Thread>
     /// A thread asleep in a syscall other than `sigsuspend(2)` has a mask for a
     /// `sigsuspend` to restore. A thread has one only while it is in that call or
     /// returning from it, and a thread returns to user mode before it makes
     /// another call.
-    | MaskToRestoreOutsideSigsuspend of thread : 'Thread * parked : ParkedSyscall
+    | MaskToRestoreOutsideSigsuspend of thread : Caller<'Thread> * parked : ParkedSyscall
     /// A thread asleep in `sigsuspend(2)` has no mask to restore, so its return
     /// would leave it with the call's temporary mask.
-    | SigsuspendWithoutMaskToRestore of thread : 'Thread
+    | SigsuspendWithoutMaskToRestore of thread : Caller<'Thread>
     /// A pending signal is directed at a thread the table does not hold, so it
     /// can never be delivered and sits in the queue for the rest of the run.
-    | PendingSignalTargetWithoutThread of thread : 'Thread * signal : Signal
+    | PendingSignalTargetWithoutThread of thread : Caller<'Thread> * signal : Signal
     /// The machine's mount claims a filesystem type its flavour cannot report,
     /// so `fstatfs` on a file would answer a fact no such machine could tell.
     | FileSystemTypeNotReportable of flavour : SimulatedUnixFlavour * fileSystemType : EmulatedFileSystemType
@@ -571,24 +578,24 @@ type UnixSystemDefect<'Thread> =
     | UserBufferCheckNotOfPlatform of platform : SimulatedUnixPlatform * check : UserBufferCheck
     /// The process holds more supplementary groups than its machine's
     /// platform lets any process hold (`SimulatedUnixPlatform.supplementaryGroupLimit`).
-    | TooManySupplementaryGroups of count : int * limit : int
+    | TooManySupplementaryGroups of processId : ProcessId * count : int * limit : int
     /// The process's file-mode creation mask holds a bit its machine's
     /// platform's `umask(2)` never stores (`SimulatedUnixPlatform.umaskStoredBits`),
     /// so every creation would clear a bit no kernel of that flavour clears.
-    | UmaskNotOfPlatform of umask : PermissionBits * platform : SimulatedUnixPlatform
+    | UmaskNotOfPlatform of processId : ProcessId * umask : PermissionBits * platform : SimulatedUnixPlatform
     /// The process's leader is not one of its threads. A running process always has
     /// its leader, since the leader cannot exit while another thread lives.
-    | LeaderWithoutThread of leader : 'Thread
+    | LeaderWithoutThread of leader : Caller<'Thread>
     /// Two live threads report the same thread ID, so a lock that records its owner
     /// by thread ID would take either for the other.
-    | DuplicateOsThreadId of id : OsThreadId * threads : 'Thread list
+    | DuplicateOsThreadId of id : OsThreadId * threads : Caller<'Thread> list
     /// On Linux, the leader's thread ID is not the process ID, which it always is.
-    | LeaderThreadIdNotProcessId of leader : 'Thread * id : OsThreadId * pid : ProcessId
+    | LeaderThreadIdNotProcessId of leader : Caller<'Thread> * id : OsThreadId * pid : ProcessId
     /// A thread's ID is one the machine's counter could not have handed out:
     /// at or above the greatest `pid_max` Linux takes
     /// (`ThreadIdAllocator.linuxPidMaxCeiling`), or not yet reached on Darwin,
     /// where a later thread could be given the same ID.
-    | OsThreadIdNotMintable of thread : 'Thread * id : OsThreadId * allocator : ThreadIdAllocator
+    | OsThreadIdNotMintable of thread : Caller<'Thread> * id : OsThreadId * allocator : ThreadIdAllocator
     /// The machine's thread ID counter is not its flavour's: a Linux counter on a
     /// Darwin machine, or the other way about.
     | ThreadIdAllocatorNotOfFlavour of flavour : SimulatedUnixFlavour * allocator : ThreadIdAllocator
@@ -663,7 +670,7 @@ type UnixSystemDefect<'Thread> =
     /// The thread `thread` is on the logical processor `cpu`, which is not one of
     /// the machine's `processorCount`, numbered from 0. See
     /// `UnixThreadState.cpu`.
-    | CpuBeyondMachine of thread : 'Thread * cpu : CpuId * processorCount : int
+    | CpuBeyondMachine of thread : Caller<'Thread> * cpu : CpuId * processorCount : int
     /// The machine records the thread with thread ID `occupant` as running on
     /// the logical processor `cpu`, which is not one of its `processorCount`,
     /// numbered from 0. See `UnixScheduling`.
@@ -675,17 +682,20 @@ type UnixSystemDefect<'Thread> =
     /// The machine records `thread` as running on the logical processor
     /// `occupied`, and the thread's own processor is `cpu`: a running thread's
     /// processor is the one it runs on (`UnixThreadState.cpu`).
-    | OccupantOnAnotherCpu of thread : 'Thread * occupied : CpuId * cpu : CpuId
+    | OccupantOnAnotherCpu of thread : Caller<'Thread> * occupied : CpuId * cpu : CpuId
     /// A thread is parked in a syscall that nothing in this version parks a thread
     /// in, such as `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`,
     /// `ParkedSyscall.Select` or `ParkedSyscall.SignalWait`: a case reserved
     /// for behaviour not yet modelled, which no call produces and no finishing
     /// call answers.
-    | ReservedPark of thread : 'Thread * parked : ParkedSyscall
+    | ReservedPark of thread : Caller<'Thread> * parked : ParkedSyscall
     /// A thread is parked in a read of an inotify instance through the open file
     /// description `description`, which names `target` rather than an
     /// inotify instance.
-    | ParkedInotifyReadOnNonInotify of thread : 'Thread * description : OpenFileDescriptionId * target : OpenFileTarget
+    | ParkedInotifyReadOnNonInotify of
+        thread : Caller<'Thread> *
+        description : OpenFileDescriptionId *
+        target : OpenFileTarget
     /// The machine's inotify limits are ones `UnixBootImage.withInotifyLimits`
     /// refuses: not all positive, or a queue too long for `ioctl(FIONREAD)` to
     /// count.
@@ -746,6 +756,20 @@ type UnixSystemDefect<'Thread> =
     /// machine says it mounted at `/dev` (`UnixMachineState.DeviceMount`),
     /// whose configuration `stat(2)` and `statfs(2)` report for it.
     | MountNotDeviceMount of root : InodeNumber * mounted : MountedFileSystem * deviceMount : MountedFileSystem
+    /// One of `FileDescriptorRegistry.checkDescriptorTableInvariants`'s
+    /// defects, in the descriptor table of the process `processId`.
+    | DescriptorTable of processId : ProcessId * defect : FileDescriptorRegistryDefect
+    /// A defect in the open file table's own rules, read against every
+    /// process's descriptor table: among them, a description whose count of
+    /// the descriptors naming it is not the number of descriptors in every
+    /// process that do.
+    | OpenFiles of defect : FileDescriptorRegistryDefect
+    /// The process held under the process ID `key` records the process ID
+    /// `recorded`. A call is made in a process found by its key, whose own
+    /// state says its ID, so the two must agree.
+    | SlotUnderAnotherProcessId of key : ProcessId * recorded : ProcessId
+    /// More than one process records the process ID `processId`.
+    | DuplicateProcessId of processId : ProcessId
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -753,59 +777,6 @@ module UnixSystemDefect =
     /// this library's source gives it, and the values that break it.
     let describe<'Thread> (defect : UnixSystemDefect<'Thread>) : string =
         $"the system's tables disagree with each other, in a state no kernel could be in, which is a bug in this library: %A{defect}"
-
-/// Why the directory a host named cannot be the one a simulated process starts
-/// in (`ProcessLaunch.withCurrentDirectory`). Launching the process returns one
-/// instead of deciding what to say about it: the remedy is always "fix the
-/// knob you set this from", and only the caller knows what that knob is called.
-///
-/// Every case is a host mistake rather than a process's, which is why none of
-/// them is a `UnixError`: there is no errno for "you launched a process in a
-/// directory the filesystem does not contain", and answering ENOENT would blame
-/// a process's path when there is no process yet.
-///
-/// Four cases, and deliberately not six. The walk could also answer an inode
-/// the filesystem does not contain, or a directory no path from the root
-/// reaches — but not for a filesystem whose invariants hold, walked from its
-/// root, so those are bugs in this library and crash rather than being handed
-/// to a caller who could do nothing about them.
-[<RequireQualifiedAccess>]
-type internal CurrentDirectoryFault =
-    /// The path does not resolve in the seeded filesystem at all. Carries what
-    /// the walk answered.
-    | DoesNotResolve of UnixError
-    /// The walk refused the path as too long. Distinguished from
-    /// `DoesNotResolve` because the directory may well be present: it is a
-    /// *length* that is unusable, and the remedy is to shorten something rather
-    /// than to go looking for a missing directory.
-    ///
-    /// Which length is deliberately not said, because the walk does not say:
-    /// `ENAMETOOLONG` is one errno covering a component past this flavour's
-    /// `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a
-    /// symbolic link whose expansion would carry the whole path past
-    /// `PATH_MAX`. A real kernel conflates them too. Splitting the case would
-    /// need the path walk to report which limit it hit, which every other
-    /// caller of the walk would pay for.
-    ///
-    /// Carries the flavour so that a fault which outlives the call still says
-    /// whose limits were in force -- 255 CJK characters name a directory a
-    /// Darwin process can start in and a Linux one cannot, and only Darwin
-    /// re-checks a splice at all.
-    | TooLong of SimulatedUnixFlavour
-    /// The path resolves, to something that is not a directory.
-    | NotADirectory
-    /// This kernel will not resolve the path.
-    | Path of PathRefusal
-
-[<RequireQualifiedAccess>]
-module internal CurrentDirectoryFault =
-    /// Which exception a public entry point raises this fault as.
-    let kind (fault : CurrentDirectoryFault) : RefusalKind =
-        match fault with
-        | CurrentDirectoryFault.DoesNotResolve _ -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.TooLong _ -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.NotADirectory -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.Path inner -> PathRefusal.kind inner
 
 /// Why `UnixBootImage.withFileSystem` refuses a seed: it describes a filesystem
 /// no kernel of the machine's flavour could have mounted.
@@ -858,6 +829,69 @@ module internal FileSystemSeedFault =
         | FileSystemSeedFault.SeedNameNotBindable _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedCoversDeviceFileSystem _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedNamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
+
+/// Why `UnixSystem.launch` will not start a process.
+[<RequireQualifiedAccess>]
+type internal ProcessCreationRefusal =
+    /// The launch itself is refused; see `LaunchRefusal`.
+    | Launch of LaunchRefusal
+    /// On Linux, every ID the machine would hand out, from 300 up to its
+    /// `pid_max`, is a live thread's, so `fork(2)` would answer EAGAIN.
+    | NoFreeProcessId
+    /// On Darwin, the process ID counter has reached `pidMax`
+    /// (`ProcessIdTable.darwinPidMax`). xnu wraps it back to 100, skipping IDs
+    /// in use; that has not been measured, so this library does not wrap.
+    | DarwinPidMaxReached of pidMax : int32
+    /// On Darwin, the 64-bit thread ID counter has reached the top of its
+    /// range, so the new process's leader would take an ID beyond it; what
+    /// Darwin does then has not been measured.
+    | DarwinThreadIdCounterExhausted
+
+[<RequireQualifiedAccess>]
+module internal ProcessCreationRefusal =
+    /// What this library knows about why it would not start the process, for
+    /// a client composing a diagnostic that names its own knob.
+    let describe (refusal : ProcessCreationRefusal) : string =
+        match refusal with
+        | ProcessCreationRefusal.Launch refusal -> LaunchRefusal.describe refusal
+        | ProcessCreationRefusal.NoFreeProcessId ->
+            "every process ID the machine would hand out is a live thread's, so fork(2) would answer EAGAIN."
+        | ProcessCreationRefusal.DarwinPidMaxReached pidMax ->
+            $"the machine's process ID counter has reached Darwin's PID_MAX %d{pidMax}; what Darwin does next (xnu's source wraps to 100) has not been measured."
+        | ProcessCreationRefusal.DarwinThreadIdCounterExhausted ->
+            "the machine's thread ID counter has reached the top of its 64-bit range, so the new process's leader would take an ID beyond it; what Darwin does then has not been measured."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : ProcessCreationRefusal) : RefusalKind =
+        match refusal with
+        | ProcessCreationRefusal.Launch inner -> LaunchRefusal.kind inner
+        | ProcessCreationRefusal.NoFreeProcessId -> RefusalKind.Unmodelled
+        | ProcessCreationRefusal.DarwinPidMaxReached _ -> RefusalKind.Unmodelled
+        | ProcessCreationRefusal.DarwinThreadIdCounterExhausted -> RefusalKind.Unmodelled
+
+/// Why `UnixSystem.endProcess` will not end a process: what closing
+/// its descriptors would do has not been measured.
+[<RequireQualifiedAccess>]
+type internal ProcessEndRefusal =
+    /// Closing the process's descriptors releases an open file description
+    /// this library will not release (`DescriptionReleaseRefusal`): so far,
+    /// the last reference to a connected socket whose `SO_LINGER` would make
+    /// its close reset the connection or wait.
+    | Release of DescriptionReleaseRefusal
+
+[<RequireQualifiedAccess>]
+module internal ProcessEndRefusal =
+    /// What this library knows about why it will not end the process, for a
+    /// client composing a diagnostic that names its own knob.
+    let describe (refusal : ProcessEndRefusal) : string =
+        match refusal with
+        | ProcessEndRefusal.Release refusal ->
+            $"the process's end closes its descriptors, and %s{DescriptionReleaseRefusal.describe refusal}"
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : ProcessEndRefusal) : RefusalKind =
+        match refusal with
+        | ProcessEndRefusal.Release inner -> DescriptionReleaseRefusal.kind inner
 
 [<RequireQualifiedAccess>]
 module UnixSystem =
@@ -1211,8 +1245,10 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<ProcessId>
         =
-        // A view holds its own process and no other.
-        Set.singleton system.Process.ProcessId
+        system.Processes
+        |> Map.keys
+        |> Seq.map (ProcessId.parseOrFail "UnixSystem.processIds")
+        |> Set.ofSeq
 
     /// `processId` once `Entry` has admitted its caller.
     let private processIdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1459,7 +1495,7 @@ module UnixSystem =
     /// Every way the machine's tables disagree with each other or with the
     /// processes on it: the clauses of `checkInvariants` that concern the
     /// machine, each of which reads facts that every process on it contributes
-    /// to, so that no one process's view can check it.
+    /// to.
     ///
     /// The socket table and the pipe table against the open file descriptions,
     /// each pipe and the pipe device against the platform, the connection
@@ -1487,8 +1523,13 @@ module UnixSystem =
         let onlyIfComplete (defects : unit -> UnixSystemDefect<'Thread> list) : UnixSystemDefect<'Thread> list =
             if complete then defects () else []
 
-        let allThreads : ('Thread * UnixThreadState) list =
-            processes |> List.collect (fun (_, threads) -> Map.toList threads)
+        let allThreads : (Caller<'Thread> * UnixThreadState) list =
+            processes
+            |> List.collect (fun (proc, threads) ->
+                threads
+                |> Map.toList
+                |> List.map (fun (thread, state) -> Caller.make proc.ProcessId thread, state)
+            )
 
 
         let named =
@@ -2691,19 +2732,23 @@ module UnixSystem =
         @ inotify
 
 
-    /// Every way one process's view of the machine disagrees with itself: the
-    /// clauses of `checkInvariants` that concern the process `system` is, read
-    /// against the machine. The current directory against the filesystem, each
+    /// Every way one process disagrees with itself or with the machine: the
+    /// clauses of `checkInvariants` that concern the process `system` is the
+    /// view of. The current directory against the filesystem, each
     /// descriptor against the bound and the flavour's descriptor flags, each
     /// thread's park against the descriptor table and the machine, each kqueue
     /// a descriptor or a `kevent` wait names against its owner, the signal
     /// state against the thread table, the leader against the threads, each thread's
     /// processor against the machine's, and the process's supplementary groups
     /// and file-mode creation mask against its platform.
-    let checkViewInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+    let private processDefects<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
         : UnixSystemDefect<'Thread> list
         =
+        let pid = system.ProcessId
+
+        let caller (thread : 'Thread) : Caller<'Thread> = Caller.make pid thread
+
 
         let currentDirectory =
             match VirtualFileSystem.tryGetContent system.Process.CurrentDirectoryInode system.Machine.FileSystem with
@@ -2715,7 +2760,7 @@ module UnixSystem =
             | Some (InodeContent.Symlink _)
             | None ->
                 [
-                    UnixSystemDefect.CurrentDirectoryIsNotADirectory system.Process.CurrentDirectoryInode
+                    UnixSystemDefect.CurrentDirectoryIsNotADirectory (pid, system.Process.CurrentDirectoryInode)
                 ]
 
         let beyondBound =
@@ -2724,7 +2769,7 @@ module UnixSystem =
             FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors system)
             |> Map.toList
             |> List.filter (fun (fd, _) -> fd >= bound)
-            |> List.map (fun (fd, _) -> UnixSystemDefect.DescriptorAtOrAboveBound (fd, bound))
+            |> List.map (fun (fd, _) -> UnixSystemDefect.DescriptorAtOrAboveBound (pid, fd, bound))
 
         // Each descriptor's flags against the machine's flavour.
         let flagsOfFlavour =
@@ -2736,7 +2781,7 @@ module UnixSystem =
             |> List.choose (fun (fd, _) ->
                 match FileDescriptorRegistry.tryFindFlags fd registry with
                 | Some flags when DescriptorFlags.flavour flags <> flavour ->
-                    Some (UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, flags, flavour))
+                    Some (UnixSystemDefect.DescriptorFlagsNotOfFlavour (pid, fd, flags, flavour))
                 | Some _
                 | None -> None
             )
@@ -2764,14 +2809,14 @@ module UnixSystem =
                 | _ when not darwin -> []
                 | current ->
                     [
-                        UnixSystemDefect.ParkedCallDescriptorRebound (thread, fd, description, current)
+                        UnixSystemDefect.ParkedCallDescriptorRebound (caller thread, fd, description, current)
                     ]
 
             let endedByClose (thread : 'Thread) =
                 if darwin then
                     []
                 else
-                    [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux thread ]
+                    [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux (caller thread) ]
 
             // What is wrong with what a connection transfer sleeps on.
             let connectionTarget (thread : 'Thread) (target : SleepTarget<SocketId>) =
@@ -2780,7 +2825,7 @@ module UnixSystem =
                 | SleepTarget.Waiting (description, fd) ->
 
                 match Map.tryFind description descriptions with
-                | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, description) ]
+                | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, description) ]
                 | Some found ->
                     let connected =
                         match found.Target with
@@ -2801,7 +2846,7 @@ module UnixSystem =
                         enteredThrough thread fd description
                     else
                         [
-                            UnixSystemDefect.ParkedConnectionTransferOnNonConnection (thread, description)
+                            UnixSystemDefect.ParkedConnectionTransferOnNonConnection (caller thread, description)
                         ]
 
             system.Threads
@@ -2817,10 +2862,10 @@ module UnixSystem =
                 | Some (ParkedSyscall.SignalWait _ as parked)
                 | Some (ParkedSyscall.DatagramReceive _ as parked)
                 | Some (ParkedSyscall.DatagramSend _ as parked)
-                | Some (ParkedSyscall.Connect _ as parked) -> [ UnixSystemDefect.ReservedPark (thread, parked) ]
+                | Some (ParkedSyscall.Connect _ as parked) -> [ UnixSystemDefect.ReservedPark (caller thread, parked) ]
                 | Some (ParkedSyscall.InotifyRead read) ->
                     match Map.tryFind read.Instance descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, read.Instance) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, read.Instance) ]
                     | Some description ->
                         match description.Target with
                         | OpenFileTarget.Inotify _ -> []
@@ -2834,7 +2879,7 @@ module UnixSystem =
                         | OpenFileTarget.Pipe _ ->
                             [
                                 UnixSystemDefect.ParkedInotifyReadOnNonInotify (
-                                    thread,
+                                    caller thread,
                                     read.Instance,
                                     description.Target
                                 )
@@ -2843,10 +2888,10 @@ module UnixSystem =
                     if Map.containsKey parked.Requester descriptions then
                         []
                     else
-                        [ UnixSystemDefect.ParkedOnAbsentDescription (thread, parked.Requester) ]
+                        [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, parked.Requester) ]
                 | Some (ParkedSyscall.EpollWait wait) ->
                     match Map.tryFind wait.Epoll descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, wait.Epoll) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, wait.Epoll) ]
                     | Some description ->
                         match description.Target with
                         | OpenFileTarget.Epoll _ -> []
@@ -2859,18 +2904,24 @@ module UnixSystem =
                         | OpenFileTarget.Inotify _
                         | OpenFileTarget.Pipe _ ->
                             [
-                                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (thread, wait.Epoll, description.Target)
+                                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (
+                                    caller thread,
+                                    wait.Epoll,
+                                    description.Target
+                                )
                             ]
                 | Some (ParkedSyscall.Kevent wait) ->
                     let count =
                         if wait.MaxEvents > 0 then
                             []
                         else
-                            [ UnixSystemDefect.ParkedKeventCountNotPositive (thread, wait.MaxEvents) ]
+                            [
+                                UnixSystemDefect.ParkedKeventCountNotPositive (caller thread, wait.MaxEvents)
+                            ]
 
                     let target =
                         match Map.tryFind wait.Kqueue descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, wait.Kqueue) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, wait.Kqueue) ]
                         | Some description ->
                             match description.Target with
                             | OpenFileTarget.Kqueue state ->
@@ -2882,7 +2933,7 @@ module UnixSystem =
                                 | current ->
                                     [
                                         UnixSystemDefect.ParkedKeventDescriptorRebound (
-                                            thread,
+                                            caller thread,
                                             wait.Fd,
                                             wait.Kqueue,
                                             current
@@ -2897,7 +2948,11 @@ module UnixSystem =
                             | OpenFileTarget.Inotify _
                             | OpenFileTarget.Pipe _ ->
                                 [
-                                    UnixSystemDefect.ParkedKeventOnNonKqueue (thread, wait.Kqueue, description.Target)
+                                    UnixSystemDefect.ParkedKeventOnNonKqueue (
+                                        caller thread,
+                                        wait.Kqueue,
+                                        description.Target
+                                    )
                                 ]
 
                     count @ target
@@ -2908,13 +2963,13 @@ module UnixSystem =
                         | ParkedPollEntry.Ignored _ -> []
                         | ParkedPollEntry.Watched (fd, watched, _) ->
                             match Map.tryFind watched descriptions with
-                            | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, watched) ]
+                            | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, watched) ]
                             | Some description ->
                                 let target =
                                     match description.Target with
                                     | OpenFileTarget.Kqueue _
                                     | OpenFileTarget.Epoll _ ->
-                                        [ UnixSystemDefect.ParkedPollOnEventQueue (thread, watched) ]
+                                        [ UnixSystemDefect.ParkedPollOnEventQueue (caller thread, watched) ]
                                     | OpenFileTarget.File _
                                     | OpenFileTarget.Directory _
                                     | OpenFileTarget.Socket _
@@ -2931,7 +2986,7 @@ module UnixSystem =
                                     | current ->
                                         [
                                             UnixSystemDefect.ParkedPollDescriptorRebound (
-                                                thread,
+                                                caller thread,
                                                 fd,
                                                 watched,
                                                 current
@@ -2942,9 +2997,11 @@ module UnixSystem =
                     )
                 | Some (ParkedSyscall.KqueuePoll poll) ->
                     match Map.tryFind poll.Queue system.Machine.PollQueues with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (thread, poll.Queue) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (caller thread, poll.Queue) ]
                     | Some queue when queue.Owner <> system.Process.ProcessId ->
-                        [ UnixSystemDefect.PollQueueOfAnotherProcess (thread, poll.Queue, queue.Owner) ]
+                        [
+                            UnixSystemDefect.PollQueueOfAnotherProcess (caller thread, poll.Queue, queue.Owner)
+                        ]
                     | Some queue ->
 
                     let entries = List.length poll.Entries
@@ -2971,7 +3028,7 @@ module UnixSystem =
                             else
                                 Some (
                                     UnixSystemDefect.ParkedKqueuePollAttachedElsewhere (
-                                        thread,
+                                        caller thread,
                                         key,
                                         registration.Socket,
                                         named
@@ -2994,15 +3051,27 @@ module UnixSystem =
                                             not (List.contains key queue.Active)
                                             && Option.isSome (DarwinReadiness.ofSocket filter socketId system.Machine)
                                         then
-                                            [ UnixSystemDefect.ParkedKqueuePollActivationMissed (thread, key) ]
+                                            [ UnixSystemDefect.ParkedKqueuePollActivationMissed (caller thread, key) ]
                                         else
                                             []
                                     | Some _
                                     | None ->
-                                        [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (thread, fd, target) ]
+                                        [
+                                            UnixSystemDefect.ParkedKqueuePollRegistrationTarget (
+                                                caller thread,
+                                                fd,
+                                                target
+                                            )
+                                        ]
                                 | Some (OpenFileTarget.Pipe _) -> []
                                 | target ->
-                                    [ UnixSystemDefect.ParkedKqueuePollRegistrationTarget (thread, fd, target) ]
+                                    [
+                                        UnixSystemDefect.ParkedKqueuePollRegistrationTarget (
+                                            caller thread,
+                                            fd,
+                                            target
+                                        )
+                                    ]
 
                             let entry =
                                 if registration.Entry >= 0 && registration.Entry < entries then
@@ -3010,7 +3079,7 @@ module UnixSystem =
                                 else
                                     [
                                         UnixSystemDefect.ParkedKqueuePollEntryOutOfRange (
-                                            thread,
+                                            caller thread,
                                             key,
                                             registration.Entry
                                         )
@@ -3030,7 +3099,7 @@ module UnixSystem =
                                 || not (Map.containsKey key queue.Registrations)
                                 || Option.isNone (socketOf fd)
                             then
-                                Some (UnixSystemDefect.ParkedKqueuePollActiveMalformed (thread, key))
+                                Some (UnixSystemDefect.ParkedKqueuePollActiveMalformed (caller thread, key))
                             else
                                 None
                         )
@@ -3042,7 +3111,7 @@ module UnixSystem =
                     | SleepTarget.Waiting (listener, fd) ->
 
                     match Map.tryFind listener descriptions with
-                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, listener) ]
+                    | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, listener) ]
                     | Some description ->
                         let listening =
                             match description.Target with
@@ -3063,15 +3132,15 @@ module UnixSystem =
                             | OpenFileTarget.Epoll _ -> None
 
                         match listening with
-                        | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (thread, listener) ]
-                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (thread, listener) ]
+                        | None -> [ UnixSystemDefect.ParkedAcceptOnNonListener (caller thread, listener) ]
+                        | Some true -> [ UnixSystemDefect.ParkedAcceptOnDrainedListener (caller thread, listener) ]
                         | Some false -> enteredThrough thread fd listener
                 | Some (ParkedSyscall.PipeRead read) ->
                     let progress =
                         if read.Count > 0 then
                             []
                         else
-                            [ UnixSystemDefect.ParkedPipeTransferProgress (thread, read.Count, 0) ]
+                            [ UnixSystemDefect.ParkedPipeTransferProgress (caller thread, read.Count, 0) ]
 
                     let target =
                         match read.Reader with
@@ -3079,11 +3148,14 @@ module UnixSystem =
                         | SleepTarget.Waiting (reader, fd) ->
 
                         match Map.tryFind reader descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, reader) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, reader) ]
                         | Some description ->
                             match description.Target with
                             | OpenFileTarget.Pipe (_, PipeEnd.Read) -> enteredThrough thread fd reader
-                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (thread, reader, target) ]
+                            | target ->
+                                [
+                                    UnixSystemDefect.ParkedPipeTransferOnWrongTarget (caller thread, reader, target)
+                                ]
 
                     progress @ target
                 | Some (ParkedSyscall.PipeWrite write) ->
@@ -3092,7 +3164,7 @@ module UnixSystem =
                             []
                         else
                             [
-                                UnixSystemDefect.ParkedPipeTransferProgress (thread, write.Count, write.Written)
+                                UnixSystemDefect.ParkedPipeTransferProgress (caller thread, write.Count, write.Written)
                             ]
 
                     let target =
@@ -3101,11 +3173,14 @@ module UnixSystem =
                         | SleepTarget.Waiting (writer, fd) ->
 
                         match Map.tryFind writer descriptions with
-                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (thread, writer) ]
+                        | None -> [ UnixSystemDefect.ParkedOnAbsentDescription (caller thread, writer) ]
                         | Some description ->
                             match description.Target with
                             | OpenFileTarget.Pipe (_, PipeEnd.Write) -> enteredThrough thread fd writer
-                            | target -> [ UnixSystemDefect.ParkedPipeTransferOnWrongTarget (thread, writer, target) ]
+                            | target ->
+                                [
+                                    UnixSystemDefect.ParkedPipeTransferOnWrongTarget (caller thread, writer, target)
+                                ]
 
                     progress @ target
                 | Some (ParkedSyscall.ConnectionRead read) ->
@@ -3121,7 +3196,9 @@ module UnixSystem =
                         if read.Count > 0 || (read.Count = 0 && mayAskNothing) then
                             []
                         else
-                            [ UnixSystemDefect.ParkedConnectionTransferProgress (thread, read.Count, 0) ]
+                            [
+                                UnixSystemDefect.ParkedConnectionTransferProgress (caller thread, read.Count, 0)
+                            ]
 
                     progress @ connectionTarget thread read.Socket
                 | Some (ParkedSyscall.ConnectionWrite write) ->
@@ -3130,7 +3207,11 @@ module UnixSystem =
                             []
                         else
                             [
-                                UnixSystemDefect.ParkedConnectionTransferProgress (thread, write.Count, write.Written)
+                                UnixSystemDefect.ParkedConnectionTransferProgress (
+                                    caller thread,
+                                    write.Count,
+                                    write.Written
+                                )
                             ]
 
                     progress @ connectionTarget thread write.Socket
@@ -3154,7 +3235,7 @@ module UnixSystem =
                 |> Map.toList
                 |> List.choose (fun (fd, kqueue) ->
                     ownedElsewhere kqueue
-                    |> Option.map (fun owner -> UnixSystemDefect.KqueueOfAnotherProcess (fd, kqueue, owner))
+                    |> Option.map (fun owner -> UnixSystemDefect.KqueueOfAnotherProcess (pid, fd, kqueue, owner))
                 )
 
             let waited =
@@ -3167,7 +3248,7 @@ module UnixSystem =
                            } ->
                         ownedElsewhere wait.Kqueue
                         |> Option.map (fun owner ->
-                            UnixSystemDefect.KqueueOfAnotherProcess (wait.Fd, wait.Kqueue, owner)
+                            UnixSystemDefect.KqueueOfAnotherProcess (pid, wait.Fd, wait.Kqueue, owner)
                         )
                     | Some _
                     | None -> None
@@ -3185,13 +3266,13 @@ module UnixSystem =
                 SignalState.threadsWithFrames signals
                 |> Set.toList
                 |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
-                |> List.map UnixSystemDefect.HandlerFramesWithoutThread
+                |> List.map (caller >> UnixSystemDefect.HandlerFramesWithoutThread)
 
             let masks =
                 SignalState.threadsWithMasks signals
                 |> Set.toList
                 |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
-                |> List.map UnixSystemDefect.MaskWithoutThread
+                |> List.map (caller >> UnixSystemDefect.MaskWithoutThread)
 
             // A mask to restore exists from a `sigsuspend` until its thread
             // returns to user mode, so exactly while the thread is parked in the
@@ -3205,7 +3286,7 @@ module UnixSystem =
                     restoring
                     |> Set.toList
                     |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
-                    |> List.map UnixSystemDefect.MaskToRestoreWithoutThread
+                    |> List.map (caller >> UnixSystemDefect.MaskToRestoreWithoutThread)
 
                 let parked =
                     system.Threads
@@ -3215,12 +3296,12 @@ module UnixSystem =
                         | Some {
                                    Syscall = ParkedSyscall.SigSuspend
                                } when not (Set.contains thread restoring) ->
-                            Some (UnixSystemDefect.SigsuspendWithoutMaskToRestore thread)
+                            Some (UnixSystemDefect.SigsuspendWithoutMaskToRestore (caller thread))
                         | Some {
                                    Syscall = ParkedSyscall.SigSuspend
                                } -> None
                         | Some park when Set.contains thread restoring ->
-                            Some (UnixSystemDefect.MaskToRestoreOutsideSigsuspend (thread, park.Syscall))
+                            Some (UnixSystemDefect.MaskToRestoreOutsideSigsuspend (caller thread, park.Syscall))
                         | Some _
                         | None -> None
                     )
@@ -3232,7 +3313,7 @@ module UnixSystem =
                 |> List.choose (fun entry ->
                     match entry.Target with
                     | ValueSome thread when not (Map.containsKey thread system.Threads) ->
-                        Some (UnixSystemDefect.PendingSignalTargetWithoutThread (thread, entry.Signal))
+                        Some (UnixSystemDefect.PendingSignalTargetWithoutThread (caller thread, entry.Signal))
                     | ValueSome _
                     | ValueNone -> None
                 )
@@ -3246,7 +3327,7 @@ module UnixSystem =
                 SimulatedUnixPlatform.supplementaryGroupLimit system.Machine.UnixPlatform
 
             if count > limit then
-                [ UnixSystemDefect.TooManySupplementaryGroups (count, limit) ]
+                [ UnixSystemDefect.TooManySupplementaryGroups (pid, count, limit) ]
             else
                 []
 
@@ -3255,7 +3336,7 @@ module UnixSystem =
             let stored = PermissionBits.toInt (SimulatedUnixPlatform.umaskStoredBits platform)
 
             if PermissionBits.toInt system.Process.Umask &&& ~~~stored <> 0 then
-                [ UnixSystemDefect.UmaskNotOfPlatform (system.Process.Umask, platform) ]
+                [ UnixSystemDefect.UmaskNotOfPlatform (pid, system.Process.Umask, platform) ]
             else
                 []
 
@@ -3263,7 +3344,7 @@ module UnixSystem =
         // thread ID is the process ID.
         let leader =
             match Map.tryFind system.Leader system.Threads with
-            | None -> [ UnixSystemDefect.LeaderWithoutThread system.Leader ]
+            | None -> [ UnixSystemDefect.LeaderWithoutThread (caller system.Leader) ]
             | Some state ->
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
                 | SimulatedUnixFlavour.Linux when
@@ -3272,7 +3353,7 @@ module UnixSystem =
                     ->
                     [
                         UnixSystemDefect.LeaderThreadIdNotProcessId (
-                            system.Leader,
+                            caller system.Leader,
                             state.OsThreadId,
                             system.Process.ProcessId
                         )
@@ -3285,7 +3366,7 @@ module UnixSystem =
             |> Map.toList
             |> List.filter (fun (_, state) -> not (UnixMachineState.hasProcessor state.Cpu system.Machine))
             |> List.map (fun (thread, state) ->
-                UnixSystemDefect.CpuBeyondMachine (thread, state.Cpu, system.Machine.ProcessorCount)
+                UnixSystemDefect.CpuBeyondMachine (caller thread, state.Cpu, system.Machine.ProcessorCount)
             )
 
         currentDirectory
@@ -3301,21 +3382,18 @@ module UnixSystem =
 
 
     /// Every way this system's tables disagree with each other: the machine's
-    /// clauses, which read facts every process on the machine contributes to,
-    /// and this process's view's (`checkViewInvariants`).
+    /// clauses, which read facts every process on the machine contributes to;
+    /// each process's own, read against the machine; each process's
+    /// descriptor table's, a descriptor naming a description the machine does
+    /// not hold, and a registration of a kqueue the process owns made through
+    /// a descriptor that is closed or names no socket; the open file table's
+    /// own rules, read against every process's descriptor table; and that each
+    /// process is held under its own process ID, and no two have one.
     ///
-    /// On a machine holding other processes besides (a view a
-    /// `SimulatedMachine` focused), only the machine's clauses this one
-    /// process can check truthfully are run: those that count or collect
-    /// across every process are `SimulatedMachine.checkInvariants`'s, which
-    /// sees them all.
-    ///
-    /// Each table's own rules are elsewhere and are not repeated here:
-    /// `FileDescriptorRegistry.checkInvariants` for the descriptor table and the
-    /// open file descriptions it names, and
-    /// `VirtualFileSystem.checkInvariants` for the filesystem. The latter takes
-    /// a `pinned` argument, which is what `pinnedInodes` computes, so a caller
-    /// wanting the whole picture pairs this with
+    /// The filesystem's own rules are `VirtualFileSystem.checkInvariants`'s,
+    /// and are not repeated here. It takes a `pinned` argument, which is what
+    /// `pinnedInodes` computes, so a caller wanting the whole picture pairs this
+    /// with
     /// `VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem`.
     ///
     /// A client that holds its own references into these tables owes its own
@@ -3324,11 +3402,55 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystemDefect<'Thread> list
         =
-        let others =
-            Set.remove system.Process.ProcessId (ProcessIdTable.live system.Machine.ProcessIds)
+        let slots =
+            system.Processes
+            |> Map.toList
+            |> List.map (fun (key, slot) -> ProcessId.parseOrFail "UnixSystem.checkInvariants" key, slot)
 
-        machineDefects (Set.isEmpty others) [ system.Process, system.Threads ] system.Scheduling system.Machine
-        @ checkViewInvariants system
+        let machine =
+            machineDefects
+                true
+                (slots |> List.map (fun (_, slot) -> slot.Process, slot.Threads))
+                system.Scheduling
+                system.Machine
+
+        let processes =
+            slots
+            |> List.collect (fun (pid, slot) -> processDefects (ProcessView.ofSlot pid slot system))
+
+        let tables =
+            slots
+            |> List.collect (fun (pid, slot) ->
+                FileDescriptorRegistry.ofTables
+                    (DescriptorCensus.OneProcessOf slot.Process.ProcessId)
+                    slot.Process.FileDescriptors
+                    system.Machine.OpenFiles
+                |> FileDescriptorRegistry.checkDescriptorTableInvariants slot.Process.ProcessId
+                |> List.map (fun defect -> UnixSystemDefect.DescriptorTable (pid, defect))
+            )
+
+        let openFiles =
+            OpenFileTable.checkInvariants
+                (slots |> List.map (fun (_, slot) -> slot.Process.FileDescriptors))
+                system.Machine.OpenFiles
+            |> List.map UnixSystemDefect.OpenFiles
+
+        let misplaced =
+            slots
+            |> List.choose (fun (key, slot) ->
+                if slot.Process.ProcessId = key then
+                    None
+                else
+                    Some (UnixSystemDefect.SlotUnderAnotherProcessId (key, slot.Process.ProcessId))
+            )
+
+        let duplicates =
+            slots
+            |> List.countBy (fun (_, slot) -> slot.Process.ProcessId)
+            |> List.filter (fun (_, count) -> count > 1)
+            |> List.map (fst >> UnixSystemDefect.DuplicateProcessId)
+
+        machine @ processes @ tables @ openFiles @ misplaced @ duplicates
 
     /// Logical-processor count a freshly-minted simulated process reports.
     /// One, because only single-processor behaviour has been exercised
@@ -3385,7 +3507,7 @@ module UnixSystem =
     /// process nobody has told where it is claims nothing beyond the root. A
     /// client that wants a particular directory sets it with
     /// `ProcessLaunch.withCurrentDirectory`.
-    let defaultCurrentDirectory : AbsoluteUnixPath = AbsoluteUnixPath.root
+    let defaultCurrentDirectory : AbsoluteUnixPath = LaunchDefaults.currentDirectory
 
     /// Executable path a freshly-minted simulated process reports: none at all.
     ///
@@ -3399,7 +3521,7 @@ module UnixSystem =
     ///
     /// A client that wants a particular executable sets it with
     /// `ProcessLaunch.withProcessPath`.
-    let defaultProcessPath : AbsoluteUnixPath option = None
+    let defaultProcessPath : AbsoluteUnixPath option = LaunchDefaults.processPath
 
     /// The range `bind(2)` draws from when asked for port 0, on a machine of
     /// this flavour that has not configured it.
@@ -3439,24 +3561,17 @@ module UnixSystem =
     /// Ubuntu-shaped Linux, and 501 on macOS (measured, `id -u` of the first
     /// account on a macOS 26 machine, 2026-09-08). A client that wants root says
     /// so with `ProcessLaunch.withCredentials`.
-    let defaultUserId (flavour : SimulatedUnixFlavour) : UserId =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> UserId.parseOrFail "UnixSystem.defaultUserId" 1000u
-        | SimulatedUnixFlavour.Darwin -> UserId.parseOrFail "UnixSystem.defaultUserId" 501u
+    let defaultUserId (flavour : SimulatedUnixFlavour) : UserId = LaunchDefaults.userId flavour
 
     /// Effective group ID a freshly-minted simulated process runs as: the
     /// first user's primary group, which is a user-private group numbered as
     /// the user on Linux and `staff` (20) on macOS (measured with the uid).
-    let defaultGroupId (flavour : SimulatedUnixFlavour) : GroupId =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 1000u
-        | SimulatedUnixFlavour.Darwin -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 20u
+    let defaultGroupId (flavour : SimulatedUnixFlavour) : GroupId = LaunchDefaults.groupId flavour
 
     /// Credentials a freshly-minted simulated process runs with: real,
     /// effective and saved IDs all `defaultUserId` and `defaultGroupId`, and no
     /// supplementary groups.
-    let defaultCredentials (flavour : SimulatedUnixFlavour) : Credentials =
-        Credentials.ofIds (defaultUserId flavour) (defaultGroupId flavour) []
+    let defaultCredentials (flavour : SimulatedUnixFlavour) : Credentials = LaunchDefaults.credentials flavour
 
     /// File-mode creation mask a freshly-minted simulated process reports.
     /// 0o022 because that is what essentially every Unix login shell and service
@@ -3465,15 +3580,14 @@ module UnixSystem =
     /// these bits cleared). Measured as the mask a process inherits on both
     /// flavours. A client chooses otherwise with `ProcessLaunch.withUmask`, and
     /// the process itself with `umask`.
-    let defaultUmask : PermissionBits =
-        PermissionBits.parseOrFail "UnixSystem.defaultUmask" 0o022
+    let defaultUmask : PermissionBits = LaunchDefaults.umask
 
     /// Whether a freshly-minted simulated process writes a core dump when a
     /// signal kills it: never, as under an `RLIMIT_CORE` of 0. A dump is a
     /// file the simulated process would leave behind, which a client has to
     /// ask for. A client chooses otherwise with
     /// `ProcessLaunch.withCoreDumps`.
-    let defaultCoreDumps : CoreDumps = CoreDumps.Suppressed
+    let defaultCoreDumps : CoreDumps = LaunchDefaults.coreDumps
 
     /// Process ID a freshly-minted simulated process reports: 4242.
     ///
@@ -3679,3 +3793,280 @@ module UnixSystem =
                     ThreadIds = threadIds
                 }
         }
+
+    /// `launch`, with a refusal answered as the `Error` rather than raised.
+    let internal tryLaunch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<ProcessId * UnixSystem<'Thread, 'Handler>, ProcessCreationRefusal>
+        =
+        let current = system.Machine
+
+        let allocated =
+            match current.ProcessIds.Counter with
+            | ProcessIdCounter.ThreadIds ->
+                match ThreadIdAllocator.allocate current.ThreadIds with
+                | ThreadIdAllocation.Failed _ -> Error ProcessCreationRefusal.NoFreeProcessId
+                | ThreadIdAllocation.DarwinCounterExhausted ->
+                    failwith
+                        "UnixSystem.launch: Linux's thread ID allocator answered that Darwin's counter is exhausted (this is a bug in this library)."
+                | ThreadIdAllocation.Issued (leader, threadIds) ->
+                    let pid =
+                        ProcessId.parseOrFail "UnixSystem.launch" (int32 (OsThreadId.toUInt64 leader))
+
+                    Ok (
+                        pid,
+                        leader,
+                        { current with
+                            ThreadIds = threadIds
+                        }
+                    )
+            | ProcessIdCounter.Darwin _ ->
+                match ProcessIdTable.nextDarwin current.ProcessIds with
+                | None -> Error (ProcessCreationRefusal.DarwinPidMaxReached ProcessIdTable.darwinPidMax)
+                | Some (pid, processIds) ->
+                    match ThreadIdAllocator.allocate current.ThreadIds with
+                    | ThreadIdAllocation.Failed error ->
+                        failwith
+                            $"UnixSystem.launch: Darwin's thread ID counter answered %O{error}, which it never does (this is a bug in this library)."
+                    | ThreadIdAllocation.DarwinCounterExhausted ->
+                        Error ProcessCreationRefusal.DarwinThreadIdCounterExhausted
+                    | ThreadIdAllocation.Issued (leader, threadIds) ->
+                        Ok (
+                            pid,
+                            leader,
+                            { current with
+                                ThreadIds = threadIds
+                                ProcessIds = processIds
+                            }
+                        )
+
+        match allocated with
+        | Error refusal -> Error refusal
+        | Ok (pid, leaderThreadId, allocatedMachine) ->
+
+        if Map.containsKey (ProcessId.toInt32 pid) system.Processes then
+            failwith
+                $"UnixSystem.launch: the kernel chose process ID %O{pid}, which a process on the machine already has (this is a bug in this library)."
+
+        match ProcessLaunch.launchOnto launch pid leaderThreadId allocatedMachine with
+        | Error refusal -> Error (ProcessCreationRefusal.Launch refusal)
+        | Ok (launched, proc, threads) ->
+            let slot : ProcessSlot<'Thread, 'Handler> =
+                {
+                    Process = proc
+                    Threads = threads
+                    Leader = ProcessLaunch.leader launch
+                }
+
+            Ok (
+                pid,
+                { system with
+                    Machine = launched
+                    Processes = Map.add (ProcessId.toInt32 pid) slot system.Processes
+                }
+            )
+
+    /// <summary>
+    /// Start a new process on the machine, as `launch` describes it: the
+    /// process ID the kernel chose for it, and the system with it on.
+    ///
+    /// On Linux the process's ID is its leader's thread ID, the next the
+    /// machine's thread ID counter hands out, so it is no live process's or
+    /// thread's. On Darwin it is the next from a process ID counter of its own,
+    /// which started one past the first process's ID, and the leader's thread
+    /// ID is the next from the 64-bit thread ID counter.
+    ///
+    /// Refuses a launch `UnixBootImage.boot` would refuse, and a machine with
+    /// no process ID left to hand out.
+    /// </summary>
+    /// <exception cref="T:System.ArgumentException">The path does not resolve in the seeded filesystem at all. Carries what the walk answered. The walk refused the path as too long. Distinguished from `DoesNotResolve` because the directory may well be present: it is a *length* that is unusable, and the remedy is to shorten something rather than to go looking for a missing directory.  Which length is deliberately not said, because the walk does not say: `ENAMETOOLONG` is one errno covering a component past this flavour's `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a symbolic link whose expansion would carry the whole path past `PATH_MAX`. A real kernel conflates them too. Splitting the case would need the path walk to report which limit it hit, which every other caller of the walk would pay for.  Carries the flavour so that a fault which outlives the call still says whose limits were in force -- 255 CJK characters name a directory a Darwin process can start in and a Linux one cannot, and only Darwin re-checks a splice at all. The path resolves, to something that is not a directory. The launch puts its leader on the logical processor `cpu`, and the machine has `processorCount`, numbered from 0, which do not include it. Contradictory: no kernel runs a thread on a processor it does not have.</exception>
+    /// <exception cref="T:System.InvalidOperationException">The launch was described for the platform `launch`, and the machine is `machine`: the description was checked against the wrong platform's rules.</exception>
+    let launch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (launch : ProcessLaunch<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ProcessId * UnixSystem<'Thread, 'Handler>
+        =
+        tryLaunch launch system
+        |> Refusal.orRaise "UnixSystem.launch" ProcessCreationRefusal.kind ProcessCreationRefusal.describe
+
+    /// `endProcess`, with a refusal answered as the `Error` rather than raised.
+    let internal tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
+        =
+        let view = ended.EndedIn
+        let processId = view.Process.ProcessId
+
+        // The process with no thread left, in the kernel the call that ended it
+        // ran in. Releasing a description reads and writes the machine alone,
+        // and dropping a descriptor the process's table.
+        let dead : ProcessView<'Thread, 'Handler> =
+            { view with
+                Machine = ended.Machine
+                Scheduling = ended.Scheduling
+                Process = ended.FinalProcess
+                Threads = Map.empty
+            }
+
+        // First what nothing references any more: what the process's calls in
+        // flight held, whose holds went with its threads, and what the call that
+        // ended the process let go of as it returned. These go as the calls
+        // return when their threads die, before the process's files are closed;
+        // the order between the two has not been measured. On a machine no
+        // process's end has left so, no description is unreferenced.
+        let unreferenced =
+            OpenFileTable.descriptions dead.Machine.OpenFiles
+            |> Map.keys
+            |> Seq.filter (fun id ->
+                OpenFileTable.descriptorCount id dead.Machine.OpenFiles = Some 0
+                && OpenFileTable.holdCount id dead.Machine.OpenFiles = Some 0
+            )
+            |> Seq.toList
+
+        let released =
+            ((Ok dead : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>), unreferenced)
+            ||> List.fold (fun state id ->
+                match state with
+                | Error refusal -> Error refusal
+                | Ok dead ->
+                    match OpenFileTable.destroyIfUnreferenced id dead.Machine.OpenFiles with
+                    | _, None ->
+                        failwith
+                            $"UnixSystem.endProcess: open file description %O{id} was unreferenced a moment ago, and destroying it destroyed nothing (this is a bug in this library)."
+                    | openFiles, Some destroyed ->
+                        UnixSystemState.mapOpenFiles (fun _ -> openFiles) dead
+                        |> ObjectLifetime.releaseDestroyed destroyed
+            )
+
+        // Then every descriptor. Measured on Linux 6.18.5 and Darwin 27.0.0
+        // (`exit-close-order.c`, sections O and D): Linux drops them lowest
+        // first and releases each description the drop let go of only after
+        // every drop, the last let go of first, as its deferred final `fput`s
+        // run; Darwin drops them highest first, releasing each as it goes.
+        let drop
+            (fd : int)
+            (dead : ProcessView<'Thread, 'Handler>)
+            : ProcessView<'Thread, 'Handler> * DestroyedDescription option
+            =
+            match FileDescriptorRegistry.dropDescriptor processId fd (UnixSystemState.fileDescriptors dead) with
+            | Error FileDescriptorCloseError.BadFd ->
+                failwith
+                    $"UnixSystem.endProcess: process %O{processId}'s table held descriptor %d{fd} a moment ago, and closing it answered EBADF (this is a bug in this library)."
+            | Ok (registry, destroyed) -> UnixSystemState.withFileDescriptors registry dead, destroyed
+
+        let closed =
+            match released with
+            | Error refusal -> Error refusal
+            | Ok dead ->
+                let ascending =
+                    FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors dead)
+                    |> Map.keys
+                    |> Seq.sort
+                    |> Seq.toList
+
+                match SimulatedUnixPlatform.flavour dead.Machine.UnixPlatform with
+                | SimulatedUnixFlavour.Linux ->
+                    // A description the drops let go of is still a reference
+                    // until its deferred `fput` releases it, as Linux's file
+                    // is: so each is held while the drops run, and destroyed
+                    // only as its turn comes. Measured
+                    // (`inotify-self-probe.c` section X): of two files held
+                    // through descriptors let go of in turn, the one whose
+                    // name an unreleased file still holds goes later.
+                    // Each description held, by the last of this process's
+                    // descriptors naming it.
+                    let dead, held =
+                        ((dead, Map.empty), ascending)
+                        ||> List.fold (fun (dead, held) fd ->
+                            let id =
+                                match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors dead) with
+                                | Some id -> id
+                                | None ->
+                                    failwith
+                                        $"UnixSystem.endProcess: process %O{processId}'s table held descriptor %d{fd} a moment ago, and it names no description now (this is a bug in this library)."
+
+                            let dead =
+                                if Map.containsKey id held then
+                                    dead
+                                else
+                                    UnixSystemState.mapOpenFiles (OpenFileTable.hold id) dead
+
+                            match drop fd dead with
+                            | dead, None -> dead, Map.add id fd held
+                            | _, Some destroyed ->
+                                failwith
+                                    $"UnixSystem.endProcess: closing descriptor %d{fd} destroyed %A{destroyed.Description.Target}, which this call holds (this is a bug in this library)."
+                        )
+
+                    // The last let go of first.
+                    let released = held |> Map.toList |> List.sortByDescending snd |> List.map fst
+
+                    (Ok dead, released)
+                    ||> List.fold (fun state id ->
+                        match state with
+                        | Error refusal -> Error refusal
+                        | Ok dead ->
+
+                        let dead = UnixSystemState.mapOpenFiles (OpenFileTable.releaseHold id) dead
+
+                        match OpenFileTable.destroyIfUnreferenced id dead.Machine.OpenFiles with
+                        | _, None -> Ok dead
+                        | openFiles, Some destroyed ->
+                            UnixSystemState.mapOpenFiles (fun _ -> openFiles) dead
+                            |> ObjectLifetime.releaseDestroyed destroyed
+                    )
+                | SimulatedUnixFlavour.Darwin ->
+                    (Ok dead, List.rev ascending)
+                    ||> List.fold (fun state fd ->
+                        match state with
+                        | Error refusal -> Error refusal
+                        | Ok dead ->
+
+                        match drop fd dead with
+                        | dead, None -> Ok dead
+                        | dead, Some destroyed -> ObjectLifetime.releaseDestroyed destroyed dead
+                    )
+
+        match closed with
+        | Error refusal -> Error (ProcessEndRefusal.Release refusal)
+        | Ok dead ->
+            Ok (
+                ended.Termination,
+                {
+                    Machine = dead.Machine
+                    Scheduling = dead.Scheduling
+                    Processes = dead.Others
+                }
+            )
+
+    /// End the process `ended` says ended, in the kernel as the call that ended
+    /// it left it (`UnixThreadLifecycle.exitGroup`, the last thread's exit, or
+    /// a signal whose default ends the process): how it ended, and the system
+    /// without it.
+    ///
+    /// What a real kernel does at exit, where another process can see it.
+    /// The process's threads are gone already, and with
+    /// them the holds their calls in flight had; any description only those
+    /// calls held, or that the call which ended the process let go of as it
+    /// returned, is released now. Then every descriptor of the process is
+    /// closed, in the order each flavour measurably closes them
+    /// (`exit-close-order.c`, Linux 6.18.5 and Darwin 27.0.0, which a peer
+    /// watching several connections sees as the order of their FINs): Linux
+    /// drops the descriptors lowest first and then releases what that let go
+    /// of, the last first; Darwin drops them highest first, releasing each as
+    /// it goes. Each release does everything a `close(2)` of the last
+    /// descriptor onto the description does: a connected peer gets its FIN,
+    /// a lock is let go of, a pipe end closes, an epoll instance or a kqueue
+    /// goes, a listener goes and resets each client still in its accept
+    /// queue, whichever process holds it, and every registration made through
+    /// the descriptor goes with it. The process ID, thread IDs and current
+    /// directory are let go of with the threads.
+    ///
+    /// Refuses where a close would be refused.
+    let endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (ended : EndedProcess<'Thread, 'Handler>)
+        : ProcessTermination * UnixSystem<'Thread, 'Handler>
+        =
+        tryEndProcess ended
+        |> Refusal.orRaise "UnixSystem.endProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe

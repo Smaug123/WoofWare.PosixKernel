@@ -110,7 +110,7 @@ module TestBlockingAccept =
         | other -> failwith $"expected thread %d{thread}'s accept to finish with a connection, got %A{other}"
 
     let private awake (threads : int list) (system : UnixSystem<int, string>) : int list =
-        UnixWait.wakes (Set.ofList threads) system |> List.map fst
+        Lone.wakes (Set.ofList threads) system |> List.map fst
 
     let private userBuffers : Gen<UserBuffer> =
         Gen.oneof
@@ -210,18 +210,18 @@ module TestBlockingAccept =
         let condition = WakeCondition.Primitive (WakePrimitive.AcceptQueueNonEmpty listener)
         let system = parkIn 1 fd system
 
-        WakeCondition.satisfied 1 condition system |> shouldEqual Set.empty
-        UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+        Lone.WakeCondition.satisfied 1 condition system |> shouldEqual Set.empty
+        Lone.wakes (Set.singleton 1) system |> shouldEqual []
 
         let system = connectTo 5000us system
 
-        WakeCondition.satisfied 1 condition system
+        Lone.WakeCondition.satisfied 1 condition system
         |> shouldEqual (Set.singleton (WakePrimitive.AcceptQueueNonEmpty listener))
 
-        UnixWait.wakes (Set.singleton 1) system
+        Lone.wakes (Set.singleton 1) system
         |> shouldEqual [ 1, Set.singleton (WakePrimitive.AcceptQueueNonEmpty listener) ]
 
-        UnixWait.deadlines (Set.singleton 1) system |> shouldEqual []
+        Lone.deadlines (Set.singleton 1) system |> shouldEqual []
 
     [<TestCaseSource(nameof platforms)>]
     let ``a parked thread cannot accept again, and an unparked one cannot finish``
@@ -337,7 +337,7 @@ module TestBlockingAccept =
                 | other -> failwith $"expected the accept to park again, got %A{other}"
             else
                 let oracle =
-                    let unparked = UnixParkState.unpark 1 system
+                    let unparked = Lone.UnixParkState.unpark 1 system
                     UnixConnection.tryAccept (Callers.thread 1 unparked) fd destination declaredLength unparked
 
                 finished |> shouldEqual oracle
@@ -360,7 +360,7 @@ module TestBlockingAccept =
         let fd, system = world platform
         let system = parkIn 1 fd system |> setNonBlocking fd true
 
-        UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+        Lone.wakes (Set.singleton 1) system |> shouldEqual []
 
         let accepted, system = connectTo 5000us system |> finishWithConnection 1
 
@@ -529,7 +529,7 @@ module TestBlockingAccept =
             let system =
                 (system, parks)
                 ||> List.fold (fun system park ->
-                    UnixWait.park
+                    Lone.UnixWait.park
                         park.Waiter
                         (ParkedSyscall.Accept
                             {
@@ -582,7 +582,7 @@ module TestBlockingAccept =
                         None
                 )
 
-            UnixWait.wakes asleep system |> shouldEqual expected
+            Lone.wakes asleep system |> shouldEqual expected
             UnixSystem.checkInvariants system |> shouldEqual []
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 1000, Prop.forAll (Arb.fromGen gen) property)
@@ -728,7 +728,7 @@ module TestBlockingAccept =
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"expected the close to succeed, got %A{other}"
 
-            UnixWait.wakes (Set.singleton 1) system |> shouldEqual []
+            Lone.wakes (Set.singleton 1) system |> shouldEqual []
             UnixSystem.checkInvariants system |> shouldEqual []
 
             let system = connectTo 5000us system
@@ -743,11 +743,11 @@ module TestBlockingAccept =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -1204,7 +1204,7 @@ module TestBlockingAccept =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1262,13 +1262,13 @@ module TestBlockingAccept =
 
                 let supplied =
                     match
-                        UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
+                        Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
                     with
                     | Ok (SetSockOptAdmission.Transfer count) ->
                         Some (System.Collections.Immutable.ImmutableArray.Create (value, 0, count))
                     | other -> failwith $"setsockopt of %A{change} through fd %d{fd} was admitted as %A{other}"
 
-                UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+                Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
 
             // The accepted socket must hold what its client's connection
             // completed with, and is then closed at once, its linger turned off
@@ -1507,7 +1507,7 @@ module TestBlockingAccept =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (UnixSystemState.signalNumbering system)
+                                        (Lone.UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1547,8 +1547,7 @@ module TestBlockingAccept =
                         |> List.sortBy (fun (_, park) -> park.Ordinal)
                         |> List.map fst
 
-                    let woken =
-                        UnixWait.wakes (asleep |> List.map fst |> Set.ofList) system |> List.map fst
+                    let woken = Lone.wakes (asleep |> List.map fst |> Set.ofList) system |> List.map fst
 
                     if woken <> expected then
                         failwith $"%s{where ()}: woke %A{woken}, expected %A{expected}"
@@ -1770,7 +1769,7 @@ module TestBlockingAccept =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
         let parkedOn (listener : OpenFileDescriptionId) (fd : int) : UnixSystem<int, string> =
-            UnixWait.park
+            Lone.UnixWait.park
                 1
                 (ParkedSyscall.Accept
                     {
@@ -1784,7 +1783,10 @@ module TestBlockingAccept =
             let description = idOf fd system
 
             UnixSystem.checkInvariants (parkedOn description fd)
-            |> shouldEqual [ UnixSystemDefect.ParkedAcceptOnNonListener (1, description) ]
+            |> shouldEqual
+                [
+                    UnixSystemDefect.ParkedAcceptOnNonListener (Callers.ofDefault 1, description)
+                ]
 
         let absent = OpenFileDescriptionId 1_000_000L
 
@@ -1798,7 +1800,7 @@ module TestBlockingAccept =
                     DeclaredLength = 16u
                 })
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (1, absent) ]
+        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault 1, absent) ]
 
     /// `system` with the park of `thread` passed through `rewrite`.
     let private reparked
@@ -1813,7 +1815,7 @@ module TestBlockingAccept =
         | Some ({
                     Syscall = ParkedSyscall.Accept accept
                 } as park) ->
-            UnixParkState.setPark
+            Lone.UnixParkState.setPark
                 thread
                 { park with
                     Syscall = ParkedSyscall.Accept (rewrite accept)
@@ -1877,7 +1879,12 @@ module TestBlockingAccept =
             | SimulatedUnixFlavour.Linux -> []
             | SimulatedUnixFlavour.Darwin ->
                 [
-                    UnixSystemDefect.ParkedCallDescriptorRebound (1, 0, listener, Some (idOf 0 system))
+                    UnixSystemDefect.ParkedCallDescriptorRebound (
+                        Callers.ofDefault 1,
+                        0,
+                        listener,
+                        Some (idOf 0 system)
+                    )
                 ]
         )
 
@@ -1905,14 +1912,17 @@ module TestBlockingAccept =
                 )
 
         UnixSystem.checkInvariants ended
-        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux 1 ]
+        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux (Callers.ofDefault 1) ]
 
         let fd, system = world SimulatedUnixPlatform.macOsArm64
         let listener = idOf fd system
         let _, asleepOnDrained = parkIn 1 fd system |> drainedByHand fd
 
         UnixSystem.checkInvariants asleepOnDrained
-        |> shouldEqual [ UnixSystemDefect.ParkedAcceptOnDrainedListener (1, listener) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedAcceptOnDrainedListener (Callers.ofDefault 1, listener)
+            ]
 
     /// `SO_RCVTIMEO` bounds a blocking accept on Linux, answering EAGAIN at the
     /// timeout (`blocking-accept.c`, section E1; Darwin's accept ignores it).
@@ -1933,5 +1943,5 @@ module TestBlockingAccept =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"expected a socket, got %A{other}"
 
-            UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
+            Lone.UnixSocket.tryAdmitSetSockOpt fd level option UserBuffer.Mapped 16u system
             |> shouldEqual (Error (SocketOptionRefusal.UnmodelledOption (socketId, level, option)))

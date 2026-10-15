@@ -226,7 +226,7 @@ module TestInodeLifetime =
 
         contains a unbound |> shouldEqual true
 
-        let reaped = ObjectLifetime.forgetIfUnheld a unbound
+        let reaped = Lone.ObjectLifetime.forgetIfUnheld a unbound
 
         contains a reaped |> shouldEqual false
 
@@ -240,7 +240,7 @@ module TestInodeLifetime =
         let kernel = kernel ()
         let a = inodeOf kernel "/outer/inner/a"
 
-        ObjectLifetime.forgetIfUnheld a kernel |> contains a |> shouldEqual true
+        Lone.ObjectLifetime.forgetIfUnheld a kernel |> contains a |> shouldEqual true
 
     [<Test>]
     let ``forgetIfUnheld leaves an inode a descriptor holds`` () : unit =
@@ -248,7 +248,7 @@ module TestInodeLifetime =
         let a, unbound = unbound "/outer/inner" "a" kernel
         let _, held = opened a unbound
 
-        let attempted = ObjectLifetime.forgetIfUnheld a held
+        let attempted = Lone.ObjectLifetime.forgetIfUnheld a held
 
         contains a attempted |> shouldEqual true
 
@@ -268,7 +268,9 @@ module TestInodeLifetime =
         let kernel = kernel ()
         let root = VirtualFileSystem.root kernel.Machine.FileSystem
 
-        ObjectLifetime.forgetIfUnheld root kernel |> contains root |> shouldEqual true
+        Lone.ObjectLifetime.forgetIfUnheld root kernel
+        |> contains root
+        |> shouldEqual true
 
         let fd, withRoot = opened root kernel
         let afterClose = closed fd withRoot
@@ -282,9 +284,9 @@ module TestInodeLifetime =
         // already reaped it — which is exactly the position `close` is in.
         let kernel = kernel ()
         let a, unbound = unbound "/outer/inner" "a" kernel
-        let once = ObjectLifetime.forgetIfUnheld a unbound
+        let once = Lone.ObjectLifetime.forgetIfUnheld a unbound
 
-        ObjectLifetime.forgetIfUnheld a once |> shouldEqual once
+        Lone.ObjectLifetime.forgetIfUnheld a once |> shouldEqual once
 
     // ------------------------------------------------------------------ close
 
@@ -359,12 +361,12 @@ module TestInodeLifetime =
             |> List.fold
                 (fun kernel entry ->
                     let inode, kernel = unbound "/outer/inner" entry kernel
-                    ObjectLifetime.forgetIfUnheld inode kernel
+                    Lone.ObjectLifetime.forgetIfUnheld inode kernel
                 )
                 kernel
 
         let _, kernel = unbound "/outer" "inner" kernel
-        fd, inner, outer, ObjectLifetime.forgetIfUnheld inner kernel
+        fd, inner, outer, Lone.ObjectLifetime.forgetIfUnheld inner kernel
 
     [<Test>]
     let ``an orphan held by a descriptor keeps its ancestors alive`` () : unit =
@@ -382,7 +384,7 @@ module TestInodeLifetime =
         // both flavours: after `rmdir(b)` and `rmdir(a)`, `stat("..")` from
         // inside the orphan still answers `a`'s inode.
         let _, kernel = unbound "/" "outer" kernel
-        let kernel = ObjectLifetime.forgetIfUnheld outer kernel
+        let kernel = Lone.ObjectLifetime.forgetIfUnheld outer kernel
 
         contains outer kernel |> shouldEqual true
 
@@ -435,12 +437,12 @@ module TestInodeLifetime =
             |> List.fold
                 (fun kernel entry ->
                     let inode, kernel = unbound "/outer/inner" entry kernel
-                    ObjectLifetime.forgetIfUnheld inode kernel
+                    Lone.ObjectLifetime.forgetIfUnheld inode kernel
                 )
                 kernel
 
         let inner, kernel = unbound "/outer" "inner" kernel
-        let reaped = ObjectLifetime.forgetIfUnheld inner kernel
+        let reaped = Lone.ObjectLifetime.forgetIfUnheld inner kernel
 
         contains inner reaped |> shouldEqual false
         contains outer reaped |> shouldEqual true
@@ -460,7 +462,7 @@ module TestInodeLifetime =
 
         let _, kernel = unbound "/" "outer" kernel
 
-        let afterClose = closed fd (ObjectLifetime.forgetIfUnheld outer kernel)
+        let afterClose = closed fd (Lone.ObjectLifetime.forgetIfUnheld outer kernel)
 
         contains root afterClose |> shouldEqual true
         VirtualFileSystem.root afterClose.Machine.FileSystem |> shouldEqual root
@@ -502,7 +504,7 @@ module TestInodeLifetime =
             |> List.fold
                 (fun kernel entry ->
                     let inode, kernel = unbound "/outer/inner" entry kernel
-                    ObjectLifetime.forgetIfUnheld inode kernel
+                    Lone.ObjectLifetime.forgetIfUnheld inode kernel
                 )
                 kernel
 
@@ -511,7 +513,7 @@ module TestInodeLifetime =
         let removed, kernel = unbound "/outer" "inner" kernel
         removed |> shouldEqual inner
 
-        let kernel = ObjectLifetime.forgetIfUnheld removed kernel
+        let kernel = Lone.ObjectLifetime.forgetIfUnheld removed kernel
         contains inner kernel |> shouldEqual true
 
         VirtualFileSystem.isOrphanedDirectory inner kernel.Machine.FileSystem

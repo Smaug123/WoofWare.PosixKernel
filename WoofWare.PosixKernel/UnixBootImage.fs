@@ -461,13 +461,17 @@ module UnixBootImage =
 
         ProcessLaunch.launchOnto launch image.ProcessId leaderThreadId image.Machine
         |> Result.map (fun (machine, proc, threads) ->
+            let slot : ProcessSlot<'Thread, 'Handler> =
+                {
+                    Process = proc
+                    Threads = threads
+                    Leader = ProcessLaunch.leader launch
+                }
+
             {
                 Machine = machine
                 Scheduling = UnixSchedulingState.initial
-                Process = proc
-                Threads = threads
-                Leader = ProcessLaunch.leader launch
-                Origin = FocusOrigin.NotFocused
+                Processes = Map.empty |> Map.add (ProcessId.toInt32 image.ProcessId) slot
             }
         )
 

@@ -614,14 +614,14 @@ module TestSigprocmask =
                 | Ok (_, system) when UnixThreadTable.parkOf 1 (Lone.threads system) |> Option.isSome -> system
                 | other -> failwith $"expected the poll to park, got %A{other}"
 
-            UnixWait.wakes (Set.singleton 1) parked |> shouldEqual []
+            Lone.wakes (Set.singleton 1) parked |> shouldEqual []
 
             match flavour, UnixSignal.trySigprocmask (Callers.thread 0 parked) (unblock flavour) (Some usr1) parked with
             | SimulatedUnixFlavour.Darwin, Error refusal ->
                 refusal
                 |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (1, Signal.SIGUSR1))
             | SimulatedUnixFlavour.Linux, Ok (Ok (_, unblocked)) ->
-                UnixWait.wakes (Set.singleton 1) unblocked |> shouldEqual []
+                Lone.wakes (Set.singleton 1) unblocked |> shouldEqual []
             | _, other -> failwith $"%O{flavour}: the sigprocmask answered %A{other}"
 
     /// One mask call of the property's sequences.

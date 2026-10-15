@@ -76,14 +76,14 @@ module TestConnectPark =
                         ParkedConnect.Socket = socket
                     }
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
             OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
+            Lone.deadlines (Set.singleton thread) asleep |> shouldEqual []
 
             UnixWait.satisfied (Callers.thread thread asleep) asleep
             |> shouldEqual (Some Set.empty)
@@ -116,7 +116,7 @@ module TestConnectPark =
 
         let error =
             Assert.Throws<Exception> (fun () ->
-                WakeCondition.satisfied
+                Lone.WakeCondition.satisfied
                     thread
                     (WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom (SocketId 1L)))
                     awake

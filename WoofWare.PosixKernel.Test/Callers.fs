@@ -26,3 +26,9 @@ module internal Callers =
         : Caller<'Thread>
         =
         Caller.make (Lone.pid system) name
+
+    /// The thread `name` of the process a boot gives `UnixSystem.defaultProcessId`:
+    /// for a test that names, in a defect it expects, a thread of a system
+    /// booted so.
+    let ofDefault<'Thread> (name : 'Thread) : Caller<'Thread> =
+        Caller.make UnixSystem.defaultProcessId name

@@ -47,7 +47,7 @@ module TestStreamReaderGone =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         disposition
                         proc.Signals
@@ -212,7 +212,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads
@@ -256,7 +256,7 @@ module TestStreamReaderGone =
 
                 // OUT|WRNORM, the empty pipe having room, and ERR: measured
                 // (pipe-epipe-sweep.c), 0xc through `poll(POLLOUT)`.
-                LinuxReadiness.ofDescription id system
+                Lone.LinuxReadiness.ofDescription id system
                 |> shouldEqual (EpollEvents.Out ||| EpollEvents.WrNorm ||| EpollEvents.Err)
 
             assertSound "launched" system
@@ -290,7 +290,7 @@ module TestStreamReaderGone =
                 let write =
                     Assert.Throws<System.InvalidOperationException> (fun () ->
                         WriteOutcomes.writeBytes 7 fd (payload 0 1) system
-                        |> ignore<Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>>
+                        |> ignore<Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>>
                     )
 
                 write.Message

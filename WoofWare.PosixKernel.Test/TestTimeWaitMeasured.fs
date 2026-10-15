@@ -152,14 +152,14 @@ module TestTimeWaitMeasured =
         | other -> failwith $"close fd %d{fd}: %A{other}"
 
     let private boundAt (fd : int) (row : Row) : Ipv4Endpoint option =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors row.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors row.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId row.System.Machine).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
         | other -> failwith $"fd %d{fd} is %A{other}"
 
     let private connected (fd : int) (row : Row) : bool =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors row.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors row.System) with
         | Some (OpenFileTarget.Socket socketId) ->
             (SocketPhase.connectionEnd (UnixMachineState.socket socketId row.System.Machine).Phase).IsSome
         | other -> failwith $"fd %d{fd} is %A{other}"

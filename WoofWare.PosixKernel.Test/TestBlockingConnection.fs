@@ -545,7 +545,9 @@ module TestBlockingConnection =
         | Error refusal -> failwith $"read refused: %s{ReadRefusal.describe refusal}"
 
     /// What a write came to, and whether it raised `SIGPIPE`.
-    let private fromWriteRaising (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) =
+    let private fromWriteRaising
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        =
         match outcome with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) -> Seen.Wrote n, false, Some after
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, signal, after)) ->
@@ -561,15 +563,17 @@ module TestBlockingConnection =
         | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> Seen.RefusedNonBlocking, false, None
         | Error refusal -> failwith $"write refused: %s{WriteRefusal.describe refusal}"
 
-    let private fromWrite (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>) =
+    let private fromWrite
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        =
         let seen, _, after = fromWriteRaising outcome
         seen, after
 
     /// `send`'s outcome as a write's: every refusal a `send` gives here is
     /// one a `write` gives too.
     let private ofSend
-        (outcome : Result<WriteStep<WriteAnswer, int, string>, SendRefusal>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, SendRefusal>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
         =
         match outcome with
         | Ok outcome -> Ok outcome
@@ -592,7 +596,7 @@ module TestBlockingConnection =
         (caller : Caller<int>)
         (payload : byte list)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
         =
         let bytesAt (offset : int) (count : int) =
             payload |> List.skip offset |> List.take count |> ImmutableArray.CreateRange
@@ -989,11 +993,11 @@ module TestBlockingConnection =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -1075,12 +1079,12 @@ module TestBlockingConnection =
         let value = OptionValue.ofLinger onOff seconds
         let length = uint32 value.Length
 
-        match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
+        match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped length system with
         | Ok (SetSockOptAdmission.Answered _) -> None
         | Ok (SetSockOptAdmission.Transfer count) ->
             let supplied = Some (ImmutableArray.Create (value, 0, count))
 
-            match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
+            match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped length supplied system with
             | Ok (SetSockOptAnswer.Set, system) -> Some system
             | Ok (SetSockOptAnswer.Failed _, _) -> None
             | other -> failwith $"setting SO_LINGER on fd %d{fd}: %A{other}"
@@ -1641,7 +1645,7 @@ module TestBlockingConnection =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (UnixSystemState.signalNumbering system)
+                                        (Lone.UnixSystemState.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1671,7 +1675,7 @@ module TestBlockingConnection =
                         )
                         |> Map.ofSeq
 
-                    let woken = UnixWait.wakes asleep system |> List.map fst
+                    let woken = Lone.wakes asleep system |> List.map fst
                     let expected = referenceWakes ordinals reference
 
                     if woken <> expected then
@@ -2110,14 +2114,14 @@ module TestBlockingConnection =
         readNowIn (Lone.pid system) fd count system
 
     let private wokenAmong (asleep : int list) (system : UnixSystem<int, string>) : int list =
-        UnixWait.wakes (Set.ofList asleep) system |> List.map fst
+        Lone.wakes (Set.ofList asleep) system |> List.map fst
 
     /// The woken write of `thread`, finished, through `libraryFinishWrite`.
     let private finishedWrite
         (thread : int)
         (bytes : byte list)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
         =
         libraryFinishWrite thread bytes system
 
@@ -2127,7 +2131,7 @@ module TestBlockingConnection =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -2321,7 +2325,7 @@ module TestBlockingConnection =
             wokenAmong [ 2 ] system |> shouldEqual []
 
             SignalState.pendingBlocked
-                (UnixSystemState.signalNumbering system)
+                (Lone.UnixSystemState.signalNumbering system)
                 (Lone.leader system)
                 2
                 (Lone.proc system).Signals
@@ -3082,7 +3086,7 @@ module TestBlockingConnection =
                 | Some (OpenFileTarget.Socket socketId) -> socketId
                 | other -> failwith $"%A{other}"
 
-            UnixSocket.tryAdmitSetSockOpt client level option UserBuffer.Mapped 16u system
+            Lone.UnixSocket.tryAdmitSetSockOpt client level option UserBuffer.Mapped 16u system
             |> shouldEqual (Error (SocketOptionRefusal.UnmodelledOption (socketId, level, option)))
 
     /// The invariants a park on a connection keeps.
@@ -3106,7 +3110,10 @@ module TestBlockingConnection =
         let read = readBy TcpReceiveCall.Read
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 0 (SleepTarget.Waiting (description, client))) system)
-        |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferProgress (1, 0, 0) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedConnectionTransferProgress (Callers.ofDefault 1, 0, 0)
+            ]
 
         // A Linux recv of nothing sleeps until there is something to answer
         // (`tcp-recv-send.c` sections Z and P-zero), so it may be asleep
@@ -3120,7 +3127,10 @@ module TestBlockingConnection =
             UnixSystem.checkInvariants (
                 ForgedPark.onAbsent 1 (readBy call -1 (SleepTarget.Waiting (description, client))) system
             )
-            |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferProgress (1, -1, 0) ]
+            |> shouldEqual
+                [
+                    UnixSystemDefect.ParkedConnectionTransferProgress (Callers.ofDefault 1, -1, 0)
+                ]
 
         let write =
             ParkedSyscall.ConnectionWrite
@@ -3133,14 +3143,20 @@ module TestBlockingConnection =
                 }
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 write system)
-        |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferProgress (1, 10, 10) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedConnectionTransferProgress (Callers.ofDefault 1, 10, 10)
+            ]
 
         // A park on stdout, a pipe, which is no connection.
         let stdout =
             FileDescriptorRegistry.tryFindId 1 (Lone.fileDescriptors system) |> Option.get
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 5 (SleepTarget.Waiting (stdout, 1))) system)
-        |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferOnNonConnection (1, stdout) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedConnectionTransferOnNonConnection (Callers.ofDefault 1, stdout)
+            ]
 
         let socketId =
             match FileDescriptorRegistry.tryFindTarget client (Lone.fileDescriptors system) with
@@ -3148,7 +3164,7 @@ module TestBlockingConnection =
             | other -> failwith $"%A{other}"
 
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 5 (SleepTarget.EndedByClose socketId)) system)
-        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux 1 ]
+        |> shouldEqual [ UnixSystemDefect.ParkedCallEndedByCloseUnderLinux (Callers.ofDefault 1) ]
 
         // Under Darwin a close of the descriptor a call was made through ends
         // it, so while it sleeps the descriptor names its description.
@@ -3165,14 +3181,22 @@ module TestBlockingConnection =
         UnixSystem.checkInvariants (ForgedPark.onAbsent 1 (read 5 (SleepTarget.Waiting (description, server))) system)
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedCallDescriptorRebound (1, server, description, Some serverDescription)
+                UnixSystemDefect.ParkedCallDescriptorRebound (
+                    Callers.ofDefault 1,
+                    server,
+                    description,
+                    Some serverDescription
+                )
             ]
 
         // Darwin's recv of nothing returns at once, so none sleeps.
         UnixSystem.checkInvariants (
             ForgedPark.onAbsent 1 (readBy TcpReceiveCall.Receive 0 (SleepTarget.Waiting (description, client))) system
         )
-        |> shouldEqual [ UnixSystemDefect.ParkedConnectionTransferProgress (1, 0, 0) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedConnectionTransferProgress (Callers.ofDefault 1, 0, 0)
+            ]
 
     /// A read asleep in one process wakes for bytes another process writes,
     /// and a write asleep in one for room another's read makes, through
@@ -3235,7 +3259,7 @@ module TestBlockingConnection =
             let asleep = Map.ofList [ a, Set.singleton 2 ]
             Machines.wakes asleep machine |> shouldEqual []
 
-            let rec untilWoken (reads : int) (machine : SimulatedMachine<int, string>) =
+            let rec untilWoken (reads : int) (machine : UnixSystem<int, string>) =
                 if reads > 1000 then
                     failwith "the writer never woke"
 
@@ -3550,7 +3574,7 @@ module TestBlockingConnection =
         (bytes : byte list)
         (flags : MessageFlag list)
         (system : UnixSystem<int, string>)
-        : WriteStep<WriteAnswer, int, string>
+        : WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>
         =
         match
             WriteOutcomes.admitThenSend
@@ -4016,7 +4040,7 @@ module TestBlockingConnection =
                 | Ok _ when receiveModelled -> ()
                 | other -> failwith $"%O{platform} recv with %A{flag}: %A{other}"
 
-                match UnixReadWrite.tryAdmitSend 0 client UserBuffer.Mapped 10UL word system with
+                match Lone.UnixReadWrite.tryAdmitSend 0 client UserBuffer.Mapped 10UL word system with
                 | Error (SendRefusal.UnmodelledFlags flags) when not sendModelled -> flags |> shouldEqual [ flag ]
                 | Ok _ when sendModelled -> ()
                 | other -> failwith $"%O{platform} send with %A{flag}: %A{other}"
@@ -4043,7 +4067,7 @@ module TestBlockingConnection =
             | Error (ReceiveRefusal.UnmeasuredCount count) -> count |> shouldEqual huge
             | other -> failwith $"%O{platform}: %A{other}"
 
-            match UnixReadWrite.tryAdmitSend 0 client UserBuffer.Mapped huge 0 system with
+            match Lone.UnixReadWrite.tryAdmitSend 0 client UserBuffer.Mapped huge 0 system with
             | Error (SendRefusal.UnmeasuredCount count) -> count |> shouldEqual huge
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -4055,7 +4079,7 @@ module TestBlockingConnection =
                 | Error (ReceiveRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"
 
-                match UnixReadWrite.tryAdmitSend 0 fd UserBuffer.Mapped 10UL 0 system with
+                match Lone.UnixReadWrite.tryAdmitSend 0 fd UserBuffer.Mapped 10UL 0 system with
                 | Error (SendRefusal.UnmodelledSocketPhase _) -> ()
                 | other -> failwith $"%O{platform} fd %d{fd}: %A{other}"
 

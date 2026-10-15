@@ -265,7 +265,7 @@
     <Compile Include="TestKeventMeasured.fs" />
     <Compile Include="TestKeventRegistration.fs" />
     <Compile Include="TestKqueueOwner.fs" />
-    <Compile Include="TestSimulatedMachine.fs" />
+    <Compile Include="TestProcessView.fs" />
     <Compile Include="TestMultiProcess.fs" />
     <Compile Include="TestMultiProcessFuzz.fs" />
     <Compile Include="TestNamespaceSequence.fs" />
@@ -637,6 +637,7 @@
     <EmbeddedResource Include="socketFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzzCorpus\*.txt" />
+    <EmbeddedResource Include="multiProcessOracle\*.txt" />
     <EmbeddedResource Include="socketFuzzCorpus\*.txt" />
   </ItemGroup>
 

@@ -320,7 +320,10 @@ module TestInotifyInvariants =
         let target = (OpenFileTable.get context id parked.Machine.OpenFiles).Target
 
         UnixSystem.checkInvariants parked
-        |> shouldEqual [ UnixSystemDefect.ParkedInotifyReadOnNonInotify (1, id, target) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedInotifyReadOnNonInotify (Callers.ofDefault 1, id, target)
+            ]
 
     [<Test>]
     let ``an instance under the Darwin flavour is a defect, and every call is refused`` () : unit =
@@ -465,7 +468,7 @@ module TestInotifyInvariants =
             | [ a ; b ] -> a, b
             | other -> failwith $"%A{other}"
 
-        let initIn (pid : ProcessId) (machine : SimulatedMachine<int, string>) =
+        let initIn (pid : ProcessId) (machine : UnixSystem<int, string>) =
             machine
             |> Machines.inProcess
                 pid
@@ -482,7 +485,7 @@ module TestInotifyInvariants =
         let refused, machine = initIn b machine
         refused |> shouldEqual (Error UnixError.EMFILE)
 
-        let addIn (pid : ProcessId) (fd : int) (path : string) (machine : SimulatedMachine<int, string>) =
+        let addIn (pid : ProcessId) (fd : int) (path : string) (machine : UnixSystem<int, string>) =
             machine
             |> Machines.inProcess
                 pid
@@ -599,7 +602,7 @@ module TestInotifyInvariants =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (UnixSystemState.signalNumbering system)
+                                (Lone.UnixSystemState.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                 proc.Signals
@@ -787,7 +790,7 @@ module TestInotifyInvariants =
                                 { proc with
                                     Signals =
                                         SignalState.enqueue
-                                            (UnixSystemState.signalNumbering system)
+                                            (Lone.UnixSystemState.signalNumbering system)
                                             {
                                                 Signal = Signal.SIGUSR1
                                                 Target = ValueSome 1

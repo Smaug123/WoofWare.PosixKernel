@@ -1017,7 +1017,7 @@ type OpenFileTarget =
     ///
     /// Reserved: nothing in this version makes one, since nothing makes a FIFO
     /// inode to open (`mknodat` of `S_IFIFO` is refused).
-    /// `FileDescriptorRegistry.checkInvariants` reports a description naming
+    /// `UnixSystem.checkInvariants` reports a description naming
     /// one as a defect. The case exists so
     /// that a client's matches already handle it when FIFOs arrive.
     ///
@@ -1054,7 +1054,7 @@ module internal ReservedFifo =
     /// `call` met a description of the FIFO at `inode`.
     let fail (call : string) (inode : InodeNumber) : 'a =
         failwith
-            $"%s{call}: a description names the FIFO at inode %O{inode}, and what this call does through a FIFO is not modelled. Nothing in this version makes one: OpenFileTarget.Fifo is reserved until FIFOs are modelled (under Darwin, until AF_UNIX stream sockets are), and FileDescriptorRegistry.checkInvariants reports a description naming one as ReservedTarget (this is a bug in this library, or in a caller that assembled the state by hand)."
+            $"%s{call}: a description names the FIFO at inode %O{inode}, and what this call does through a FIFO is not modelled. Nothing in this version makes one: OpenFileTarget.Fifo is reserved until FIFOs are modelled (under Darwin, until AF_UNIX stream sockets are), and UnixSystem.checkInvariants reports a description naming one as ReservedTarget (this is a bug in this library, or in a caller that assembled the state by hand)."
 
 /// Which transfers `open(2)`'s access mode permits: `O_RDONLY`, `O_WRONLY` or
 /// `O_RDWR`.
@@ -1243,9 +1243,10 @@ type private OpenFileEntry =
         Descriptors : int
         /// How many holds syscalls in flight have on this description, in every
         /// process on the machine: one for each time a park names it
-        /// (`ParkedSyscall.descriptions`). Stored rather than derived for the
-        /// reason `Descriptors` is: a process's view cannot see another
-        /// process's parks. `UnixSystem.checkInvariants` holds it to the parks.
+        /// (`ParkedSyscall.descriptions`). Stored rather than derived, as
+        /// `Descriptors` is: a registry holds one process's descriptor table
+        /// and no thread's parks. `UnixSystem.checkInvariants` holds it to the
+        /// parks.
         Holds : int
         /// The name the description was opened through, for one onto an inode
         /// (`OpenFileTable.namesInode`), which only a path's walk makes; `None`
@@ -1410,15 +1411,10 @@ type internal FlockError =
 /// A way in which a `FileDescriptorRegistry` fails to be a descriptor table any
 /// kernel could produce, or an `OpenFileTable` the open file descriptions of one.
 /// `FileDescriptorRegistry.checkInvariants` returns these, and
-/// `SimulatedMachine.checkInvariants` reports them for every process.
-///
-/// A defect is a bug in this library, and its cases are not public: a client
-/// reports one with `FileDescriptorRegistryDefect.describe`, and has no reason
-/// to branch on which rule broke. Any version may add a rule or remove one, for
-/// instance when the types come to make a state it forbids unrepresentable.
+/// `UnixSystem.checkInvariants` reports them, inside a `UnixSystemDefect`, for
+/// every process.
 [<RequireQualifiedAccess>]
-type FileDescriptorRegistryDefect =
-    internal
+type internal FileDescriptorRegistryDefect =
     /// A live descriptor names a description that is not present. Every lookup
     /// through this descriptor would fail, which no kernel permits.
     | DanglingFd of fd : int * description : OpenFileDescriptionId
@@ -1545,7 +1541,7 @@ type FileDescriptorRegistryDefect =
     | OpenedThroughNameNotShared of description : OpenFileDescriptionId * other : OpenFileDescriptionId
 
 [<RequireQualifiedAccess>]
-module FileDescriptorRegistryDefect =
+module internal FileDescriptorRegistryDefect =
     /// The defect, for a bug report: the rule that does not hold, by the name
     /// this library's source gives it, and the values that break it.
     let describe (defect : FileDescriptorRegistryDefect) : string =
@@ -3978,18 +3974,17 @@ module FileDescriptorRegistry =
     /// descriptor table. On a machine running this one process the table
     /// holds every descriptor, and each description's count of the
     /// descriptors naming it must be exactly what the table names. On a
-    /// machine holding other processes besides (a registry of a view a
-    /// `SimulatedMachine` focused), only what one table can tell is checked:
-    /// that no description counts fewer descriptors than this table alone
-    /// names, and that every registration of a kqueue this process owns is made
-    /// through one of its descriptors onto a socket. The rest is
-    /// `SimulatedMachine.checkInvariants`'s, which sees every table.
+    /// machine holding other processes besides, only what one table can tell
+    /// is checked: that no description counts fewer descriptors than this
+    /// table alone names, and that every registration of a kqueue this process
+    /// owns is made through one of its descriptors onto a socket. The rest is
+    /// `UnixSystem.checkInvariants`'s, which sees every table.
     ///
     /// Whether a description is still referenced, and whether its holds are
     /// those the parks name, are not among them: the parks are the threads',
     /// which a registry does not hold, so those are `UnixSystem.checkInvariants`'s
     /// `UnreferencedDescription` and `HoldCountMismatch`.
-    let checkInvariants (registry : FileDescriptorRegistry) : FileDescriptorRegistryDefect list =
+    let internal checkInvariants (registry : FileDescriptorRegistry) : FileDescriptorRegistryDefect list =
         let complete, ownsKqueue =
             match registry.Census with
             | DescriptorCensus.Complete -> true, (fun (_ : KqueueState) -> true)
@@ -4009,8 +4004,8 @@ module FileDescriptorRegistry =
     ///
     /// `checkInvariants` without the open file table's own rules, for a caller
     /// that checks those once against every process's table, as
-    /// `SimulatedMachine.checkInvariants` does.
-    let checkDescriptorTableInvariants
+    /// `UnixSystem.checkInvariants` does.
+    let internal checkDescriptorTableInvariants
         (owner : ProcessId)
         (registry : FileDescriptorRegistry)
         : FileDescriptorRegistryDefect list

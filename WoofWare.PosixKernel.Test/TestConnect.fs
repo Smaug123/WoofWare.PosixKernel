@@ -121,7 +121,7 @@ module TestConnect =
         (system : UnixSystem<int, string>)
         : SockaddrCopyAdmission
         =
-        match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination declaredLength system with
+        match Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination declaredLength system with
         | Ok admission -> admission
         | Error refusal -> failwith $"expected an admission, got a refusal: %s{SockaddrCopyRefusal.describe refusal}"
 
@@ -185,7 +185,7 @@ module TestConnect =
 
         let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-        UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd UserBuffer.Mapped 16u system
+        Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd UserBuffer.Mapped 16u system
         |> shouldEqual (Error (SockaddrCopyRefusal.UnmodelledDomain (SocketId 0L, SocketDomain.Unix)))
 
         // An IPv6 datagram socket's addresses are not modelled either.
@@ -197,7 +197,7 @@ module TestConnect =
 
         let fd, system = withSocket (SocketId 0L) socket (systemOn platform)
 
-        UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd UserBuffer.Mapped 28u system
+        Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd UserBuffer.Mapped 28u system
         |> shouldEqual (Error (SockaddrCopyRefusal.UnmodelledInet6Kind (SocketId 0L, SocketKind.Datagram)))
 
     /// `connectSocket` skips the descriptor screens, but not the domain's: a
@@ -221,7 +221,7 @@ module TestConnect =
                     }
             }
 
-        UnixConnection.connectSocket
+        Lone.UnixConnection.connectSocket
             (SocketId 0L)
             false
             16u
@@ -247,7 +247,7 @@ module TestConnect =
             | SimulatedUnixFlavour.Darwin -> 256u
 
         let viaSocket =
-            UnixConnection.connectSocket (SocketId 9L) false overlong ImmutableArray.Empty unixSystem
+            Lone.UnixConnection.connectSocket (SocketId 9L) false overlong ImmutableArray.Empty unixSystem
 
         viaSocket
         |> shouldEqual (
@@ -380,7 +380,7 @@ module TestConnect =
         for destination, expected in rows do
             let fd, system = client platform
 
-            UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination 16u system
+            Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination 16u system
             |> shouldEqual (Error (SockaddrCopyRefusal.Buffer expected))
 
     /// The length verdict precedes the buffer: a length the copy helper rejects
@@ -414,7 +414,7 @@ module TestConnect =
         for passed in [ 0 ; 2 ; 8 ; 15 ; 17 ] do
             let e =
                 Assert.Throws<System.InvalidOperationException> (fun () ->
-                    UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
+                    Lone.UnixConnection.tryConnectBytes fd UserBuffer.Mapped 16u (CopyIn.prefix blob passed) system
                     |> ignore<_>
                 )
 
@@ -424,7 +424,7 @@ module TestConnect =
     /// so a caller that never asked is not punished for it.
     [<TestCaseSource(nameof platforms)>]
     let ``connect repeats the admission's answers`` (platform : SimulatedUnixPlatform) : unit =
-        UnixConnection.tryConnectBytes 99 UserBuffer.Mapped 16u ImmutableArray.Empty (systemOn platform)
+        Lone.UnixConnection.tryConnectBytes 99 UserBuffer.Mapped 16u ImmutableArray.Empty (systemOn platform)
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EBADF, systemOn platform))
 
     // ------------------------------------------------------------------
@@ -577,8 +577,8 @@ module TestConnect =
             platform
 
     let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        UnixSystemState.withFileDescriptors
-            (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+        Lone.UnixSystemState.withFileDescriptors
+            (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
             system
 
     /// The three ways a socket's source comes to be its own destination, port
@@ -824,7 +824,7 @@ module TestConnect =
     let ``a copy refusal is carried as a connect refusal`` (platform : SimulatedUnixPlatform) : unit =
         let fd, system = client platform
 
-        match UnixConnection.tryConnectBytes fd UserBuffer.Addressless 16u ImmutableArray.Empty system with
+        match Lone.UnixConnection.tryConnectBytes fd UserBuffer.Addressless 16u ImmutableArray.Empty system with
         | Error (ConnectRefusal.Copy _) -> ()
         | other -> failwith $"expected a copy refusal, got %A{other}"
 
@@ -891,7 +891,14 @@ module TestConnect =
             let option = SimulatedUnixPlatform.reuseAddressOption platform
 
             match
-                UnixSocket.trySetsockoptBytes fd level option UserBuffer.Mapped 4u (Some (OptionValue.ofInt 1)) system
+                Lone.UnixSocket.trySetsockoptBytes
+                    fd
+                    level
+                    option
+                    UserBuffer.Mapped
+                    4u
+                    (Some (OptionValue.ofInt 1))
+                    system
             with
             | Ok (SetSockOptAnswer.Set, system) -> fd, system
             | other -> failwith $"setsockopt answered %A{other}"

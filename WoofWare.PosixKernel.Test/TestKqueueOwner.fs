@@ -152,5 +152,10 @@ module TestKqueueOwner =
         |> shouldEqual
             [
                 UnixSystemDefect.KqueueOwnerNotLive (KeventWorld.idOf kqueue foreign, other)
-                UnixSystemDefect.KqueueOfAnotherProcess (kqueue, KeventWorld.idOf kqueue foreign, other)
+                UnixSystemDefect.KqueueOfAnotherProcess (
+                    UnixSystem.defaultProcessId,
+                    kqueue,
+                    KeventWorld.idOf kqueue foreign,
+                    other
+                )
             ]

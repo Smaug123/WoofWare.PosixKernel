@@ -7,8 +7,8 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// Every public function that takes a `Caller` checks it, through `Entry`,
-/// before it does anything else: a caller in another process, a thread the
-/// process does not have, a parked thread making a call or returning to user
+/// before it does anything else: a caller in a process the system does not
+/// hold, a thread the process does not have, a parked thread making a call or returning to user
 /// mode, and an unparked thread at a finishing function each throw
 /// `InvalidOperationException`, naming the function; the caller each
 /// requirement admits does not. A query about a process, or about a thread,
@@ -639,7 +639,7 @@ module TestCallerChecks =
     /// message says.
     [<RequireQualifiedAccess>]
     type private Refused =
-        | OtherProcess
+        | NoProcess
         | Absent
         | Parked
         | Unparked
@@ -647,7 +647,7 @@ module TestCallerChecks =
 
     let private reason (refused : Refused) : string =
         match refused with
-        | Refused.OtherProcess -> "but the system holds process"
+        | Refused.NoProcess -> "but the system holds no process"
         | Refused.Absent -> "is not one of the process's threads"
         | Refused.Parked -> "and is making another call"
         | Refused.Unparked -> "is not parked, so there is no call to finish"
@@ -672,7 +672,8 @@ module TestCallerChecks =
             | SimulatedUnixFlavour.Darwin ->
                 // Darwin refuses an `flock` of a pipe, so its waiter is parked
                 // as the library would park it.
-                UnixWait.park
+                Proc.view own view
+                |> UnixWait.park
                     2
                     (ParkedSyscall.Flock
                         {
@@ -680,7 +681,7 @@ module TestCallerChecks =
                                 FileDescriptorRegistry.tryFindId 0 (Proc.fileDescriptors own view) |> Option.get
                             Mode = FlockMode.Exclusive
                         })
-                    view
+                |> Proc.unview
             | SimulatedUnixFlavour.Linux ->
                 // Both ends of a pipe are one object to `flock`, so the write
                 // end's lock waits on the read end's.
@@ -808,6 +809,7 @@ module TestCallerChecks =
             [
                 for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
                     let own, other, view = world platform
+                    let ghost = ProcessId.parseOrFail "TestCallerChecks" 77
 
                     let flavour = SimulatedUnixPlatform.flavour platform
 
@@ -817,21 +819,24 @@ module TestCallerChecks =
                             | Admits.Running ->
                                 [
                                     Caller.make own 0, None
-                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make other 0, None
+                                    Caller.make ghost 0, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                     Caller.make own 1, Some Refused.Parked
                                 ]
                             | Admits.Finishing sleeper ->
                                 [
                                     Caller.make own sleeper, None
-                                    Caller.make other sleeper, Some Refused.OtherProcess
+                                    Caller.make other sleeper, Some Refused.Unparked
+                                    Caller.make ghost sleeper, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                     Caller.make own 0, Some Refused.Unparked
                                 ]
                             | Admits.Returning ->
                                 [
                                     Caller.make own 0, None
-                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make other 0, None
+                                    Caller.make ghost 0, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                     Caller.make own suspender, Some Refused.NotReturning
                                 ]
@@ -839,7 +844,8 @@ module TestCallerChecks =
                                 [
                                     Caller.make own 0, None
                                     Caller.make own suspender, None
-                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make other 0, None
+                                    Caller.make ghost 0, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                 ]
                             | Admits.Process ->
@@ -847,7 +853,8 @@ module TestCallerChecks =
                                     Caller.make own 0, None
                                     Caller.make own suspender, None
                                     Caller.make own absent, None
-                                    Caller.make other 0, Some Refused.OtherProcess
+                                    Caller.make other 0, None
+                                    Caller.make ghost 0, Some Refused.NoProcess
                                 ]
 
                         for caller, expected in cases do
