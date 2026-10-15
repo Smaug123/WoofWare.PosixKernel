@@ -533,19 +533,33 @@ module TestBlockingConnection =
 
     // --- the library, driven as a client drives it ---
 
-    let private fromRead (outcome : Result<ReadOutcome * UnixSystem<int, string>, ReadRefusal>) =
+    /// How the call `thread` made ends, once it answered `Interrupted` in
+    /// `after`: as the thread's return to user mode says, the handlers having
+    /// run.
+    let private libraryInterrupted
+        (thread : int)
+        (after : UnixSystem<int, string>)
+        : Seen * UnixSystem<int, string> option
+        =
+        match Interruptions.handled (Callers.thread thread after) after with
+        | Ok (InterruptedCall.FailsWithEintr, after) -> Seen.Failed UnixError.EINTR, Some after
+        | Ok (InterruptedCall.Restarts, after) -> Seen.Restarts, Some after
+        | Error _ -> Seen.RefusedSignal, None
+
+    let private fromRead (thread : int) (outcome : Result<ReadOutcome * UnixSystem<int, string>, ReadRefusal>) =
         match outcome with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) -> Seen.ReadBytes (List.ofSeq bytes), Some after
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Seen.Failed error, Some after
         | Ok (ReadOutcome.Answered (ReadAnswer.Drawn _), _) -> failwith "a read of a socket drew from the entropy pool"
         | Ok (ReadOutcome.WouldBlock _, after) -> Seen.Sleeps, Some after
-        | Ok (ReadOutcome.Restarts, after) -> Seen.Restarts, Some after
+        | Ok (ReadOutcome.Interrupted, after) -> libraryInterrupted thread after
         | Error (ReadRefusal.Interruption _) -> Seen.RefusedSignal, None
         | Error (ReadRefusal.ConnectionBecameNonBlocking _) -> Seen.RefusedNonBlocking, None
         | Error refusal -> failwith $"read refused: %s{ReadRefusal.describe refusal}"
 
     /// What a write came to, and whether it raised `SIGPIPE`.
     let private fromWriteRaising
+        (thread : int)
         (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         =
         match outcome with
@@ -557,14 +571,19 @@ module TestBlockingConnection =
             signal.Signal |> shouldEqual Signal.SIGPIPE
             Seen.Failed error, true, Some after
         | Ok (WriteStep.WouldBlock (_, after)) -> Seen.Sleeps, false, Some after
-        | Ok (WriteStep.Restarts after) -> Seen.Restarts, false, Some after
+        | Ok (WriteStep.Interrupted after) ->
+            let seen, after = libraryInterrupted thread after
+            seen, false, after
         | Ok (WriteStep.ProcessEnded _ as outcome) -> failwith $"a write ended the process: %A{outcome}"
         | Error (WriteRefusal.Interruption _) -> Seen.RefusedSignal, false, None
         | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> Seen.RefusedNonBlocking, false, None
         | Error refusal -> failwith $"write refused: %s{WriteRefusal.describe refusal}"
 
-    let private fromWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) =
-        let seen, _, after = fromWriteRaising outcome
+    let private fromWrite
+        (thread : int)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
+        =
+        let seen, _, after = fromWriteRaising thread outcome
         seen, after
 
     /// `send`'s outcome as a write's: every refusal a `send` gives here is
@@ -609,8 +628,8 @@ module TestBlockingConnection =
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
             (system, frames)
             ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
@@ -1248,14 +1267,14 @@ module TestBlockingConnection =
                         referenceRead thread fd count TcpReceiveCall.Read false reference
 
                     let seen, actual =
-                        fromRead (
-                            UnixReadWrite.tryRead
+                        fromRead
+                            thread
+                            (UnixReadWrite.tryRead
                                 (Callers.thread thread system)
                                 fd
                                 UserBuffer.Mapped
                                 (uint64 count)
-                                system
-                        )
+                                system)
 
                     compare expected seen
                     cover (label flavourName "read" seen)
@@ -1268,14 +1287,14 @@ module TestBlockingConnection =
                         referenceWrite thread fd count TcpSendCall.Write false reference
 
                     let seen, raised, actual =
-                        fromWriteRaising (
-                            WriteOutcomes.admitThenWrite
+                        fromWriteRaising
+                            thread
+                            (WriteOutcomes.admitThenWrite
                                 thread
                                 fd
                                 UserBuffer.Mapped
                                 (ImmutableArray.CreateRange bytes)
-                                system
-                        )
+                                system)
 
                     compare expected seen
 
@@ -1317,7 +1336,7 @@ module TestBlockingConnection =
                                 system
                         with
                         | Error refusal -> failwith $"%s{where ()}: recv refused: %s{ReceiveRefusal.describe refusal}"
-                        | Ok outcome -> fromRead (Ok outcome)
+                        | Ok outcome -> fromRead thread (Ok outcome)
 
                     compare expected seen
 
@@ -1346,16 +1365,16 @@ module TestBlockingConnection =
                             ]
 
                     let seen, raised, actual =
-                        fromWriteRaising (
-                            WriteOutcomes.admitThenSend
+                        fromWriteRaising
+                            thread
+                            (WriteOutcomes.admitThenSend
                                 thread
                                 fd
                                 UserBuffer.Mapped
                                 (ImmutableArray.CreateRange bytes)
                                 flags
                                 system
-                            |> ofSend
-                        )
+                             |> ofSend)
 
                     compare expected seen
 
@@ -1734,12 +1753,12 @@ module TestBlockingConnection =
                     let seen, actual =
                         match park.Call with
                         | Call.Reading _ ->
-                            fromRead (
-                                UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system)
-                            )
+                            fromRead
+                                thread
+                                (UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system))
                         | Call.Writing (_, payload, _, call) ->
                             let seen, raised, actual =
-                                fromWriteRaising (libraryFinishWrite thread payload system)
+                                fromWriteRaising thread (libraryFinishWrite thread payload system)
 
                             // A close that ended the call raised nothing.
                             let raisedExpected = park.Through.IsSome && raises call seen
@@ -2241,10 +2260,17 @@ module TestBlockingConnection =
                 let system = asleepReading 1 client 4096 system |> signalled 1
                 let system = Lone.waking [ 1 ] system
 
+                let ending =
+                    if restart then
+                        InterruptedCall.Restarts
+                    else
+                        InterruptedCall.FailsWithEintr
+
                 match UnixReadWrite.tryFinishRead (Callers.thread 1 system) (Woken.thread 1 system) with
-                | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
-                | Ok (ReadOutcome.Restarts, after) when restart ->
+                | Ok (ReadOutcome.Interrupted, after) ->
                     UnixThreadTable.parkOf 1 (Lone.threads after) |> shouldEqual None
+                    let call, _, _ = Interruptions.ends (Callers.thread 1 after) after
+                    call |> shouldEqual ending
                 | other -> failwith $"%O{platform} restart %b{restart}: the read came to %A{other}"
 
                 // The server's end full, so a write by it takes nothing.
@@ -2273,9 +2299,10 @@ module TestBlockingConnection =
                 let system = Lone.waking [ 2 ] system
 
                 match finishedWrite 2 (payload 2 1000) system with
-                | Ok (WriteStep.Returns (WriteAnswer.Failed UnixError.EINTR, _)) when not restart -> ()
-                | Ok (WriteStep.Restarts after) when restart ->
+                | Ok (WriteStep.Interrupted after) ->
                     UnixThreadTable.parkOf 2 (Lone.threads after) |> shouldEqual None
+                    let call, _, _ = Interruptions.ends (Callers.thread 2 after) after
+                    call |> shouldEqual ending
                 | other -> failwith $"%O{platform} restart %b{restart}: the write came to %A{other}"
 
     /// A signal the sleeping thread blocks neither wakes a sleeping transfer nor
@@ -3777,8 +3804,16 @@ module TestBlockingConnection =
                 let system = Lone.waking [ 1 ] system
 
                 match UnixReadWrite.tryFinishRead (Callers.thread 1 system) (Woken.thread 1 system) with
-                | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), _) when not restart -> ()
-                | Ok (ReadOutcome.Restarts, _) when restart -> ()
+                | Ok (ReadOutcome.Interrupted, after) ->
+                    let call, _, _ = Interruptions.ends (Callers.thread 1 after) after
+
+                    call
+                    |> shouldEqual (
+                        if restart then
+                            InterruptedCall.Restarts
+                        else
+                            InterruptedCall.FailsWithEintr
+                    )
                 | other -> failwith $"%O{platform} restart %b{restart}: %A{other}"
 
     /// D: `MSG_DONTWAIT` on a blocking socket. A recv with nothing queued

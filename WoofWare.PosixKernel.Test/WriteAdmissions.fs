@@ -23,7 +23,8 @@ module internal WriteOutcomes =
             | WriteStep.ReturnsRaising _
             | WriteStep.ProcessEnded _
             | WriteStep.WouldBlock _
-            | WriteStep.Restarts _ -> failwith $"expected a write that returns and raises no signal, got %A{outcome}"
+            | WriteStep.Interrupted _ ->
+                failwith $"expected a write that returns and raises no signal, got %A{outcome}"
         )
 
     /// The step after the copy of a `write` through `fd` that its admission
@@ -85,7 +86,7 @@ module internal WriteOutcomes =
                 Ok (WriteStep.ReturnsRaising (answer, signal, after))
             | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+            | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after)
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
                 if count > bytes.Length then
                     failwith $"admitWrite asked for %d{count} of %d{bytes.Length} bytes"
@@ -103,7 +104,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map Proc.unfocus)
+        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
 
     /// A whole `send(2)` by `caller` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
@@ -135,7 +136,7 @@ module internal WriteOutcomes =
                 Ok (WriteStep.ReturnsRaising (answer, signal, after))
             | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+            | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after)
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
                 if count > bytes.Length then
                     failwith $"admitSend asked for %d{count} of %d{bytes.Length} bytes"
@@ -157,7 +158,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitSend raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map Proc.unfocus)
+        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
 
     /// A paused write's or send's answer, in the shape of the internal steps
     /// the tests match on.
@@ -171,7 +172,7 @@ module internal WriteOutcomes =
         | ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), system) ->
             WriteStep.ReturnsRaising (answer, signal, system)
         | ProcessFate.Continues (WriteOutcome.WouldBlock condition, system) -> WriteStep.WouldBlock (condition, system)
-        | ProcessFate.Continues (WriteOutcome.Restarts, system) -> WriteStep.Restarts system
+        | ProcessFate.Continues (WriteOutcome.Interrupted, system) -> WriteStep.Interrupted system
 
     /// The bytes of `bytes` a paused call's `range` names, failing unless the
     /// range lies in the buffer the call was made with, from its start.
@@ -284,9 +285,9 @@ module internal WriteOutcomes =
                 failwith $"admitFinishWrite raised %A{signal} and still asked for %A{resumption}"
             | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+            | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after)
 
-        stepped |> Result.map (WriteStep.map Proc.unfocus)
+        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
 
     /// The woken `write` or `send` of `caller`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
@@ -383,7 +384,8 @@ module internal WriteOutcomes =
     /// library's public protocol (`UnixReadWrite.pwrite`, and if it stops at
     /// the copy, `pwriteWithBytes` of the bytes `PausedPWrite.copyRange`
     /// names), held to the same call made a step at a time (`tryAdmitPWrite`,
-    /// then `tryApplyPWrite` with the decision it made).
+    /// then `tryApplyPWrite` with the decision it made), which leaves the
+    /// thread owing a return to user mode as `Entry` does.
     let admitThenPwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -395,12 +397,13 @@ module internal WriteOutcomes =
         let steps =
             match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
-            | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
+            | Ok (PWriteAdmission.Answered answer) -> Ok (answer, Lone.afterCallBy thread system)
             | Ok (PWriteAdmission.Transfer (count, into)) ->
                 if count > bytes.Length then
                     failwith $"admitPWrite asked for %d{count} of %d{bytes.Length} bytes"
 
                 Lone.UnixReadWrite.tryApplyPWrite fd offset into (ImmutableArray.Create (bytes, 0, count)) system
+                |> Result.map (fun (answer, after) -> answer, Lone.afterCallBy thread after)
 
         let actual =
             UnixReadWrite.tryPwrite

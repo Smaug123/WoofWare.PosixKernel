@@ -80,29 +80,29 @@ WoofWare.PosixKernel.AcceptOutcome+Tags inherit obj
 WoofWare.PosixKernel.AcceptOutcome+Tags.Accepted [static field]: int = 1
 WoofWare.PosixKernel.AcceptOutcome+Tags.DroppedConnection [static field]: int = 2
 WoofWare.PosixKernel.AcceptOutcome+Tags.Failed [static field]: int = 0
-WoofWare.PosixKernel.AcceptOutcome+Tags.Restarts [static field]: int = 4
+WoofWare.PosixKernel.AcceptOutcome+Tags.Interrupted [static field]: int = 4
 WoofWare.PosixKernel.AcceptOutcome+Tags.WouldBlock [static field]: int = 3
 WoofWare.PosixKernel.AcceptOutcome+WouldBlock inherit WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.AcceptOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.AcceptOutcome.Equals [method]: (WoofWare.PosixKernel.AcceptOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.AcceptOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.get_IsAccepted [method]: unit -> bool
 WoofWare.PosixKernel.AcceptOutcome.get_IsDroppedConnection [method]: unit -> bool
 WoofWare.PosixKernel.AcceptOutcome.get_IsFailed [method]: unit -> bool
-WoofWare.PosixKernel.AcceptOutcome.get_IsRestarts [method]: unit -> bool
+WoofWare.PosixKernel.AcceptOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.AcceptOutcome.get_IsWouldBlock [method]: unit -> bool
-WoofWare.PosixKernel.AcceptOutcome.get_Restarts [static method]: unit -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.AcceptOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.IsAccepted [property]: [read-only] bool
 WoofWare.PosixKernel.AcceptOutcome.IsDroppedConnection [property]: [read-only] bool
 WoofWare.PosixKernel.AcceptOutcome.IsFailed [property]: [read-only] bool
-WoofWare.PosixKernel.AcceptOutcome.IsRestarts [property]: [read-only] bool
+WoofWare.PosixKernel.AcceptOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.AcceptOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.AcceptOutcome.NewAccepted [static method]: (int, System.Byte System.Collections.Immutable.ImmutableArray, int) -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.NewDroppedConnection [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> WoofWare.PosixKernel.AcceptOutcome
-WoofWare.PosixKernel.AcceptOutcome.Restarts [static property]: [read-only] WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ApfsMount inherit obj, implements WoofWare.PosixKernel.ApfsMount System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ApfsMount System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.ApfsMount..ctor [constructor]: (int, System.UInt32, WoofWare.PosixKernel.UnixByteString)
@@ -973,7 +973,7 @@ WoofWare.PosixKernel.EpollState.get_Ready [method]: unit -> (int * WoofWare.Posi
 WoofWare.PosixKernel.EpollState.get_Registrations [method]: unit -> Map<(int * WoofWare.PosixKernel.OpenFileDescriptionId), WoofWare.PosixKernel.EpollRegistration>
 WoofWare.PosixKernel.EpollState.Ready [property]: [read-only] (int * WoofWare.PosixKernel.OpenFileDescriptionId) list
 WoofWare.PosixKernel.EpollState.Registrations [property]: [read-only] Map<(int * WoofWare.PosixKernel.OpenFileDescriptionId), WoofWare.PosixKernel.EpollRegistration>
-WoofWare.PosixKernel.EpollWaitOutcome inherit obj, implements WoofWare.PosixKernel.EpollWaitOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EpollWaitOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.EpollWaitOutcome inherit obj, implements WoofWare.PosixKernel.EpollWaitOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EpollWaitOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 4 cases
 WoofWare.PosixKernel.EpollWaitOutcome+Answered inherit WoofWare.PosixKernel.EpollWaitOutcome
 WoofWare.PosixKernel.EpollWaitOutcome+Answered.events [property]: [read-only] (System.UInt64 * System.UInt32) list
 WoofWare.PosixKernel.EpollWaitOutcome+Answered.get_events [method]: unit -> (System.UInt64 * System.UInt32) list
@@ -983,17 +983,22 @@ WoofWare.PosixKernel.EpollWaitOutcome+Failed.get_error [method]: unit -> WoofWar
 WoofWare.PosixKernel.EpollWaitOutcome+Tags inherit obj
 WoofWare.PosixKernel.EpollWaitOutcome+Tags.Answered [static field]: int = 1
 WoofWare.PosixKernel.EpollWaitOutcome+Tags.Failed [static field]: int = 0
+WoofWare.PosixKernel.EpollWaitOutcome+Tags.Interrupted [static field]: int = 3
 WoofWare.PosixKernel.EpollWaitOutcome+Tags.WouldBlock [static field]: int = 2
 WoofWare.PosixKernel.EpollWaitOutcome+WouldBlock inherit WoofWare.PosixKernel.EpollWaitOutcome
 WoofWare.PosixKernel.EpollWaitOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.EpollWaitOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.EpollWaitOutcome.Equals [method]: (WoofWare.PosixKernel.EpollWaitOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.EpollWaitOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.EpollWaitOutcome
 WoofWare.PosixKernel.EpollWaitOutcome.get_IsAnswered [method]: unit -> bool
 WoofWare.PosixKernel.EpollWaitOutcome.get_IsFailed [method]: unit -> bool
+WoofWare.PosixKernel.EpollWaitOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.EpollWaitOutcome.get_IsWouldBlock [method]: unit -> bool
 WoofWare.PosixKernel.EpollWaitOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.EpollWaitOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.EpollWaitOutcome
 WoofWare.PosixKernel.EpollWaitOutcome.IsAnswered [property]: [read-only] bool
 WoofWare.PosixKernel.EpollWaitOutcome.IsFailed [property]: [read-only] bool
+WoofWare.PosixKernel.EpollWaitOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.EpollWaitOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.EpollWaitOutcome.NewAnswered [static method]: (System.UInt64 * System.UInt32) list -> WoofWare.PosixKernel.EpollWaitOutcome
 WoofWare.PosixKernel.EpollWaitOutcome.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.EpollWaitOutcome
@@ -1815,6 +1820,21 @@ WoofWare.PosixKernel.InternetV6Sockaddr.get_port [static method]: unit -> WoofWa
 WoofWare.PosixKernel.InternetV6Sockaddr.get_scopeId [static method]: unit -> WoofWare.PosixKernel.SockaddrField
 WoofWare.PosixKernel.InternetV6Sockaddr.port [static property]: [read-only] WoofWare.PosixKernel.SockaddrField
 WoofWare.PosixKernel.InternetV6Sockaddr.scopeId [static property]: [read-only] WoofWare.PosixKernel.SockaddrField
+WoofWare.PosixKernel.InterruptedCall inherit obj, implements WoofWare.PosixKernel.InterruptedCall System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.InterruptedCall System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.InterruptedCall+Tags inherit obj
+WoofWare.PosixKernel.InterruptedCall+Tags.FailsWithEintr [static field]: int = 0
+WoofWare.PosixKernel.InterruptedCall+Tags.Restarts [static field]: int = 1
+WoofWare.PosixKernel.InterruptedCall.Equals [method]: (WoofWare.PosixKernel.InterruptedCall, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.InterruptedCall.FailsWithEintr [static property]: [read-only] WoofWare.PosixKernel.InterruptedCall
+WoofWare.PosixKernel.InterruptedCall.get_FailsWithEintr [static method]: unit -> WoofWare.PosixKernel.InterruptedCall
+WoofWare.PosixKernel.InterruptedCall.get_IsFailsWithEintr [method]: unit -> bool
+WoofWare.PosixKernel.InterruptedCall.get_IsRestarts [method]: unit -> bool
+WoofWare.PosixKernel.InterruptedCall.get_Restarts [static method]: unit -> WoofWare.PosixKernel.InterruptedCall
+WoofWare.PosixKernel.InterruptedCall.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.InterruptedCall.IsFailsWithEintr [property]: [read-only] bool
+WoofWare.PosixKernel.InterruptedCall.IsRestarts [property]: [read-only] bool
+WoofWare.PosixKernel.InterruptedCall.Restarts [static property]: [read-only] WoofWare.PosixKernel.InterruptedCall
+WoofWare.PosixKernel.InterruptedCall.Tag [property]: [read-only] int
 WoofWare.PosixKernel.Ipv4Address inherit System.ValueType, implements WoofWare.PosixKernel.Ipv4Address System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.Ipv4Address System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 1 cases
 WoofWare.PosixKernel.Ipv4Address.Equals [method]: (WoofWare.PosixKernel.Ipv4Address, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.Ipv4Address.get_Item [method]: unit -> System.UInt32
@@ -1924,7 +1944,7 @@ WoofWare.PosixKernel.KeventFlags.Delete [static field]: System.UInt16 = 2
 WoofWare.PosixKernel.KeventFlags.Eof [static field]: System.UInt16 = 32768
 WoofWare.PosixKernel.KeventFlags.Error [static field]: System.UInt16 = 16384
 WoofWare.PosixKernel.KeventFlags.Receipt [static field]: System.UInt16 = 64
-WoofWare.PosixKernel.KeventOutcome inherit obj, implements WoofWare.PosixKernel.KeventOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.KeventOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 5 cases
+WoofWare.PosixKernel.KeventOutcome inherit obj, implements WoofWare.PosixKernel.KeventOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.KeventOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 6 cases
 WoofWare.PosixKernel.KeventOutcome+Answered inherit WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome+Answered.events [property]: [read-only] WoofWare.PosixKernel.Kevent list
 WoofWare.PosixKernel.KeventOutcome+Answered.get_events [method]: unit -> WoofWare.PosixKernel.Kevent list
@@ -1944,21 +1964,26 @@ WoofWare.PosixKernel.KeventOutcome+Tags.Answered [static field]: int = 3
 WoofWare.PosixKernel.KeventOutcome+Tags.Echoed [static field]: int = 1
 WoofWare.PosixKernel.KeventOutcome+Tags.Failed [static field]: int = 0
 WoofWare.PosixKernel.KeventOutcome+Tags.FailedAfterEchoing [static field]: int = 2
+WoofWare.PosixKernel.KeventOutcome+Tags.Interrupted [static field]: int = 5
 WoofWare.PosixKernel.KeventOutcome+Tags.WouldBlock [static field]: int = 4
 WoofWare.PosixKernel.KeventOutcome+WouldBlock inherit WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.KeventOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.KeventOutcome.Equals [method]: (WoofWare.PosixKernel.KeventOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.KeventOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome.get_IsAnswered [method]: unit -> bool
 WoofWare.PosixKernel.KeventOutcome.get_IsEchoed [method]: unit -> bool
 WoofWare.PosixKernel.KeventOutcome.get_IsFailed [method]: unit -> bool
 WoofWare.PosixKernel.KeventOutcome.get_IsFailedAfterEchoing [method]: unit -> bool
+WoofWare.PosixKernel.KeventOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.KeventOutcome.get_IsWouldBlock [method]: unit -> bool
 WoofWare.PosixKernel.KeventOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.KeventOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome.IsAnswered [property]: [read-only] bool
 WoofWare.PosixKernel.KeventOutcome.IsEchoed [property]: [read-only] bool
 WoofWare.PosixKernel.KeventOutcome.IsFailed [property]: [read-only] bool
 WoofWare.PosixKernel.KeventOutcome.IsFailedAfterEchoing [property]: [read-only] bool
+WoofWare.PosixKernel.KeventOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.KeventOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.KeventOutcome.NewAnswered [static method]: WoofWare.PosixKernel.Kevent list -> WoofWare.PosixKernel.KeventOutcome
 WoofWare.PosixKernel.KeventOutcome.NewEchoed [static method]: WoofWare.PosixKernel.Kevent list -> WoofWare.PosixKernel.KeventOutcome
@@ -3201,7 +3226,7 @@ WoofWare.PosixKernel.PollEntry.Events [property]: [read-only] System.Int16
 WoofWare.PosixKernel.PollEntry.Fd [property]: [read-only] int
 WoofWare.PosixKernel.PollEntry.get_Events [method]: unit -> System.Int16
 WoofWare.PosixKernel.PollEntry.get_Fd [method]: unit -> int
-WoofWare.PosixKernel.PollOutcome inherit obj, implements WoofWare.PosixKernel.PollOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PollOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.PollOutcome inherit obj, implements WoofWare.PosixKernel.PollOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PollOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 4 cases
 WoofWare.PosixKernel.PollOutcome+Answered inherit WoofWare.PosixKernel.PollOutcome
 WoofWare.PosixKernel.PollOutcome+Answered.count [property]: [read-only] int
 WoofWare.PosixKernel.PollOutcome+Answered.get_count [method]: unit -> int
@@ -3213,17 +3238,22 @@ WoofWare.PosixKernel.PollOutcome+Failed.get_error [method]: unit -> WoofWare.Pos
 WoofWare.PosixKernel.PollOutcome+Tags inherit obj
 WoofWare.PosixKernel.PollOutcome+Tags.Answered [static field]: int = 0
 WoofWare.PosixKernel.PollOutcome+Tags.Failed [static field]: int = 1
+WoofWare.PosixKernel.PollOutcome+Tags.Interrupted [static field]: int = 3
 WoofWare.PosixKernel.PollOutcome+Tags.WouldBlock [static field]: int = 2
 WoofWare.PosixKernel.PollOutcome+WouldBlock inherit WoofWare.PosixKernel.PollOutcome
 WoofWare.PosixKernel.PollOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.PollOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.PollOutcome.Equals [method]: (WoofWare.PosixKernel.PollOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.PollOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.PollOutcome
 WoofWare.PosixKernel.PollOutcome.get_IsAnswered [method]: unit -> bool
 WoofWare.PosixKernel.PollOutcome.get_IsFailed [method]: unit -> bool
+WoofWare.PosixKernel.PollOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.PollOutcome.get_IsWouldBlock [method]: unit -> bool
 WoofWare.PosixKernel.PollOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.PollOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.PollOutcome
 WoofWare.PosixKernel.PollOutcome.IsAnswered [property]: [read-only] bool
 WoofWare.PosixKernel.PollOutcome.IsFailed [property]: [read-only] bool
+WoofWare.PosixKernel.PollOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.PollOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.PollOutcome.NewAnswered [static method]: (System.Int16 list, int) -> WoofWare.PosixKernel.PollOutcome
 WoofWare.PosixKernel.PollOutcome.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.PollOutcome
@@ -3526,23 +3556,23 @@ WoofWare.PosixKernel.ReadOutcome+Answered.get_Item [method]: unit -> WoofWare.Po
 WoofWare.PosixKernel.ReadOutcome+Answered.Item [property]: [read-only] WoofWare.PosixKernel.ReadAnswer
 WoofWare.PosixKernel.ReadOutcome+Tags inherit obj
 WoofWare.PosixKernel.ReadOutcome+Tags.Answered [static field]: int = 0
-WoofWare.PosixKernel.ReadOutcome+Tags.Restarts [static field]: int = 2
+WoofWare.PosixKernel.ReadOutcome+Tags.Interrupted [static field]: int = 2
 WoofWare.PosixKernel.ReadOutcome+Tags.WouldBlock [static field]: int = 1
 WoofWare.PosixKernel.ReadOutcome+WouldBlock inherit WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.ReadOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.ReadOutcome.Equals [method]: (WoofWare.PosixKernel.ReadOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.ReadOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome.get_IsAnswered [method]: unit -> bool
-WoofWare.PosixKernel.ReadOutcome.get_IsRestarts [method]: unit -> bool
+WoofWare.PosixKernel.ReadOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.ReadOutcome.get_IsWouldBlock [method]: unit -> bool
-WoofWare.PosixKernel.ReadOutcome.get_Restarts [static method]: unit -> WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.ReadOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome.IsAnswered [property]: [read-only] bool
-WoofWare.PosixKernel.ReadOutcome.IsRestarts [property]: [read-only] bool
+WoofWare.PosixKernel.ReadOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.ReadOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.ReadOutcome.NewAnswered [static method]: WoofWare.PosixKernel.ReadAnswer -> WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> WoofWare.PosixKernel.ReadOutcome
-WoofWare.PosixKernel.ReadOutcome.Restarts [static property]: [read-only] WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome.Tag [property]: [read-only] int
 WoofWare.PosixKernel.RefusalError inherit obj, implements WoofWare.PosixKernel.RefusalError System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RefusalError System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.RefusalError+Tags inherit obj
@@ -3586,9 +3616,14 @@ WoofWare.PosixKernel.ReturnToUserOutcome`2+ContinueDiscarded.signal [property]: 
 WoofWare.PosixKernel.ReturnToUserOutcome`2+ProcessStopped inherit WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2+ProcessStopped.get_signal [method]: unit -> WoofWare.PosixKernel.Signal
 WoofWare.PosixKernel.ReturnToUserOutcome`2+ProcessStopped.signal [property]: [read-only] WoofWare.PosixKernel.Signal
+WoofWare.PosixKernel.ReturnToUserOutcome`2+Resumes inherit WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
+WoofWare.PosixKernel.ReturnToUserOutcome`2+Resumes.get_interrupted [method]: unit -> WoofWare.PosixKernel.InterruptedCall option
+WoofWare.PosixKernel.ReturnToUserOutcome`2+Resumes.interrupted [property]: [read-only] WoofWare.PosixKernel.InterruptedCall option
 WoofWare.PosixKernel.ReturnToUserOutcome`2+RunHandlers inherit WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2+RunHandlers.frames [property]: [read-only] WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list
 WoofWare.PosixKernel.ReturnToUserOutcome`2+RunHandlers.get_frames [method]: unit -> WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list
+WoofWare.PosixKernel.ReturnToUserOutcome`2+RunHandlers.get_interrupted [method]: unit -> WoofWare.PosixKernel.InterruptedCall option
+WoofWare.PosixKernel.ReturnToUserOutcome`2+RunHandlers.interrupted [property]: [read-only] WoofWare.PosixKernel.InterruptedCall option
 WoofWare.PosixKernel.ReturnToUserOutcome`2+Tags inherit obj
 WoofWare.PosixKernel.ReturnToUserOutcome`2+Tags.ContinueDiscarded [static field]: int = 3
 WoofWare.PosixKernel.ReturnToUserOutcome`2+Tags.ProcessStopped [static field]: int = 2
@@ -3599,7 +3634,6 @@ WoofWare.PosixKernel.ReturnToUserOutcome`2.get_IsContinueDiscarded [method]: uni
 WoofWare.PosixKernel.ReturnToUserOutcome`2.get_IsProcessStopped [method]: unit -> bool
 WoofWare.PosixKernel.ReturnToUserOutcome`2.get_IsResumes [method]: unit -> bool
 WoofWare.PosixKernel.ReturnToUserOutcome`2.get_IsRunHandlers [method]: unit -> bool
-WoofWare.PosixKernel.ReturnToUserOutcome`2.get_Resumes [static method]: unit -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2.get_Tag [method]: unit -> int
 WoofWare.PosixKernel.ReturnToUserOutcome`2.IsContinueDiscarded [property]: [read-only] bool
 WoofWare.PosixKernel.ReturnToUserOutcome`2.IsProcessStopped [property]: [read-only] bool
@@ -3607,8 +3641,8 @@ WoofWare.PosixKernel.ReturnToUserOutcome`2.IsResumes [property]: [read-only] boo
 WoofWare.PosixKernel.ReturnToUserOutcome`2.IsRunHandlers [property]: [read-only] bool
 WoofWare.PosixKernel.ReturnToUserOutcome`2.NewContinueDiscarded [static method]: WoofWare.PosixKernel.Signal -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2.NewProcessStopped [static method]: WoofWare.PosixKernel.Signal -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
-WoofWare.PosixKernel.ReturnToUserOutcome`2.NewRunHandlers [static method]: WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
-WoofWare.PosixKernel.ReturnToUserOutcome`2.Resumes [static property]: [read-only] WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
+WoofWare.PosixKernel.ReturnToUserOutcome`2.NewResumes [static method]: WoofWare.PosixKernel.InterruptedCall option -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
+WoofWare.PosixKernel.ReturnToUserOutcome`2.NewRunHandlers [static method]: (WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list, WoofWare.PosixKernel.InterruptedCall option) -> WoofWare.PosixKernel.ReturnToUserOutcome<'Thread, 'Handler>
 WoofWare.PosixKernel.ReturnToUserOutcome`2.Tag [property]: [read-only] int
 WoofWare.PosixKernel.RmDirRules inherit obj, implements WoofWare.PosixKernel.RmDirRules System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.RmDirRules System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.RmDirRules..ctor [constructor]: WoofWare.PosixKernel.UnbindTargetEffect
@@ -4032,21 +4066,26 @@ WoofWare.PosixKernel.SignalState.threadsWithMasks [static method]: WoofWare.Posi
 WoofWare.PosixKernel.SignalState.threadsWithMasksToRestore [static method]: WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Thread Microsoft.FSharp.Collections.FSharpSet
 WoofWare.PosixKernel.SignalState`2 inherit obj, implements WoofWare.PosixKernel.SignalState<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SignalState<'Thread, 'Handler> System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.SignalState`2.Equals [method]: (WoofWare.PosixKernel.SignalState<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.SigsuspendOutcome inherit obj, implements WoofWare.PosixKernel.SigsuspendOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SigsuspendOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.SigsuspendOutcome inherit obj, implements WoofWare.PosixKernel.SigsuspendOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SigsuspendOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.SigsuspendOutcome+Failed inherit WoofWare.PosixKernel.SigsuspendOutcome
 WoofWare.PosixKernel.SigsuspendOutcome+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.SigsuspendOutcome+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.SigsuspendOutcome+Tags inherit obj
 WoofWare.PosixKernel.SigsuspendOutcome+Tags.Failed [static field]: int = 0
+WoofWare.PosixKernel.SigsuspendOutcome+Tags.Interrupted [static field]: int = 2
 WoofWare.PosixKernel.SigsuspendOutcome+Tags.WouldBlock [static field]: int = 1
 WoofWare.PosixKernel.SigsuspendOutcome+WouldBlock inherit WoofWare.PosixKernel.SigsuspendOutcome
 WoofWare.PosixKernel.SigsuspendOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.SigsuspendOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.SigsuspendOutcome.Equals [method]: (WoofWare.PosixKernel.SigsuspendOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.SigsuspendOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.SigsuspendOutcome
 WoofWare.PosixKernel.SigsuspendOutcome.get_IsFailed [method]: unit -> bool
+WoofWare.PosixKernel.SigsuspendOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.SigsuspendOutcome.get_IsWouldBlock [method]: unit -> bool
 WoofWare.PosixKernel.SigsuspendOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.SigsuspendOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.SigsuspendOutcome
 WoofWare.PosixKernel.SigsuspendOutcome.IsFailed [property]: [read-only] bool
+WoofWare.PosixKernel.SigsuspendOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.SigsuspendOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.SigsuspendOutcome.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.SigsuspendOutcome
 WoofWare.PosixKernel.SigsuspendOutcome.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> WoofWare.PosixKernel.SigsuspendOutcome
@@ -5009,23 +5048,23 @@ WoofWare.PosixKernel.SyscallOutcome+Answered.get_Item [method]: unit -> WoofWare
 WoofWare.PosixKernel.SyscallOutcome+Answered.Item [property]: [read-only] WoofWare.PosixKernel.SyscallAnswer
 WoofWare.PosixKernel.SyscallOutcome+Tags inherit obj
 WoofWare.PosixKernel.SyscallOutcome+Tags.Answered [static field]: int = 0
-WoofWare.PosixKernel.SyscallOutcome+Tags.Restarts [static field]: int = 2
+WoofWare.PosixKernel.SyscallOutcome+Tags.Interrupted [static field]: int = 2
 WoofWare.PosixKernel.SyscallOutcome+Tags.WouldBlock [static field]: int = 1
 WoofWare.PosixKernel.SyscallOutcome+WouldBlock inherit WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome+WouldBlock.get_Item [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.SyscallOutcome+WouldBlock.Item [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.SyscallOutcome.Equals [method]: (WoofWare.PosixKernel.SyscallOutcome, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.SyscallOutcome.get_Interrupted [static method]: unit -> WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome.get_IsAnswered [method]: unit -> bool
-WoofWare.PosixKernel.SyscallOutcome.get_IsRestarts [method]: unit -> bool
+WoofWare.PosixKernel.SyscallOutcome.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.SyscallOutcome.get_IsWouldBlock [method]: unit -> bool
-WoofWare.PosixKernel.SyscallOutcome.get_Restarts [static method]: unit -> WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.SyscallOutcome.Interrupted [static property]: [read-only] WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome.IsAnswered [property]: [read-only] bool
-WoofWare.PosixKernel.SyscallOutcome.IsRestarts [property]: [read-only] bool
+WoofWare.PosixKernel.SyscallOutcome.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.SyscallOutcome.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.SyscallOutcome.NewAnswered [static method]: WoofWare.PosixKernel.SyscallAnswer -> WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> WoofWare.PosixKernel.SyscallOutcome
-WoofWare.PosixKernel.SyscallOutcome.Restarts [static property]: [read-only] WoofWare.PosixKernel.SyscallOutcome
 WoofWare.PosixKernel.SyscallOutcome.Tag [property]: [read-only] int
 WoofWare.PosixKernel.TcpReceiveCall inherit obj, implements WoofWare.PosixKernel.TcpReceiveCall System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.TcpReceiveCall System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.TcpReceiveCall+Tags inherit obj
@@ -6817,7 +6856,7 @@ WoofWare.PosixKernel.WriteOutcome`1+ReturnsRaising.get_answer [method]: unit -> 
 WoofWare.PosixKernel.WriteOutcome`1+ReturnsRaising.get_signal [method]: unit -> 'Thread WoofWare.PosixKernel.PendingSignal
 WoofWare.PosixKernel.WriteOutcome`1+ReturnsRaising.signal [property]: [read-only] 'Thread WoofWare.PosixKernel.PendingSignal
 WoofWare.PosixKernel.WriteOutcome`1+Tags inherit obj
-WoofWare.PosixKernel.WriteOutcome`1+Tags.Restarts [static field]: int = 3
+WoofWare.PosixKernel.WriteOutcome`1+Tags.Interrupted [static field]: int = 3
 WoofWare.PosixKernel.WriteOutcome`1+Tags.Returns [static field]: int = 0
 WoofWare.PosixKernel.WriteOutcome`1+Tags.ReturnsRaising [static field]: int = 1
 WoofWare.PosixKernel.WriteOutcome`1+Tags.WouldBlock [static field]: int = 2
@@ -6825,18 +6864,18 @@ WoofWare.PosixKernel.WriteOutcome`1+WouldBlock inherit 'Thread WoofWare.PosixKer
 WoofWare.PosixKernel.WriteOutcome`1+WouldBlock.condition [property]: [read-only] WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.WriteOutcome`1+WouldBlock.get_condition [method]: unit -> WoofWare.PosixKernel.WakeCondition
 WoofWare.PosixKernel.WriteOutcome`1.Equals [method]: ('Thread WoofWare.PosixKernel.WriteOutcome, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.WriteOutcome`1.get_IsRestarts [method]: unit -> bool
+WoofWare.PosixKernel.WriteOutcome`1.get_Interrupted [static method]: unit -> 'Thread WoofWare.PosixKernel.WriteOutcome
+WoofWare.PosixKernel.WriteOutcome`1.get_IsInterrupted [method]: unit -> bool
 WoofWare.PosixKernel.WriteOutcome`1.get_IsReturns [method]: unit -> bool
 WoofWare.PosixKernel.WriteOutcome`1.get_IsReturnsRaising [method]: unit -> bool
 WoofWare.PosixKernel.WriteOutcome`1.get_IsWouldBlock [method]: unit -> bool
-WoofWare.PosixKernel.WriteOutcome`1.get_Restarts [static method]: unit -> 'Thread WoofWare.PosixKernel.WriteOutcome
 WoofWare.PosixKernel.WriteOutcome`1.get_Tag [method]: unit -> int
-WoofWare.PosixKernel.WriteOutcome`1.IsRestarts [property]: [read-only] bool
+WoofWare.PosixKernel.WriteOutcome`1.Interrupted [static property]: [read-only] 'Thread WoofWare.PosixKernel.WriteOutcome
+WoofWare.PosixKernel.WriteOutcome`1.IsInterrupted [property]: [read-only] bool
 WoofWare.PosixKernel.WriteOutcome`1.IsReturns [property]: [read-only] bool
 WoofWare.PosixKernel.WriteOutcome`1.IsReturnsRaising [property]: [read-only] bool
 WoofWare.PosixKernel.WriteOutcome`1.IsWouldBlock [property]: [read-only] bool
 WoofWare.PosixKernel.WriteOutcome`1.NewReturns [static method]: WoofWare.PosixKernel.WriteAnswer -> 'Thread WoofWare.PosixKernel.WriteOutcome
 WoofWare.PosixKernel.WriteOutcome`1.NewReturnsRaising [static method]: (WoofWare.PosixKernel.WriteAnswer, 'Thread WoofWare.PosixKernel.PendingSignal) -> 'Thread WoofWare.PosixKernel.WriteOutcome
 WoofWare.PosixKernel.WriteOutcome`1.NewWouldBlock [static method]: WoofWare.PosixKernel.WakeCondition -> 'Thread WoofWare.PosixKernel.WriteOutcome
-WoofWare.PosixKernel.WriteOutcome`1.Restarts [static property]: [read-only] 'Thread WoofWare.PosixKernel.WriteOutcome
 WoofWare.PosixKernel.WriteOutcome`1.Tag [property]: [read-only] int

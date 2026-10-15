@@ -802,7 +802,13 @@ module TestInotifyMeasured =
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), s) -> $"result=-1 %O{error}", s
-        | Ok (ReadOutcome.Restarts, s) -> "restarts", s
+        | Ok (ReadOutcome.Interrupted, s) ->
+            // How the thread's return to user mode ends the call, its handler
+            // having run.
+            match Interruptions.handled (Callers.thread thread s) s with
+            | Ok (InterruptedCall.FailsWithEintr, s) -> $"result=-1 %O{UnixError.EINTR}", s
+            | Ok (InterruptedCall.Restarts, s) -> "restarts", s
+            | Error refusal -> failwith $"the return refused %A{refusal}"
         | other -> failwith $"%A{other}"
 
     let private sleeps (thread : int) (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -862,14 +868,8 @@ module TestInotifyMeasured =
         let restarted, s = finish reader system
         restarted |> shouldEqual "restarts"
 
-        // The handler runs and returns, and the client issues the read again.
-        let s =
-            match UnixSignal.tryOnReturnToUser (Callers.thread reader s) s with
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, s)) ->
-                (s, frames)
-                ||> List.fold (fun s frame -> UnixSignal.sigreturn (Callers.thread reader s) frame.Id s)
-            | other -> failwith $"%A{other}"
-
+        // The return to user mode that said so ran the handler, which
+        // returned, and the client issues the read again.
         system <- sleeps reader fd s
         actual.Add ("signal-sa-restart", $"returned=%d{(if returned reader system then 1 else 0)}")
         system <- queue fd (event 1 create "y") system

@@ -659,7 +659,7 @@ module TestInotifyInvariants =
                 match woken |> List.tryFind (fun (thread, _) -> thread = 1) with
                 | Some _ ->
                     match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
-                    | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), after) ->
+                    | Ok (ReadOutcome.Interrupted, after) ->
                         cover Label.ReaderInterrupted
                         system <- after
                         asleep <- false
@@ -672,8 +672,12 @@ module TestInotifyInvariants =
 
                     // Its handler runs and returns, as the client would see to.
                     match UnixSignal.tryOnReturnToUser (Callers.thread 1 system) system with
-                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) -> system <- after
-                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
+                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, after)) -> system <- after
+                    // An interrupted read fails with EINTR as the handler runs.
+                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after))
+                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames,
+                                                                                  Some InterruptedCall.FailsWithEintr),
+                                                 after)) ->
                         system <-
                             (after, frames)
                             ||> List.fold (fun system frame ->

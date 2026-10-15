@@ -708,6 +708,18 @@ module TestUnixThreadLifecycle =
                 | Op.Exit _
                 | Op.ExitGroup _ -> system, model
 
+            // This property puts signals in the state directly rather than
+            // sending them, so a call can leave its thread owing a return to
+            // user mode where a sent signal would have been taken or ended the
+            // process at once. Which return a client makes is not this
+            // property's subject: each such debt is settled before the next op.
+            let after =
+                after
+                |> Lone.mapThreads (fun threads ->
+                    (threads, Map.keys threads |> List.ofSeq)
+                    ||> List.fold (fun threads name -> UnixThreadTable.settle name threads)
+                )
+
             // The thread set is exactly the model's, and no per-thread entry outlives its thread.
             Lone.threads after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
             orphans after |> shouldEqual []

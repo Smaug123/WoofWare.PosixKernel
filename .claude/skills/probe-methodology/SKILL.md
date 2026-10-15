@@ -16,8 +16,9 @@ while measuring the wrong thing. For the platform-specific traps — set-ID bits
 ## Re-entrant calls look like straight-line code
 
 A syscall that sleeps or pauses is not one pass through one function. A call
-interrupted by a signal handler under `SA_RESTART` is issued again by the client
-from the top (`ReadOutcome.Restarts`); a call that stops to copy bytes in
+a signal interrupts answers `Interrupted`, and if the thread's return to user
+mode restarts it (`InterruptedCall.Restarts`), it is issued again by the client
+from the top; a call that stops to copy bytes in
 (`CallProgress.NeedsCopyIn`) finishes in its resume function; a parked call is
 completed by its family's finishing function once `UnixWait` says it is woken.
 So a branch that reads like a once-per-call early return can run twice for what

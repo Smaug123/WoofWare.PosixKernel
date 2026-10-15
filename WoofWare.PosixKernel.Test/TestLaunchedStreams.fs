@@ -130,7 +130,7 @@ module TestLaunchedStreams =
         | Ok (WriteStep.ProcessEnded _ as outcome) ->
             failwith $"a write ended the process, whose SIGPIPE is ignored: %A{outcome}"
         | Ok (WriteStep.WouldBlock _) -> Error None
-        | Ok (WriteStep.Restarts _ as outcome) -> failwith $"a write that never slept restarted: %A{outcome}"
+        | Ok (WriteStep.Interrupted _ as outcome) -> failwith $"a write that never slept restarted: %A{outcome}"
 
     /// What the earlier standard streams answered, if the descriptor named one
     /// (`None` for a descriptor the reference does not model), and the
@@ -311,7 +311,7 @@ module TestLaunchedStreams =
             // A read that sleeps, on a pipe the process made, which the
             // earlier streams had no notion of.
             | Ok (ReadOutcome.WouldBlock _, _) -> None
-            | Ok (ReadOutcome.Restarts, _) -> failwith "a read that never slept restarted"
+            | Ok (ReadOutcome.Interrupted, _) -> failwith "a read that never slept was interrupted"
             | Error _ -> None
         | Op.Dup fd ->
             let answer, after = Answered.dup (Callers.leader system) fd system

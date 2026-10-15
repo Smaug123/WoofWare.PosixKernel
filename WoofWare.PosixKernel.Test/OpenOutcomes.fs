@@ -19,7 +19,7 @@ module internal OpenOutcomes =
             match outcome with
             | SyscallOutcome.Answered answer -> answer, after
             | SyscallOutcome.WouldBlock _
-            | SyscallOutcome.Restarts -> failwith $"expected an open that returns, got %A{outcome}"
+            | SyscallOutcome.Interrupted -> failwith $"expected an open that returns, got %A{outcome}"
         )
 
     /// `UnixNamespace.openPath` by the leader of the process `pid`, failing the

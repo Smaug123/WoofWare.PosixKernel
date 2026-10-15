@@ -271,8 +271,8 @@ module SignalFuzz =
         let rec returnToUser () : unit =
             match UnixSignal.tryOnReturnToUser (Callers.thread leader system) system with
             | Error refusal -> raise (Refusal $"onReturnToUser refused: %O{refusal}")
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) -> system <- after
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, after)) -> system <- after
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after)) ->
                 system <- after
                 runFrames frames
             | Ok (ProcessFate.ProcessEnded (ended, after)) ->
@@ -284,6 +284,9 @@ module SignalFuzz =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other) ->
                 raise (Refusal $"onReturnToUser answered %A{other}")
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some _), _) as other)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (_, Some _), _) as other) ->
+                failwith $"no call the fuzz makes sleeps, so none is interrupted, but onReturnToUser answered %A{other}"
 
         and runFrames (frames : HandlerFrame<int, unit> list) : unit =
             match frames with

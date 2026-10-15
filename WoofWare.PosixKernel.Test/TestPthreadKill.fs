@@ -239,8 +239,8 @@ module TestPthreadKill =
 
             match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
             | Error refusal -> failwith $"onReturnToUser %O{thread} refused: %O{refusal}"
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> count, system
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> count, system
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
                 let ofSignal =
                     frames |> List.filter (fun frame -> frame.Entry.Signal = signal) |> List.length
 
@@ -251,6 +251,8 @@ module TestPthreadKill =
                     )
 
                 go (count + ofSignal) (rounds + 1) system
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some _), _) as other)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (_, Some _), _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other)
             | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"onReturnToUser %O{thread} answered %A{other}"

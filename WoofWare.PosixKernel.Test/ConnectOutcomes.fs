@@ -19,5 +19,5 @@ module internal ConnectOutcomes =
             match outcome with
             | SyscallOutcome.Answered answer -> answer, after
             | SyscallOutcome.WouldBlock _
-            | SyscallOutcome.Restarts -> failwith $"expected a connect that returns, got %A{outcome}"
+            | SyscallOutcome.Interrupted -> failwith $"expected a connect that returns, got %A{outcome}"
         )

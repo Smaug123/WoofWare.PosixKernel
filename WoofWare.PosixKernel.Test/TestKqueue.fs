@@ -999,9 +999,13 @@ module TestKqueue =
             Lone.wakes interrupted
             |> shouldEqual [ 1, Set.singleton WakePrimitive.SignalDeliverable ]
 
-            finishes 1 interrupted
-            |> fst
-            |> shouldEqual (KeventOutcome.Failed UnixError.EINTR)
+            let outcome, finished = finishes 1 interrupted
+            outcome |> shouldEqual KeventOutcome.Interrupted
+
+            // The return to user mode runs the handler and fails the call.
+            let call, frames, _ = Interruptions.ends (Callers.thread 1 finished) finished
+            call |> shouldEqual InterruptedCall.FailsWithEintr
+            frames |> List.length |> shouldEqual 1
 
         SyscallInterruption.ruleOf
             SimulatedUnixFlavour.Darwin

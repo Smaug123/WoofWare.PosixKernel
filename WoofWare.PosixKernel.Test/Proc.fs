@@ -70,6 +70,18 @@ module internal Proc =
             Without = ProcessView.unfocusWithout
         }
 
+    /// `unfocus` of the views a call by `thread` answered: `thread` owes a
+    /// return to user mode in each view whose process carries on, as
+    /// `Entry.call` leaves it (`OwedReturns.markIfDue`).
+    let unfocusAfterCallBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        : Unfocus<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>>
+        =
+        {
+            Back = OwedReturns.markIfDue thread >> unview
+            Without = ProcessView.unfocusWithout
+        }
+
     /// `f` in the view of `pid`, and the system its view is a view of.
     let inView<'Thread, 'Handler, 'Result when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)

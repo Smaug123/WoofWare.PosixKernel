@@ -1174,8 +1174,8 @@ module TestBlockingAccept =
 
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
             (system, frames)
             ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
@@ -1648,9 +1648,23 @@ module TestBlockingAccept =
                                 (acceptedHead reference)
                                 (dropAccepted where (List.head reference.Queue) accepted after)
                         | other -> failwith $"%s{where ()}: %A{other}"
-                    | Some _, Ok (AcceptOutcome.Failed UnixError.EINTR, after) when signalled && not restart ->
-                        settle reference after
-                    | Some _, Ok (AcceptOutcome.Restarts, after) when signalled && restart -> settle reference after
+                    | Some _, Ok (AcceptOutcome.Interrupted, after) when signalled ->
+                        // The return to user mode ends the call as the
+                        // handler's SA_RESTART says, and runs the handler;
+                        // `settle` returns the thread again, taking nothing
+                        // more.
+                        match Interruptions.handled (Callers.thread thread after) after with
+                        | Ok (call, after) ->
+                            call
+                            |> shouldEqual (
+                                if restart then
+                                    InterruptedCall.Restarts
+                                else
+                                    InterruptedCall.FailsWithEintr
+                            )
+
+                            settle reference after
+                        | Error refusal -> failwith $"%s{where ()}: the return refused %A{refusal}"
                     | Some _, Ok (AcceptOutcome.WouldBlock _, after) when not signalled ->
                         system <- after
 

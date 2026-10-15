@@ -369,7 +369,7 @@ module TestPipe =
                             Ok (WriteStep.ReturnsRaising (answer, signal, after))
                         | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
                         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-                        | Ok (WriteStep.Restarts _) as other ->
+                        | Ok (WriteStep.Interrupted _) as other ->
                             failwith $"%s{where ()}: a write that never slept restarted: %A{other}"
                         | Ok (WriteStep.Returns (WriteAdmission.Transfer (n, into), admitted)) ->
                             transferred <- Some n
@@ -426,10 +426,16 @@ module TestPipe =
                         | SignalDisposition.Catch _,
                           Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
                             signal |> shouldEqual raised
-                            // Pending once, however many writes raised it.
+                            // Pending as the write answers, once.
                             SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
-                            withSignals (Lone.proc system).Signals after |> shouldEqual system
-                            system <- after
+
+                            withSignals (Lone.proc system).Signals after
+                            |> Lone.mapThreads (UnixThreadTable.settle (Lone.leader system))
+                            |> shouldEqual system
+
+                            // The writer takes it as it returns to user mode,
+                            // where its handler runs and returns.
+                            system <- ReturnsToUser.untilResumed (Callers.leader after) after
                         | _ -> failwith $"%s{where ()}: expected EPIPE and SIGPIPE under %A{sigPipe}, got %A{actual}"
                     else
 
@@ -1058,7 +1064,16 @@ module TestPipe =
                                 | true, SignalDisposition.Catch _, Ok (WriteStep.ReturnsRaising (answer, signal, after)) ->
                                     (answer, signal) |> shouldEqual (WriteAnswer.Failed UnixError.EPIPE, raised)
                                     SignalState.pending (Lone.proc after).Signals |> shouldEqual [ raised ]
-                                    withSignals (Lone.proc system).Signals after |> shouldEqual system
+
+                                    // The writer takes the SIGPIPE as it returns
+                                    // to user mode, which it owes before its next
+                                    // call; nothing else changed.
+                                    UnixThreadTable.owedBy (Lone.leader system) (Lone.threads after)
+                                    |> shouldEqual (Some OwedReturn.SignalDue)
+
+                                    withSignals (Lone.proc system).Signals after
+                                    |> Lone.mapThreads (UnixThreadTable.settle (Lone.leader system))
+                                    |> shouldEqual system
                                 | _ -> failwith $"%s{where ()}: %A{actual}"
 
     [<Test>]

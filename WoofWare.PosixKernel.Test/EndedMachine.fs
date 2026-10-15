@@ -11,7 +11,9 @@ module EndedMachine =
     /// `caller`'s process, is what `exit_group` by `caller` leaves of `before`,
     /// the system the call was made in: so the call changed nothing outside
     /// the process before it ended it, and the process ended as an exit ends
-    /// it, its descriptors closed and the process gone.
+    /// it, its descriptors closed and the process gone. A `caller` that owes
+    /// a return to user mode in `before`, as one returning to end the process
+    /// does, exits as if it had made that return and taken nothing.
     let assertAsExit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (before : UnixSystem<'Thread, 'Handler>)
@@ -21,6 +23,10 @@ module EndedMachine =
         UnixSystem.processIds after
         |> Set.contains (Caller.processId caller)
         |> shouldEqual false
+
+        let before =
+            before
+            |> Proc.mapThreads (Caller.processId caller) (UnixThreadTable.settle (Caller.thread caller))
 
         let _, exited = UnixThreadLifecycle.exitGroup caller 0 before
         after |> shouldEqual exited

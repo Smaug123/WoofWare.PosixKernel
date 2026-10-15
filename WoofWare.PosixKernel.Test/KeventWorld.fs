@@ -531,6 +531,7 @@ module KeventWorld =
                     )
             }
         | KeventOutcome.WouldBlock _ -> failwith "a probe row never waited"
+        | KeventOutcome.Interrupted -> failwith "a probe row never waited, so no signal interrupted it"
 
     /// Whether `modelled` agrees with what the probe printed, entry for entry and
     /// field for field.

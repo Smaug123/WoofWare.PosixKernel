@@ -141,6 +141,7 @@ module TestStreamReaderGone =
                                 Signals = (Lone.proc system).Signals
                             }
                         )
+                        |> Lone.mapThreads (UnixThreadTable.settle thread)
                         |> shouldEqual system
 
                         system <- after
@@ -157,6 +158,12 @@ module TestStreamReaderGone =
                     | other -> failwith $"%s{where}: expected the whole write, got %A{other}"
 
                 assertSound where system
+
+                // The writer returns to user mode, taking what it takes there:
+                // what stays pending is what it does not.
+                if not ended then
+                    system <- ReturnsToUser.untilResumed (Callers.thread thread system) system
+                    pending <- Set.ofList (SignalState.pending (Lone.proc system).Signals)
 
                 let log =
                     DeliveryLog.toList system.Machine.Delivered

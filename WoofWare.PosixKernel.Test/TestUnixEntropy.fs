@@ -265,7 +265,18 @@ module TestUnixEntropy =
             | Ok (GetRandomAnswer.Failed error, after) ->
                 refused |> shouldEqual false
                 error |> shouldEqual UnixError.EFAULT
-                after |> shouldEqual system
+
+                // It changes nothing, but that a caller holding a signal it
+                // takes as it returns to user mode owes that return.
+                UnixThreadTable.owedBy 0 (Lone.threads after)
+                |> shouldEqual (
+                    if PendingSignal.transferrerHasSignal pending then
+                        Some OwedReturn.SignalDue
+                    else
+                        None
+                )
+
+                after |> Lone.mapThreads (UnixThreadTable.settle 0) |> shouldEqual system
             | Error refusal -> failwith $"%A{refusal}"
 
         let countGen =

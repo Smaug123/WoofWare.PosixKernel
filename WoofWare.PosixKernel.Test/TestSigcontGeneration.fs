@@ -114,18 +114,32 @@ module TestSigcontGeneration =
 
     /// `thread` returns to user mode: it runs every handler the kernel pushes,
     /// each logged as the probe's handler logs itself, and the return goes on
-    /// past a SIGCONT the kernel discards.
-    let rec private returns (thread : int) : Step =
+    /// past a SIGCONT the kernel discards. `ended` is told how the return ends
+    /// the call it returns from (`None` for one no signal interrupted).
+    let rec private returnsEnding (thread : int) (ended : InterruptedCall option -> Replay -> Replay) : Step =
         fun r ->
             match UnixSignal.tryOnReturnToUser (Callers.thread thread r.System) r.System with
             | Error (ReturnToUserRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
             | Error other -> Error (Stop.Other $"onReturnToUser: %A{other}")
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system)) ->
+                Ok (withSystem system r |> ended interrupted)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
-                returns thread (withSystem system r)
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
-                runFrames thread frames (withSystem system r)
+                returnsEnding thread ended (withSystem system r)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system)) ->
+                runFrames thread frames (withSystem system r |> ended interrupted)
             | Ok other -> failwith $"thread %d{thread}'s return to user mode: %A{other}"
+
+    /// `returnsEnding`, for `thread`'s return from a call no signal
+    /// interrupted.
+    and private returns (thread : int) : Step =
+        returnsEnding
+            thread
+            (fun interrupted r ->
+                match interrupted with
+                | None -> r
+                | Some call ->
+                    failwith $"thread %d{thread} returned from no interrupted call, and the return said %A{call}"
+            )
 
     /// Each of `frames`' handlers runs, innermost first; each `sigreturn` is a
     /// return to user mode of its own.
@@ -344,6 +358,20 @@ module TestSigcontGeneration =
                     Returned = Some (answer, r.Phase)
                 }
 
+    /// The sleeper's call was interrupted: it returns to user mode, which
+    /// fails the call with EINTR.
+    let private sleeperReturnsInterrupted (sleeper : int) : Step =
+        returnsEnding
+            sleeper
+            (fun interrupted r ->
+                match interrupted with
+                | Some InterruptedCall.FailsWithEintr ->
+                    { r with
+                        Returned = Some ("-1/EINTR", r.Phase)
+                    }
+                | other -> failwith $"the sleeper's interrupted call ended %A{other}"
+            )
+
     /// If the sleeper is woken, its call finishes: it returns, or sleeps on.
     let private wakeIfDue (row : SleepRow) : Step =
         fun r ->
@@ -361,8 +389,8 @@ module TestSigcontGeneration =
                 match UnixSignal.tryFinishSigsuspend (Callers.thread row.Sleeper r.System) r.System with
                 | Error (SigsuspendRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishSigsuspend: %A{other}")
-                | Ok (SigsuspendOutcome.Failed UnixError.EINTR, system) ->
-                    sleeperReturns row.Sleeper "-1/EINTR" (withSystem system r)
+                | Ok (SigsuspendOutcome.Interrupted, system) ->
+                    sleeperReturnsInterrupted row.Sleeper (withSystem system r)
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Ok other -> failwith $"finishSigsuspend: %A{other}"
             else
@@ -370,8 +398,7 @@ module TestSigcontGeneration =
                 | Error (PollRefusal.Interruption (SyscallInterruptionRefusal.Receiver refusal)) ->
                     Error (Stop.Receiver refusal)
                 | Error other -> Error (Stop.Other $"finishPoll: %A{other}")
-                | Ok (PollOutcome.Failed UnixError.EINTR, system) ->
-                    sleeperReturns row.Sleeper "-1/EINTR" (withSystem system r)
+                | Ok (PollOutcome.Interrupted, system) -> sleeperReturnsInterrupted row.Sleeper (withSystem system r)
                 | Ok (PollOutcome.Answered ([], 0), system) -> sleeperReturns row.Sleeper "0/0" (withSystem system r)
                 | Ok (PollOutcome.WouldBlock _, system) -> Ok (withSystem system r)
                 | Ok other -> failwith $"finishPoll: %A{other}"

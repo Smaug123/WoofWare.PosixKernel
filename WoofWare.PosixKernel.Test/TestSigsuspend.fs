@@ -182,8 +182,14 @@ module TestSigsuspend =
     /// The main thread's return to user mode from a call that has ended with
     /// `error`: every handler runs, each recorded as the probe's handler
     /// records itself, and then the main thread prints what the probe's does.
-    let private mainReturns (error : UnixError) : Step =
+    /// A call that answered `Interrupted` ends as its return says, which must
+    /// be with `error`.
+    let private mainReturnsFrom (interrupted : bool) (error : UnixError) : Step =
         fun r ->
+            // What each return said of the interrupted call: only the first
+            // says anything.
+            let mutable said : InterruptedCall option list = []
+
             let rec returnThen
                 (continuation :
                     UnixSystem<int, string>
@@ -195,8 +201,12 @@ module TestSigsuspend =
                 =
                 match UnixSignal.tryOnReturnToUser (Callers.thread main system) system with
                 | Error refusal -> failwith $"onReturnToUser refused: %A{refusal}"
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> continuation system ran
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes call, system)) ->
+                    said <- call :: said
+                    continuation system ran
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, call), system)) ->
+                    said <- call :: said
+
                     runFrames frames system ran
                     |> Result.bind (fun (system, ran) -> continuation system ran)
                 | Ok (ProcessFate.ProcessEnded (ended, _)) ->
@@ -222,6 +232,14 @@ module TestSigsuspend =
 
             returnThen (fun system ran -> Ok (system, ran)) r.System []
             |> Result.map (fun (system, ran) ->
+                List.choose id said
+                |> shouldEqual (
+                    if interrupted then
+                        [ InterruptedCall.FailsWithEintr ]
+                    else
+                        []
+                )
+
                 let ran = List.rev ran
 
                 let ranText =
@@ -251,6 +269,12 @@ module TestSigsuspend =
                 }
             )
 
+    /// `mainReturnsFrom` a call that failed with `error` as it was made.
+    let private mainReturns (error : UnixError) : Step = mainReturnsFrom false error
+
+    /// `mainReturnsFrom` a call that answered `Interrupted`.
+    let private mainReturnsInterrupted : Step = mainReturnsFrom true UnixError.EINTR
+
     /// Which call the main thread makes.
     [<RequireQualifiedAccess>]
     type private Call =
@@ -270,6 +294,12 @@ module TestSigsuspend =
             | Ok (SigsuspendOutcome.Failed error, system) ->
                 mainReturns
                     error
+                    { r with
+                        System = system
+                        AnsweredAtOnce = true
+                    }
+            | Ok (SigsuspendOutcome.Interrupted, system) ->
+                mainReturnsInterrupted
                     { r with
                         System = system
                         AnsweredAtOnce = true
@@ -295,6 +325,11 @@ module TestSigsuspend =
                     | Ok (SigsuspendOutcome.Failed error, system) ->
                         mainReturns
                             error
+                            { r with
+                                System = system
+                            }
+                    | Ok (SigsuspendOutcome.Interrupted, system) ->
+                        mainReturnsInterrupted
                             { r with
                                 System = system
                             }
@@ -865,7 +900,7 @@ module TestSigsuspend =
     /// The paths of the model that its walk must reach.
     [<RequireQualifiedAccess>]
     type private ModelLabel =
-        /// A `sigsuspend` or `pause` answered `EINTR` at once.
+        /// A `sigsuspend` or `pause` interrupted at once, to answer `EINTR`.
         | AnsweredAtOnce
         /// A `sigsuspend` or `pause` that slept.
         | Park
@@ -932,9 +967,13 @@ module TestSigsuspend =
                 | Error errno -> failwith $"sigaction: %O{errno}"
 
             let returnToUser (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                // A sigsuspend a signal interrupted fails with EINTR whatever
+                // SA_RESTART says, and its return runs a handler.
                 match UnixSignal.tryOnReturnToUser (Callers.thread main system) system with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system))
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, system)) -> system
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system))
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (_, None), system))
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (_, Some InterruptedCall.FailsWithEintr),
+                                             system)) -> system
                 | other -> failwith $"the main thread's return took %A{other}"
 
             let setmask = how flavour SignalMaskChange.SetMask
@@ -1031,7 +1070,7 @@ module TestSigsuspend =
                         system <- wokenSystem
 
                         match UnixSignal.tryFinishSigsuspend (Callers.thread main system) system with
-                        | Ok (SigsuspendOutcome.Failed UnixError.EINTR, after) ->
+                        | Ok (SigsuspendOutcome.Interrupted, after) ->
                             system <- after
 
                             model <-
@@ -1055,7 +1094,7 @@ module TestSigsuspend =
                     }
 
                 match outcome with
-                | Ok (SigsuspendOutcome.Failed UnixError.EINTR, after) ->
+                | Ok (SigsuspendOutcome.Interrupted, after) ->
                     // The return to user mode takes everything, ignored signals
                     // included, in order: a frame pushed first may block an
                     // ignored signal, which then stays pending.

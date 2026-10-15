@@ -344,7 +344,7 @@ module TestSigprocmask =
                     )
 
                 match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> ()
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, _)) -> ()
                 | other -> failwith $"%O{flavour}: expected nothing taken while blocked, got %A{other}"
 
                 UnixSignal.sigpending (Callers.thread 0 system) system |> shouldEqual mask
@@ -352,7 +352,7 @@ module TestSigprocmask =
                 let unblocked = sigprocmask 0 (unblock flavour) (Some mask) system |> orFail
 
                 match UnixSignal.tryOnReturnToUser (Callers.thread 0 unblocked) unblocked with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after)) ->
                     (flavour, threadDirected, frames |> List.map (fun frame -> frame.Entry.Signal))
                     |> shouldEqual (flavour, threadDirected, measured flavour)
 
@@ -445,7 +445,7 @@ module TestSigprocmask =
 
                 let system =
                     match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
-                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
+                    | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
                     | other -> failwith $"%O{flavour} %O{signal}: expected nothing taken, got %A{other}"
 
                 let expected =
@@ -463,7 +463,7 @@ module TestSigprocmask =
 
                     let returned =
                         match UnixSignal.tryOnReturnToUser (Callers.thread 0 unblocked) unblocked with
-                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
+                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
                         | other -> failwith $"%O{flavour} %O{signal}: expected nothing taken, got %A{other}"
 
                     let reblocked = withMask flavour 0 (SignalMask.toWord mask) returned
@@ -504,7 +504,8 @@ module TestSigprocmask =
 
             let frame, inHandler =
                 match UnixSignal.tryOnReturnToUser (Callers.thread 0 raised) raised with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system)) ->
+                    frame, system
                 | other -> failwith $"expected USR1's handler, got %A{other}"
 
             let inHandler =
@@ -534,8 +535,8 @@ module TestSigprocmask =
 
                     let ran, system =
                         match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
-                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> ran, system
-                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> ran, system
+                        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
                             run ran frames system
                         | other -> failwith $"expected handlers, got %A{other}"
 
@@ -848,7 +849,8 @@ module TestSigprocmask =
 
             let frame, inHandler =
                 match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system)) ->
+                    frame, system
                 | other -> failwith $"expected one frame, got %A{other}"
 
             frame.SavedMask |> shouldEqual (ofList before)

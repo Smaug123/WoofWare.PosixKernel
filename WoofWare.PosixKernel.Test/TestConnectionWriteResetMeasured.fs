@@ -160,8 +160,8 @@ module TestConnectionWriteResetMeasured =
     /// `thread` returns to user mode, running every handler it takes.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
             (system, frames)
             ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread

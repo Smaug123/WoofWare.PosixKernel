@@ -1333,7 +1333,12 @@ module TestFcntlMeasured =
 
             let answer, system =
                 match UnixDescriptor.tryFlockAcquire (Callers.thread 1 system) system with
-                | Ok (SyscallOutcome.Answered answer, system) -> FcntlWorld.number answer, system
+                | Ok (SyscallOutcome.Interrupted, system) ->
+                    // The thread's return to user mode says how the call ends.
+                    match Interruptions.handled (Callers.thread 1 system) system with
+                    | Ok (InterruptedCall.FailsWithEintr, system) ->
+                        FcntlWorld.number (SyscallAnswer.Failed UnixError.EINTR), system
+                    | other -> failwith $"%s{run.Name}: the interrupted flock's return: %A{other}"
                 | other -> failwith $"%s{run.Name}: the interrupted flock: %A{other}"
 
             [

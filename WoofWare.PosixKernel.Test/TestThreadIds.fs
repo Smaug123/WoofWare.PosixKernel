@@ -534,7 +534,8 @@ module TestThreadIds =
 
             let frame, inHandler =
                 match UnixSignal.tryOnReturnToUser (Callers.thread 0 system) system with
-                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], system)) -> frame, system
+                | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system)) ->
+                    frame, system
                 | other -> failwith $"onReturnToUser answered %A{other}"
 
             let _, spawned = spawnOrFail 1 inHandler
