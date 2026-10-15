@@ -4040,10 +4040,10 @@ module UnixSystem =
                 }
             )
 
-    /// End the process `ended` is in the kernel the call that ended it ran in,
-    /// as that call left it (`UnixThreadLifecycle.exitGroup`, the last thread's
-    /// exit, or a signal whose default ends the process): how it ended, and the
-    /// system without it.
+    /// End the process `ended` says ended, in the kernel as the call that ended
+    /// it left it (`UnixThreadLifecycle.exitGroup`, the last thread's exit, or
+    /// a signal whose default ends the process): how it ended, and the system
+    /// without it.
     ///
     /// What a real kernel does at exit, where another process can see it.
     /// The process's threads are gone already, and with

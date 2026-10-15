@@ -50,7 +50,7 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
 /// machine, which thread each processor runs, the process with its threads,
 /// and every other process, held apart from it.
 ///
-/// `Entry` focuses the caller's process to make one (`ProcessView.focus`) and
+/// `Entry` focuses the caller's process to make one (`ProcessView.ofSlot`) and
 /// puts each view in the body's answer back into the kernel
 /// (`ProcessView.unfocus`). A view holds the rest of the kernel, so a value
 /// that holds a view, such as a call paused at a copy, holds everything its

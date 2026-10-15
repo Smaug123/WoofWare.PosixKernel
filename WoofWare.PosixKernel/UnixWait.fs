@@ -103,7 +103,8 @@ module WakeSweepMemo =
                )
 
         LanguagePrimitives.PhysicalEquality remembered.Machine machine
-        && sameSlots ()
+        && (LanguagePrimitives.PhysicalEquality remembered.Processes processes
+            || sameSlots ())
         && (LanguagePrimitives.PhysicalEquality remembered.Asleep asleep
             || remembered.Asleep = asleep)
 

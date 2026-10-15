@@ -260,9 +260,11 @@ module TestProcessView =
 
             for part, view in rebuilt do
                 let after = ProcessView.unfocusFrom system focused view
-                obj.ReferenceEquals (after, system) |> shouldEqual false
+
+                if obj.ReferenceEquals (after, system) then
+                    failwith $"a view whose %s{part} was rebuilt was put back as the kernel it was focused from"
+
                 after |> shouldEqual system
-                ignore part
 
             // A different leader is a different kernel.
             let led =
