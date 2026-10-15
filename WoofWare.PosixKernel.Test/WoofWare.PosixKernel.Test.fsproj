@@ -637,6 +637,7 @@
     <EmbeddedResource Include="socketFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzz\harness.c" />
     <EmbeddedResource Include="signalFuzzCorpus\*.txt" />
+    <EmbeddedResource Include="multiProcessOracle\*.txt" />
     <EmbeddedResource Include="socketFuzzCorpus\*.txt" />
   </ItemGroup>
 
