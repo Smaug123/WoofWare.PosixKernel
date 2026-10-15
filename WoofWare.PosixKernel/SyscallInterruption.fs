@@ -334,18 +334,31 @@ module SyscallInterruption =
 
         count > pageSize && wakes thread system
 
-    /// Whether a signal with a handler ends the sleep of `thread` now, whatever
-    /// the handlers' flags: for a syscall that, interrupted, returns what it
-    /// has done so far rather than failing or restarting, as a write that has
-    /// put bytes into a pipe does. `Error` where this library will not say what
-    /// the thread takes as it returns to user mode, or where it is a signal's
-    /// default action.
+    /// Whether a signal ends the sleep of `thread` now, whatever the handlers'
+    /// flags: whether the thread would take one as it returned to user mode,
+    /// running its handler or applying its default. For a syscall that,
+    /// interrupted, returns what it has done so far rather than failing or
+    /// restarting, as a write that has put bytes into a pipe does. `Error`
+    /// where this library will not say what the thread takes as it returns.
     let internal interrupts<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<bool, SyscallInterruptionRefusal>
         =
-        framesOnReturn thread system |> Result.map (List.isEmpty >> not)
+        // A default that terminates the process ends the sleep as a handler
+        // does (`docs/probes/disposition-before-return`, the `dfl` rows): the
+        // call answers, and the return then ends the process.
+        match
+            SignalState.takeOnReturn
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                (system.Threads |> Map.keys |> Set.ofSeq)
+                thread
+                system.Process.Signals
+        with
+        | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
+        | Ok (delivery, _) -> Ok delivery.IsSome
 
     /// Whether the syscall `thread` is asleep in may give its own answer, now that
     /// it has one: a finishing call asks this before it answers, and refuses
