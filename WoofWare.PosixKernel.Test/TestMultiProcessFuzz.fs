@@ -1666,15 +1666,8 @@ module TestMultiProcessFuzz =
             Woken : (ProcessId * int) list
         }
 
-    let private asleepByProcess (asleep : Set<ProcessId * int>) : Map<ProcessId, Set<int>> =
-        asleep
-        |> Set.toList
-        |> List.groupBy fst
-        |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-        |> Map.ofList
-
     let private wakeable (world : World) : Map<ProcessId * int, Set<WakePrimitive>> =
-        Machines.wakes (asleepByProcess world.Asleep) world.Machine |> Map.ofList
+        Machines.wakes world.Machine |> Map.ofList
 
     let private assertClean (machine : UnixSystem<int, string>) : unit =
         Machines.checkInvariants machine |> Expect.empty (fun () -> "the system")
@@ -1799,13 +1792,14 @@ module TestMultiProcessFuzz =
                 Machine = machine
             }
         | Step.WakePass finishing ->
-            let woken =
-                Machines.wakes (asleepByProcess world.Asleep) world.Machine |> List.map fst
+            let woken, machine = Machines.wake world.Machine
+            let woken = woken |> List.map fst
 
             log $"  woken %A{woken}"
 
             let world =
                 { world with
+                    Machine = machine
                     Asleep = Set.difference world.Asleep (Set.ofList woken)
                     Woken = world.Woken @ woken
                 }
@@ -2364,21 +2358,23 @@ module TestMultiProcessFuzz =
             let lastSkipped = ref false
 
             let observe (step : Step) (world : World) : unit =
-                let asleep = asleepByProcess world.Asleep
                 let machine = world.Machine
-                let full = Machines.wakes asleep machine
-
-                let callers = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
+                let full, fullAfter = Machines.wake machine
 
                 let skips, readsSame =
                     match memo.Value.Remembered with
                     | ValueNone -> false, false
                     | ValueSome remembered ->
-                        WakeSweepMemo.covers remembered callers machine.Machine machine.Scheduling machine.Processes,
-                        WakeSweepMemo.readsSame remembered callers machine.Machine machine.Processes
+                        WakeSweepMemo.covers remembered machine.Machine machine.Scheduling machine.Processes,
+                        WakeSweepMemo.readsSame remembered machine.Machine machine.Processes
 
-                let answer, next = Machines.wakesRemembering memo.Value asleep machine
+                let answer, next, after = Machines.wakeRemembering memo.Value machine
                 answer |> shouldEqual full
+                obj.ReferenceEquals (after.Machine, machine.Machine) |> shouldEqual true
+                Machines.parkStates after |> shouldEqual (Machines.parkStates fullAfter)
+
+                if answer.IsEmpty then
+                    obj.ReferenceEquals (after, machine) |> shouldEqual true
 
                 if skips then
                     let kind =
@@ -2459,12 +2455,14 @@ module TestMultiProcessFuzz =
         )
         |> Set.ofSeq
 
-    /// The library's sweep is the reference's (`ReferenceWake`), given every
-    /// thread the client holds asleep: at each step of the first property's
-    /// interleavings, where the client's own bookkeeping names every parked
-    /// thread as asleep or as woken and not yet finished.
+    /// `UnixWait.wake` is the reference sweep (`ReferenceWake`), the sweep as
+    /// it was when the client named the threads it held asleep, given the
+    /// threads the kernel's parks hold asleep; and it records exactly the wakes
+    /// it answers. At each step of the first property's interleavings, the
+    /// kernel's parks agree with the client's own bookkeeping of who sleeps and
+    /// who has been woken and not yet finished.
     [<Test>]
-    let ``the sweep answers what the reference sweep answers, at every step of random interleavings`` () : unit =
+    let ``wake answers what the reference sweep answers, at every step of random interleavings`` () : unit =
         let property (cover : SweepLabel -> unit) (case : Case) : unit =
             let observe (_ : Step) (world : World) : unit =
                 let machine = world.Machine
@@ -2472,13 +2470,52 @@ module TestMultiProcessFuzz =
 
                 Set.intersect world.Asleep woken |> shouldEqual Set.empty
                 Set.union world.Asleep woken |> shouldEqual (parkedThreads machine)
+                Machines.parkStates machine |> shouldEqual (world.Asleep, woken)
 
                 let asleep = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
 
                 let reference = ReferenceWake.wakes asleep machine
-                UnixWait.wakes asleep machine |> shouldEqual reference
+                let answer, after = UnixWait.wake machine
+                answer |> shouldEqual reference
 
-                UnixWait.deadlines asleep machine
+                // The sweep marks exactly the threads it answers woken, each for
+                // what it answers, and changes nothing else.
+                let answered =
+                    answer
+                    |> List.map (fun (caller, fired) -> (Caller.processId caller, Caller.thread caller), fired)
+                    |> Map.ofList
+
+                obj.ReferenceEquals (after.Machine, machine.Machine) |> shouldEqual true
+                obj.ReferenceEquals (after.Scheduling, machine.Scheduling) |> shouldEqual true
+
+                for pid in UnixSystem.processIds machine do
+                    let before = machine.Processes.[ProcessId.toInt32 pid]
+                    let slot = after.Processes.[ProcessId.toInt32 pid]
+                    obj.ReferenceEquals (slot.Process, before.Process) |> shouldEqual true
+
+                    for KeyValue (thread, state) in before.Threads do
+                        let expected =
+                            match Map.tryFind (pid, thread) answered with
+                            | Some fired ->
+                                { state with
+                                    Parked =
+                                        state.Parked
+                                        |> Option.map (fun park ->
+                                            { park with
+                                                State = ParkState.Woken fired
+                                            }
+                                        )
+                                }
+                            | None -> state
+
+                        slot.Threads.[thread] |> shouldEqual expected
+
+                    slot.Threads.Count |> shouldEqual before.Threads.Count
+
+                if answer.IsEmpty then
+                    obj.ReferenceEquals (after, machine) |> shouldEqual true
+
+                UnixWait.deadlines machine
                 |> shouldEqual (ReferenceWake.deadlines asleep machine)
 
                 if not reference.IsEmpty then

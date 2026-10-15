@@ -796,6 +796,8 @@ module TestInotifyMeasured =
 
     /// What the woken read of `thread` answers, as the probe prints it.
     let private finish (thread : int) (system : UnixSystem<int, string>) : string * UnixSystem<int, string> =
+        let system = Woken.thread thread system
+
         match UnixReadWrite.tryFinishRead (Callers.thread thread system) system with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), s) ->
             $"""result=%d{bytes.Length}  events=%s{String.concat " | " (render bytes)}""", s

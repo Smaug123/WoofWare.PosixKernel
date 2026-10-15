@@ -428,7 +428,8 @@ module TestSocketAddressLength =
                 let _, system = connectClient system
 
                 match
-                    UnixConnection.tryFinishAccept (Callers.thread 1 system) system, isLinux platform && int word < 0
+                    UnixConnection.tryFinishAccept (Callers.thread 1 system) (Woken.thread 1 system),
+                    isLinux platform && int word < 0
                 with
                 | Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, after), true ->
                     queueOf listenerFd after |> shouldEqual []

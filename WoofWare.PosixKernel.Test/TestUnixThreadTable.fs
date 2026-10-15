@@ -82,6 +82,7 @@ module TestUnixThreadTable =
                 {
                     Syscall = ParkedSyscall.EpollWait wait
                     Ordinal = ParkOrdinal 0L
+                    State = ParkState.Asleep
                 }
                 (Lone.threads system)
 

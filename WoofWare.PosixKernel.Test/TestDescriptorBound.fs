@@ -157,7 +157,7 @@ module TestDescriptorBound =
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 
-            Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
             | Error (AcceptRefusal.DescriptorLimit refusal) -> refusal |> shouldEqual (refusalAt bound bound)

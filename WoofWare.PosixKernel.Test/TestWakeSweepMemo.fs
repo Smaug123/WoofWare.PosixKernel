@@ -4,9 +4,9 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// `UnixWait.wakesRemembering` sweeps again when something a wake
+/// `UnixWait.wakeRemembering` sweeps again when something a wake
 /// condition reads has changed, even where nothing but that one input has.
-/// `TestMultiProcessFuzz` holds it to `UnixWait.wakes` over random
+/// `TestMultiProcessFuzz` holds it to `UnixWait.wake` over random
 /// interleavings; each test here changes one input of the memo's alone, as no
 /// random interleaving does, and checks that the memo does not answer.
 ///
@@ -23,16 +23,17 @@ module TestWakeSweepMemo =
 
     let private linux : SimulatedUnixPlatform = SimulatedUnixPlatform.linuxX64
 
-    /// `wakesRemembering` of `asleep` on `machine`, which must answer what
-    /// `wakes` answers.
+    /// `wakeRemembering` on `machine`, which must answer what `wake` answers,
+    /// and wake what it wakes; and the memo it answers.
     let private remembering
         (memo : WakeSweepMemo<int, string>)
-        (asleep : Map<ProcessId, Set<int>>)
         (machine : UnixSystem<int, string>)
         : ((ProcessId * int) * Set<WakePrimitive>) list * WakeSweepMemo<int, string>
         =
-        let woken, memo = Machines.wakesRemembering memo asleep machine
-        woken |> shouldEqual (Machines.wakes asleep machine)
+        let woken, memo, after = Machines.wakeRemembering memo machine
+        let full, fullAfter = Machines.wake machine
+        woken |> shouldEqual full
+        Machines.parkStates after |> shouldEqual (Machines.parkStates fullAfter)
         woken, memo
 
     /// `thread` of `pid` in a blocking `accept` on `listener`, which must sleep.
@@ -77,9 +78,8 @@ module TestWakeSweepMemo =
                 machine
 
         let machine = parkInAccept pid 1 listener machine
-        let asleep = Map.ofList [ pid, Set.singleton 1 ]
 
-        let woken, memo = remembering WakeSweepMemo.empty asleep machine
+        let woken, memo = remembering WakeSweepMemo.empty machine
         woken |> shouldEqual []
 
         // Thread 0 sends SIGUSR1, which thread 1 catches, to thread 1.
@@ -101,7 +101,7 @@ module TestWakeSweepMemo =
             machine.Processes.[ProcessId.toInt32 pid].Threads
         |> shouldEqual true
 
-        remembering memo asleep signalled
+        remembering memo signalled
         |> fst
         |> shouldEqual [ (pid, 1), Set.singleton WakePrimitive.SignalDeliverable ]
 
@@ -123,11 +123,7 @@ module TestWakeSweepMemo =
             // one call makes no other.
             |> Machines.doIn pid (fun view -> KeventWorld.clientAs (Caller.make pid 2) 8080us view |> snd)
 
-        Machines.wakes (Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]) machine
-        |> List.map fst
-        |> shouldEqual [ pid, 0 ]
-
-        pid, machine
+        pid, Machines.waking [ pid, 0 ] machine
 
     /// `machine` with thread 0 of `pid` unparked in the thread table alone, as its
     /// finished `accept` leaves it: a forged state, whose open file table still
@@ -148,12 +144,11 @@ module TestWakeSweepMemo =
     [<Test>]
     let ``a woken accepter's finish lets the next one wake, though only the thread table changed`` () : unit =
         let pid, machine = behindAWokenAccepter ()
-        let asleep = Map.ofList [ pid, Set.singleton 1 ]
 
-        let woken, memo = remembering WakeSweepMemo.empty asleep machine
+        let woken, memo = remembering WakeSweepMemo.empty machine
         woken |> shouldEqual []
 
-        remembering memo asleep (finishedInThreadsAlone pid machine)
+        remembering memo (finishedInThreadsAlone pid machine)
         |> fst
         |> List.map fst
         |> shouldEqual [ pid, 1 ]
@@ -161,12 +156,11 @@ module TestWakeSweepMemo =
     [<Test>]
     let ``a process gone, or another in its place, is swept again, though nothing else changed`` () : unit =
         let pid, machine = behindAWokenAccepter ()
-        let asleep = Map.ofList [ pid, Set.singleton 1 ]
         let finished = finishedInThreadsAlone pid machine
         let other = ProcessId.parseOrFail "TestWakeSweepMemo" 9999
 
         // A second process holding a copy of the first's threads, thread 0 among
-        // them asleep in its accept and not woken: thread 1 of the first
+        // them woken in its accept and not finished: thread 1 of the first
         // waits behind it.
         let withCopy =
             { finished with
@@ -174,14 +168,11 @@ module TestWakeSweepMemo =
                     Map.add (ProcessId.toInt32 other) machine.Processes.[ProcessId.toInt32 pid] finished.Processes
             }
 
-        let woken, memo = remembering WakeSweepMemo.empty asleep withCopy
+        let woken, memo = remembering WakeSweepMemo.empty withCopy
         woken |> shouldEqual []
 
         // Without it, thread 1 wakes.
-        remembering memo asleep finished
-        |> fst
-        |> List.map fst
-        |> shouldEqual [ pid, 1 ]
+        remembering memo finished |> fst |> List.map fst |> shouldEqual [ pid, 1 ]
 
         // With a process of no threads under another ID in its place, thread 1
         // wakes too.
@@ -196,26 +187,7 @@ module TestWakeSweepMemo =
                         finished.Processes
             }
 
-        remembering memo asleep replaced
-        |> fst
-        |> List.map fst
-        |> shouldEqual [ pid, 1 ]
-
-    [<Test>]
-    let ``a woken thread the client holds asleep again is swept again, though the machine did not change`` () : unit =
-        let pid, machine = behindAWokenAccepter ()
-
-        let woken, memo =
-            remembering WakeSweepMemo.empty (Map.ofList [ pid, Set.singleton 1 ]) machine
-
-        woken |> shouldEqual []
-
-        // Thread 0 is asleep again in the client's eyes, and nothing waits behind
-        // it now: the one waiter the listener wakes is the first to park.
-        remembering memo (Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]) machine
-        |> fst
-        |> List.map fst
-        |> shouldEqual [ pid, 0 ]
+        remembering memo replaced |> fst |> List.map fst |> shouldEqual [ pid, 1 ]
 
     [<Test>]
     let ``the earliest of several deadlines ends the memo's answer, not the latest`` () : unit =
@@ -243,9 +215,8 @@ module TestWakeSweepMemo =
                 machine
 
         let machine = machine |> pollFor 0 5 |> pollFor 1 10
-        let asleep = Map.ofList [ pid, Set.ofList [ 0 ; 1 ] ]
 
-        let woken, memo = remembering WakeSweepMemo.empty asleep machine
+        let woken, memo = remembering WakeSweepMemo.empty machine
         woken |> shouldEqual []
 
         let later = Machines.doIn pid (UnixSystem.advanceClock 7_000_000L) machine
@@ -253,7 +224,7 @@ module TestWakeSweepMemo =
         LanguagePrimitives.PhysicalEquality later.Machine machine.Machine
         |> shouldEqual true
 
-        match remembering memo asleep later |> fst with
+        match remembering memo later |> fst with
         | [ (woke, fired) ] ->
             woke |> shouldEqual (pid, 0)
 
@@ -292,16 +263,15 @@ module TestWakeSweepMemo =
     let ``a memo counts the answers it has given since its sweep, from none after each sweep`` () : unit =
 #if DEBUG
         let pid, machine = behindAWokenAccepter ()
-        let asleep = Map.ofList [ pid, Set.singleton 1 ]
 
-        let woken, swept = remembering WakeSweepMemo.empty asleep machine
+        let woken, swept = remembering WakeSweepMemo.empty machine
         woken |> shouldEqual []
         swept.HitsSinceSweep |> shouldEqual 0
 
         let answered =
             (swept, [ 1..5 ])
             ||> List.fold (fun memo expected ->
-                let woken, memo = remembering memo asleep machine
+                let woken, memo = remembering memo machine
                 woken |> shouldEqual []
                 memo.HitsSinceSweep |> shouldEqual expected
                 memo
@@ -322,11 +292,11 @@ module TestWakeSweepMemo =
                         machine.Processes
             }
 
-        let woken, reswept = remembering answered asleep copied
+        let woken, reswept = remembering answered copied
         woken |> shouldEqual []
         reswept.HitsSinceSweep |> shouldEqual 0
 
-        let woken, memo = remembering reswept asleep copied
+        let woken, memo = remembering reswept copied
         woken |> shouldEqual []
         memo.HitsSinceSweep |> shouldEqual 1
 #else

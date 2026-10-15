@@ -36,7 +36,7 @@ type AcceptOutcome =
     /// The call did not return: the listener is blocking and its accept queue
     /// is empty. The calling thread is parked, and sleeps until
     /// `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wakes` wakes it; then `UnixConnection.finishAccept` finishes
+    /// `UnixWait.wake` wakes it; then `UnixConnection.finishAccept` finishes
     /// the call.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
@@ -2432,7 +2432,7 @@ module UnixConnection =
     /// `finishAccept`. It waits for ever: `SO_RCVTIMEO`, which bounds such a
     /// wait on Linux (and not on Darwin), is an option `setsockopt` refuses to
     /// set. Of several threads parked on one listener, a connection wakes the one
-    /// that parked first (see `UnixWait.wakes`). The destination is not looked
+    /// that parked first (see `UnixWait.wake`). The destination is not looked
     /// at before the call sleeps.
     ///
     /// Under Darwin, a close of the descriptor a sleeping accept was made
@@ -2607,7 +2607,7 @@ module UnixConnection =
     /// answers `ECONNABORTED`, whatever is queued and whatever signal is
     /// pending, and leaves the queue as it is.
     ///
-    /// `caller` must be parked in an accept.
+    /// `caller` must be parked in an accept, and woken (`UnixWait.wake`).
     let finishAccept<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -2764,7 +2764,7 @@ module UnixConnection =
     /// answers EISCONN (measured, section U, `connect-unreported`).
     ///
     /// A parked read or write on either end may have an answer afterwards;
-    /// `UnixWait.wakes` finds it.
+    /// `UnixWait.wake` finds it.
     let shutdown<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)

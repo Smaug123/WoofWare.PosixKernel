@@ -380,6 +380,8 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
+                let view = Woken.caller (Caller.make pid thread) view
+
                 match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishPoll: %A{refusal}"
@@ -397,13 +399,13 @@ module TestCrossProcess =
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         client |> shouldEqual listener
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        Machines.wakes machine
         |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
@@ -428,7 +430,7 @@ module TestCrossProcess =
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        Machines.wakes machine
         |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
@@ -455,19 +457,6 @@ module TestCrossProcess =
         |> shouldEqual (PollOutcome.Answered ([ pollIn ], 1))
 
     // ------------------------------------------------------ the machine's wakes
-
-    let private woken
-        (asleep : (ProcessId * int) list)
-        (machine : UnixSystem<int, string>)
-        : ((ProcessId * int) * Set<WakePrimitive>) list
-        =
-        let asleep =
-            asleep
-            |> List.groupBy fst
-            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-            |> Map.ofList
-
-        Machines.wakes asleep machine
 
     /// `thread` of `pid` accepts on the blocking listener `listener`, which holds
     /// nothing, and sleeps.
@@ -496,6 +485,8 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
+                let view = Woken.caller (Caller.make pid thread) view
+
                 match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
@@ -513,14 +504,16 @@ module TestCrossProcess =
 
             let machine = sleepInAccept b 1 listener machine
             Machines.assertClean machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
             Machines.assertClean machine
 
             let listenerId = KeventWorld.idOfIn b listener (Machines.viewOf b machine)
 
-            woken [ b, 1 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.AcceptQueueNonEmpty listenerId) ]
 
             match finishAccept b 1 machine with
@@ -570,14 +563,16 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         let epollId = KeventWorld.idOfIn b epoll (Machines.viewOf b machine)
 
-        woken [ b, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.EpollEventDeliverable epollId) ]
 
         let outcome, machine =
@@ -642,12 +637,12 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
-        woken [ b, 1 ] machine |> List.map fst |> shouldEqual [ b, 1 ]
+        let machine = Machines.waking [ b, 1 ] machine
 
         let outcome, machine =
             Machines.inProcess
@@ -689,14 +684,16 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         let kqueueId = KeventWorld.idOfIn b kq (Machines.viewOf b machine)
 
-        woken [ b, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.KqueueEventDeliverable kqueueId) ]
 
         let outcome, machine =
@@ -764,14 +761,16 @@ module TestCrossProcess =
             | other -> failwith $"the second flock: expected to sleep, got %A{other}"
 
             Machines.assertClean machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let outcome, machine = Machines.inProcess a (flock a 1 held lockUn) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
 
             let waitingId = KeventWorld.idOfIn b waiting (Machines.viewOf b machine)
 
-            woken [ b, 1 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> shouldEqual
                 [
                     (b, 1), Set.singleton (WakePrimitive.FlockGrantable (waitingId, FlockMode.Exclusive))
@@ -810,8 +809,7 @@ module TestCrossProcess =
                 |> sleepInAccept a 1 listenerA
                 |> sleepInAccept b 2 listenerB
 
-            let asleep = [ a, 1 ; b, 1 ; b, 2 ]
-            woken asleep machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             // One connection to each, made by the other process's third thread.
             let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8081us) machine
@@ -820,20 +818,11 @@ module TestCrossProcess =
 
             // Park order, not process order; and of b's two accepters on one
             // listener holding one connection, the one that parked first.
-            woken asleep machine |> List.map fst |> shouldEqual [ b, 1 ; a, 1 ]
+            let machine = Machines.waking [ b, 1 ; a, 1 ] machine
 
             // A woken accepter that has not yet finished stands for the
             // connection, so its queue wakes nobody else meanwhile.
-            woken [ a, 1 ; b, 2 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
-
-    [<Test>]
-    let ``the machine's wakes refuse a process it does not hold`` () : unit =
-        let _, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 1
-        let ghost = ProcessId.parseOrFail "test" 77
-
-        let error = Assert.Throws<exn> (fun () -> woken [ ghost, 1 ] machine |> ignore)
-
-        error.Message |> shouldContainText "77"
+            Machines.wakes machine |> shouldEqual []
 
     // ------------------------------------------------------- a process's end
 
@@ -1294,7 +1283,7 @@ module TestCrossProcess =
             |> Set.ofSeq
             |> shouldEqual survivors
 
-            woken [ b, 1 ] machine |> List.map fst |> shouldEqual [ b, 1 ]
+            Machines.waking [ b, 1 ] machine |> ignore<UnixSystem<int, string>>
 
     /// A listener's release resets each client still in its queue
     /// (`tcp-shutdown.c` section Q, docs/plans/2026-10-08-tcp-shutdown-linger),
@@ -1402,7 +1391,7 @@ module TestCrossProcess =
             let _, machine = drain machine
             let machine = sleepInPoll b 2 [ entry watched pollIn ] machine
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let machine = exitedOk a machine
             Machines.assertClean machine
@@ -1414,7 +1403,9 @@ module TestCrossProcess =
                 | WakePrimitive.KqueuePollReportable -> "a poll"
                 | other -> failwith $"unexpected wake %A{other}"
 
-            woken [ b, 1 ; b, 2 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> List.map (fun (thread, fired) -> thread, fired |> Set.map kind)
             |> shouldEqual [ (b, 1), Set.singleton "a read" ; (b, 2), Set.singleton "a poll" ]
 
@@ -1773,12 +1764,14 @@ module TestCrossProcess =
         let _, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
         Machines.checkInvariants machine |> shouldEqual []
 
-        woken [ a, 1 ; b, 1 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
+        let woken = Machines.waking [ a, 1 ] machine
 
         // Either woken and not yet finished stands for the connection, in
         // whichever process, so the other does not wake.
-        woken [ b, 1 ] machine |> shouldEqual []
-        woken [ a, 1 ] machine |> shouldEqual []
+        Machines.wakes woken |> shouldEqual []
+
+        Machines.wakes (ForgedPark.wokenCaller (Caller.make b 1) machine)
+        |> shouldEqual []
 
     [<Test>]
     let ``a file one process has open outlives its unlink by another, until it is closed`` () : unit =
@@ -2004,14 +1997,16 @@ module TestCrossProcess =
                 machine
 
         Machines.assertClean machine
-        woken [ a, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let machine = Machines.doIn b (create b "/d/x") machine
         Machines.assertClean machine
 
         let instance = KeventWorld.idOfIn a fd (Machines.viewOf a machine)
 
-        woken [ a, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (a, 1), Set.singleton (WakePrimitive.InotifyRecordQueued instance) ]
 
         let records, machine =

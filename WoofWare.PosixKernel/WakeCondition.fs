@@ -522,7 +522,7 @@ type SyscallOutcome =
     /// The entry point returned.
     | Answered of SyscallAnswer
     /// The entry point did not return. The calling thread sleeps until
-    /// `UnixWait.wakes` wakes it, and then
+    /// `UnixWait.wake` wakes it, and then
     /// finishes the call; what sleeping means, and when to re-ask, are the client's
     /// scheduler's business, which is why this library has no opinion on either.
     ///

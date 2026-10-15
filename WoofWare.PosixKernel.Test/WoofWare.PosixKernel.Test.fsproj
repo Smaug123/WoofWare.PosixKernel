@@ -23,6 +23,7 @@
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
     <Compile Include="Callers.fs" />
+    <Compile Include="Woken.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />

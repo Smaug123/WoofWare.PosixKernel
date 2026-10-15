@@ -74,7 +74,7 @@ type PollOutcome =
     /// signal with a handler interrupts it.
     | Failed of error : UnixError
     /// `poll` did not return. The calling thread is parked, and sleeps until
-    /// `UnixWait.wakes` wakes it; then
+    /// `UnixWait.wake` wakes it; then
     /// `UnixPoll.finishPoll` finishes the call.
     | WouldBlock of WakeCondition
 
@@ -164,7 +164,7 @@ type EpollWaitOutcome =
     | Answered of events : (uint64 * uint32) list
     /// `epoll_wait` did not return. The calling thread is parked, and sleeps
     /// until `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wakes` wakes it; then `UnixPoll.finishEpollWait` finishes the
+    /// `UnixWait.wake` wakes it; then `UnixPoll.finishEpollWait` finishes the
     /// call.
     | WouldBlock of WakeCondition
 
@@ -1524,7 +1524,7 @@ module UnixPoll =
     /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
     ///
-    /// `caller` must be parked in a `poll`.
+    /// `caller` must be parked in a `poll`, and woken (`UnixWait.wake`).
     let finishPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -1734,7 +1734,7 @@ module UnixPoll =
     /// nothing never looks at the buffer past the screen.
     ///
     /// Of several threads parked on one epoll instance, one event wakes one of them (see
-    /// `UnixWait.wakes`).
+    /// `UnixWait.wake`).
     ///
     /// The caller's thread must not already be parked. Under the Darwin flavour
     /// every call is refused: Darwin has no epoll.
@@ -1848,7 +1848,7 @@ module UnixPoll =
     /// Delivering events copies them out to the buffer the call was made with;
     /// see `epollWait` for the buffers that refuses.
     ///
-    /// `caller` must be parked in an `epoll_wait`.
+    /// `caller` must be parked in an `epoll_wait`, and woken (`UnixWait.wake`).
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Linux-flavoured, and only Linux has epoll.</exception>
     let finishEpollWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

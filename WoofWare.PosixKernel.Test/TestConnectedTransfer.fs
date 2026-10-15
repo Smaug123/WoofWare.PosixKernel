@@ -1864,15 +1864,6 @@ module TestConnectedTransfer =
 
         client, accepted, machine
 
-    let private woken (asleep : (ProcessId * int) list) (machine : UnixSystem<int, string>) : (ProcessId * int) list =
-        let asleep =
-            asleep
-            |> List.groupBy fst
-            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-            |> Map.ofList
-
-        Machines.wakes asleep machine |> List.map fst
-
     /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
     let private sleepOn
@@ -1965,11 +1956,15 @@ module TestConnectedTransfer =
                     machine
 
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let machine = Machines.doIn a (sentAllIn a client 100) machine
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> List.sort |> shouldEqual [ b, 1 ; b, 2 ]
+
+            Machines.wakes machine
+            |> List.map fst
+            |> List.sort
+            |> shouldEqual [ b, 1 ; b, 2 ]
 
     [<Test>]
     let ``a read in one process wakes another asleep for send space on its end`` () : unit =
@@ -1981,7 +1976,7 @@ module TestConnectedTransfer =
             // `b` fills its end, then sleeps for room.
             let machine = Machines.doIn b (fun view -> fillIn b accepted view |> snd) machine
             let machine = sleepOn b 1 accepted 'w' machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             // `a` drains until `b`'s end has room by its flavour's rule.
             let rec drain (reads : int) (machine : UnixSystem<int, string>) =
@@ -1993,9 +1988,9 @@ module TestConnectedTransfer =
 
                     Machines.assertClean machine
 
-                    match woken [ b, 1 ] machine with
+                    match Machines.wakes machine with
                     | [] -> drain (reads - 1) machine
-                    | woke -> woke
+                    | woke -> woke |> List.map fst
 
             drain 2000 machine |> shouldEqual [ b, 1 ]
 

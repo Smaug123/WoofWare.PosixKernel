@@ -136,27 +136,64 @@ module internal Lone =
                 }
         }
 
-    /// `UnixWait.wakes` of the threads of the only process named in `asleep`,
-    /// each answered by its name.
+    /// `UnixWait.wake` of the only process's threads, each woken thread
+    /// answered by its name, and the system with them woken.
+    let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ('Thread * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
+        =
+        only "wake" system |> ignore
+        let woken, system = UnixWait.wake system
+        woken |> List.map (fun (caller, fired) -> Caller.thread caller, fired), system
+
+    /// The threads of the only process that `UnixWait.wake` would wake, each
+    /// answered by its name: `wake`'s answer, for a test that asks only who
+    /// wakes, and finishes no call in the system it was asked of.
     let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : ('Thread * Set<WakePrimitive>) list
         =
-        let pid = only "wakes" system
+        fst (wake system)
 
-        UnixWait.wakes (Set.map (Caller.make pid) asleep) system
-        |> List.map (fun (caller, fired) -> Caller.thread caller, fired)
+    /// `system` after `UnixWait.wake`, which must wake exactly the threads of
+    /// the only process `expected` names, in that order.
+    let waking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (expected : 'Thread list)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let woken, system = wake system
+        let woken = woken |> List.map fst
 
-    /// `UnixWait.deadlines` of the threads of the only process named in
-    /// `asleep`.
+        if woken <> expected then
+            failwith $"Lone.waking: expected UnixWait.wake to wake %A{expected}, but it woke %A{woken}"
+
+        system
+
+    /// `UnixWait.deadlines` of the only process's sleeping threads.
     let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
         : int64 list
         =
-        let pid = only "deadlines" system
-        UnixWait.deadlines (Set.map (Caller.make pid) asleep) system
+        only "deadlines" system |> ignore
+        UnixWait.deadlines system
+
+    /// The only process's threads asleep in a call (`ParkState.Asleep`).
+    let asleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<'Thread>
+        =
+        threads system
+        |> Map.toSeq
+        |> Seq.choose (fun (thread, state) ->
+            match UnixThreadState.park state with
+            | Some {
+                       State = ParkState.Asleep
+                   } -> Some thread
+            | Some _
+            | None -> None
+        )
+        |> Set.ofSeq
 
     /// `system` with the machine's record of the directories processes stand
     /// in saying where the only process stands: for a test that has moved the

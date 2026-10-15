@@ -1187,13 +1187,13 @@ module TestFcntlMeasured =
 
                 UnixSystem.checkInvariants system |> shouldEqual []
 
-                match darwin, Lone.wakes (Set.singleton 1) system with
-                | false, [] -> ()
-                | true, [ 1, _ ] ->
+                match darwin, Lone.wake system with
+                | false, ([], _) -> ()
+                | true, ([ 1, _ ], system) ->
                     match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
                     | Ok (AcceptOutcome.Failed UnixError.ECONNABORTED, _) -> ()
                     | other -> failwith $"the ended accept answered %A{other}"
-                | _, woken -> failwith $"%s{run.Name}, dup kept %b{keepDup}: the accept woke %A{woken}"
+                | _, (woken, _) -> failwith $"%s{run.Name}, dup kept %b{keepDup}: the accept woke %A{woken}"
 
                 // flock
                 let system = FcntlWorld.system run
@@ -1216,7 +1216,7 @@ module TestFcntlMeasured =
 
                 match darwin, UnixDescriptor.tryDup2 (Callers.leader system) source target system with
                 | true, Error (Dup2Refusal.ClosingTarget (CloseRefusal.DarwinFlockedDescriptorWithWaiter (_, 1))) -> ()
-                | false, Ok (SyscallAnswer.Completed _, after) -> Lone.wakes (Set.singleton 1) after |> shouldEqual []
+                | false, Ok (SyscallAnswer.Completed _, after) -> Lone.wakes after |> shouldEqual []
                 | _, other -> failwith $"%s{run.Name}, dup kept %b{keepDup}: dup2 onto the flock answered %A{other}"
 
     /// `system` with `SIGUSR1` caught, without `SA_RESTART`, as the probe had
@@ -1272,7 +1272,7 @@ module TestFcntlMeasured =
                 | other -> failwith $"a write larger than the pipe: %A{other}"
 
             let system = signalled 1 system
-            Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
                 match Lone.UnixReadWrite.tryAdmitFinishWrite 1 system with
@@ -1312,7 +1312,7 @@ module TestFcntlMeasured =
             // Granted after a wait.
             let holder, fd, system = parked (FcntlWorld.system run |> catchingSigUsr1)
             let _, system = flockOf holder 8 system
-            Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
                 match UnixDescriptor.tryFlockAcquire (Callers.thread 1 system) system with
@@ -1329,7 +1329,7 @@ module TestFcntlMeasured =
             // Interrupted.
             let _, fd, system = parked (FcntlWorld.system run |> catchingSigUsr1)
             let system = signalled 1 system
-            Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            let system = Lone.waking [ 1 ] system
 
             let answer, system =
                 match UnixDescriptor.tryFlockAcquire (Callers.thread 1 system) system with
@@ -1371,7 +1371,11 @@ module TestFcntlMeasured =
                     | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
                     | other -> failwith $"%s{run.Name}: draining: %A{other}"
 
-                if not (List.isEmpty (Lone.wakes (Set.singleton 1) system)) then
+                let woken, wokenSystem = Lone.wake system
+
+                if not woken.IsEmpty then
+                    system <- wokenSystem
+
                     match Lone.UnixReadWrite.tryAdmitFinishWrite 1 system with
                     | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
                         match

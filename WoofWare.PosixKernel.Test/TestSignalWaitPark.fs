@@ -125,7 +125,7 @@ module TestSignalWaitPark =
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            Lone.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
+            Lone.deadlines asleep |> shouldEqual [ deadline ]
 
             // Which pending signals a wait may take is not modelled, so asking
             // fails loudly rather than guessing.

@@ -938,7 +938,7 @@ module TestKeventMeasured =
             s.Step (KeventWorld.close k)
 
             s.Step (fun system ->
-                match UnixKqueue.tryFinishKevent (Callers.thread 2 system) system with
+                match UnixKqueue.tryFinishKevent (Callers.thread 2 system) (Woken.thread 2 system) with
                 | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
                 | other -> failwith $"expected the sleeper to fail with EBADF, got %A{other}"
             )
