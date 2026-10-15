@@ -132,23 +132,6 @@ module internal Machines =
         woken |> List.map fst |> shouldEqual expected
         system
 
-    /// `wake`, answered from `memo` when it can tell that `system` wakes
-    /// no thread, the memo for the next call, and the system with the threads
-    /// woken (`UnixWait.wakeRemembering`).
-    let wakeRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (memo : WakeSweepMemo<'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list *
-          WakeSweepMemo<'Thread, 'Handler> *
-          UnixSystem<'Thread, 'Handler>
-        =
-        let woken, memo, system = UnixWait.wakeRemembering memo system
-
-        woken
-        |> List.map (fun (caller, fired) -> (Caller.processId caller, Caller.thread caller), fired),
-        memo,
-        system
-
     /// Which threads of each process are asleep in a call (`ParkState.Asleep`),
     /// and which have been woken and are yet to finish theirs.
     let parkStates<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

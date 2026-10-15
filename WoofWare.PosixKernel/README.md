@@ -652,6 +652,12 @@ A park records whether its thread has been woken (`ThreadPark.State`, `ParkState
 A woken thread is not woken again, and where a kernel wakes one waiter of a queue at a time, as for an epoll instance, a listener or a Linux pipe, a woken thread that has not finished its call stands for whatever woke it, so no other waiter on that queue wakes meanwhile.
 `UnixWait.satisfied` asks of one thread whether its call could get any further, and changes nothing: it is cheaper, but does not decide which of several waiters on one queue wakes, which only `wake` chooses.
 
+A client that asks `wake` after every step, as one that interleaves instructions does, mostly asks of a system in which nothing has changed, so that is made cheap.
+A system remembers the last sweep of it that woke nobody, and `wake` answers from that, asking no wake condition and answering the very system it was given, while nothing a condition reads has changed since but the clock, which has not reached any sleeping thread's deadline.
+Advancing the clock, a call that changes nothing, and dispatching a thread to the processor it is on leave the memo answering; a call that changes the system, and a dispatch that moves a thread to another processor, make the next `wake` sweep.
+A sweep that wakes nobody answers a new system, equal to the one it was given, which remembers the sweep: so the client keeps the system `wake` answers, as it keeps every other.
+What a system remembers is no part of its value, and two systems that differ only in that are equal.
+
 A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, asleep, for a new wake, or say the call restarts because a signal handler interrupted it:
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
@@ -939,9 +945,6 @@ A call asleep in one process wakes for what another process's call does: a conne
 `UnixWait.wake` wakes the sleeping threads of every process at once.
 Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order; a woken thread that has not finished its call holds such a queue, in whichever process.
 A woken call is finished by its own thread's finishing call.
-A client that asks after every step, as one that interleaves instructions does, can ask `UnixWait.wakeRemembering memo` instead, starting from `WakeSweepMemo.empty` and passing each call the memo the last one answered.
-It answers what `wake` answers, and the system `wake` answers, and asks no wake condition when the last sweep woke nobody and nothing a condition reads has changed since but the clock, which has not reached any sleeping thread's deadline.
-Advancing the clock, a call that changes nothing, and dispatching a thread to the processor it is on leave the memo answering; a call that changes the system, and a dispatch that moves a thread to another processor, make the next call sweep.
 A kqueue registration, and a filter a sleeping Darwin `poll` registered, is attached to the socket its descriptor named, as XNU attaches a knote to the socket, so an event on the socket reaches it whichever process caused the event; a sleeping Darwin poll's kqueue (`PollQueue`) is the machine's for as long as the call sleeps.
 A client reads that kqueue through `UnixSystem.pollQueue`, then `PollQueue.registered`, `PollQueue.entry` and `PollQueue.activated`.
 A kqueue's own registrations, and what each is attached to, are not public (`KqueueState`'s representation is internal), so a later version can attach a registration to a pipe or a timer without a change of shape.
