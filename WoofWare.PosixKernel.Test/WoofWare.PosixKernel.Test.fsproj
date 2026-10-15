@@ -52,6 +52,7 @@
     <Compile Include="EndedMachine.fs" />
     <Compile Include="ForgedPark.fs" />
     <Compile Include="Machines.fs" />
+    <Compile Include="ReferenceWake.fs" />
     <Compile Include="ForgedConnection.fs" />
     <Compile Include="FcntlWorld.fs" />
     <Compile Include="PendingSignal.fs" />

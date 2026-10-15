@@ -2430,6 +2430,103 @@ module TestMultiProcessFuzz =
         coverage.Count MemoLabel.DeadlineWakeAfterSkip |> shouldBeGreaterThan 11
         coverage.Count MemoLabel.SyscallWakeAfterSkip |> shouldBeGreaterThan 59
 
+    /// What the library's sweep met at a step, each counted every time a step
+    /// reaches it.
+    [<RequireQualifiedAccess>]
+    type private SweepLabel =
+        /// The sweep woke a thread.
+        | Woke
+        /// A thread was woken and had not yet finished its call.
+        | WokenUnfinished
+        /// A sleeping thread's condition held on an exclusive queue that a
+        /// woken, unfinished thread's call waits on, and the sweep did not
+        /// wake it.
+        | HeldByWoken
+
+    /// Every thread of `machine`'s processes that is parked in a call.
+    let private parkedThreads (machine : UnixSystem<int, string>) : Set<ProcessId * int> =
+        machine.Processes
+        |> Seq.collect (fun (KeyValue (key, slot)) ->
+            let pid = ProcessId.parseOrFail "parkedThreads" key
+
+            slot.Threads
+            |> Map.toSeq
+            |> Seq.choose (fun (thread, state) ->
+                match UnixThreadState.parkedIn state with
+                | Some _ -> Some (pid, thread)
+                | None -> None
+            )
+        )
+        |> Set.ofSeq
+
+    /// The library's sweep is the reference's (`ReferenceWake`), given every
+    /// thread the client holds asleep: at each step of the first property's
+    /// interleavings, where the client's own bookkeeping names every parked
+    /// thread as asleep or as woken and not yet finished.
+    [<Test>]
+    let ``the sweep answers what the reference sweep answers, at every step of random interleavings`` () : unit =
+        let property (cover : SweepLabel -> unit) (case : Case) : unit =
+            let observe (_ : Step) (world : World) : unit =
+                let machine = world.Machine
+                let woken = Set.ofList world.Woken
+
+                Set.intersect world.Asleep woken |> shouldEqual Set.empty
+                Set.union world.Asleep woken |> shouldEqual (parkedThreads machine)
+
+                let asleep = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
+
+                let reference = ReferenceWake.wakes asleep machine
+                UnixWait.wakes asleep machine |> shouldEqual reference
+
+                UnixWait.deadlines asleep machine
+                |> shouldEqual (ReferenceWake.deadlines asleep machine)
+
+                if not reference.IsEmpty then
+                    cover SweepLabel.Woke
+
+                if not woken.IsEmpty then
+                    cover SweepLabel.WokenUnfinished
+
+                // The exclusive queues the woken threads' calls wait on.
+                let held =
+                    woken
+                    |> Seq.collect (fun (pid, thread) ->
+                        match UnixThreadTable.parkOf thread (Proc.threads pid machine) with
+                        | Some park -> UnixWait.exclusiveQueuesOfPark machine.Machine park.Syscall
+                        | None -> []
+                    )
+                    |> Set.ofSeq
+
+                let answered = reference |> List.map fst |> Set.ofList
+
+                let heldBack =
+                    asleep
+                    |> Set.exists (fun caller ->
+                        not (Set.contains caller answered)
+                        && match UnixWait.satisfied caller machine with
+                           | Some fired ->
+                               fired
+                               |> Set.exists (fun primitive ->
+                                   match UnixWait.exclusiveQueueOf machine.Machine primitive with
+                                   | Some queue -> Set.contains queue held
+                                   | None -> false
+                               )
+                           | None -> false
+                    )
+
+                if heldBack then
+                    cover SweepLabel.HeldByWoken
+
+            runObserving smallBuffers observe ignore ignore case
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen caseGen) property
+
+        // A third of what the fixed sample reached when these were added.
+        coverage.Count SweepLabel.Woke |> shouldBeGreaterThan 1550
+        coverage.Count SweepLabel.WokenUnfinished |> shouldBeGreaterThan 160
+        coverage.Count SweepLabel.HeldByWoken |> shouldBeGreaterThan 7
+
     /// How many cases of `caseGen`'s fixed sample the oracle replays: every one
     /// the first property counts its coverage over.
     let private oracleCases : int = 1500
