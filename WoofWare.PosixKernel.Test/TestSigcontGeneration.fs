@@ -118,7 +118,8 @@ module TestSigcontGeneration =
     let rec private returns (thread : int) : Step =
         fun r ->
             match UnixSignal.tryOnReturnToUser (Callers.thread thread r.System) r.System with
-            | Error refusal -> Error (Stop.Receiver refusal)
+            | Error (ReturnToUserRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
+            | Error other -> Error (Stop.Other $"onReturnToUser: %A{other}")
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
                 returns thread (withSystem system r)

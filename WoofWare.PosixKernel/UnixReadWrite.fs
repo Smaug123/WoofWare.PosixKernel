@@ -337,6 +337,10 @@ type internal WriteRefusal =
     /// from inside its own PID namespace, every signal it has not installed a
     /// handler for, and this library does not model that.
     | InitProcess of target : BrokenWriteTarget
+    /// A write into a pipe with no reader, or a Linux stream socket with no
+    /// peer, which raises `SIGPIPE` at its default, which ends the process,
+    /// and the process's end is refused.
+    | ProcessEnd of target : BrokenWriteTarget * refusal : ProcessEndRefusal
     /// A write of `count` bytes to `/dev/urandom`, more than a page, by a thread
     /// with a signal pending that it would take on its return to user mode.
     | SignalAtPageBoundary of count : int
@@ -382,6 +386,8 @@ module internal WriteRefusal =
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE; but the process is process ID 1, and what an init process does with a signal it has no handler for is not modelled."
         | WriteRefusal.SignalReceiver (target, refusal) ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write answers EPIPE and raises SIGPIPE; but which thread would take that signal is not modelled: %s{SignalReceiverRefusal.describe refusal}"
+        | WriteRefusal.ProcessEnd (target, refusal) ->
+            $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE, whose default ends the process; %s{ProcessEndRefusal.describe refusal}"
         | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
         | WriteRefusal.SignalAtPageBoundary count -> describeSignalAtPageBoundary count
 
@@ -400,6 +406,7 @@ module internal WriteRefusal =
         | WriteRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | WriteRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | WriteRefusal.InitProcess _ -> RefusalKind.Unmodelled
+        | WriteRefusal.ProcessEnd (_, inner) -> ProcessEndRefusal.kind inner
         | WriteRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `recv(2)`.
@@ -472,6 +479,8 @@ type internal SendRefusal =
     | SignalReceiver of target : BrokenWriteTarget * refusal : SignalReceiverRefusal
     /// As `WriteRefusal.InitProcess`, for a `send` without `MSG_NOSIGNAL`.
     | InitProcess of target : BrokenWriteTarget
+    /// As `WriteRefusal.ProcessEnd`, for a `send` without `MSG_NOSIGNAL`.
+    | ProcessEnd of target : BrokenWriteTarget * refusal : ProcessEndRefusal
 
 [<RequireQualifiedAccess>]
 module internal SendRefusal =
@@ -492,6 +501,7 @@ module internal SendRefusal =
         | SendRefusal.SignalReceiver (target, refusal) ->
             WriteRefusal.describe (WriteRefusal.SignalReceiver (target, refusal))
         | SendRefusal.InitProcess target -> WriteRefusal.describe (WriteRefusal.InitProcess target)
+        | SendRefusal.ProcessEnd (target, refusal) -> WriteRefusal.describe (WriteRefusal.ProcessEnd (target, refusal))
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SendRefusal) : RefusalKind =
@@ -503,6 +513,7 @@ module internal SendRefusal =
         | SendRefusal.ConnectionFault _ -> RefusalKind.Unmodelled
         | SendRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | SendRefusal.InitProcess _ -> RefusalKind.Unmodelled
+        | SendRefusal.ProcessEnd (_, inner) -> ProcessEndRefusal.kind inner
 
 /// What a `write(2)` or `send(2)` did, if it did not end the process (see
 /// `ProcessFate`).
@@ -541,28 +552,32 @@ type WriteOutcome<'Thread> =
 /// `'System` what the process carries on as: the `ProcessView` a step works
 /// on.
 [<RequireQualifiedAccess>]
-type internal WriteStep<'Answer, 'System, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+type internal WriteStep<'Answer, 'System, 'Thread> =
     | Returns of answer : 'Answer * system : 'System
     | ReturnsRaising of answer : 'Answer * signal : PendingSignal<'Thread> * system : 'System
-    | ProcessEnded of EndedProcess<'Thread, 'Handler>
+    /// The process has ended, and `system` is what is left of it: as
+    /// `ViewFate.ProcessEnded`.
+    | ProcessEnded of ended : EndedProcess * system : 'System
     | WouldBlock of condition : WakeCondition * system : 'System
     | Restarts of system : 'System
 
 [<RequireQualifiedAccess>]
 module internal WriteStep =
-    /// `step` with `put` applied to what the process carries on as, if it
-    /// carries on.
-    let map<'Answer, 'View, 'Kernel, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (put : 'View -> 'Kernel)
-        (step : WriteStep<'Answer, 'View, 'Thread, 'Handler>)
-        : WriteStep<'Answer, 'Kernel, 'Thread, 'Handler>
+    /// `step` with a kernel made of its system by `unfocus`: `unfocus.Back` of
+    /// what the process carries on as, if it carries on, and `unfocus.Without`
+    /// of what is left of it, if it ended.
+    let map<'Answer, 'View, 'Kernel, 'Thread>
+        (unfocus : Unfocus<'View, 'Kernel>)
+        (step : WriteStep<'Answer, 'View, 'Thread>)
+        : WriteStep<'Answer, 'Kernel, 'Thread>
         =
         match step with
-        | WriteStep.Returns (answer, view) -> WriteStep.Returns (answer, put view)
-        | WriteStep.ReturnsRaising (answer, signal, view) -> WriteStep.ReturnsRaising (answer, signal, put view)
-        | WriteStep.ProcessEnded ended -> WriteStep.ProcessEnded ended
-        | WriteStep.WouldBlock (condition, view) -> WriteStep.WouldBlock (condition, put view)
-        | WriteStep.Restarts view -> WriteStep.Restarts (put view)
+        | WriteStep.Returns (answer, view) -> WriteStep.Returns (answer, unfocus.Back view)
+        | WriteStep.ReturnsRaising (answer, signal, view) ->
+            WriteStep.ReturnsRaising (answer, signal, unfocus.Back view)
+        | WriteStep.ProcessEnded (ended, view) -> WriteStep.ProcessEnded (ended, unfocus.Without view)
+        | WriteStep.WouldBlock (condition, view) -> WriteStep.WouldBlock (condition, unfocus.Back view)
+        | WriteStep.Restarts view -> WriteStep.Restarts (unfocus.Back view)
 
 /// Whether a `pwrite` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitPWrite` answers it, as `WriteAdmission` is for
@@ -1054,8 +1069,8 @@ module UnixReadWrite =
     let private markedAfterWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : OpenFileDescriptionId)
         (moved : 'Answer -> bool)
-        (outcome : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>)
-        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        (outcome : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>)
+        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         match outcome with
         | WriteStep.Returns (answer, system) when moved answer -> WriteStep.Returns (answer, markWritten id system)
@@ -1073,8 +1088,8 @@ module UnixReadWrite =
     let internal markedThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (system : ProcessView<'Thread, 'Handler>)
-        (outcome : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        (outcome : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>)
+        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors system) with
         | Some id -> markedAfterWrite id (returnsHavingMoved 0) outcome
@@ -1262,7 +1277,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (target : BrokenWriteTarget)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         // Measured (pipe-sigpipe.c), a worker thread's write into a pipe:
         // Linux's handler ran on the writing thread, before its write
@@ -1288,10 +1303,11 @@ module UnixReadWrite =
 
         match ProcessSignal.generate entry system with
         | Error refusal -> Error (WriteRefusal.SignalReceiver (target, refusal))
-        | Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system)) ->
+        | Ok (Error refusal) -> Error (WriteRefusal.ProcessEnd (target, refusal))
+        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system))) ->
             Ok (WriteStep.ReturnsRaising (answer, entry, system))
-        | Ok (ViewFate.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
-        | Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
+        | Ok (Ok (ViewFate.ProcessEnded (ended, dead))) -> Ok (WriteStep.ProcessEnded (ended, dead))
+        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _))) ->
             failwith
                 $"UnixReadWrite: generating %O{signal} for a write into %s{BrokenWriteTarget.describe target} stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
 
@@ -1306,7 +1322,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (target : BrokenWriteTarget)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         match call with
         | TcpSendCall.Send true -> Ok (WriteStep.Returns (answer, system))
@@ -1322,7 +1338,7 @@ module UnixReadWrite =
         (socketId : SocketId)
         (count : uint64)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -3054,7 +3070,7 @@ module UnixReadWrite =
         (count : int)
         (written : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         let reads =
             match OpenFileTable.tryFind writer system.Machine.OpenFiles with
@@ -3103,7 +3119,7 @@ module UnixReadWrite =
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
         (system : ProcessView<'Thread, 'Handler>)
-        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         let parked =
             ParkedSyscall.ConnectionWrite
@@ -3193,7 +3209,7 @@ module UnixReadWrite =
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
         (system : ProcessView<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         if returnsOnOwnReset connectionId connectionEnd system then
             WriteStep.Returns (WriteAnswer.Completed (int64 taken), system)
@@ -3217,7 +3233,7 @@ module UnixReadWrite =
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let withTransfer (transfer : TcpTransfer) : ProcessView<'Thread, 'Handler> =
             { system with
@@ -3279,7 +3295,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -3418,7 +3434,7 @@ module UnixReadWrite =
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let returns (system : ProcessView<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system))
@@ -3541,7 +3557,7 @@ module UnixReadWrite =
         (into : WriteIntoThenSleep)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         match into with
         | WriteIntoThenSleep.Pipe (pipeId, writer, fd) ->
@@ -3569,8 +3585,8 @@ module UnixReadWrite =
     let private releasedAfterWrite<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (held : OpenFileDescriptionId list)
-        (outcome : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>)
-        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>
+        (outcome : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>)
+        : WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>
         =
         let release (system : ProcessView<'Thread, 'Handler>) =
             ObjectLifetime.releaseUnreferencedUnrefusable caller held system
@@ -3580,7 +3596,8 @@ module UnixReadWrite =
         | WriteStep.ReturnsRaising (answer, signal, system) -> WriteStep.ReturnsRaising (answer, signal, release system)
         | WriteStep.WouldBlock (condition, system) -> WriteStep.WouldBlock (condition, release system)
         | WriteStep.Restarts system -> WriteStep.Restarts (release system)
-        | WriteStep.ProcessEnded ended -> WriteStep.ProcessEnded ended
+        // The process's end released everything nothing references any more.
+        | WriteStep.ProcessEnded _ -> outcome
 
     /// The description the write `thread` is asleep in was made through, and
     /// how many bytes it has moved so far; `None` once a close has ended it,
@@ -3657,7 +3674,7 @@ module UnixReadWrite =
         (givesUp : bool)
         (answered : WriteAnswer -> 'Answer)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         match SyscallInterruption.interrupts thread system with
         | Error refusal -> Error (WriteRefusal.Interruption refusal)
@@ -3672,7 +3689,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (parked : ParkedConnectionWrite)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let answered (answer : WriteAnswer) (system : ProcessView<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteResumption.Answered answer, system))
@@ -3851,7 +3868,7 @@ module UnixReadWrite =
         (parked : ParkedConnectionWrite)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
         let system = intoConnection connectionId connectionEnd bytes transfer system
@@ -3885,7 +3902,7 @@ module UnixReadWrite =
     let private admitFinishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         match UnixThreadTable.parkedFor thread system.Threads with
         | Some (ParkedSyscall.ConnectionWrite parked) -> admitFinishConnectionWrite thread parked system
@@ -4015,7 +4032,7 @@ module UnixReadWrite =
     let internal tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteResumption, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
@@ -4048,7 +4065,7 @@ module UnixReadWrite =
         (parked : ParkedPipeWrite)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
@@ -4091,7 +4108,7 @@ module UnixReadWrite =
         (into : WriteResumed)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         // What the call holds while it sleeps, which it lets go of as it
         // returns, and the description a `write` marks written if it returns
@@ -4130,6 +4147,7 @@ module UnixReadWrite =
         | WriteRefusal.ConnectionFault socket -> SendRefusal.ConnectionFault socket
         | WriteRefusal.SignalReceiver (target, refusal) -> SendRefusal.SignalReceiver (target, refusal)
         | WriteRefusal.InitProcess target -> SendRefusal.InitProcess target
+        | WriteRefusal.ProcessEnd (target, refusal) -> SendRefusal.ProcessEnd (target, refusal)
         | WriteRefusal.UnmodelledSocketPhase _
         | WriteRefusal.ConnectionBecameNonBlocking _
         | WriteRefusal.SendBuffer _
@@ -4148,7 +4166,7 @@ module UnixReadWrite =
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         tryApplyWrite into bytes system |> Result.mapError sendRefusalOf
 
@@ -4196,7 +4214,7 @@ module UnixReadWrite =
         (count : uint64)
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAdmission, ProcessView<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -4491,14 +4509,14 @@ module UnixReadWrite =
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (step : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>)
-        : ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>
+        (step : WriteStep<WriteAnswer, ProcessView<'Thread, 'Handler>, 'Thread>)
+        : ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
         =
         match step with
         | WriteStep.Returns (answer, system) -> ViewFate.Continues (WriteOutcome.Returns answer, system)
         | WriteStep.ReturnsRaising (answer, signal, system) ->
             ViewFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), system)
-        | WriteStep.ProcessEnded ended -> ViewFate.ProcessEnded ended
+        | WriteStep.ProcessEnded (ended, dead) -> ViewFate.ProcessEnded (ended, dead)
         | WriteStep.WouldBlock (condition, system) -> ViewFate.Continues (WriteOutcome.WouldBlock condition, system)
         | WriteStep.Restarts system -> ViewFate.Continues (WriteOutcome.Restarts, system)
 
@@ -4509,8 +4527,8 @@ module UnixReadWrite =
     let private progressOf<'Admission, 'Paused, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
         (decide : 'Admission -> Choice<WriteAnswer, ProcessView<'Thread, 'Handler> -> 'Paused>)
-        (step : WriteStep<'Admission, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>)
-        : CallProgress<'Paused, ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+        (step : WriteStep<'Admission, ProcessView<'Thread, 'Handler>, 'Thread>)
+        : CallProgress<'Paused, ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>>
         =
         match step with
         | WriteStep.Returns (admission, system) ->
@@ -4524,7 +4542,7 @@ module UnixReadWrite =
             | Choice2Of2 _ ->
                 failwith
                     $"%s{caller}: the call raised %O{signal} and still reached the copy (%A{admission}), which no write does (this is a bug in this library)."
-        | WriteStep.ProcessEnded ended -> CallProgress.Answered (ViewFate.ProcessEnded ended)
+        | WriteStep.ProcessEnded (ended, dead) -> CallProgress.Answered (ViewFate.ProcessEnded (ended, dead))
         | WriteStep.WouldBlock (condition, system) ->
             CallProgress.Answered (ViewFate.Continues (WriteOutcome.WouldBlock condition, system))
         | WriteStep.Restarts system -> CallProgress.Answered (ViewFate.Continues (WriteOutcome.Restarts, system))
@@ -4537,7 +4555,10 @@ module UnixReadWrite =
         (count : uint64)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              CallProgress<
+                  PausedWrite<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
               WriteRefusal
            >
         =
@@ -4653,7 +4674,10 @@ module UnixReadWrite =
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              CallProgress<
+                  PausedWrite<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
               WriteRefusal
            >
         =
@@ -4769,7 +4793,7 @@ module UnixReadWrite =
     let private tryWriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedWrite<'Thread, 'Handler>)
-        : Result<ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, WriteRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.writeWithBytes" "UnixReadWrite.write or finishWrite" paused
         CopyRange.require "UnixReadWrite.writeWithBytes" paused.Range bytes
@@ -4842,7 +4866,10 @@ module UnixReadWrite =
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedSend<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
+              CallProgress<
+                  PausedSend<'Thread, 'Handler>,
+                  ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>
+               >,
               SendRefusal
            >
         =
@@ -4939,7 +4966,7 @@ module UnixReadWrite =
     let private trySendWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedSend<'Thread, 'Handler>)
-        : Result<ViewFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
+        : Result<ViewFate<WriteOutcome<'Thread>, ProcessView<'Thread, 'Handler>>, SendRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.sendWithBytes" "UnixReadWrite.send" paused
         CopyRange.require "UnixReadWrite.sendWithBytes" paused.Range bytes

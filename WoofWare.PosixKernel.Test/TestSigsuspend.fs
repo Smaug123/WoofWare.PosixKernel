@@ -199,7 +199,7 @@ module TestSigsuspend =
                 | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
                     runFrames frames system ran
                     |> Result.bind (fun (system, ran) -> continuation system ran)
-                | Ok (ProcessFate.ProcessEnded ended) ->
+                | Ok (ProcessFate.ProcessEnded (ended, _)) ->
                     match EndedProcess.termination ended with
                     | ProcessTermination.Signaled (signal, _) -> Error (Stop.Killed (signal, r))
                     | other -> failwith $"the main thread's return ended the process with %O{other}"
@@ -315,8 +315,8 @@ module TestSigsuspend =
                     { r with
                         System = system
                     }
-            | Ok (ProcessFate.ProcessEnded ended) ->
-                match ended.Termination with
+            | Ok (ProcessFate.ProcessEnded (ended, _)) ->
+                match EndedProcess.termination ended with
                 | ProcessTermination.Signaled (signal, _) -> Error (Stop.Killed (signal, r))
                 | other -> failwith $"the process ended by %O{other}"
 
@@ -507,7 +507,8 @@ module TestSigsuspend =
                 }
                 r.System
         with
-        | Ok fate -> Ok fate
+        | Ok (Ok fate) -> Ok fate
+        | Ok (Error refusal) -> failwith $"the process's end was refused: %s{ProcessEndRefusal.describe refusal}"
         | Error refusal -> failwith $"the parent's kill was refused: %A{refusal}"
 
     /// The probe's `stopcont`: the parent stops the child and continues it,
@@ -1393,12 +1394,21 @@ module TestSigsuspend =
 
             refused.Message |> shouldContainText $"thread %d{helper} is parked in"
 
-            let ended = UnixThreadLifecycle.exitGroup (Callers.thread main asleep) 0 asleep
+            // What is left of the process as it ends, before the kernel lets go
+            // of it.
+            let dead =
+                match
+                    UnixThreadLifecycle.tryEndProcess
+                        (ProcessTermination.Exited (ExitStatus.ofExitArgument flavour 0))
+                        (Lone.view asleep)
+                with
+                | Ok (_, dead) -> dead
+                | Error refusal -> failwith $"the process's end: %s{ProcessEndRefusal.describe refusal}"
 
-            SignalState.threadsWithMasksToRestore ended.FinalProcess.Signals
+            SignalState.threadsWithMasksToRestore dead.Process.Signals
             |> shouldEqual Set.empty
 
-            SignalState.threadsWithMasks ended.FinalProcess.Signals |> shouldEqual Set.empty
+            SignalState.threadsWithMasks dead.Process.Signals |> shouldEqual Set.empty
 
             // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.

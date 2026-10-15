@@ -61,6 +61,15 @@ module internal Proc =
         =
         ProcessView.unfocus view
 
+    /// `unview` of a view whose process carries on, and the system without
+    /// the process of one whose process has ended, as `Shape.map` takes them.
+    let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Unfocus<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>> =
+        {
+            Back = unview
+            Without = ProcessView.unfocusWithout
+        }
+
     /// `f` in the view of `pid`, and the system its view is a view of.
     let inView<'Thread, 'Handler, 'Result when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)

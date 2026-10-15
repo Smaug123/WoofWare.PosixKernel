@@ -564,7 +564,7 @@ module TestCallerChecks =
                 "UnixThreadLifecycle.exitGroup"
                 (fun caller system ->
                     UnixThreadLifecycle.exitGroup caller 0 system
-                    |> ignore<EndedProcess<int, string>>
+                    |> ignore<EndedProcess * UnixSystem<int, string>>
                 )
             anyThread
                 "UnixScheduling.dispatch"

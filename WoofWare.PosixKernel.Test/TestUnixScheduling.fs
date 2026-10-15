@@ -253,11 +253,6 @@ module TestUnixScheduling =
                 @ world.Events
         }
 
-    let private endOn (ended : EndedProcess<int, string>) (machine : UnixSystem<int, string>) =
-        match Machines.tryEndProcess ended machine with
-        | Ok (_, machine) -> machine
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
-
     let private beyondCpus (count : int) : int list =
         [ -1 ; count ; count + 1 ; Int32.MinValue ; Int32.MaxValue ]
 
@@ -484,9 +479,9 @@ module TestUnixScheduling =
                         Live = world.Live |> List.filter (fun live -> live.Serial <> thread.Serial)
                         Events = Event.Exited thread.Serial :: world.Events
                     }
-                | Ok (ProcessFate.ProcessEnded e) ->
+                | Ok (ProcessFate.ProcessEnded (_, machine)) ->
                     { world with
-                        Machine = endOn e world.Machine
+                        Machine = machine
                     }
                     |> ended thread.Pid
                 | Error refusal -> failwith $"exitThread: %s{ThreadExitRefusal.describe refusal}"
@@ -494,10 +489,11 @@ module TestUnixScheduling =
             match pick proc (processes world) with
             | None -> world
             | Some pid ->
-                let e = UnixThreadLifecycle.exitGroup (Caller.make pid 0) 0 (viewOf pid world)
+                let _, machine =
+                    UnixThreadLifecycle.exitGroup (Caller.make pid 0) 0 (viewOf pid world)
 
                 { world with
-                    Machine = endOn e world.Machine
+                    Machine = machine
                 }
                 |> ended pid
 

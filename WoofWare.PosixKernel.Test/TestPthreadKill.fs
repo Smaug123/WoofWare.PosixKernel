@@ -211,11 +211,11 @@ module TestPthreadKill =
                     stoppedBy |> shouldEqual signal
                     (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
-                | ProcessFate.ProcessEnded ended, SignalGeneration.ProcessTerminated (signal, coreDumped) ->
-                    ended.Termination
+                | ProcessFate.ProcessEnded (ended, after), SignalGeneration.ProcessTerminated (signal, coreDumped) ->
+                    EndedProcess.termination ended
                     |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                    EndedMachine.assertThreadsGone system ended
+                    EndedMachine.assertAsExit (Callers.leader system) system after
                 | _ ->
                     failwith
                         $"pthread_kill(%d{target}, %d{signo}) under %O{flavour} answered %O{outcome}, but generating it is %O{expected}"
@@ -522,9 +522,11 @@ module TestPthreadKill =
         let system = systemOn SimulatedUnixFlavour.Darwin |> pendingOnProcess Signal.SIGTERM
 
         match UnixSignal.tryPthreadKill (Callers.leader system) leader 15 system with
-        | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
-            ended.Termination
+        | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+            EndedProcess.termination ended
             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGTERM, false))
+
+            EndedMachine.assertAsExit (Callers.leader system) system after
         | other -> failwith $"raise SIGTERM: %O{other}"
 
     [<Test>]

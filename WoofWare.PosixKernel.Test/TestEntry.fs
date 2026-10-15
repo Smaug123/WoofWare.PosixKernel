@@ -95,9 +95,27 @@ module TestEntry =
         | Some view -> left = ProcessView.unfocus view
         | None -> false
 
-    /// The process `view` is the view of, ended.
-    let private ended (view : ProcessView<int, string>) : EndedProcess<int, string> =
-        UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) view
+    /// The process `view` is the view of, ended: how, and the view of it with
+    /// no thread or descriptor left.
+    let private ended (view : ProcessView<int, string>) : EndedProcess * ProcessView<int, string> =
+        match UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) view with
+        | Ok ended -> ended
+        | Error refusal -> failwith $"ending the process: %s{ProcessEndRefusal.describe refusal}"
+
+    /// Whether `left` is the kernel `answered`, the view a body answered as
+    /// its process ended, leaves without that process.
+    let private leftWithout
+        (answered : (EndedProcess * ProcessView<int, string>) option ref)
+        (ended : EndedProcess)
+        (left : UnixSystem<int, string>)
+        : bool
+        =
+        match answered.Value with
+        | Some (answeredEnded, dead) ->
+            same answeredEnded ended
+            && left = ProcessView.unfocusWithout dead
+            && not (Set.contains (EndedProcess.processId ended) (UnixSystem.processIds left))
+        | None -> false
 
     let private ways : Way list =
         [
@@ -263,7 +281,7 @@ module TestEntry =
                                 system
                         with
                         | ProcessFate.Continues ((_ : obj), _) -> false
-                        | ProcessFate.ProcessEnded ended -> same answered.Value.Value ended
+                        | ProcessFate.ProcessEnded (ended, left) -> leftWithout answered ended left
             }
             {
                 Name = "ended"
@@ -282,7 +300,7 @@ module TestEntry =
                                 answered.Value.Value
                             )
                             system
-                        |> same answered.Value.Value
+                        |> fun (ended, left) -> leftWithout answered ended left
             }
             {
                 Name = "progress withSystem, Answered"
@@ -466,7 +484,7 @@ module TestEntry =
 
                     "result fate, ProcessEnded",
                     (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.ProcessEnded ended)) with
-                     | Ok (ProcessFate.ProcessEnded answered) -> same ended answered
+                     | Ok (ProcessFate.ProcessEnded (answered, left)) -> leftWithout (ref (Some ended)) answered left
                      | Ok (ProcessFate.Continues ((_ : obj), _))
                      | Error (_ : obj) -> false)
                 ]

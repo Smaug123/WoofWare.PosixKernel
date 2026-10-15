@@ -68,31 +68,9 @@ module TestUnixThreadLifecycle =
     let private exitOrFail (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixThreadLifecycle.tryExitThread (Callers.thread thread system) 0 system with
         | Ok (ProcessFate.Continues ((), system)) -> system
-        | Ok (ProcessFate.ProcessEnded ended) ->
-            failwith $"expected the process to carry on, but it ended: %O{ended.Termination}"
+        | Ok (ProcessFate.ProcessEnded (ended, _)) ->
+            failwith $"expected the process to carry on, but it ended: %O{EndedProcess.termination ended}"
         | Error refusal -> failwith $"expected the exit to be answered, got: %s{ThreadExitRefusal.describe refusal}"
-
-    /// The per-thread entries the process holds, each of which must name a live thread.
-    let private perThreadEntries (proc : UnixProcessState<int, string>) : string list =
-        let frames =
-            SignalState.threadsWithFrames proc.Signals
-            |> Set.toList
-            |> List.map (fun t -> $"frames of %d{t}")
-
-        let masks =
-            SignalState.threadsWithMasks proc.Signals
-            |> Set.toList
-            |> List.map (fun t -> $"mask of %d{t}")
-
-        let pending =
-            SignalState.pending proc.Signals
-            |> List.choose (fun entry ->
-                match entry.Target with
-                | ValueSome t -> Some $"%O{entry.Signal} pending on %d{t}"
-                | ValueNone -> None
-            )
-
-        frames @ masks @ pending
 
     [<Test>]
     let ``a thread's own pending signals are discarded at its exit, and the process's stay`` () : unit =
@@ -204,19 +182,15 @@ module TestUnixThreadLifecycle =
 
             for status, kept in [ 0, 0 ; 5, 5 ; 256, 0 ; 263, 7 ; -1, 255 ; System.Int32.MinValue, 0 ] do
                 match UnixThreadLifecycle.tryExitThread (Callers.thread 0 system) status system with
-                | Ok (ProcessFate.ProcessEnded ended) ->
-                    match ended.Termination with
+                | Ok (ProcessFate.ProcessEnded (ended, after)) ->
+                    match EndedProcess.termination ended with
                     | ProcessTermination.Exited exitStatus ->
                         (status, ExitStatus.waitidStatus exitStatus) |> shouldEqual (status, kept)
-                    | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
+                    | other -> failwith $"expected an exit, got %O{other}"
 
-                    EndedMachine.assertThreadsGone system ended
-                    perThreadEntries ended.FinalProcess |> shouldEqual []
-
-                    { ended.FinalProcess with
-                        Signals = (Lone.proc system).Signals
-                    }
-                    |> shouldEqual (Lone.proc system)
+                    // The last thread's exit ends the process as `exit_group` does.
+                    EndedMachine.assertNoneLeft after
+                    EndedMachine.assertAsExit (Callers.thread 0 system) system after
                 | other -> failwith $"expected the process to end, got %A{other}"
 
     [<Test>]
@@ -295,29 +269,22 @@ module TestUnixThreadLifecycle =
                     }
                 )
 
-            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 1 system) 257 system
+            let ended, after =
+                UnixThreadLifecycle.exitGroup (Callers.thread 1 system) 257 system
 
             let expected =
                 match SimulatedUnixPlatform.flavour platform with
                 | SimulatedUnixFlavour.Linux -> 1
                 | SimulatedUnixFlavour.Darwin -> 257
 
-            match ended.Termination with
+            match EndedProcess.termination ended with
             | ProcessTermination.Exited status -> ExitStatus.waitidStatus status |> shouldEqual expected
-            | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
+            | other -> failwith $"expected an exit, got %O{other}"
 
-            EndedMachine.assertThreadsGone system ended
-            perThreadEntries ended.FinalProcess |> shouldEqual []
-
-            // The process-directed signal is the process's, not a thread's.
-            SignalState.pending ended.FinalProcess.Signals
-            |> shouldEqual
-                [
-                    {
-                        Signal = Signal.SIGUSR1
-                        Target = ValueNone
-                    }
-                ]
+            EndedProcess.processId ended |> shouldEqual (Lone.pid system)
+            // The parked thread's call goes with it, and so does the description
+            // its `flock` waits on, once the descriptors are closed.
+            EndedMachine.assertNoneLeft after
 
     [<Test>]
     let ``exit_group from a parked thread, or one that was never registered, fails loudly`` () : unit =
@@ -329,7 +296,7 @@ module TestUnixThreadLifecycle =
         let parked =
             Assert.Throws<System.InvalidOperationException> (fun () ->
                 UnixThreadLifecycle.exitGroup (Callers.thread 2 system) 0 system
-                |> ignore<EndedProcess<int, string>>
+                |> ignore<EndedProcess * UnixSystem<int, string>>
             )
 
         parked.Message |> shouldContainText "parked"
@@ -337,7 +304,7 @@ module TestUnixThreadLifecycle =
         let unknown =
             Assert.Throws<System.InvalidOperationException> (fun () ->
                 UnixThreadLifecycle.exitGroup (Callers.thread 3 system) 0 system
-                |> ignore<EndedProcess<int, string>>
+                |> ignore<EndedProcess * UnixSystem<int, string>>
             )
 
         unknown.Message |> shouldContainText "names no thread"
@@ -470,36 +437,26 @@ module TestUnixThreadLifecycle =
         | SimulatedUnixFlavour.Linux -> status &&& 0xff
         | SimulatedUnixFlavour.Darwin -> status &&& 0xffffff
 
-    /// Check a process that ended: it exited with what the flavour keeps of `status`,
-    /// on the machine it ran on, and holds nothing for any thread.
+    /// Check a process that ended, by a call `caller` made in `before`: it
+    /// exited with what the flavour keeps of `status`, and the system it left
+    /// holds no process, and is what `exit_group` by `caller` leaves of
+    /// `before`.
     let private assertExited
         (platform : SimulatedUnixPlatform)
         (status : int32)
+        (caller : Caller<int>)
         (before : UnixSystem<int, string>)
-        (ended : EndedProcess<int, string>)
+        ((ended, after) : EndedProcess * UnixSystem<int, string>)
         : unit
         =
-        match ended.Termination with
+        match EndedProcess.termination ended with
         | ProcessTermination.Exited exitStatus ->
             ExitStatus.waitidStatus exitStatus |> shouldEqual (kept platform status)
-        | ProcessTermination.Signaled _ -> failwith $"expected an exit, got %O{ended.Termination}"
+        | other -> failwith $"expected an exit, got %O{other}"
 
-        EndedMachine.assertThreadsGone before ended
-        perThreadEntries ended.FinalProcess |> shouldEqual []
-
-        SignalState.pending ended.FinalProcess.Signals
-        |> shouldEqual (
-            SignalState.pending (Lone.proc before).Signals
-            |> List.filter (fun entry -> entry.Target = ValueNone)
-        )
-
-        SignalState.dispositions ended.FinalProcess.Signals
-        |> shouldEqual (SignalState.dispositions (Lone.proc before).Signals)
-
-        { ended.FinalProcess with
-            Signals = (Lone.proc before).Signals
-        }
-        |> shouldEqual (Lone.proc before)
+        EndedProcess.processId ended |> shouldEqual (Lone.pid before)
+        EndedMachine.assertNoneLeft after
+        EndedMachine.assertAsExit caller before after
 
     let private runProperty (platform : SimulatedUnixPlatform) : Coverage<LifecycleLabel> =
         let initial, queue = world platform
@@ -610,10 +567,11 @@ module TestUnixThreadLifecycle =
                 | Op.ExitGroup (thread, status) when live thread && not (Set.contains thread model.Parked) ->
                     // An ended process has no state to carry on with, so the run goes on
                     // from the one it ended in, as if the call had not been made.
-                    let ended =
-                        UnixThreadLifecycle.exitGroup (Callers.thread thread system) status system
+                    let caller = Callers.thread thread system
 
-                    assertExited platform status system ended
+                    UnixThreadLifecycle.exitGroup caller status system
+                    |> assertExited platform status caller system
+
                     cover LifecycleLabel.EndedByExitGroup
 
                     if not model.Parked.IsEmpty then
@@ -643,7 +601,8 @@ module TestUnixThreadLifecycle =
                         match SimulatedUnixPlatform.flavour platform with
                         | SimulatedUnixFlavour.Linux ->
                             match result () with
-                            | Ok (ProcessFate.ProcessEnded ended) -> assertExited platform status system ended
+                            | Ok (ProcessFate.ProcessEnded (ended, after)) ->
+                                assertExited platform status (Callers.thread thread system) system (ended, after)
                             | other -> failwith $"expected the last thread's exit to end the process, got %A{other}"
 
                             cover LifecycleLabel.EndedByLastExit
@@ -657,9 +616,9 @@ module TestUnixThreadLifecycle =
                         let after =
                             match result () with
                             | Ok (ProcessFate.Continues ((), after)) -> after
-                            | Ok (ProcessFate.ProcessEnded ended) ->
+                            | Ok (ProcessFate.ProcessEnded (ended, _)) ->
                                 failwith
-                                    $"expected thread %d{thread}'s exit to leave the process running, but it ended: %O{ended.Termination}"
+                                    $"expected thread %d{thread}'s exit to leave the process running, but it ended: %O{EndedProcess.termination ended}"
                             | Error refusal ->
                                 failwith
                                     $"expected thread %d{thread}'s exit to be answered, got: %s{ThreadExitRefusal.describe refusal}"

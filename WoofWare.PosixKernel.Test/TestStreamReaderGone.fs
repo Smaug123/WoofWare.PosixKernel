@@ -116,9 +116,11 @@ module TestStreamReaderGone =
                     let raised = sigPipeFrom flavour thread
 
                     match disposition, actual with
-                    | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
-                        endedProcess.Termination
+                    | SignalDisposition.Default, Ok (WriteStep.ProcessEnded (endedProcess, after)) ->
+                        EndedProcess.termination endedProcess
                         |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
+
+                        EndedMachine.assertAsExit (Callers.thread thread system) system after
 
                         ended <- true
                     | SignalDisposition.Ignore,
@@ -290,7 +292,7 @@ module TestStreamReaderGone =
                 let write =
                     Assert.Throws<System.InvalidOperationException> (fun () ->
                         WriteOutcomes.writeBytes 7 fd (payload 0 1) system
-                        |> ignore<Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>>
+                        |> ignore<Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>>
                     )
 
                 write.Message

@@ -836,11 +836,11 @@ WoofWare.PosixKernel.EmulatedMountModule inherit obj
 WoofWare.PosixKernel.EmulatedMountModule.defaultFor [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.EmulatedMount
 WoofWare.PosixKernel.EmulatedMountModule.defaultOf [static method]: WoofWare.PosixKernel.EmulatedFileSystemType -> WoofWare.PosixKernel.EmulatedMount
 WoofWare.PosixKernel.EmulatedMountModule.fileSystemType [static method]: WoofWare.PosixKernel.EmulatedMount -> WoofWare.PosixKernel.EmulatedFileSystemType
-WoofWare.PosixKernel.EndedProcess inherit obj
-WoofWare.PosixKernel.EndedProcess.processId [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessId
-WoofWare.PosixKernel.EndedProcess.termination [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessTermination
-WoofWare.PosixKernel.EndedProcess`2 inherit obj, implements WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
-WoofWare.PosixKernel.EndedProcess`2.Equals [method]: (WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.EndedProcess inherit obj, implements WoofWare.PosixKernel.EndedProcess System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EndedProcess System.IComparable, System.IComparable, System.Collections.IStructuralComparable
+WoofWare.PosixKernel.EndedProcess.Equals [method]: (WoofWare.PosixKernel.EndedProcess, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.EndedProcessModule inherit obj
+WoofWare.PosixKernel.EndedProcessModule.processId [static method]: WoofWare.PosixKernel.EndedProcess -> WoofWare.PosixKernel.ProcessId
+WoofWare.PosixKernel.EndedProcessModule.termination [static method]: WoofWare.PosixKernel.EndedProcess -> WoofWare.PosixKernel.ProcessTermination
 WoofWare.PosixKernel.EntropyDraw inherit System.ValueType, implements WoofWare.PosixKernel.EntropyDraw System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EntropyDraw System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.EntropyDraw.Equals [method]: (WoofWare.PosixKernel.EntropyDraw, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.EntropyDrawModule inherit obj
@@ -3282,8 +3282,10 @@ WoofWare.PosixKernel.ProcessFate`3+Continues.get_system [method]: unit -> WoofWa
 WoofWare.PosixKernel.ProcessFate`3+Continues.outcome [property]: [read-only] 'Outcome
 WoofWare.PosixKernel.ProcessFate`3+Continues.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+ProcessEnded inherit WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_Item [method]: unit -> WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.Item [property]: [read-only] WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.ended [property]: [read-only] WoofWare.PosixKernel.EndedProcess
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_ended [method]: unit -> WoofWare.PosixKernel.EndedProcess
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_system [method]: unit -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+Tags inherit obj
 WoofWare.PosixKernel.ProcessFate`3+Tags.Continues [static field]: int = 0
 WoofWare.PosixKernel.ProcessFate`3+Tags.ProcessEnded [static field]: int = 1
@@ -3294,7 +3296,7 @@ WoofWare.PosixKernel.ProcessFate`3.get_Tag [method]: unit -> int
 WoofWare.PosixKernel.ProcessFate`3.IsContinues [property]: [read-only] bool
 WoofWare.PosixKernel.ProcessFate`3.IsProcessEnded [property]: [read-only] bool
 WoofWare.PosixKernel.ProcessFate`3.NewContinues [static method]: ('Outcome, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3.NewProcessEnded [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3.NewProcessEnded [static method]: (WoofWare.PosixKernel.EndedProcess, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ProcessId inherit System.ValueType, implements WoofWare.PosixKernel.ProcessId System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ProcessId System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.ProcessId.Equals [method]: (WoofWare.PosixKernel.ProcessId, System.Collections.IEqualityComparer) -> bool
@@ -6260,7 +6262,6 @@ WoofWare.PosixKernel.UnixSystem.defaultUserBufferCheck [static method]: WoofWare
 WoofWare.PosixKernel.UnixSystem.defaultUserId [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.UnixSystem.delivered [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.DeliveryLog
 WoofWare.PosixKernel.UnixSystem.descriptorTarget [static method]: WoofWare.PosixKernel.ProcessId -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.OpenFileTarget option
-WoofWare.PosixKernel.UnixSystem.endProcess [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> (WoofWare.PosixKernel.ProcessTermination * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSystem.entropyPool [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.EntropyPool
 WoofWare.PosixKernel.UnixSystem.environment [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixByteString list
 WoofWare.PosixKernel.UnixSystem.ephemeralPortRange [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (System.UInt16 * System.UInt16)
@@ -6310,7 +6311,7 @@ WoofWare.PosixKernel.UnixSystemDefect.describe [static method]: 'Thread WoofWare
 WoofWare.PosixKernel.UnixSystemDefect`1 inherit obj, implements 'Thread WoofWare.PosixKernel.UnixSystemDefect System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.UnixSystemDefect`1.Equals [method]: ('Thread WoofWare.PosixKernel.UnixSystemDefect, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.UnixThreadLifecycle inherit obj
-WoofWare.PosixKernel.UnixThreadLifecycle.exitGroup [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixThreadLifecycle.exitGroup [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.EndedProcess * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixThreadLifecycle.exitThread [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessFate<unit, 'Thread, 'Handler>
 WoofWare.PosixKernel.UnixThreadLifecycle.spawn [static method]: 'Thread WoofWare.PosixKernel.Caller -> 'Thread -> WoofWare.PosixKernel.CpuId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SpawnAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixThreadState inherit obj, implements WoofWare.PosixKernel.UnixThreadState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.UnixThreadState System.IComparable, System.IComparable, System.Collections.IStructuralComparable

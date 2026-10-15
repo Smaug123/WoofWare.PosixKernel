@@ -829,22 +829,19 @@ module TestMultiProcessFuzz =
         | Answered of UnixSystem<int, string>
         /// The calling thread sleeps, in this.
         | Sleeps of UnixSystem<int, string>
-        /// The call ended the process.
-        | Ended of EndedProcess<int, string>
+        /// The call ended the process, and left the system without it.
+        | Ended of EndedProcess * UnixSystem<int, string>
         /// The library refused it, which changes nothing.
         | Refused
 
-    let private ofWrite
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        : Made
-        =
+    let private ofWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) : Made =
         match outcome with
         | Error _ -> Made.Refused
         | Ok (WriteStep.Returns (_, view))
         | Ok (WriteStep.ReturnsRaising (_, _, view))
         | Ok (WriteStep.Restarts view) -> Made.Answered view
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
-        | Ok (WriteStep.ProcessEnded ended) -> Made.Ended ended
+        | Ok (WriteStep.ProcessEnded (ended, after)) -> Made.Ended (ended, after)
 
     /// `bytes`, for a transcript: how many, and a checksum of them.
     let private bytesText (bytes : ImmutableArray<byte>) : string =
@@ -861,11 +858,11 @@ module TestMultiProcessFuzz =
     let private fateText<'Outcome> (fate : ProcessFate<'Outcome, int, string>) : string =
         match fate with
         | ProcessFate.Continues (outcome, _) -> $"continues %A{outcome}"
-        | ProcessFate.ProcessEnded ended -> $"ends %A{EndedProcess.termination ended}"
+        | ProcessFate.ProcessEnded (ended, _) -> $"ends %A{EndedProcess.termination ended}"
 
     /// What a write answered, for a transcript.
     let private writeText
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         : string
         =
         match outcome with
@@ -874,7 +871,7 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.ReturnsRaising (answer, signal, _)) -> $"returns %A{answer} raising %A{signal}"
         | Ok (WriteStep.WouldBlock (condition, _)) -> $"sleeps %A{condition}"
         | Ok (WriteStep.Restarts _) -> "restarts"
-        | Ok (WriteStep.ProcessEnded ended) -> $"ends %A{EndedProcess.termination ended}"
+        | Ok (WriteStep.ProcessEnded (ended, _)) -> $"ends %A{EndedProcess.termination ended}"
 
     /// `result`, having written to `log` what it answered, without the system.
     let private logged<'a, 'r>
@@ -903,8 +900,8 @@ module TestMultiProcessFuzz =
     /// `logged`, for a write.
     let private loggedWrite
         (log : string -> unit)
-        (result : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        (result : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         log $"  %s{writeText result}"
         result
@@ -1072,11 +1069,11 @@ module TestMultiProcessFuzz =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) ->
                 due |> shouldEqual Set.empty
                 Made.Answered after
-            | Ok (ProcessFate.ProcessEnded ended) ->
+            | Ok (ProcessFate.ProcessEnded (ended, kernel)) ->
                 match EndedProcess.termination ended with
                 | ProcessTermination.Signaled (signal, false) when Set.contains signal due ->
                     cover FuzzLabel.SignalDeath
-                    Made.Ended ended
+                    Made.Ended (ended, kernel)
                 | termination ->
                     failwith $"thread %d{thread}'s return ended the process with %O{termination}, with %O{due} due"
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, _) as other)
@@ -1543,9 +1540,14 @@ module TestMultiProcessFuzz =
             UnixNamespace.tryUnlink (Caller.make pid thread) (PathArg.ofText files.[path % files.Length]) view
             |> answered
         | Op.Exit status ->
-            let ended = UnixThreadLifecycle.exitGroup (Caller.make pid thread) status view
-            log $"  ends %A{EndedProcess.termination ended}"
-            Made.Ended ended
+            match UnixThreadLifecycle.tryExitGroup (Caller.make pid thread) status view with
+            | Ok (ended, after) ->
+                log $"  ends %A{EndedProcess.termination ended}"
+                Made.Ended (ended, after)
+            | Error refusal ->
+                log $"  end refused %A{refusal}"
+                cover FuzzLabel.ExitRefusal
+                Made.Refused
 
     /// The call `thread` of the view `view` is asleep in, finished.
     let private finish
@@ -1737,24 +1739,18 @@ module TestMultiProcessFuzz =
                 Machine = Machines.unfocus view world.Machine
                 Asleep = Set.add (pid, thread) world.Asleep
             }
-        | Made.Ended ended ->
-            match Machines.tryEndProcess ended world.Machine with
-            | Error refusal ->
-                log $"  end refused %A{refusal}"
-                cover FuzzLabel.ExitRefusal
-                world
-            | Ok (termination, machine) ->
-                log $"  ended %A{termination}"
-                cover FuzzLabel.Exit
-                othersUnmoved pid world.Machine machine
-                UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
+        | Made.Ended (ended, machine) ->
+            log $"  ended %A{EndedProcess.termination ended}"
+            cover FuzzLabel.Exit
+            othersUnmoved pid world.Machine machine
+            UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
 
-                {
-                    Machine = machine
-                    Live = world.Live |> List.filter ((<>) pid)
-                    Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
-                    Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
-                }
+            {
+                Machine = machine
+                Live = world.Live |> List.filter ((<>) pid)
+                Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
+                Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
+            }
 
     let private step (cover : FuzzLabel -> unit) (log : string -> unit) (world : World) (next : Step) : World =
         match next with
@@ -2559,5 +2555,409 @@ module TestMultiProcessFuzz =
 
         System.IO.File.WriteAllText (
             System.IO.Path.Combine (__SOURCE_DIRECTORY__, "multiProcessOracle", "answers.txt"),
+            String.concat "\n" lines + "\n"
+        )
+
+    // ------------------------------------------------- the process-end oracle
+
+    /// A way a process ends, which the process-end oracle takes in each process
+    /// still on the machine at the end of each case of the fixed sample.
+    [<RequireQualifiedAccess>]
+    type private Ending =
+        /// `exit_group(7)`.
+        | ExitGroup
+        /// `kill(2)` of `signal`, to the process itself.
+        | Kill of signal : Signal
+        /// `raise(3)` of SIGTERM.
+        | Raise
+        /// SIGTERM blocked, raised, and unblocked, each followed by the return
+        /// to user mode, the last of which ends the process.
+        | ReturnToUser
+        /// Every thread but the leader exits, and then the leader, the last.
+        | LastThread
+        /// A write of one byte into a new pipe whose read end is closed, which
+        /// raises SIGPIPE at its default.
+        | BrokenPipe
+
+    let private endings : Ending list =
+        [
+            Ending.ExitGroup
+            Ending.Kill Signal.SIGKILL
+            Ending.Kill Signal.SIGQUIT
+            Ending.Raise
+            Ending.ReturnToUser
+            Ending.LastThread
+            Ending.BrokenPipe
+        ]
+
+    /// What an `Ending` came to.
+    [<RequireQualifiedAccess>]
+    type private Ended =
+        /// The process ended as `termination` says, and `kernel` is the system
+        /// without it.
+        | Ended of termination : ProcessTermination * kernel : UnixSystem<int, string>
+        /// The process's end was refused, as `ProcessEndRefusal.describe` says.
+        | EndRefused of reason : string
+        /// A call on the way did not end the process: what it answered, and
+        /// the system it left.
+        | Carried of answer : string * kernel : UnixSystem<int, string>
+        /// A call on the way was refused, as this says.
+        | Refused of reason : string
+        /// The process cannot take the ending: why.
+        | Inapplicable of reason : string
+
+
+    /// `fate`, a call's answer, as an `Ended`; or, if the process carries on
+    /// and `next` says nothing of the outcome, `onwards` of the system it
+    /// left.
+    let private fateThen<'Outcome>
+        (fate : ProcessFate<'Outcome, int, string>)
+        (next : 'Outcome -> UnixSystem<int, string> -> Ended option)
+        (onwards : UnixSystem<int, string> -> Ended)
+        : Ended
+        =
+        match fate with
+        | ProcessFate.ProcessEnded (ended, kernel) -> Ended.Ended (EndedProcess.termination ended, kernel)
+        | ProcessFate.Continues (outcome, kernel) ->
+            match next outcome kernel with
+            | Some ended -> ended
+            | None -> onwards kernel
+
+    /// `fate`, a call's answer that ends the path whatever it is.
+    let private fateOnly<'Outcome> (call : string) (fate : ProcessFate<'Outcome, int, string>) : Ended =
+        fateThen
+            fate
+            (fun outcome kernel -> Some (Ended.Carried ($"%s{call}: %A{outcome}", kernel)))
+            (fun _ -> failwith "unreachable")
+
+    /// How the process `pid` of `machine` ends by `ending`, made by its
+    /// lowest-named thread parked in nothing.
+    let private endBy (ending : Ending) (pid : ProcessId) (machine : UnixSystem<int, string>) : Ended =
+        let threads = Proc.threads pid machine
+
+        let running =
+            threads
+            |> Map.filter (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+            |> Map.keys
+            |> List.ofSeq
+
+        match running with
+        | [] -> Ended.Inapplicable "no thread is running"
+        | thread :: _ ->
+
+        let caller = Caller.make pid thread
+        let platform = UnixSystem.platform machine
+        let numbering = SimulatedUnixPlatform.signalNumbering platform
+        let signo (signal : Signal) : int = Signal.toRawSignoUnder numbering signal
+
+        // The return to user mode of `caller`, which goes on to `onwards`
+        // unless it ends the process or takes something else.
+        let returning (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) : Ended =
+            match UnixSignal.tryOnReturnToUser caller kernel with
+            | Error (ReturnToUserRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+            | Error refusal -> Ended.Refused $"onReturnToUser: %A{refusal}"
+            | Ok fate ->
+                fateThen
+                    fate
+                    (fun outcome kernel ->
+                        match outcome with
+                        | ReturnToUserOutcome.Resumes -> None
+                        | other -> Some (Ended.Carried ($"onReturnToUser: %A{other}", kernel))
+                    )
+                    onwards
+
+        // `pthread_sigmask(2)` of SIGTERM alone, and the return from it.
+        let mask (block : bool) (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) =
+            let how =
+                match SimulatedUnixPlatform.flavour platform, block with
+                | SimulatedUnixFlavour.Linux, true -> 0
+                | SimulatedUnixFlavour.Linux, false -> 1
+                | SimulatedUnixFlavour.Darwin, true -> 1
+                | SimulatedUnixFlavour.Darwin, false -> 2
+
+            let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
+
+            match UnixSignal.pthreadSigmask caller how (Some set) kernel with
+            | Error errno -> Ended.Refused $"pthread_sigmask: %O{errno}"
+            | Ok (_, kernel) -> returning onwards kernel
+
+        match ending with
+        | Ending.ExitGroup ->
+            match UnixThreadLifecycle.tryExitGroup caller 7 machine with
+            | Ok (ended, kernel) -> Ended.Ended (EndedProcess.termination ended, kernel)
+            | Error refusal -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+        | Ending.Kill signal ->
+            match UnixSignal.tryKill caller (ProcessId.toInt32 pid) (signo signal) machine with
+            | Error (KillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+            | Error refusal -> Ended.Refused $"kill: %A{refusal}"
+            | Ok (Error errno) -> Ended.Refused $"kill: %O{errno}"
+            | Ok (Ok fate) -> fateOnly "kill" fate
+        | Ending.Raise ->
+            match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) machine with
+            | Error (ThreadKillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+            | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"
+            | Ok (Error errno) -> Ended.Refused $"pthread_kill: %O{errno}"
+            | Ok (Ok fate) -> fateOnly "pthread_kill" fate
+        | Ending.ReturnToUser ->
+            machine
+            |> mask
+                true
+                (fun kernel ->
+                    match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) kernel with
+                    | Error (ThreadKillRefusal.ProcessEnd refusal) ->
+                        Ended.EndRefused (ProcessEndRefusal.describe refusal)
+                    | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"
+                    | Ok (Error errno) -> Ended.Refused $"pthread_kill: %O{errno}"
+                    | Ok (Ok fate) ->
+                        fateThen
+                            fate
+                            (fun outcome kernel ->
+                                match outcome with
+                                | KillOutcome.ProcessRuns -> None
+                                | other -> Some (Ended.Carried ($"pthread_kill: %A{other}", kernel))
+                            )
+                            (returning (mask false (fun kernel -> Ended.Carried ("unblocked", kernel))))
+                )
+        | Ending.LastThread ->
+            let leader = Proc.leader pid machine
+
+            if running.Length <> threads.Count then
+                Ended.Inapplicable "a thread is parked"
+            else
+
+            let exit (thread : int) (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) =
+                match UnixThreadLifecycle.tryExitThread (Caller.make pid thread) 0 kernel with
+                | Error (ThreadExitRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+                | Error refusal -> Ended.Refused $"exitThread %d{thread}: %A{refusal}"
+                | Ok fate -> fateThen fate (fun () _ -> None) onwards
+
+            let last =
+                exit leader (fun kernel -> Ended.Carried ("the leader's exit left the process", kernel))
+
+            List.foldBack exit (running |> List.filter ((<>) leader)) last machine
+        | Ending.BrokenPipe ->
+            match UnixPipe.tryPipe2 caller 0 UserBuffer.Mapped machine with
+            | Error refusal -> Ended.Refused $"pipe2: %A{refusal}"
+            | Ok (Pipe2Answer.Failed errno, _) -> Ended.Inapplicable $"pipe2: %O{errno}"
+            | Ok (Pipe2Answer.Created (readFd, writeFd), kernel) ->
+
+            match UnixDescriptor.tryClose caller readFd kernel with
+            | Ok (SyscallAnswer.Completed 0L, kernel) ->
+                match UnixReadWrite.tryWrite caller writeFd UserBuffer.Mapped 1UL kernel with
+                | Error (WriteRefusal.ProcessEnd (_, refusal)) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
+                | Error refusal -> Ended.Refused $"write: %A{refusal}"
+                | Ok (CallProgress.Answered fate) -> fateOnly "write" fate
+                | Ok (CallProgress.NeedsCopyIn paused) ->
+                    match UnixReadWrite.tryWriteWithBytes (ImmutableArray.Create 0uy) paused with
+                    | Error (WriteRefusal.ProcessEnd (_, refusal)) ->
+                        Ended.EndRefused (ProcessEndRefusal.describe refusal)
+                    | Error refusal -> Ended.Refused $"write: %A{refusal}"
+                    | Ok fate -> fateOnly "write" fate
+            | other -> Ended.Refused $"close: %A{other}"
+
+    /// What `kernel` shows of itself, without saying how the library holds it:
+    /// its processes, each one's descriptors with the description each names
+    /// and the kind of thing that is, its threads with the kind of call each
+    /// is parked in and whether that call could go on, and what a `poll` of
+    /// each descriptor by a thread parked in nothing answers at once; every
+    /// open file description with how many descriptors name it and how many
+    /// calls hold it; and what the launched pipes have delivered.
+    let private observed (log : string -> unit) (kernel : UnixSystem<int, string>) : unit =
+        Machines.checkInvariants kernel |> Expect.empty (fun () -> "the system")
+        let pids = UnixSystem.processIds kernel |> List.ofSeq
+        log $"    processes %A{pids |> List.map ProcessId.toInt32}"
+
+        for pid in pids do
+            let registry = Proc.fileDescriptors pid kernel
+            let threads = Proc.threads pid kernel
+
+            let descriptors =
+                FileDescriptorRegistry.fds registry
+                |> Map.toList
+                |> List.map (fun (fd, id) ->
+                    let target =
+                        match FileDescriptorRegistry.tryFindTarget fd registry with
+                        | Some target -> UnionCaseName.ofValue target
+                        | None -> "nothing"
+
+                    $"%d{fd}=%O{id}:%s{target}"
+                )
+                |> String.concat " "
+
+            log $"    %d{ProcessId.toInt32 pid}: %s{descriptors}"
+
+            for KeyValue (thread, state) in threads do
+                match UnixThreadState.parkedIn state with
+                | None -> log $"      thread %d{thread} running"
+                | Some parked ->
+                    let satisfied = UnixWait.satisfied (Caller.make pid thread) kernel
+                    log $"      thread %d{thread} %s{UnionCaseName.ofValue parked}, satisfied %A{satisfied}"
+
+            let poller =
+                threads
+                |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+
+            match poller with
+            | None -> ()
+            | Some thread ->
+                for fd in FileDescriptorRegistry.fds registry |> Map.keys do
+                    let entry : PollEntry =
+                        {
+                            Fd = fd
+                            Events = 0x0001s ||| 0x0004s
+                        }
+
+                    match UnixPoll.tryPoll (Caller.make pid thread) [ entry ] 0 kernel with
+                    | Ok (outcome, _) -> log $"      poll %d{fd}: %A{outcome}"
+                    | Error refusal -> log $"      poll %d{fd}: refused %s{UnionCaseName.ofValue refusal}"
+
+        let openFiles = UnixSystem.openFiles kernel
+
+        for KeyValue (id, description) in OpenFileTable.descriptions openFiles do
+            log
+                $"    %O{id} %s{UnionCaseName.ofValue description.Target}: %A{OpenFileTable.descriptorCount id openFiles} descriptors, %A{OpenFileTable.holdCount id openFiles} holds"
+
+        let delivered = DeliveryLog.toList (UnixSystem.delivered kernel)
+
+        let sum =
+            (17, delivered)
+            ||> List.fold (fun sum delivery ->
+                Seq.fold (fun (sum : int) (b : byte) -> sum * 31 + int b) sum delivery.Bytes
+            )
+
+        log $"    delivered %d{delivered.Length}, checksum %d{sum}"
+
+    /// How many cases of the fixed sample the process-end oracle replays.
+    let private endingCases : int = 1500
+
+    /// The embedded reference the process-end oracle holds the library to.
+    let private endingResource : string =
+        "WoofWare.PosixKernel.Test.multiProcessOracle.endings.txt"
+
+    /// What each `Ending` came to in each process still on the machine at the
+    /// end of `case`, and what the system it left shows (`observed`).
+    let private endingsTranscriptOf (case : Case) : string =
+        let builder = System.Text.StringBuilder ()
+        let log (line : string) : unit = builder.AppendLine line |> ignore
+        log $"%A{case.Platform} %d{case.Processes} %b{case.Prepared}"
+        let last = ref None
+        runObserving smallBuffers (fun _ world -> last.Value <- Some world) ignore ignore case
+
+        match last.Value with
+        | None -> log "  no steps"
+        | Some (world : World) ->
+            for pid in world.Live do
+                let mutable exited = None
+
+                for ending in endings do
+                    log $"  %d{ProcessId.toInt32 pid} %A{ending}"
+
+                    match endBy ending pid world.Machine with
+                    | Ended.Ended (termination, kernel) ->
+                        log $"    ends %A{termination}"
+                        observed log kernel
+
+                        // An ending that changes nothing outside the process before it
+                        // ends it leaves the very system `exit_group` leaves.
+                        match ending, exited with
+                        | Ending.ExitGroup, _ -> exited <- Some kernel
+                        | Ending.BrokenPipe, _ -> ()
+                        | _, Some exited ->
+                            kernel
+                            |> Expect.equal (fun () -> $"%A{ending} of %O{pid}, against exit_group") exited
+                        | _, None -> ()
+                    | Ended.EndRefused reason -> log $"    end refused: %s{reason}"
+                    | Ended.Carried (answer, kernel) ->
+                        log $"    carries on: %s{answer}"
+                        observed log kernel
+                    | Ended.Refused reason -> log $"    refused: %s{reason}"
+                    | Ended.Inapplicable reason -> log $"    inapplicable: %s{reason}"
+
+        builder.ToString ()
+
+    /// The process-end oracle's transcript of each case it replays, in the
+    /// order they are drawn.
+    let private endingsTranscripts () : string list =
+        let transcripts = ResizeArray<string> ()
+
+        CoverageSample.replay endingCases (Arb.fromGen caseGen) (fun case -> transcripts.Add (endingsTranscriptOf case))
+
+        List.ofSeq transcripts
+
+    /// Each case's index and the hash of its transcript, as the process-end
+    /// oracle's reference records them.
+    let private recordedEndings () : Map<int, string> =
+        let assembly = System.Reflection.Assembly.GetExecutingAssembly ()
+
+        use stream =
+            match assembly.GetManifestResourceStream endingResource with
+            | null -> failwith $"embedded resource %s{endingResource} not found"
+            | stream -> stream
+
+        use reader = new System.IO.StreamReader (stream)
+
+        reader.ReadToEnd().Split '\n'
+        |> Array.filter (fun line -> line <> "" && not (line.StartsWith '#'))
+        |> Array.map (fun line ->
+            match line.Split '\t' with
+            | [| index ; hash |] -> int index, hash
+            | _ -> failwith $"not a line of the process-end oracle's reference: %s{line}"
+        )
+        |> Map.ofArray
+
+    /// The oracle for how a process ends: in the world each case of the fixed
+    /// sample leaves, each process still on the machine ends by every `Ending`,
+    /// and what each came to, and what the system it left shows, is exactly
+    /// what the reference records. Besides, each ending that changes nothing
+    /// outside the process before it ends it, every one but the broken pipe's,
+    /// leaves the very system `exit_group` leaves. A difference names the cases whose
+    /// transcripts moved; set `POSIXKERNEL_ORACLE_DUMP` to a directory and run
+    /// `Update process-end oracle` on the commit that recorded the reference
+    /// and on this one to compare them line by line.
+    [<Test>]
+    let ``every way a process ends, from the fixed sample's worlds, answers what the recorded reference says``
+        ()
+        : unit
+        =
+        let recorded = recordedEndings ()
+        recorded.Count |> shouldEqual endingCases
+
+        let moved =
+            endingsTranscripts ()
+            |> List.mapi (fun index transcript -> index, sha256 transcript)
+            |> List.filter (fun (index, hash) -> Map.tryFind index recorded <> Some hash)
+            |> List.map fst
+
+        moved |> shouldEqual []
+
+    /// Rewrites the process-end oracle's reference from the library as built,
+    /// and, if `POSIXKERNEL_ORACLE_DUMP` names a directory, writes each case's
+    /// transcript there as `ending-<index>.txt`.
+    [<Test ; Explicit>]
+    let ``Update process-end oracle`` () : unit =
+        let transcripts = endingsTranscripts ()
+
+        match System.Environment.GetEnvironmentVariable "POSIXKERNEL_ORACLE_DUMP" with
+        | null
+        | "" -> ()
+        | directory ->
+            System.IO.Directory.CreateDirectory directory |> ignore
+
+            transcripts
+            |> List.iteri (fun index transcript ->
+                System.IO.File.WriteAllText (System.IO.Path.Combine (directory, $"ending-%d{index}.txt"), transcript)
+            )
+
+        let lines =
+            [
+                "# TestMultiProcessFuzz's process-end oracle: the SHA-256 of the transcript (endingsTranscriptOf) of"
+                "# each case of caseGen's fixed sample (CoverageSample's seed, the first 1500 cases), as the library"
+                "# answered them when this file was written. index<TAB>hash"
+            ]
+            @ (transcripts
+               |> List.mapi (fun index transcript -> $"%d{index}\t%s{sha256 transcript}"))
+
+        System.IO.File.WriteAllText (
+            System.IO.Path.Combine (__SOURCE_DIRECTORY__, "multiProcessOracle", "endings.txt"),
             String.concat "\n" lines + "\n"
         )
