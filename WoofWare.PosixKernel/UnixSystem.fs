@@ -754,59 +754,6 @@ module UnixSystemDefect =
     let describe<'Thread> (defect : UnixSystemDefect<'Thread>) : string =
         $"the system's tables disagree with each other, in a state no kernel could be in, which is a bug in this library: %A{defect}"
 
-/// Why the directory a host named cannot be the one a simulated process starts
-/// in (`ProcessLaunch.withCurrentDirectory`). Launching the process returns one
-/// instead of deciding what to say about it: the remedy is always "fix the
-/// knob you set this from", and only the caller knows what that knob is called.
-///
-/// Every case is a host mistake rather than a process's, which is why none of
-/// them is a `UnixError`: there is no errno for "you launched a process in a
-/// directory the filesystem does not contain", and answering ENOENT would blame
-/// a process's path when there is no process yet.
-///
-/// Four cases, and deliberately not six. The walk could also answer an inode
-/// the filesystem does not contain, or a directory no path from the root
-/// reaches — but not for a filesystem whose invariants hold, walked from its
-/// root, so those are bugs in this library and crash rather than being handed
-/// to a caller who could do nothing about them.
-[<RequireQualifiedAccess>]
-type internal CurrentDirectoryFault =
-    /// The path does not resolve in the seeded filesystem at all. Carries what
-    /// the walk answered.
-    | DoesNotResolve of UnixError
-    /// The walk refused the path as too long. Distinguished from
-    /// `DoesNotResolve` because the directory may well be present: it is a
-    /// *length* that is unusable, and the remedy is to shorten something rather
-    /// than to go looking for a missing directory.
-    ///
-    /// Which length is deliberately not said, because the walk does not say:
-    /// `ENAMETOOLONG` is one errno covering a component past this flavour's
-    /// `NAME_MAX` and — on a flavour that re-checks, which is Darwin — a
-    /// symbolic link whose expansion would carry the whole path past
-    /// `PATH_MAX`. A real kernel conflates them too. Splitting the case would
-    /// need the path walk to report which limit it hit, which every other
-    /// caller of the walk would pay for.
-    ///
-    /// Carries the flavour so that a fault which outlives the call still says
-    /// whose limits were in force -- 255 CJK characters name a directory a
-    /// Darwin process can start in and a Linux one cannot, and only Darwin
-    /// re-checks a splice at all.
-    | TooLong of SimulatedUnixFlavour
-    /// The path resolves, to something that is not a directory.
-    | NotADirectory
-    /// This kernel will not resolve the path.
-    | Path of PathRefusal
-
-[<RequireQualifiedAccess>]
-module internal CurrentDirectoryFault =
-    /// Which exception a public entry point raises this fault as.
-    let kind (fault : CurrentDirectoryFault) : RefusalKind =
-        match fault with
-        | CurrentDirectoryFault.DoesNotResolve _ -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.TooLong _ -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.NotADirectory -> RefusalKind.Contradictory "launch"
-        | CurrentDirectoryFault.Path inner -> PathRefusal.kind inner
-
 /// Why `UnixBootImage.withFileSystem` refuses a seed: it describes a filesystem
 /// no kernel of the machine's flavour could have mounted.
 [<RequireQualifiedAccess>]
@@ -3385,7 +3332,7 @@ module UnixSystem =
     /// process nobody has told where it is claims nothing beyond the root. A
     /// client that wants a particular directory sets it with
     /// `ProcessLaunch.withCurrentDirectory`.
-    let defaultCurrentDirectory : AbsoluteUnixPath = AbsoluteUnixPath.root
+    let defaultCurrentDirectory : AbsoluteUnixPath = LaunchDefaults.currentDirectory
 
     /// Executable path a freshly-minted simulated process reports: none at all.
     ///
@@ -3399,7 +3346,7 @@ module UnixSystem =
     ///
     /// A client that wants a particular executable sets it with
     /// `ProcessLaunch.withProcessPath`.
-    let defaultProcessPath : AbsoluteUnixPath option = None
+    let defaultProcessPath : AbsoluteUnixPath option = LaunchDefaults.processPath
 
     /// The range `bind(2)` draws from when asked for port 0, on a machine of
     /// this flavour that has not configured it.
@@ -3439,24 +3386,17 @@ module UnixSystem =
     /// Ubuntu-shaped Linux, and 501 on macOS (measured, `id -u` of the first
     /// account on a macOS 26 machine, 2026-09-08). A client that wants root says
     /// so with `ProcessLaunch.withCredentials`.
-    let defaultUserId (flavour : SimulatedUnixFlavour) : UserId =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> UserId.parseOrFail "UnixSystem.defaultUserId" 1000u
-        | SimulatedUnixFlavour.Darwin -> UserId.parseOrFail "UnixSystem.defaultUserId" 501u
+    let defaultUserId (flavour : SimulatedUnixFlavour) : UserId = LaunchDefaults.userId flavour
 
     /// Effective group ID a freshly-minted simulated process runs as: the
     /// first user's primary group, which is a user-private group numbered as
     /// the user on Linux and `staff` (20) on macOS (measured with the uid).
-    let defaultGroupId (flavour : SimulatedUnixFlavour) : GroupId =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 1000u
-        | SimulatedUnixFlavour.Darwin -> GroupId.parseOrFail "UnixSystem.defaultGroupId" 20u
+    let defaultGroupId (flavour : SimulatedUnixFlavour) : GroupId = LaunchDefaults.groupId flavour
 
     /// Credentials a freshly-minted simulated process runs with: real,
     /// effective and saved IDs all `defaultUserId` and `defaultGroupId`, and no
     /// supplementary groups.
-    let defaultCredentials (flavour : SimulatedUnixFlavour) : Credentials =
-        Credentials.ofIds (defaultUserId flavour) (defaultGroupId flavour) []
+    let defaultCredentials (flavour : SimulatedUnixFlavour) : Credentials = LaunchDefaults.credentials flavour
 
     /// File-mode creation mask a freshly-minted simulated process reports.
     /// 0o022 because that is what essentially every Unix login shell and service
@@ -3465,15 +3405,14 @@ module UnixSystem =
     /// these bits cleared). Measured as the mask a process inherits on both
     /// flavours. A client chooses otherwise with `ProcessLaunch.withUmask`, and
     /// the process itself with `umask`.
-    let defaultUmask : PermissionBits =
-        PermissionBits.parseOrFail "UnixSystem.defaultUmask" 0o022
+    let defaultUmask : PermissionBits = LaunchDefaults.umask
 
     /// Whether a freshly-minted simulated process writes a core dump when a
     /// signal kills it: never, as under an `RLIMIT_CORE` of 0. A dump is a
     /// file the simulated process would leave behind, which a client has to
     /// ask for. A client chooses otherwise with
     /// `ProcessLaunch.withCoreDumps`.
-    let defaultCoreDumps : CoreDumps = CoreDumps.Suppressed
+    let defaultCoreDumps : CoreDumps = LaunchDefaults.coreDumps
 
     /// Process ID a freshly-minted simulated process reports: 4242.
     ///
