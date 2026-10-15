@@ -17,6 +17,7 @@ open WoofWare.PosixKernel
 /// it, so that a setter added later on a booted system, or a way back from a
 /// system to an image, fails here.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestBootImage =
 
     let private library : Assembly = typeof<UnixBootImage<int, string>>.Assembly

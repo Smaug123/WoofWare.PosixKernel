@@ -24,6 +24,7 @@ open WoofWare.PosixKernel
 /// be whatever mount its client configures, where this host's mounts have
 /// sizes, identities and options of their own.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestFileSystemType =
 
     [<DllImport("libc", SetLastError = true)>]

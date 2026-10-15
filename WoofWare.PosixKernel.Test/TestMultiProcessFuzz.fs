@@ -32,6 +32,7 @@ open WoofWare.PosixKernel
 /// close or end wakes it.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestMultiProcessFuzz =
 
     /// One step; each index is read modulo whatever it picks from.

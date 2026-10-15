@@ -15,6 +15,7 @@ open WoofWare.PosixKernel
 /// answer the library gives as the kernel's own could turn out to be that
 /// build's, so this runs the whole grid again on whichever host it finds.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestSocketSyscallAgainstHost =
 
     [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]

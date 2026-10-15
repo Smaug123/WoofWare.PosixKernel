@@ -12,6 +12,7 @@ open WoofWare.PosixKernel
 /// one back from the library. And a client holds only what the library hands
 /// it, so no public function takes a type that nothing public hands out.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestPublicSurface =
 
     /// The kernel's tables. Each has a representation hidden from clients, so

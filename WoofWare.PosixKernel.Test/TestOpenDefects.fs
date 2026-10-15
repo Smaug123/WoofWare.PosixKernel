@@ -13,6 +13,7 @@ open WoofWare.PosixKernel
 /// client reports with its `describe` and never branches on. These tests hold
 /// the suffix `Defect` to meaning such a union, or the error of a parser.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestOpenDefects =
 
     /// The defects whose cases are hidden, and which have no patterns.

@@ -16,6 +16,7 @@ open WoofWare.PosixKernel
 /// helpers every other test writes through (`WriteOutcomes`, `CopyIn`,
 /// `SockOptCalls`); this fixture is about the protocol's own promises.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestCallProgress =
 
     /// What a write under the property below came to.

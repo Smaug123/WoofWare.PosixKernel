@@ -15,6 +15,7 @@ open WoofWare.PosixKernel
 /// whole file malformed, and an IDE then shows no documentation for any member
 /// of the package.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestXmlDocumentation =
 
     /// The documentation file the build wrote beside the library, which MSBuild
