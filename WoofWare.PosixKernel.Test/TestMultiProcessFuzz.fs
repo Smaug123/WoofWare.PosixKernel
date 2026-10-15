@@ -2631,6 +2631,61 @@ module TestMultiProcessFuzz =
         coverage.Count SweepLabel.WokenUnfinished |> shouldBeGreaterThan 160
         coverage.Count SweepLabel.HeldByWoken |> shouldBeGreaterThan 7
 
+    /// `UnixWait.finish` answers what the finishing function of each woken
+    /// call's own family answers (`FinishOracle.agree`), at every step of the
+    /// first property's interleavings: for every thread woken and not yet
+    /// finished, and every thread a sweep of that step's system would wake, in
+    /// the system the sweep answers. The run itself goes on through the
+    /// families' functions, as the first property's does.
+    [<Test>]
+    let ``finish answers what each woken call's own finishing function answers, at every step of random interleavings``
+        ()
+        : unit
+        =
+        let property (cover : string -> unit) (case : Case) : unit =
+            let observe (_ : Step) (world : World) : unit =
+                let _, woken = UnixWait.wake world.Machine
+
+                for pid in UnixSystem.processIds woken do
+                    for KeyValue (thread, state) in UnixSystem.threads pid woken do
+                        match UnixThreadState.park state with
+                        | Some {
+                                   State = ParkState.Woken _
+                               } -> cover (FinishOracle.agree (Caller.make pid thread) woken)
+                        | Some {
+                                   State = ParkState.Asleep
+                               }
+                        | None -> ()
+
+            runObserving smallBuffers observe ignore ignore case
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen caseGen) property
+
+        let reached (prefix : string) : int =
+            coverage.Reached
+            |> List.sumBy (fun (label, count) -> if label.StartsWith prefix then count else 0)
+
+        // A third of what the fixed sample reached when this was added, for
+        // each kind of call the interleavings park a thread in often. A pipe's
+        // `read` and `write` they park in seldom, and a `sigsuspend` never;
+        // `TestUnixWaitFinish` reaches every kind.
+        reached "Accept " |> shouldBeGreaterThan 478
+        reached "ConnectionRead " |> shouldBeGreaterThan 417
+        reached "ConnectionWrite " |> shouldBeGreaterThan 214
+        reached "EpollWait " |> shouldBeGreaterThan 145
+        reached "Flock " |> shouldBeGreaterThan 133
+        reached "InotifyRead " |> shouldBeGreaterThan 204
+        reached "Kevent " |> shouldBeGreaterThan 177
+        reached "KqueuePoll " |> shouldBeGreaterThan 272
+        reached "Poll " |> shouldBeGreaterThan 167
+        reached "ConnectionWrite NeedsCopyIn" |> shouldBeGreaterThan 129
+        reached "ConnectionWrite ProcessEnded" |> shouldBeGreaterThan 4
+
+        coverage.Reached
+        |> List.sumBy (fun (label, count) -> if label.EndsWith " refused" then count else 0)
+        |> shouldBeGreaterThan 80
+
     /// How many cases of `caseGen`'s fixed sample the oracle replays: every one
     /// the first property counts its coverage over.
     let private oracleCases : int = 1500

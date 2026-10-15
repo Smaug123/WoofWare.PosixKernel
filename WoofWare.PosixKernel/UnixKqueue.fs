@@ -877,7 +877,7 @@ module UnixKqueue =
             )
 
     /// `tryFinishKevent` once `Entry` has admitted its caller.
-    let private tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
