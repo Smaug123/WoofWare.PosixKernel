@@ -529,7 +529,7 @@ module TestTransferCounts =
             let actual =
                 // A pwrite's admission says what a write's does, but for the
                 // sleeping write, which a file never makes.
-                match Lone.UnixReadWrite.tryAdmitPWrite 0 fd case.Buffer case.Count offset system with
+                match Lone.UnixReadWrite.tryAdmitPWrite fd case.Buffer case.Count offset system with
                 | Ok (PWriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
                 | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
                 | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device)) ->
@@ -819,7 +819,7 @@ module TestTransferCounts =
             | Ok other -> failwith $"unexpected write outcome %A{other}"
             | Error _ -> Seen.Refused
         | "pwrite" ->
-            match Lone.UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite fd buffer count 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
             | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count

@@ -625,7 +625,6 @@ module internal Lone =
             |> unviewedStep
 
         let tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-            (thread : 'Thread)
             (fd : int)
             (buffer : UserBuffer)
             (count : uint64)
@@ -633,7 +632,7 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<PWriteAdmission, PWriteRefusal>
             =
-            WoofWare.PosixKernel.UnixReadWrite.tryAdmitPWrite thread fd buffer count offset (view system)
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitPWrite fd buffer count offset (view system)
 
         let tryApplyPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (fd : int)

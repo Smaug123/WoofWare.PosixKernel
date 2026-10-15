@@ -1060,15 +1060,7 @@ module TestFcntlMeasured =
                             let fd, system =
                                 FcntlWorld.openWith (FcntlWorld.opening FileAccessMode.ReadWrite) "f" system
 
-                            match
-                                Lone.UnixReadWrite.tryAdmitPWrite
-                                    (Lone.leader system)
-                                    fd
-                                    UserBuffer.Mapped
-                                    1UL
-                                    -1L
-                                    system
-                            with
+                            match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 1UL -1L system with
                             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> fd, $"%A{error}", system
                             | other -> failwith $"admitPWrite at -1: %A{other}"
 

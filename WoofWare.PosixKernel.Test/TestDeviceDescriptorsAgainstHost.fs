@@ -234,7 +234,7 @@ module TestDeviceDescriptorsAgainstHost =
 
                     $"pwrite 16@%d{offset}",
                     hostAnswer (int64 (hostPWrite (host, Array.zeroCreate 16, 16un, offset))),
-                    (match Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 16UL offset system with
+                    (match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 16UL offset system with
                      | Ok (PWriteAdmission.Answered answer) -> ofWrite answer
                      | Ok (PWriteAdmission.Transfer (count, into)) ->
                          match

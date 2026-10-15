@@ -394,7 +394,7 @@ module internal WriteOutcomes =
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
         let steps =
-            match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
+            match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
             | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
             | Ok (PWriteAdmission.Transfer (count, into)) ->
