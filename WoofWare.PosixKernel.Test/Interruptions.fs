@@ -24,7 +24,7 @@ module internal ReturnsToUser =
 
     /// The thread `caller` names, returning to user mode until it takes
     /// nothing more, every handler it takes running and returning
-    /// (`sigreturn`). Fails the test on anything else.
+    /// (`handlersReturn`). Fails the test on anything else.
     let rec untilResumed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -33,10 +33,21 @@ module internal ReturnsToUser =
         match UnixSignal.tryOnReturnToUser caller system with
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
         | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
-            (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn caller frame.Id system)
-            |> untilResumed caller
+            handlersReturn caller frames system
         | other -> failwith $"ReturnsToUser: returning %O{caller} to user mode: %A{other}"
+
+    /// The handler of each of `frames`, innermost first, returning
+    /// (`sigreturn`), and the thread `caller` names returning to user mode
+    /// after each (`untilResumed`), as it does from a `sigreturn`: one may
+    /// restore a mask that lets a pending signal through.
+    and handlersReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (frames : HandlerFrame<'Thread, 'Handler> list)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        (system, frames)
+        ||> List.fold (fun system frame -> UnixSignal.sigreturn caller frame.Id system |> untilResumed caller)
 
 /// Translating the answers of a call a signal interrupted into the end the
 /// process sees, for a test whose table states that end as a finishing call
@@ -63,12 +74,12 @@ module internal Interruptions =
             failwith
                 $"Interruptions.settle: %O{caller}'s return after an interrupted call said nothing of it: %A{other}"
 
-    /// `settle`, and then every handler the return pushed run and returned
-    /// (`sigreturn`), and the thread returned to user mode again until it
-    /// takes nothing more: how the call ends, and the system as the thread
-    /// next runs its own code, which for a call that restarts is the call
-    /// made again. `Error` where the return is refused; fails the test where
-    /// it ends the process.
+    /// `settle`, and then every handler the return pushed run and returned,
+    /// the thread returning to user mode from each `sigreturn`
+    /// (`ReturnsToUser.handlersReturn`): how the call ends, and the system as
+    /// the thread next runs its own code, which for a call that restarts is
+    /// the call made again. `Error` where the return is refused; fails the
+    /// test where it ends the process.
     let handled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -78,12 +89,7 @@ module internal Interruptions =
         | Settled.Refused refusal -> Error refusal
         | Settled.ProcessEnded _ as ended ->
             failwith $"Interruptions.handled: %O{caller}'s return ended the process: %A{ended}"
-        | Settled.Ends (call, frames, system) ->
-            let system =
-                (system, frames)
-                ||> List.fold (fun system frame -> UnixSignal.sigreturn caller frame.Id system)
-
-            Ok (call, ReturnsToUser.untilResumed caller system)
+        | Settled.Ends (call, frames, system) -> Ok (call, ReturnsToUser.handlersReturn caller frames system)
 
     /// `settle`, for a test that expects the return to end the call: how it
     /// ends, the frames the return pushed, and the system it left.

@@ -9,7 +9,8 @@ open WoofWare.PosixKernel
 /// Every public function that takes a `Caller` checks it, through `Entry`,
 /// before it does anything else: a caller in a process the system does not
 /// hold, a thread the process does not have, a parked thread making a call or returning to user
-/// mode, and an unparked thread at a finishing function each throw
+/// mode, a thread making a call before the return to user mode it owes, and an
+/// unparked thread at a finishing function each throw
 /// `InvalidOperationException`, naming the function; the caller each
 /// requirement admits does not. A query about a process, or about a thread,
 /// checks only that the system holds the process.
@@ -70,8 +71,16 @@ module TestCallerChecks =
     /// The thread `world` parks in a `pause`.
     let private pauser : int = 8
 
+    /// The thread `world` leaves owing a return to user mode for a caught
+    /// signal it sent itself.
+    let private signalDebtor : int = 9
+
+    /// The thread `world` leaves owing the return to user mode that ends a
+    /// `pause` a caught signal interrupted.
+    let private interruptedDebtor : int = 10
+
     /// A thread neither process has.
-    let private absent : int = 9
+    let private absent : int = 11
 
     let private everyFlavour : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
@@ -645,6 +654,8 @@ module TestCallerChecks =
         | Unparked
         | Asleep
         | NotReturning
+        | OwesSignal
+        | OwesInterrupted
 
     let private reason (refused : Refused) : string =
         match refused with
@@ -654,8 +665,10 @@ module TestCallerChecks =
         | Refused.Unparked -> "is not parked, so there is no call to finish"
         | Refused.Asleep -> "and nothing has woken it"
         | Refused.NotReturning -> "so it is not returning to user mode"
+        | Refused.OwesSignal -> "its last call left it a signal to take"
+        | Refused.OwesInterrupted -> "interrupted its last call"
 
-    /// A machine of `platform` holding two processes, each with threads 0 to 8,
+    /// A machine of `platform` holding two processes, each with threads 0 to 10,
     /// and the view of the first, in which thread 2 is parked in an `flock` of
     /// a pipe it made (so that `flockAcquire` admits it), thread 3 in an
     /// `accept` of a listener at `listenerFd` (so that `finishAccept` admits
@@ -663,9 +676,10 @@ module TestCallerChecks =
     /// `kevent` (Darwin) of a queue the leader made, `pipeReader` in a `read`
     /// of an empty pipe and `pipeWriter` in a `write` to a full one, each of
     /// a pipe the leader made, `suspender` in a `sigsuspend` and `pauser` in a
-    /// `pause`; and the IDs of the two processes.
+    /// `pause`; in which `signalDebtor` and `interruptedDebtor` owe a return to
+    /// user mode; and the IDs of the two processes.
     let private world (platform : SimulatedUnixPlatform) : ProcessId * ProcessId * UnixSystem<int, string> =
-        let pids, machine = Machines.withThreads platform 2 9
+        let pids, machine = Machines.withThreads platform 2 11
         let own, other = pids.[0], pids.[1]
         let view = Machines.viewOf own machine
 
@@ -797,6 +811,36 @@ module TestCallerChecks =
             | SigsuspendOutcome.WouldBlock _, view -> view
             | other -> failwith $"the pause: expected it to sleep, got %A{other}"
 
+        // SIGUSR1 caught. `signalDebtor` sends it to itself, and takes it only
+        // as it returns to user mode; the leader sends it to
+        // `interruptedDebtor`, which it interrupts in a `pause` as the pause is
+        // made, and which takes it as it returns from the pause.
+        let view =
+            let leader = Caller.make own 0
+
+            let usr1 =
+                Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
+
+            let send (sender : Caller<int>) (target : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
+                match UnixSignal.pthreadKill sender target usr1 view with
+                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, view)) -> view
+                | other -> failwith $"pthread_kill of %d{target}: %A{other}"
+
+            let view =
+                match
+                    UnixSignal.sigaction leader usr1 (Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))) view
+                with
+                | Ok (_, view) -> view
+                | Error error -> failwith $"sigaction: %O{error}"
+
+            let view =
+                send leader interruptedDebtor view
+                |> send (Caller.make own signalDebtor) signalDebtor
+
+            match UnixSignal.pause (Caller.make own interruptedDebtor) view with
+            | SigsuspendOutcome.Interrupted, view -> view
+            | other -> failwith $"the pause: expected the pending signal to interrupt it, got %A{other}"
+
         own, other, view
 
     /// Every public function that takes a caller, or asks about a process,
@@ -835,6 +879,8 @@ module TestCallerChecks =
                                     Caller.make ghost 0, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                     Caller.make own 1, Some Refused.Parked
+                                    Caller.make own signalDebtor, Some Refused.OwesSignal
+                                    Caller.make own interruptedDebtor, Some Refused.OwesInterrupted
                                 ]
                             | Admits.Finishing sleeper ->
                                 [
@@ -851,6 +897,8 @@ module TestCallerChecks =
                                     Caller.make ghost 0, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
                                     Caller.make own suspender, Some Refused.NotReturning
+                                    Caller.make own signalDebtor, None
+                                    Caller.make own interruptedDebtor, None
                                 ]
                             | Admits.AnyThread ->
                                 [

@@ -798,7 +798,7 @@ It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate
 * `ReturnToUserOutcome.ProcessStopped signal`: a signal whose default action stops the process stopped it (see below).
 * `ReturnToUserOutcome.ContinueDiscarded signal`: the kernel discarded a `SIGCONT` at its default, pending while the thread blocked it, as the thread took it, and the client asks `onReturnToUser` again, since the return goes on, under a `sigsuspend`'s temporary mask if the thread is returning from one.
 
-`interrupted` is `None` unless a signal interrupted the call the thread is returning from: unless that call answered `Interrupted`, from its finishing function, or as a `sigsuspend` or `pause` was made with a signal already pending.
+`interrupted` is `Some` only for the return from a call that answered `Interrupted`: from its finishing function, or, for a `sigsuspend` or `pause`, as it was made with a signal already pending.
 Such a call ends here, as a real kernel ends it as the thread returns, from the signals as they are now, which another thread may have changed since the call was interrupted.
 `Some InterruptedCall.FailsWithEintr` is the call returning -1 with `EINTR`, once every handler pushed has returned.
 `Some InterruptedCall.Restarts` is the call restarting: once every handler pushed has returned, the client makes the same call again, with the arguments it was first made with, as a real kernel rewinds the thread to make it again.
@@ -898,21 +898,20 @@ let first = Caller.make pid 0
 let second = Caller.make pid 1
 let usr1 = Signal.toRawSignoUnder numbering Signal.SIGUSR1
 
-// A thread's return to user mode: each handler it pushes runs and returns at once,
-// and the thread returns again, until it takes nothing more. The first return says
-// how an interrupted call ends.
+// A thread's return to user mode: each handler it pushes, innermost first, runs and
+// returns at once, and its sigreturn is a return to user mode of its own. The first
+// return says how an interrupted call ends.
 let rec returnToUser (caller : Caller<int>) (system : UnixSystem<int, string>) : InterruptedCall option * UnixSystem<int, string> =
     match UnixSignal.onReturnToUser caller system with
     | ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system) -> interrupted, system
     | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system) ->
-        for frame in frames do
-            printfn "handler %s runs for %A" frame.Action.Handler frame.Entry.Signal
-
         let system =
             (system, frames)
-            ||> List.fold (fun system frame -> UnixSignal.sigreturn caller frame.Id system)
+            ||> List.fold (fun system frame ->
+                printfn "handler %s runs for %A" frame.Action.Handler frame.Entry.Signal
+                UnixSignal.sigreturn caller frame.Id system |> returnToUser caller |> snd
+            )
 
-        let _, system = returnToUser caller system
         interrupted, system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
