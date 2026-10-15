@@ -25,6 +25,10 @@ open WoofWare.PosixKernel
 /// Touching the real filesystem is fine in a *test*; the prohibition is on the
 /// product, which must never read the host.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestVirtualFileSystemAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]

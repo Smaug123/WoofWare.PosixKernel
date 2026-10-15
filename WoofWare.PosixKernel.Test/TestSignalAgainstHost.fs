@@ -24,6 +24,10 @@ open WoofWare.PosixKernel
 /// handler.
 /// `TestSignal` pins that set from a probe instead.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestSignalAgainstHost =
 
     /// `Some name` when `kill -l signo` names a signal, `None` when the shell

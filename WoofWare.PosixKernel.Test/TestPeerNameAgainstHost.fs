@@ -20,6 +20,9 @@ open WoofWare.PosixKernel
 /// The two sides allocate ephemeral ports independently, so an address is
 /// compared by which of the scenario's endpoints it names, never by its bytes.
 [<TestFixture>]
+[<NonParallelizable>]
+// Takes a port that a socket it closed has just freed as one nothing listens
+// on, which a host test beside it could bind in the meantime.
 module TestPeerNameAgainstHost =
 
     [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]

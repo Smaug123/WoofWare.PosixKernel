@@ -72,6 +72,7 @@ type BlockingConnectionOp =
 /// shut.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestBlockingConnection =
 
     /// Whether `status` records Darwin's `FWASWRITTEN`, which Linux never sets.

@@ -21,6 +21,7 @@ open WoofWare.PosixKernel
 /// in a cell made as the probe made it.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
+[<Order(TestOrder.LongRunning)>]
 module TestAttributeChangeAt =
 
     let private context : string = "TestAttributeChangeAt"

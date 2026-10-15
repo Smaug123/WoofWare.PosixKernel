@@ -14,6 +14,7 @@ open WoofWare.PosixKernel
 /// tags: its reading of an ApiSurface listing, against F#'s own reflection over the library, and
 /// its comparison, against appends and against each kind of change that is not one.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestUnionCaseOrder =
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 1000

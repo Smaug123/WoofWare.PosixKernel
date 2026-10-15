@@ -19,6 +19,7 @@ open WoofWare.PosixKernel
 /// runner's kernel, and CI's runner image moves that kernel on its own schedule,
 /// so pinning it would fail CI whenever the image moved.
 [<TestFixture>]
+[<Parallelizable(ParallelScope.All)>]
 module TestDarwinReleaseAgainstHost =
 
     let private major (context : string) (release : string) : int =

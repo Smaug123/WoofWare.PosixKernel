@@ -14,6 +14,10 @@ open WoofWare.PosixKernel
 /// The P/Invokes take `byte[]` rather than `string`, because the names under
 /// test are not UTF-8 and a `string` could not carry them.
 [<TestFixture>]
+[<NonParallelizable>]
+// Starts child processes, which inherit the raw sockets a host test beside
+// it holds and keep their endpoints after the test closes them; see
+// TestFixtureParallelism.
 module TestBindingAgainstHost =
 
     [<DllImport("libc", SetLastError = true)>]
