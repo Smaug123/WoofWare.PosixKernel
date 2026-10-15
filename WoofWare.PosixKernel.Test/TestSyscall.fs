@@ -282,9 +282,6 @@ module TestSyscall =
             "GetCpu"
         ]
 
-    /// The cases `step` does not make yet, by the stage that wires each.
-    let private unwired : (string * WiringStage) list = []
-
     let private allCases : BindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
 
     let private syscallCases : UnionCaseInfo list =
@@ -520,12 +517,8 @@ module TestSyscall =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     [<Test>]
-    let ``every case is made, refused as reserved, or refused naming the stage that wires it`` () : unit =
-        let unwiredNames = unwired |> List.map fst
-
-        unwiredNames |> List.distinct |> shouldEqual unwiredNames
-
-        List.concat [ wired ; reserved ; unwiredNames ]
+    let ``every case is made, or refused as reserved`` () : unit =
+        List.concat [ wired ; reserved ]
         |> List.sort
         |> shouldEqual (List.sort syscallCaseNames)
 
@@ -535,11 +528,7 @@ module TestSyscall =
             for case in syscallCases do
                 if not (List.contains case.Name wired) then
                     let call = placeholder case
-
-                    let expected =
-                        match List.tryFind (fun (name, _) -> name = case.Name) unwired with
-                        | Some (_, stage) -> SyscallRefusal.Unwired ($"Syscall.%s{case.Name}", stage)
-                        | None -> SyscallRefusal.Reserved $"Syscall.%s{case.Name}"
+                    let expected = SyscallRefusal.Reserved $"Syscall.%s{case.Name}"
 
                     match UnixSystem.tryStep (Callers.leader system) call system with
                     | Error refusal -> refusal |> shouldEqual expected

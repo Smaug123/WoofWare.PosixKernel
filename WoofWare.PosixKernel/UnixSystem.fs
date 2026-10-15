@@ -2,18 +2,11 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// Which change of `docs/plans/2026-10-13-one-kernel.md` makes `UnixSystem.step`
-/// make a call it does not make yet. Each goes once its change has wired every
-/// call it names.
-[<RequireQualifiedAccess>]
-type internal WiringStage =
-    /// The socket, polling, signal, clock, entropy, identity and thread calls.
-    | S3
-
 /// Why this kernel will not answer a syscall `UnixSystem.step` was asked to
 /// make: the refusal of the call's own function, named for the call's
-/// `Syscall` case, or a call `step` does not make. The client decides what a
-/// refusal means for it; nothing here is recoverable by retrying.
+/// `Syscall` case, or a reserved call, which this library does not model yet.
+/// The client decides what a refusal means for it; nothing here is recoverable
+/// by retrying.
 [<RequireQualifiedAccess>]
 type internal SyscallRefusal<'Thread> =
     | Dup of DescriptorLimitRefusal
@@ -111,9 +104,6 @@ type internal SyscallRefusal<'Thread> =
     /// The call is `call`, a reserved case: this library does not model the
     /// call it names yet.
     | Reserved of call : string
-    /// The call is `call`, which `step` does not make yet, though the call's
-    /// own function does: `stage` makes `step` make it.
-    | Unwired of call : string * stage : WiringStage
 
 [<RequireQualifiedAccess>]
 module internal SyscallRefusal =
@@ -217,12 +207,6 @@ module internal SyscallRefusal =
         | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
         | SyscallRefusal.Reserved call ->
             $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
-        | SyscallRefusal.Unwired (call, stage) ->
-            let stage =
-                match stage with
-                | WiringStage.S3 -> "S3"
-
-            $"%s{call}: step does not make this call yet; make it through the call's own function. Stage %s{stage} of docs/plans/2026-10-13-one-kernel.md wires it."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallRefusal<'Thread>) : RefusalKind =
@@ -320,7 +304,6 @@ module internal SyscallRefusal =
         | SyscallRefusal.ExitGroup inner -> ProcessEndRefusal.kind inner
         | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
         | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
-        | SyscallRefusal.Unwired _ -> RefusalKind.Unmodelled
 
 /// A way this system's tables disagree with each other — a state no kernel
 /// could be in, and which the operations here exist to keep unreachable.
@@ -1405,30 +1388,17 @@ module UnixSystem =
     /// `step`, with a refusal answered as the `Error` rather than raised.
     ///
     /// Each call `step` makes is made through its own family's function, whose
-    /// `Entry` checks `caller` before anything else; a call it does not make
-    /// checks `caller` here, before it is refused.
+    /// `Entry` checks `caller` before anything else; a reserved call checks
+    /// `caller` here, before it is refused.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>>
         =
-        let refused
-            (refusal : SyscallRefusal<'Thread>)
-            : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>>
-            =
-            Entry.admit "UnixSystem.step" CallerRequirement.Running caller system
-            Error refusal
-
-        let unwired
-            (call : string)
-            (stage : WiringStage)
-            : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>>
-            =
-            refused (SyscallRefusal.Unwired (call, stage))
-
         let reserved (call : string) : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>> =
-            refused (SyscallRefusal.Reserved call)
+            Entry.admit "UnixSystem.step" CallerRequirement.Running caller system
+            Error (SyscallRefusal.Reserved call)
 
         match call with
         | Syscall.Dup fd ->

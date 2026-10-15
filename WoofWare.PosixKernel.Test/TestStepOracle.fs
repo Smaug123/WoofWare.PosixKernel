@@ -487,7 +487,7 @@ module TestStepOracle =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
-        | other -> failwith $"%s{UnionCaseName.ofValue other} is no call step makes yet"
+        | other -> failwith $"%s{UnionCaseName.ofValue other} is a reserved case, whose call no function makes"
 
     /// What a call answered, as values to compare: the `SteppedCall`'s case
     /// and fields, or the refusal, or the type and message of what it threw.
