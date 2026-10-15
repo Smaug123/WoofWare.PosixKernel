@@ -11,10 +11,11 @@ open WoofWare.PosixKernel
 
 /// `UnixSystem.step` of each call it makes is that call made through its own
 /// function: the same answer in the same `SteppedCall` case, the same refusal,
-/// or the same exception. `reference` makes each call as a client holding
-/// every argument would, through the call's function and then each
-/// resumption, and each property generates calls of one case, by any thread,
-/// on worlds a few generated calls have moved.
+/// or the same exception; for a call that ends the process, the same ended
+/// process and the same system without it. `reference` makes each call as a
+/// client holding every argument would, through the call's function and then
+/// each resumption, and each property generates calls of one case, by any
+/// thread, on worlds a few generated calls have moved.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestStepOracle =
@@ -315,6 +316,10 @@ module TestStepOracle =
             UnixPipe.tryPipe2 caller flags destination system
             |> Result.map SteppedCall.Pipe2
             |> Result.mapError SyscallRefusal.Pipe2
+        | Syscall.Socket (domain, socketType, protocol) ->
+            UnixSocket.trySocket caller domain socketType protocol system
+            |> Result.map SteppedCall.Socket
+            |> Result.mapError SyscallRefusal.Socket
         | Syscall.Bind (fd, address, declaredLength) ->
             UnixSocket.tryBind caller fd (bufferOf address) declaredLength system
             |> CallProgress.resumeWith (fun paused ->
@@ -329,6 +334,26 @@ module TestStepOracle =
             )
             |> Result.map SteppedCall.Connect
             |> Result.mapError SyscallRefusal.Connect
+        | Syscall.Listen (fd, backlog) ->
+            UnixSocket.tryListen caller fd backlog system
+            |> Result.map SteppedCall.Listen
+            |> Result.mapError SyscallRefusal.Listen
+        | Syscall.Accept (fd, destination, declaredLength) ->
+            UnixConnection.tryAccept caller fd destination declaredLength system
+            |> Result.map SteppedCall.Accept
+            |> Result.mapError SyscallRefusal.Accept
+        | Syscall.Shutdown (fd, how) ->
+            UnixConnection.tryShutdown caller fd how system
+            |> Result.map SteppedCall.Shutdown
+            |> Result.mapError SyscallRefusal.Shutdown
+        | Syscall.GetSockName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetsockname caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetSockName
+            |> Result.mapError SyscallRefusal.GetSockName
+        | Syscall.GetPeerName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetpeername caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetPeerName
+            |> Result.mapError SyscallRefusal.GetPeerName
         | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->
             UnixSocket.trySetsockopt caller fd level optionName (bufferOf value) optionLength system
             |> CallProgress.resumeWith (fun paused ->
@@ -341,6 +366,30 @@ module TestStepOracle =
             |> CallProgress.resumeWith (fun paused -> UnixSocket.tryGetsockoptWithLength (cell length) paused)
             |> Result.map SteppedCall.GetSockOpt
             |> Result.mapError SyscallRefusal.GetSockOpt
+        | Syscall.Poll (entries, milliseconds) ->
+            UnixPoll.tryPoll caller entries milliseconds system
+            |> Result.map SteppedCall.Poll
+            |> Result.mapError SyscallRefusal.Poll
+        | Syscall.EpollCreate1 flags ->
+            UnixPoll.tryEpollCreate1 caller flags system
+            |> Result.map SteppedCall.EpollCreate1
+            |> Result.mapError SyscallRefusal.EpollCreate1
+        | Syscall.EpollCtl (epfd, op, fd, event) ->
+            UnixPoll.tryEpollCtl caller epfd op fd event system
+            |> Result.map SteppedCall.EpollCtl
+            |> Result.mapError SyscallRefusal.EpollCtl
+        | Syscall.EpollWait (epfd, buffer, maxEvents, milliseconds) ->
+            UnixPoll.tryEpollWait caller epfd maxEvents buffer milliseconds system
+            |> Result.map SteppedCall.EpollWait
+            |> Result.mapError SyscallRefusal.EpollWait
+        | Syscall.Kqueue ->
+            UnixKqueue.tryKqueue caller system
+            |> Result.map SteppedCall.Kqueue
+            |> Result.mapError SyscallRefusal.Kqueue
+        | Syscall.Kevent (kq, changes, nchanges, eventlist, nevents, timeout) ->
+            UnixKqueue.tryKevent caller kq nchanges changes nevents eventlist timeout system
+            |> Result.map SteppedCall.Kevent
+            |> Result.mapError SyscallRefusal.Kevent
         | Syscall.InotifyInit1 flags ->
             UnixInotify.tryInotifyInit1 caller flags system
             |> Result.map SteppedCall.InotifyInit1
@@ -353,8 +402,63 @@ module TestStepOracle =
             UnixInotify.tryInotifyRmWatch caller fd wd system
             |> Result.map SteppedCall.InotifyRmWatch
             |> Result.mapError SyscallRefusal.InotifyRmWatch
+        | Syscall.Kill (pid, signo) ->
+            UnixSignal.tryKill caller pid signo system
+            |> Result.map SteppedCall.Kill
+            |> Result.mapError SyscallRefusal.Kill
+        | Syscall.PthreadKill (target, signo) ->
+            UnixSignal.tryPthreadKill caller target signo system
+            |> Result.map SteppedCall.PthreadKill
+            |> Result.mapError SyscallRefusal.PthreadKill
+        | Syscall.SigAction (signo, newAction) ->
+            Ok (SteppedCall.SigAction (UnixSignal.sigaction caller signo newAction system))
+        | Syscall.SigActionSyscall (signo, newAction) ->
+            Ok (SteppedCall.SigActionSyscall (UnixSignal.sigactionSyscall caller signo newAction system))
+        | Syscall.PthreadSigMask (how, set) ->
+            Ok (SteppedCall.PthreadSigMask (UnixSignal.pthreadSigmask caller how set system))
+        | Syscall.SigProcMask (how, set) ->
+            UnixSignal.trySigprocmask caller how set system
+            |> Result.map SteppedCall.SigProcMask
+            |> Result.mapError SyscallRefusal.SigProcMask
+        | Syscall.RtSigProcMask (how, set, sigsetSize) ->
+            Ok (SteppedCall.RtSigProcMask (UnixSignal.rtSigprocmask caller how set sigsetSize system))
+        | Syscall.SigPending -> Ok (SteppedCall.SigPending (UnixSignal.sigpending caller system))
+        | Syscall.SigSuspend mask ->
+            UnixSignal.trySigsuspend caller mask system
+            |> Result.map SteppedCall.SigSuspend
+            |> Result.mapError SyscallRefusal.SigSuspend
+        | Syscall.RtSigSuspend (mask, sigsetSize) ->
+            UnixSignal.tryRtSigsuspend caller mask sigsetSize system
+            |> Result.map SteppedCall.RtSigSuspend
+            |> Result.mapError SyscallRefusal.RtSigSuspend
+        | Syscall.Pause ->
+            UnixSignal.tryPause caller system
+            |> Result.map SteppedCall.Pause
+            |> Result.mapError SyscallRefusal.Pause
+        | Syscall.SigReturn frame -> Ok (SteppedCall.SigReturn (UnixSignal.sigreturn caller frame system))
+        | Syscall.ClockGetTime clockId ->
+            UnixClock.tryClockGettime caller clockId system
+            |> Result.map SteppedCall.ClockGetTime
+            |> Result.mapError SyscallRefusal.ClockGetTime
+        | Syscall.GetTimeOfDay -> Ok (SteppedCall.GetTimeOfDay (UnixClock.gettimeofday caller system))
+        | Syscall.GetRandom (buffer, count, flags) ->
+            UnixEntropy.tryGetRandom caller buffer count flags system
+            |> Result.map SteppedCall.GetRandom
+            |> Result.mapError SyscallRefusal.GetRandom
+        | Syscall.GetEntropy (buffer, length) ->
+            UnixEntropy.tryGetEntropy caller buffer length system
+            |> Result.map SteppedCall.GetEntropy
+            |> Result.mapError SyscallRefusal.GetEntropy
         | Syscall.GetProcessId -> Ok (SteppedCall.GetProcessId (UnixSystem.processId caller system))
         | Syscall.UMask mask -> Ok (SteppedCall.UMask (UnixSystem.umask caller mask system))
+        | Syscall.GetResUid (real, effective, saved) ->
+            UnixCredentials.tryGetresuid caller real effective saved system
+            |> Result.map SteppedCall.GetResUid
+            |> Result.mapError SyscallRefusal.GetResUid
+        | Syscall.GetResGid (real, effective, saved) ->
+            UnixCredentials.tryGetresgid caller real effective saved system
+            |> Result.map SteppedCall.GetResGid
+            |> Result.mapError SyscallRefusal.GetResGid
         | Syscall.SetResUid (real, effective, saved) ->
             UnixCredentials.trySetresuid caller real effective saved system
             |> Result.map SteppedCall.SetResUid
@@ -367,7 +471,23 @@ module TestStepOracle =
             UnixCredentials.trySetgroups caller size words system
             |> Result.map SteppedCall.SetGroups
             |> Result.mapError SyscallRefusal.SetGroups
-        | other -> failwith $"%s{UnionCaseName.ofValue other} is no call step makes yet"
+        | Syscall.Spawn (child, cpu) ->
+            UnixThreadLifecycle.trySpawn caller child cpu system
+            |> Result.map SteppedCall.Spawn
+            |> Result.mapError SyscallRefusal.Spawn
+        | Syscall.ExitThread status ->
+            UnixThreadLifecycle.tryExitThread caller status system
+            |> Result.map SteppedCall.ExitThread
+            |> Result.mapError SyscallRefusal.ExitThread
+        | Syscall.ExitGroup status ->
+            UnixThreadLifecycle.tryExitGroup caller status system
+            |> Result.map SteppedCall.ExitGroup
+            |> Result.mapError SyscallRefusal.ExitGroup
+        | Syscall.GetCpu ->
+            UnixScheduling.tryGetcpu caller system
+            |> Result.map SteppedCall.GetCpu
+            |> Result.mapError SyscallRefusal.GetCpu
+        | other -> failwith $"%s{UnionCaseName.ofValue other} is a reserved case, whose call no function makes"
 
     /// What a call answered, as values to compare: the `SteppedCall`'s case
     /// and fields, or the refusal, or the type and message of what it threw.
@@ -380,41 +500,127 @@ module TestStepOracle =
         with e ->
             Error (e.GetType().FullName, e.Message)
 
-    /// The system a call left, if it answered without parking its thread.
+    /// The system a call left, if it answered without parking its thread and
+    /// its process carries on.
     let private carriedOn (stepped : SteppedCall<int, string>) : UnixSystem<int, string> option =
         match stepped with
-        | SteppedCall.FLock (SyscallOutcome.Answered _, system) -> Some system
-        | SteppedCall.FLock _ -> None
-        | SteppedCall.InotifyInit1 (Ok (_, system)) -> Some system
-        | SteppedCall.InotifyInit1 (Error _) -> None
-        | SteppedCall.UMask (_, system) -> Some system
+        | SteppedCall.FLock (SyscallOutcome.Answered _, system)
         | SteppedCall.Open (SyscallOutcome.Answered _, system)
         | SteppedCall.OpenAt (SyscallOutcome.Answered _, system)
-        | SteppedCall.Connect (SyscallOutcome.Answered _, system) -> Some system
+        | SteppedCall.Connect (SyscallOutcome.Answered _, system)
+        | SteppedCall.Read (ReadOutcome.Answered _, system)
+        | SteppedCall.Recv (ReadOutcome.Answered _, system)
+        // A signal a write raised is taken as its thread returns to user
+        // mode.
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns _, system))
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system))
+        | SteppedCall.Send (ProcessFate.Continues (WriteOutcome.Returns _, system))
+        | SteppedCall.Send (ProcessFate.Continues (WriteOutcome.ReturnsRaising _, system))
+        | SteppedCall.Socket (Ok (_, system))
+        | SteppedCall.EpollCreate1 (Ok (_, system))
+        | SteppedCall.InotifyInit1 (Ok (_, system))
+        | SteppedCall.Kill (Ok (ProcessFate.Continues (_, system)))
+        | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (_, system)))
+        | SteppedCall.SigAction (Ok (_, system))
+        | SteppedCall.SigActionSyscall (Ok (_, system))
+        | SteppedCall.PthreadSigMask (Ok (_, system))
+        | SteppedCall.SigProcMask (Ok (_, system))
+        | SteppedCall.RtSigProcMask (Ok (_, system))
+        | SteppedCall.ExitThread (ProcessFate.Continues ((), system)) -> Some system
+        | SteppedCall.FLock _
         | SteppedCall.Open _
         | SteppedCall.OpenAt _
-        | SteppedCall.Connect _ -> None
-        | SteppedCall.ReadDirectoryEntry (_, system) -> Some system
-        | SteppedCall.Read (ReadOutcome.Answered _, system)
-        | SteppedCall.Recv (ReadOutcome.Answered _, system) -> Some system
+        | SteppedCall.Connect _
         | SteppedCall.Read _
-        | SteppedCall.Recv _ -> None
-        | SteppedCall.PRead (_, system) -> Some system
-        // A write that raised a signal leaves its thread owing a return to user
-        // mode, which no call here makes.
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns _, system))
-        | SteppedCall.Send (ProcessFate.Continues (WriteOutcome.Returns _, system)) -> Some system
+        | SteppedCall.Recv _
         | SteppedCall.Write _
-        | SteppedCall.Send _ -> None
-        | SteppedCall.PWrite (_, system) -> Some system
-        | SteppedCall.Pipe2 (_, system) -> Some system
-        | SteppedCall.Bind (_, system) -> Some system
-        | SteppedCall.SetSockOpt (_, system) -> Some system
-        | SteppedCall.GetSockOpt (_, system) -> Some system
+        | SteppedCall.Send _
+        | SteppedCall.Socket (Error _)
+        | SteppedCall.EpollCreate1 (Error _)
+        | SteppedCall.InotifyInit1 (Error _)
+        | SteppedCall.Kill _
+        | SteppedCall.PthreadKill _
+        | SteppedCall.SigAction (Error _)
+        | SteppedCall.SigActionSyscall (Error _)
+        | SteppedCall.PthreadSigMask (Error _)
+        | SteppedCall.SigProcMask (Error _)
+        | SteppedCall.RtSigProcMask (Error _)
+        | SteppedCall.ExitThread (ProcessFate.ProcessEnded _)
+        | SteppedCall.ExitGroup _ -> None
+        | SteppedCall.Accept (AcceptOutcome.WouldBlock _, _)
+        | SteppedCall.Poll (PollOutcome.WouldBlock _, _)
+        | SteppedCall.EpollWait (EpollWaitOutcome.WouldBlock _, _)
+        | SteppedCall.Kevent (KeventOutcome.WouldBlock _, _)
+        | SteppedCall.SigSuspend (SigsuspendOutcome.WouldBlock _, _)
+        | SteppedCall.RtSigSuspend (SigsuspendOutcome.WouldBlock _, _)
+        | SteppedCall.Pause (SigsuspendOutcome.WouldBlock _, _) -> None
+        | SteppedCall.UMask (_, system)
+        | SteppedCall.ReadDirectoryEntry (_, system)
+        | SteppedCall.PRead (_, system)
+        | SteppedCall.PWrite (_, system)
+        | SteppedCall.Pipe2 (_, system)
+        | SteppedCall.Bind (_, system)
+        | SteppedCall.SetSockOpt (_, system)
+        | SteppedCall.GetSockOpt (_, system)
+        | SteppedCall.Listen (_, system)
+        | SteppedCall.Accept (_, system)
+        | SteppedCall.Shutdown (_, system)
+        | SteppedCall.Poll (_, system)
+        | SteppedCall.EpollCtl (_, system)
+        | SteppedCall.EpollWait (_, system)
+        | SteppedCall.Kqueue (_, system)
+        | SteppedCall.Kevent (_, system)
+        | SteppedCall.SigSuspend (_, system)
+        | SteppedCall.RtSigSuspend (_, system)
+        | SteppedCall.Pause (_, system)
+        | SteppedCall.SigReturn system
+        | SteppedCall.GetRandom (_, system)
+        | SteppedCall.GetEntropy (_, system)
+        | SteppedCall.Spawn (_, system) -> Some system
         | stepped ->
             match Stepped.syscallAnswer stepped with
             | Some (_, system) -> system
             | None -> None
+
+    /// Whether `stepped` is the end of the calling process: the call's
+    /// `ProcessFate.ProcessEnded`, or an `exit_group`'s.
+    let private endsProcess (stepped : SteppedCall<int, string>) : bool =
+        match stepped with
+        | SteppedCall.Kill (Ok (ProcessFate.ProcessEnded _))
+        | SteppedCall.PthreadKill (Ok (ProcessFate.ProcessEnded _))
+        | SteppedCall.ExitThread (ProcessFate.ProcessEnded _)
+        | SteppedCall.ExitGroup _ -> true
+        | _ -> false
+
+    /// Whether `stepped` is a call a signal interrupted as it was made.
+    let private interrupted (stepped : SteppedCall<int, string>) : bool =
+        match stepped with
+        | SteppedCall.SigSuspend (SigsuspendOutcome.Interrupted, _)
+        | SteppedCall.RtSigSuspend (SigsuspendOutcome.Interrupted, _)
+        | SteppedCall.Pause (SigsuspendOutcome.Interrupted, _) -> true
+        | _ -> false
+
+    /// `system` once the thread `caller` names has returned to user mode, as a
+    /// client returns it after each call: each handler the return pushes runs
+    /// and returns at once. `None` where the return ends or stops the process,
+    /// or is refused.
+    let rec private returned
+        (caller : Caller<int>)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string> option
+        =
+        match UnixSignal.tryOnReturnToUser caller system with
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes _, system)) -> Some system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) -> returned caller system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, _), system)) ->
+            (Some system, frames)
+            ||> List.fold (fun system frame ->
+                system
+                |> Option.bind (fun system -> returned caller (UnixSignal.sigreturn caller frame.Id system))
+            )
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _))
+        | Ok (ProcessFate.ProcessEnded _)
+        | Error _ -> None
 
     // ------------------------------------------------------------- worlds
 
@@ -465,16 +671,39 @@ module TestStepOracle =
     let private platforms : SimulatedUnixPlatform list =
         [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ]
 
-    /// The calls of a world are made by thread 0, its leader, or thread 1.
+    /// The calls of a world are made by thread 0, its leader, or, in a world
+    /// with two threads, thread 1.
     let private threads : int list = [ 0 ; 1 ]
 
     /// The address the world's listener is bound to.
     let private listening : Ipv4Endpoint =
         Ipv4Endpoint.ofParts Ipv4Address.loopback 5000us
 
-    /// `system` with four TCP sockets, made by its leader: 8, fresh from
-    /// `socket(2)`; 9, listening at `listening`; 10, connected to 9; and 11,
-    /// the server end 9 accepted.
+    /// The process ID every world's process has.
+    let private pid : int = ProcessId.toInt32 UnixSystem.defaultProcessId
+
+    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> SignalNumbering.Linux
+        | SimulatedUnixFlavour.Darwin -> SignalNumbering.Darwin
+
+    /// `SIG_BLOCK` in the flavour's numbering.
+    let private sigBlock (flavour : SimulatedUnixFlavour) : int =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> 0
+        | SimulatedUnixFlavour.Darwin -> 1
+
+    /// `system` once its leader has returned to user mode, as a client returns
+    /// it after a call of the setting up.
+    let private leaderReturned (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        match returned (Callers.leader system) system with
+        | Some system -> system
+        | None -> failwith "setting up: the leader's return to user mode did not resume it"
+
+    /// `system` with five TCP sockets, made by its leader: 8, fresh from
+    /// `socket(2)`; 9, listening at `listening`; 10, connected to 9; 11, the
+    /// server end 9 accepted; and 12, connected to 9 and still in its accept
+    /// queue.
     let private withSockets
         (platform : SimulatedUnixPlatform)
         (system : UnixSystem<int, string>)
@@ -484,6 +713,11 @@ module TestStepOracle =
             match NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system with
             | fd, system when fd = expected -> system
             | fd, _ -> failwith $"setting up, socket: %d{fd}, not %d{expected}"
+
+        let connect (client : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match CopyIn.connect client UserBuffer.Mapped 16u (CopyIn.inet platform listening) system with
+            | Ok (SyscallAnswer.Completed 0L, system) -> system
+            | other -> failwith $"setting up, connect(%d{client}): %A{other}"
 
         let system = system |> stream 8 |> stream 9
 
@@ -497,23 +731,132 @@ module TestStepOracle =
             | Ok (ListenAnswer.Listening _, system) -> system
             | other -> failwith $"setting up, listen: %A{other}"
 
-        let system = stream 10 system
+        let system = system |> stream 10 |> connect 10
 
         let system =
-            match CopyIn.connect 10 UserBuffer.Mapped 16u (CopyIn.inet platform listening) system with
-            | Ok (SyscallAnswer.Completed 0L, system) -> system
-            | other -> failwith $"setting up, connect: %A{other}"
+            match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u system with
+            | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
+            | other -> failwith $"setting up, accept: %A{other}"
 
-        match UnixConnection.tryAccept (Callers.leader system) 9 UserBuffer.Mapped 16u system with
-        | Ok (AcceptOutcome.Accepted (11, _, _), system) -> system
-        | other -> failwith $"setting up, accept: %A{other}"
+        system |> stream 12 |> connect 12
+
+    /// `system` with 13 an event queue watching 10 for input and 11 for
+    /// output: under Linux an epoll instance, whose registrations are
+    /// edge-triggered, which is all this library models; under Darwin a
+    /// kqueue.
+    let private withEventQueue
+        (flavour : SimulatedUnixFlavour)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let leader = Callers.leader system
+
+        match flavour with
+        | SimulatedUnixFlavour.Linux ->
+            let watch (fd : int) (events : uint32) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                match UnixPoll.epollCtl leader 13 1 fd (EpollEventArgument.Readable (events, uint64 fd)) system with
+                | EpollCtlAnswer.Changed, system -> system
+                | other -> failwith $"setting up, epoll_ctl(%d{fd}): %A{other}"
+
+            // EPOLLIN and EPOLLOUT, each with EPOLLET.
+            match UnixPoll.epollCreate1 leader 0 system with
+            | Ok (13, system) -> system |> watch 10 0x8000_0001u |> watch 11 0x8000_0004u
+            | other -> failwith $"setting up, epoll_create1: %A{other}"
+        | SimulatedUnixFlavour.Darwin ->
+            let change (fd : int) (filter : int16) : Kevent =
+                {
+                    Ident = uint64 fd
+                    Filter = filter
+                    Flags = KeventFlags.Add
+                    FilterFlags = 0u
+                    Data = 0L
+                    UserData = uint64 fd
+                }
+
+            match UnixKqueue.kqueue leader system with
+            | 13, system ->
+                let changes = [ change 10 KeventFilter.Read ; change 11 KeventFilter.Write ]
+
+                match
+                    UnixKqueue.kevent leader 13 2 changes 0 UserBuffer.Mapped (KeventTimeout.Readable (0L, 0L)) system
+                with
+                | KeventOutcome.Answered [], system -> system
+                | other -> failwith $"setting up, kevent: %A{other}"
+            | other -> failwith $"setting up, kqueue: %A{other}"
+
+    /// `system` with `signal` caught by a handler the client calls `handler`.
+    let private catching
+        (flavour : SimulatedUnixFlavour)
+        (signal : Signal)
+        (handler : string)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let action = SignalDisposition.Catch (SignalCatch.ofHandler handler)
+        let signo = Signal.toRawSignoUnder (numberingOf flavour) signal
+
+        match UnixSignal.sigaction (Callers.leader system) signo (Some action) system with
+        | Ok (_, system) -> leaderReturned system
+        | Error error -> failwith $"setting up, sigaction(%O{signal}): %O{error}"
+
+    /// `system` with SIGUSR1 caught, blocked by the leader, and pending on the
+    /// process.
+    let private withPendingSignal
+        (flavour : SimulatedUnixFlavour)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let numbering = numberingOf flavour
+        let system = catching flavour Signal.SIGUSR1 "usr1" system
+        let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
+
+        let system =
+            match UnixSignal.pthreadSigmask (Callers.leader system) (sigBlock flavour) (Some usr1) system with
+            | Ok (_, system) -> leaderReturned system
+            | Error error -> failwith $"setting up, pthread_sigmask: %O{error}"
+
+        match UnixSignal.kill (Callers.leader system) pid (Signal.toRawSignoUnder numbering Signal.SIGUSR1) system with
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> leaderReturned system
+        | other -> failwith $"setting up, kill: %A{other}"
+
+    /// `system` with its leader inside a handler for SIGUSR2, whose frame is
+    /// `HandlerFrameId 0L`.
+    let private inHandler
+        (flavour : SimulatedUnixFlavour)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let system = catching flavour Signal.SIGUSR2 "usr2" system
+        let leader = Callers.leader system
+        let usr2 = Signal.toRawSignoUnder (numberingOf flavour) Signal.SIGUSR2
+
+        match UnixSignal.pthreadKill leader 0 usr2 system with
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
+            match UnixSignal.onReturnToUser leader system with
+            | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), system) when
+                frame.Id = HandlerFrameId 0L
+                ->
+                system
+            | other -> failwith $"setting up, the return to user mode: %A{other}"
+        | other -> failwith $"setting up, pthread_kill: %A{other}"
 
     /// A booted process on `platform`, as root or as the flavour's default
-    /// user, owning the seeded tree, with two threads, and with `/f` open
-    /// read-write as 3, `/d` as 4, `/d/g` as 5 and `/f` again, read-only, as
-    /// 6. Under Linux, 7 is an inotify instance watching `/d` as watch 1, and
-    /// under Darwin, `/d/e`. Then 8 to 11 are the sockets of `withSockets`.
-    let private world (platform : SimulatedUnixPlatform) (privileged : bool) : UnixSystem<int, string> =
+    /// user, owning the seeded tree, with `threadCount` threads (1 or 2), and
+    /// with `/f` open read-write as 3, `/d` as 4, `/d/g` as 5 and `/f` again,
+    /// read-only, as 6. Under Linux, 7 is an inotify instance watching `/d` as
+    /// watch 1, and under Darwin, `/d/e`. Then 8 to 12 are the sockets of
+    /// `withSockets`, and 13 the event queue of `withEventQueue`.
+    ///
+    /// SIGUSR1 has a handler, every thread blocks it, and it is pending on
+    /// the process. The leader runs on processor 0, inside a handler for
+    /// SIGUSR2, whose frame is `HandlerFrameId 0L`. The machine has been up
+    /// for a little over a second.
+    let private world
+        (platform : SimulatedUnixPlatform)
+        (privileged : bool)
+        (threadCount : int)
+        : UnixSystem<int, string>
+        =
         let flavour = SimulatedUnixPlatform.flavour platform
         let ordinary = UnixSystem.defaultCredentials flavour
 
@@ -532,11 +875,13 @@ module TestStepOracle =
             UnixSystem.initial<int, string> platform
             |> Launched.fileSystem (UnixTimestamp.ofMillisecondsSinceEpoch 0L) (InodeOwner.ofProcess ordinary) seed
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> Threads.ensure 1
             |> opened "/f" 2
             |> opened "/d" 0
             |> opened "/d/g" 0
             |> opened "/f" 0
+
+        if Lone.pid system <> UnixSystem.defaultProcessId then
+            failwith $"setting up: the process is %O{Lone.pid system}"
 
         let system =
             match flavour with
@@ -550,15 +895,39 @@ module TestStepOracle =
                     | other -> failwith $"setting up, inotify_add_watch: %A{other}"
                 | other -> failwith $"setting up, inotify_init1: %A{other}"
 
-        withSockets platform system
+        let system =
+            system
+            |> withSockets platform
+            |> withEventQueue flavour
+            |> withPendingSignal flavour
 
-    let private worlds : Lazy<Map<SimulatedUnixFlavour * bool, UnixSystem<int, string>>> =
+        // Thread 1 starts with the leader's mask, before the leader enters its
+        // handler.
+        let system =
+            match threadCount with
+            | 1 -> system
+            | 2 -> Threads.ensure 1 system
+            | other -> failwith $"a world has 1 or 2 threads, not %d{other}"
+
+        let system =
+            inHandler flavour system
+            |> UnixScheduling.dispatch (Callers.leader system) (CpuId 0)
+            |> UnixSystem.advanceClock 1_234_567_891L
+
+        match UnixSystem.checkInvariants system with
+        | [] -> system
+        | defects -> failwith $"setting up: %A{defects}"
+
+    let private worlds : Lazy<Map<SimulatedUnixFlavour * bool * int, UnixSystem<int, string>>> =
         lazy
             Map.ofList
                 [
                     for platform in platforms do
                         for privileged in [ true ; false ] do
-                            yield (SimulatedUnixPlatform.flavour platform, privileged), world platform privileged
+                            for threadCount in [ 1 ; 2 ] do
+                                yield
+                                    (SimulatedUnixPlatform.flavour platform, privileged, threadCount),
+                                    world platform privileged threadCount
                 ]
 
     // ------------------------------------------------------------- generators
@@ -566,7 +935,7 @@ module TestStepOracle =
     let private fdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
         Gen.frequency
             [
-                8, Gen.choose (0, 12)
+                8, Gen.choose (0, 13)
                 1, Gen.elements [ -1 ; 99 ; 1023 ; 1024 ]
                 2, Gen.constant (AtDirectory.atFdCwd flavour)
             ]
@@ -660,7 +1029,7 @@ module TestStepOracle =
 
     /// Mostly the world's sockets, for a call that asks a socket something.
     let private socketFdGen (flavour : SimulatedUnixFlavour) : Gen<int> =
-        Gen.frequency [ 3, Gen.choose (8, 11) ; 1, fdGen flavour ]
+        Gen.frequency [ 3, Gen.choose (8, 12) ; 1, fdGen flavour ]
 
     /// Mostly the world's connected sockets, for a call that moves bytes
     /// through one.
@@ -883,6 +1252,119 @@ module TestStepOracle =
                 2, Gen.elements [ 0u ; 1u ; 16u ; 0x8000_0000u ; UInt32.MaxValue ]
             ]
 
+    /// Three buffers, all different from each other, so that two swapped
+    /// would make a different call; and sometimes all real storage.
+    let private bufferTripleGen : Gen<UserBuffer * UserBuffer * UserBuffer> =
+        let buffers =
+            [
+                UserBuffer.Mapped
+                UserBuffer.Unmapped 0x10UL
+                UserBuffer.Unmapped 0x20UL
+                UserBuffer.Opaque
+                UserBuffer.Addressless
+            ]
+
+        Gen.frequency
+            [
+                4, distinct3 (Gen.elements buffers) (Gen.elements buffers) (Gen.elements buffers)
+                1, Gen.constant (UserBuffer.Mapped, UserBuffer.Mapped, UserBuffer.Mapped)
+            ]
+
+    /// What a caller's `socklen_t` cell holds.
+    let private socklenGen : Gen<uint32> =
+        Gen.elements [ 0u ; 8u ; 16u ; 28u ; 128u ; 0x8000_0000u ; UInt32.MaxValue ]
+
+    /// Signals of the flavour, by their numbers, and numbers that name none
+    /// (Linux's 32 and 33 name signals the C library keeps).
+    let private signoGen (flavour : SimulatedUnixFlavour) : Gen<int> =
+        let numbering = numberingOf flavour
+
+        Gen.frequency
+            [
+                6,
+                Gen.elements
+                    [
+                        Signal.SIGUSR1
+                        Signal.SIGUSR2
+                        Signal.SIGTERM
+                        Signal.SIGKILL
+                        Signal.SIGSTOP
+                        Signal.SIGCONT
+                        Signal.SIGCHLD
+                        Signal.SIGHUP
+                        Signal.SIGINT
+                    ]
+                |> Gen.map (Signal.toRawSignoUnder numbering)
+                1, Gen.elements [ 0 ; -1 ; 32 ; 33 ; 65 ; 1000 ]
+            ]
+
+    /// A set of signals under the flavour's numbering.
+    let private maskGen (flavour : SimulatedUnixFlavour) : Gen<SignalMask> =
+        let signals =
+            [
+                Signal.SIGUSR1
+                Signal.SIGUSR2
+                Signal.SIGTERM
+                Signal.SIGINT
+                Signal.SIGKILL
+                Signal.SIGCHLD
+            ]
+            @ (
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> [ Signal.RealTime 0 ; Signal.RealTime 1 ]
+                | SimulatedUnixFlavour.Darwin -> []
+            )
+
+        Gen.subListOf signals
+        |> Gen.map (Set.ofList >> SignalMask.ofSignals (numberingOf flavour))
+
+    /// A `how` of the mask calls in either flavour's numbering, and numbers
+    /// naming none.
+    let private howGen : Gen<int> = Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ]
+
+    let private dispositionGen : Gen<SignalDisposition<string> option> =
+        Gen.elements
+            [
+                None
+                Some SignalDisposition.Default
+                Some SignalDisposition.Ignore
+                Some (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
+                Some (
+                    SignalDisposition.Catch
+                        { SignalCatch.ofHandler "r" with
+                            Restart = true
+                        }
+                )
+            ]
+
+    let private keventGen : Gen<Kevent> =
+        gen {
+            let! ident = Gen.elements [ 3UL ; 8UL ; 9UL ; 10UL ; 11UL ; 12UL ; 99UL ]
+            let! filter = Gen.elements [ KeventFilter.Read ; KeventFilter.Write ; -3s ]
+
+            let! flags =
+                Gen.elements
+                    [
+                        KeventFlags.Add
+                        KeventFlags.Delete
+                        KeventFlags.Add ||| KeventFlags.Receipt
+                        KeventFlags.Add ||| KeventFlags.Clear
+                        0us
+                    ]
+
+            let! userData = Gen.elements [ 0UL ; 1UL ]
+
+            return
+                {
+                    Ident = ident
+                    Filter = filter
+                    Flags = flags
+                    FilterFlags = 0u
+                    Data = 0L
+                    UserData = userData
+                }
+        }
+
     /// A generator of calls of each case `step` makes, by the case's name.
     let private callGens (flavour : SimulatedUnixFlavour) : (string * Gen<Syscall<int, string>>) list =
         let fd = fdGen flavour
@@ -891,6 +1373,8 @@ module TestStepOracle =
         let writableFd = writableFdGen flavour
         let platform = platformOf flavour
         let paths = distinct2 pathGen pathGen
+        let signo = signoGen flavour
+        let mask = maskGen flavour
 
         // A socket, an option's level and its name, all different.
         let socketOption : Gen<int * int * int> =
@@ -1138,6 +1622,21 @@ module TestStepOracle =
             }
             "Pipe2",
             Gen.map2 (fun destination flags -> Syscall.Pipe2 (destination, flags)) userBufferGen (pipeFlagsGen flavour)
+            "Socket",
+            Gen.frequency
+                [
+                    6,
+                    Gen.zip3
+                        (Gen.elements [ 0 ; 1 ; 2 ; 10 ; 30 ; 99 ])
+                        (Gen.elements [ 1 ; 2 ; 3 ; 5 ; 0x801 ; 0x80001 ; 0x80802 ])
+                        (Gen.elements [ 0 ; 6 ; 17 ; 1 ; 132 ])
+                    |> Gen.filter (fun (domain, socketType, protocol) ->
+                        domain <> socketType && socketType <> protocol && domain <> protocol
+                    )
+                    // AF_UNIX streams and AF_INET datagrams, whose numbers coincide.
+                    1, Gen.elements [ 1, 1, 0 ; 2, 2, 0 ; 2, 2, 17 ]
+                ]
+            |> Gen.map Syscall.Socket
             "Bind",
             Gen.map3
                 (fun fd address declaredLength -> Syscall.Bind (fd, address, declaredLength))
@@ -1150,6 +1649,17 @@ module TestStepOracle =
                 socketFd
                 (copiedGen (sockaddrGen platform))
                 sockaddrLengthGen
+            "Listen",
+            Gen.zip socketFd (Gen.elements [ -1 ; 0 ; 1 ; 4 ; 128 ; Int32.MaxValue ])
+            |> Gen.filter (fun (fd, backlog) -> fd <> backlog)
+            |> Gen.map Syscall.Listen
+            "Accept", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.Accept
+            "Shutdown",
+            Gen.zip socketFd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ])
+            |> Gen.filter (fun (fd, how) -> fd <> how)
+            |> Gen.map Syscall.Shutdown
+            "GetSockName", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.GetSockName
+            "GetPeerName", Gen.zip3 socketFd userBufferGen socklenGen |> Gen.map Syscall.GetPeerName
             "SetSockOpt",
             gen {
                 let! fd, level, optionName = socketOption
@@ -1164,6 +1674,98 @@ module TestStepOracle =
                 let! length = copiedGen optionLengthGen
                 return Syscall.GetSockOpt (fd, level, optionName, value, length)
             }
+            "Poll",
+            gen {
+                let! count = Gen.choose (0, 3)
+
+                let! entries =
+                    Gen.listOfLength
+                        count
+                        (Gen.map2
+                            (fun fd events ->
+                                {
+                                    Fd = fd
+                                    Events = events
+                                }
+                            )
+                            (Gen.frequency [ 6, socketFd ; 1, Gen.constant -1 ])
+                            (Gen.elements [ 0x1s ; 0x4s ; 0x5s ; 0x2s ; 0s ; 0x40s ]))
+
+                let! milliseconds = Gen.elements [ 0 ; 1 ; 10 ; -1 ; -2 ]
+                return Syscall.Poll (entries, milliseconds)
+            }
+            "EpollCreate1", Gen.elements [ 0 ; 0x80000 ; 1 ; -1 ; 0x800 ] |> Gen.map Syscall.EpollCreate1
+            "EpollCtl",
+            gen {
+                let! epfd = Gen.frequency [ 3, Gen.constant 13 ; 2, fd ]
+                let! op = Gen.elements [ 1 ; 2 ; 3 ; 0 ; 4 ; -1 ]
+                let! target = socketFd
+
+                let! event =
+                    Gen.frequency
+                        [
+                            5,
+                            Gen.map2
+                                (fun events data -> EpollEventArgument.Readable (events, data))
+                                (Gen.elements
+                                    [
+                                        0u
+                                        1u
+                                        4u
+                                        0x8000_0001u
+                                        0x8000_0004u
+                                        0x8000_0005u
+                                        0x4000_0004u
+                                        0x1000_0001u
+                                    ])
+                                (Gen.elements [ 0UL ; 9UL ])
+                            1, Gen.constant EpollEventArgument.Unreadable
+                        ]
+
+                return epfd, op, target, event
+            }
+            |> Gen.filter (fun (epfd, op, target, _) -> epfd <> op && op <> target && epfd <> target)
+            |> Gen.map Syscall.EpollCtl
+            "EpollWait",
+            gen {
+                let! epfd = Gen.frequency [ 3, Gen.constant 13 ; 2, fd ]
+                let! buffer = userBufferGen
+                let! maxEvents = Gen.elements [ -1 ; 0 ; 1 ; 2 ; 64 ]
+                let! milliseconds = Gen.elements [ 0 ; 1 ; 10 ; -1 ]
+                return epfd, buffer, maxEvents, milliseconds
+            }
+            |> Gen.filter (fun (epfd, _, maxEvents, milliseconds) ->
+                epfd <> maxEvents && maxEvents <> milliseconds && epfd <> milliseconds
+            )
+            |> Gen.map Syscall.EpollWait
+            "Kqueue", Gen.constant Syscall.Kqueue
+            "Kevent",
+            gen {
+                let! kq = Gen.frequency [ 3, Gen.constant 13 ; 2, fd ]
+                let! nchanges = Gen.elements [ -1 ; 0 ; 1 ; 2 ; 3 ]
+                // The entries the copy-in could read: all of them, or fewer.
+                let! readable = Gen.choose (0, max 0 nchanges)
+                let! changes = Gen.listOfLength readable keventGen
+                let! eventlist = userBufferGen
+                let! nevents = Gen.elements [ -1 ; 0 ; 1 ; 4 ; 5 ]
+
+                let! timeout =
+                    Gen.elements
+                        [
+                            KeventTimeout.Null
+                            KeventTimeout.Readable (0L, 0L)
+                            KeventTimeout.Readable (1L, 0L)
+                            KeventTimeout.Readable (-1L, 0L)
+                            KeventTimeout.Readable (0L, 1_000_000_001L)
+                            KeventTimeout.Unreadable
+                        ]
+
+                return kq, changes, nchanges, eventlist, nevents, timeout
+            }
+            |> Gen.filter (fun (kq, _, nchanges, _, nevents, _) ->
+                kq <> nchanges && nchanges <> nevents && kq <> nevents
+            )
+            |> Gen.map Syscall.Kevent
             "InotifyInit1",
             Gen.elements [ 0 ; 1 ; 0x800 ; 0x4000 ; 0x80000 ; 0x80800 ]
             |> Gen.map Syscall.InotifyInit1
@@ -1189,10 +1791,46 @@ module TestStepOracle =
                         1, Gen.elements [ 0u ; 0x1u ; 0x80000100u ; 0x10000100u ]
                     ])
             "InotifyRmWatch", Gen.map2 (fun fd wd -> Syscall.InotifyRmWatch (fd, wd)) fd (Gen.choose (-1, 3))
+            "Kill",
+            Gen.zip (Gen.elements [ pid ; pid ; 0 ; -1 ; 1 ; 99999 ; -pid ]) signo
+            |> Gen.filter (fun (pid, signo) -> pid <> signo)
+            |> Gen.map Syscall.Kill
+            "PthreadKill", Gen.zip (Gen.elements [ 0 ; 0 ; 1 ]) signo |> Gen.map Syscall.PthreadKill
+            "SigAction", Gen.zip signo dispositionGen |> Gen.map Syscall.SigAction
+            "SigActionSyscall", Gen.zip signo dispositionGen |> Gen.map Syscall.SigActionSyscall
+            "PthreadSigMask", Gen.zip howGen (Gen.optionOf mask) |> Gen.map Syscall.PthreadSigMask
+            "SigProcMask", Gen.zip howGen (Gen.optionOf mask) |> Gen.map Syscall.SigProcMask
+            "RtSigProcMask",
+            Gen.zip3 howGen (Gen.optionOf mask) (Gen.elements [ 8UL ; 8UL ; 4UL ; 16UL ; 128UL ])
+            |> Gen.map Syscall.RtSigProcMask
+            "SigPending", Gen.constant Syscall.SigPending
+            "SigSuspend", mask |> Gen.map Syscall.SigSuspend
+            "RtSigSuspend",
+            Gen.zip mask (Gen.elements [ 8UL ; 8UL ; 4UL ; 128UL ])
+            |> Gen.map Syscall.RtSigSuspend
+            "Pause", Gen.constant Syscall.Pause
+            "SigReturn",
+            Gen.elements [ 0L ; 0L ; 1L ; 2L ]
+            |> Gen.map (HandlerFrameId >> Syscall.SigReturn)
+            "ClockGetTime",
+            Gen.frequency [ 6, Gen.choose (0, 12) ; 1, Gen.elements [ -1 ; 99 ; Int32.MinValue ] ]
+            |> Gen.map Syscall.ClockGetTime
+            "GetTimeOfDay", Gen.constant Syscall.GetTimeOfDay
+            "GetRandom",
+            Gen.zip3
+                userBufferGen
+                (Gen.elements [ 0UL ; 1UL ; 16UL ; 256UL ; 4096UL ; 4097UL ; 1UL <<< 25 ])
+                (Gen.elements [ 0u ; 1u ; 2u ; 3u ; 4u ; 5u ; 6u ; 8u ])
+            |> Gen.map Syscall.GetRandom
+            "GetEntropy",
+            Gen.zip userBufferGen (Gen.elements [ 0UL ; 1UL ; 16UL ; 256UL ; 257UL ])
+            |> Gen.map Syscall.GetEntropy
             "GetProcessId", Gen.constant Syscall.GetProcessId
             "UMask",
             Gen.frequency [ 3, Gen.choose (0, 0o777) ; 1, Gen.choose (Int32.MinValue, Int32.MaxValue) ]
             |> Gen.map Syscall.UMask
+            "GetResUid", bufferTripleGen |> Gen.map Syscall.GetResUid
+            "GetResGid", bufferTripleGen |> Gen.map Syscall.GetResGid
             "SetResUid",
             Gen.map3 (fun real effective saved -> Syscall.SetResUid (real, effective, saved)) userGen userGen userGen
             "SetResGid",
@@ -1210,6 +1848,12 @@ module TestStepOracle =
                     else
                         Syscall.SetGroups (List.length words, GroupListWords.Readable words)
             }
+            "Spawn",
+            Gen.zip (Gen.elements [ 1 ; 2 ; 2 ; 0 ]) (Gen.elements [ CpuId 0 ; CpuId 0 ; CpuId 1 ; CpuId 64 ])
+            |> Gen.map Syscall.Spawn
+            "ExitThread", Gen.elements [ 0 ; 1 ; 255 ; 256 ; -1 ] |> Gen.map Syscall.ExitThread
+            "ExitGroup", Gen.elements [ 0 ; 1 ; 255 ; 256 ; -1 ] |> Gen.map Syscall.ExitGroup
+            "GetCpu", Gen.constant Syscall.GetCpu
         ]
 
     [<Test>]
@@ -1270,48 +1914,89 @@ module TestStepOracle =
             "GetSockOpt"
         ]
 
+    /// The cases whose call can end the process, each of which some sample
+    /// must see end it.
+    let private ending : Set<string> =
+        Set.ofList [ "Kill" ; "PthreadKill" ; "ExitThread" ; "ExitGroup" ]
+
+    /// The cases whose call some sample must see a signal interrupt as it is
+    /// made. (`pause` keeps the mask that blocks the world's pending signal,
+    /// so it sleeps rather than being interrupted.)
+    let private interruptible : Set<string> =
+        Set.ofList [ "SigSuspend" ; "RtSigSuspend" ]
+
     let private agree (case : string) : unit =
-        // How many of the samples' calls answered.
+        // How many of the samples' calls answered; reached a copy from the
+        // caller's memory, of a case that has one; ended the process; and were
+        // interrupted as they were made.
         let answered = ref 0
-        // How many reached a copy from the caller's memory, of a case that has one.
         let reachedCopy = ref 0
+        let ended = ref 0
+        let interruptions = ref 0
 
         let sample =
             gen {
                 let! platform = Gen.elements platforms
                 let! privileged = Gen.elements [ true ; false ]
+                let! threadCount = Gen.elements [ 1 ; 2 ]
                 let flavour = SimulatedUnixPlatform.flavour platform
                 let gens = callGens flavour
                 let caseGen = gens |> List.find (fun (name, _) -> name = case) |> snd
                 let! prefixLength = Gen.choose (0, 4)
                 let! prefix = Gen.listOfLength prefixLength (Gen.oneof (List.map snd gens))
-                let! caller = Gen.frequency [ 8, Gen.elements threads ; 1, Gen.constant 99 ]
+                // A thread of the world, or a name that is none.
+                let! caller = Gen.frequency [ 8, Gen.elements (List.take threadCount threads) ; 1, Gen.constant 99 ]
                 let! call = caseGen
-                return platform, privileged, prefix, caller, call
+                return platform, privileged, threadCount, prefix, caller, call
             }
 
         let property
-            (platform : SimulatedUnixPlatform, privileged : bool, prefix : Syscall<int, string> list, caller : int, call)
+            (
+                platform : SimulatedUnixPlatform,
+                privileged : bool,
+                threadCount : int,
+                prefix : Syscall<int, string> list,
+                caller : int,
+                call
+            )
             : unit
             =
             let start =
-                Map.find (SimulatedUnixPlatform.flavour platform, privileged) worlds.Value
+                Map.find (SimulatedUnixPlatform.flavour platform, privileged, threadCount) worlds.Value
 
             // The prefix moves the world through the calls' own functions,
-            // made by the leader, keeping whatever answered without parking.
+            // made by the leader, each followed by its return to user mode,
+            // keeping whatever answered without parking or ending the
+            // process.
             let system =
                 (start, prefix)
                 ||> List.fold (fun system call ->
+                    let leader = Callers.leader system
+
                     try
-                        match reference (Callers.leader system) call system with
-                        | Ok stepped -> carriedOn stepped |> Option.defaultValue system
+                        match reference leader call system with
+                        | Ok stepped ->
+                            carriedOn stepped |> Option.bind (returned leader) |> Option.defaultValue system
                         | Error _ -> system
                     with _ ->
                         system
                 )
 
             let caller = Callers.thread caller system
-            let viaStep = observe (fun () -> UnixSystem.tryStep caller call system)
+
+            let viaStep =
+                observe (fun () ->
+                    let stepped = UnixSystem.tryStep caller call system
+
+                    match stepped with
+                    | Ok stepped when endsProcess stepped -> ended.Value <- ended.Value + 1
+                    | Ok stepped when interrupted stepped -> interruptions.Value <- interruptions.Value + 1
+                    | Ok _
+                    | Error _ -> ()
+
+                    stepped
+                )
+
             let direct = observe (fun () -> reference caller call system)
 
             if List.contains case copyingCases then
@@ -1341,6 +2026,8 @@ module TestStepOracle =
                 then
                     failwith
                         $"%A{call} by %O{caller}: the buffer is too short, and step threw %s{stepThrew}: %s{message}"
+            // For a call that ended the process, this compares the ended
+            // process and the system without it.
             | _ ->
                 if viaStep <> direct then
                     failwith
@@ -1348,12 +2035,19 @@ module TestStepOracle =
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 300, Prop.forAll (Arb.fromGen sample) property)
 
-        // Not vacuous: the case answered, whatever else it did, and a call that
-        // copies in reached its copy.
+        // Not vacuous: the case answered, whatever else it did; a call that
+        // copies in reached its copy; and the cases that can end the process
+        // or be interrupted did.
         answered.Value |> shouldBeGreaterThan 0
 
         if List.contains case copyingCases then
             reachedCopy.Value |> shouldBeGreaterThan 0
+
+        if Set.contains case ending then
+            ended.Value |> shouldBeGreaterThan 0
+
+        if Set.contains case interruptible then
+            interruptions.Value |> shouldBeGreaterThan 0
 
     let private wiredCases : string list = TestSyscall.wired
 
@@ -1391,7 +2085,7 @@ module TestStepOracle =
     [<Test>]
     let ``step copies the bytes the paused call names from a longer buffer, and goes on as the call does`` () : unit =
         for platform in platforms do
-            let system = Map.find (SimulatedUnixPlatform.flavour platform, true) worlds.Value
+            let system = Map.find (SimulatedUnixPlatform.flavour platform, true, 2) worlds.Value
             let leader = Callers.leader system
 
             let sockaddr (length : int) : ImmutableArray<byte> =
@@ -1467,7 +2161,7 @@ module TestStepOracle =
     [<Test>]
     let ``step throws for a readable buffer that ends before the bytes the call copies`` () : unit =
         for platform in platforms do
-            let system = Map.find (SimulatedUnixPlatform.flavour platform, true) worlds.Value
+            let system = Map.find (SimulatedUnixPlatform.flavour platform, true, 2) worlds.Value
             let leader = Callers.leader system
 
             let short (count : int) : CopiedArgument<ImmutableArray<byte>> =
@@ -1513,7 +2207,7 @@ module TestStepOracle =
     [<Test>]
     let ``an in-pointer naming no storage answers as the call's own function does`` () : unit =
         for platform in platforms do
-            let system = Map.find (SimulatedUnixPlatform.flavour platform, true) worlds.Value
+            let system = Map.find (SimulatedUnixPlatform.flavour platform, true, 2) worlds.Value
             let leader = Callers.leader system
             let level = SimulatedUnixPlatform.socketOptionLevel platform
             let reuse = SimulatedUnixPlatform.reuseAddressOption platform

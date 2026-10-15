@@ -234,61 +234,52 @@ module TestSyscall =
             "PWrite"
             "CopyFileRange"
             "Pipe2"
+            "Socket"
             "Bind"
             "Connect"
+            "Listen"
+            "Accept"
+            "Shutdown"
+            "GetSockName"
+            "GetPeerName"
             "SetSockOpt"
             "GetSockOpt"
+            "Poll"
+            "EpollCreate1"
+            "EpollCtl"
+            "EpollWait"
+            "Kqueue"
+            "Kevent"
             "InotifyInit1"
             "InotifyAddWatch"
             "InotifyRmWatch"
+            "Kill"
+            "PthreadKill"
+            "SigAction"
+            "SigActionSyscall"
+            "PthreadSigMask"
+            "SigProcMask"
+            "RtSigProcMask"
+            "SigPending"
+            "SigSuspend"
+            "RtSigSuspend"
+            "Pause"
+            "SigReturn"
+            "ClockGetTime"
+            "GetTimeOfDay"
+            "GetRandom"
+            "GetEntropy"
             "GetProcessId"
             "UMask"
+            "GetResUid"
+            "GetResGid"
             "SetResUid"
             "SetResGid"
             "SetGroups"
-        ]
-
-    /// The cases `step` does not make yet, by the stage that wires each.
-    let private unwired : (string * WiringStage) list =
-        [
-            for case in
-                [
-                    "Socket"
-                    "Listen"
-                    "Accept"
-                    "Shutdown"
-                    "GetSockName"
-                    "GetPeerName"
-                    "Poll"
-                    "EpollCreate1"
-                    "EpollCtl"
-                    "EpollWait"
-                    "Kqueue"
-                    "Kevent"
-                    "Kill"
-                    "PthreadKill"
-                    "SigAction"
-                    "SigActionSyscall"
-                    "PthreadSigMask"
-                    "SigProcMask"
-                    "RtSigProcMask"
-                    "SigPending"
-                    "SigSuspend"
-                    "RtSigSuspend"
-                    "Pause"
-                    "SigReturn"
-                    "ClockGetTime"
-                    "GetTimeOfDay"
-                    "GetRandom"
-                    "GetEntropy"
-                    "GetResUid"
-                    "GetResGid"
-                    "Spawn"
-                    "ExitThread"
-                    "ExitGroup"
-                    "GetCpu"
-                ] do
-                yield case, WiringStage.S3
+            "Spawn"
+            "ExitThread"
+            "ExitGroup"
+            "GetCpu"
         ]
 
     let private allCases : BindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
@@ -526,12 +517,8 @@ module TestSyscall =
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
     [<Test>]
-    let ``every case is made, refused as reserved, or refused naming the stage that wires it`` () : unit =
-        let unwiredNames = unwired |> List.map fst
-
-        unwiredNames |> List.distinct |> shouldEqual unwiredNames
-
-        List.concat [ wired ; reserved ; unwiredNames ]
+    let ``every case is made, or refused as reserved`` () : unit =
+        List.concat [ wired ; reserved ]
         |> List.sort
         |> shouldEqual (List.sort syscallCaseNames)
 
@@ -541,11 +528,7 @@ module TestSyscall =
             for case in syscallCases do
                 if not (List.contains case.Name wired) then
                     let call = placeholder case
-
-                    let expected =
-                        match List.tryFind (fun (name, _) -> name = case.Name) unwired with
-                        | Some (_, stage) -> SyscallRefusal.Unwired ($"Syscall.%s{case.Name}", stage)
-                        | None -> SyscallRefusal.Reserved $"Syscall.%s{case.Name}"
+                    let expected = SyscallRefusal.Reserved $"Syscall.%s{case.Name}"
 
                     match UnixSystem.tryStep (Callers.leader system) call system with
                     | Error refusal -> refusal |> shouldEqual expected

@@ -608,8 +608,103 @@ The finishing functions, the return to user mode, `UnixScheduling.dispatch`, `Un
 `Syscall.Nanosleep`, `Syscall.ClockNanosleep`, `Syscall.Select`, `Syscall.PSelect`, `Syscall.SigWait`, `Syscall.SigWaitInfo`, `Syscall.SigTimedWait`, `Syscall.RecvFrom`, `Syscall.RecvMsg`, `Syscall.SendTo` and `Syscall.SendMsg` are reserved for calls this library does not model yet (see "What is not modelled"): the types their arguments and answers are held in have internal representations, nothing makes one, and `step` throws `UnmodelledException` for one.
 Whatever the call, `getpid` included, `caller` must be one of the process's threads, not asleep in another call and owing no return to user mode, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
 
-In this version `step` does not yet make `socket`, `listen`, `accept`, `shutdown`, `getsockname`, `getpeername`, `poll`, `epoll_create1`, `epoll_ctl`, `epoll_wait`, `kqueue`, `kevent`, `kill`, `pthread_kill`, `sigaction` and Linux's `rt_sigaction`, `pthread_sigmask`, `sigprocmask`, `rt_sigprocmask`, `sigpending`, `sigsuspend`, `rt_sigsuspend`, `pause`, `sigreturn`, `clock_gettime`, `gettimeofday`, `getrandom`, `getentropy`, `getresuid`, `getresgid`, a thread's `clone` or `exit`, `exit_group` or `getcpu`.
-It throws `UnmodelledException` for each, naming the change that will make it; meanwhile each of those calls is made through its own function.
+A call that can end the process answers through `step` as through its own function: `SteppedCall.Kill`, `SteppedCall.PthreadKill` and `SteppedCall.ExitThread` hold a `ProcessFate`, which is `ProcessFate.ProcessEnded` where the call ended the process, and `SteppedCall.ExitGroup` holds the ended process beside the system without it.
+So does a call that sleeps, or that a signal interrupts: `SteppedCall.Accept` may hold `AcceptOutcome.WouldBlock`, which `UnixWait.finish` finishes once the thread is woken, and `SteppedCall.SigSuspend` may hold `SigsuspendOutcome.Interrupted`.
+The client's loop is the same as for the calls' own functions (see "The return to user mode"): make the call; once it has ended, return the thread to user mode; and on `InterruptedCall.Restarts`, step the same `Syscall` again.
+This client's second thread sleeps in an `accept` that a signal whose handler was installed with `SA_RESTART` interrupts, and the client steps the `accept` again:
+
+```fsharp
+open WoofWare.PosixKernel
+
+let platform = SimulatedUnixPlatform.linuxX64
+let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+let booted : UnixSystem<int, string> =
+    let launch =
+        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+    UnixSystem.initial platform |> UnixBootImage.boot launch
+
+let pid = Seq.exactlyOne (UnixSystem.processIds booted)
+let first = Caller.make pid 0
+let second = Caller.make pid 1
+let usr1 = Signal.toRawSignoUnder numbering Signal.SIGUSR1
+
+// A thread's return to user mode, as in "The return to user mode": each handler it
+// pushes runs and returns at once. The first return says how an interrupted call ends.
+let rec returnToUser (caller : Caller<int>) (system : UnixSystem<int, string>) : InterruptedCall option * UnixSystem<int, string> =
+    match UnixSignal.onReturnToUser caller system with
+    | ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system) -> interrupted, system
+    | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system) ->
+        let system =
+            (system, frames)
+            ||> List.fold (fun system frame ->
+                printfn "handler %s runs" frame.Action.Handler
+                UnixSignal.sigreturn caller frame.Id system |> returnToUser caller |> snd
+            )
+
+        interrupted, system
+    | other -> failwith $"unexpected at the return to user mode: %A{other}"
+
+// The client's loop, for the calls this client makes: step the call, and unless its
+// thread sleeps, return to user mode.
+let make (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    match UnixSystem.step caller call system with
+    | SteppedCall.Accept (AcceptOutcome.WouldBlock _, asleep) ->
+        printfn "thread %d sleeps in accept" (Caller.thread caller)
+        asleep
+    | SteppedCall.SigAction (Ok (_, system))
+    | SteppedCall.Listen (ListenAnswer.Listening _, system)
+    | SteppedCall.Spawn (SpawnAnswer.Spawned _, system)
+    | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        snd (returnToUser caller system)
+    | stepped -> failwith $"unexpected from %A{call}: %A{stepped}"
+
+// Once a wake has ended a thread's sleep: finish its call, and return to user mode;
+// on a restart, step the same call again.
+let resume (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    match UnixWait.finish caller system with
+    | FinishedCall.Accept (AcceptOutcome.Interrupted, system) ->
+        match returnToUser caller system with
+        | Some InterruptedCall.Restarts, system ->
+            printfn "the accept restarts"
+            make caller call system
+        | ending, _ -> failwith $"expected the accept to restart: %A{ending}"
+    | finished -> failwith $"unexpected finish: %A{finished}"
+
+// Thread 0 installs a handler for SIGUSR1 under SA_RESTART, and makes a socket:
+// socket(AF_INET, SOCK_STREAM, 0), in Linux's numbering.
+let listener, opened =
+    let restarting = SignalDisposition.Catch { SignalCatch.ofHandler "on-usr1" with Restart = true }
+    let installed = make first (Syscall.SigAction (usr1, Some restarting)) booted
+
+    match UnixSystem.step first (Syscall.Socket (2, 1, 0)) installed with
+    | SteppedCall.Socket (Ok (fd, system)) -> fd, snd (returnToUser first system)
+    | stepped -> failwith $"unexpected from socket: %A{stepped}"
+
+// It listens on the socket, which nothing will connect to, and starts thread 1, which
+// accepts on it and sleeps. Thread 0 sends thread 1 SIGUSR1.
+let accept = Syscall.Accept (listener, UserBuffer.Mapped, 16u)
+
+let signalled =
+    opened
+    |> make first (Syscall.Listen (listener, 1))
+    |> make first (Syscall.Spawn (1, CpuId 0))
+    |> make second accept
+    |> make first (Syscall.PthreadKill (1, usr1))
+
+// The signal wakes thread 1, and the client resumes its accept, which restarts and
+// sleeps again.
+match UnixWait.wake signalled with
+| [ woken, _ ], system when woken = second -> resume second accept system |> ignore
+| wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
+
+// Prints:
+// thread 1 sleeps in accept
+// handler on-usr1 runs
+// the accept restarts
+// thread 1 sleeps in accept
+```
 
 ### Checking the tables
 
