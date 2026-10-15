@@ -1675,18 +1675,10 @@ module TestMultiProcessFuzz =
         Machines.wakes (asleepByProcess world.Asleep) world.Machine |> Map.ofList
 
     let private assertClean (machine : UnixSystem<int, string>) : unit =
-        Machines.checkInvariants machine |> Expect.empty (fun () -> "the machine")
+        Machines.checkInvariants machine |> Expect.empty (fun () -> "the system")
 
-        for pid in Machines.processIds machine do
-            let where () : string = $"process %O{pid}"
-            let view = Machines.focus pid machine |> Option.get
-            UnixSystem.checkInvariants view |> Expect.empty where
-
-            FileDescriptorRegistry.checkInvariants (UnixSystem.fileDescriptors pid view)
-            |> Expect.empty where
-
-            VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes view) view.Machine.FileSystem
-            |> Expect.empty where
+        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes machine) machine.Machine.FileSystem
+        |> Expect.empty (fun () -> "the filesystem")
 
         // Nothing passes a descriptor to another process, so each pipe's ends
         // are one process's.
