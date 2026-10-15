@@ -82,7 +82,7 @@ module TestUnixScheduling =
         {
             Platform : SimulatedUnixPlatform
             Count : int
-            Machine : SimulatedMachine<int, string>
+            Machine : UnixSystem<int, string>
             /// In creation order.
             Live : Live list
             NextName : Map<ProcessId, int>
@@ -156,7 +156,7 @@ module TestUnixScheduling =
 
     let private viewOf (pid : ProcessId) (world : World) : UnixSystem<int, string> = Machines.viewOf pid world.Machine
 
-    let private withPipe (pid : ProcessId) (machine : SimulatedMachine<int, string>) : SimulatedMachine<int, string> =
+    let private withPipe (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         machine
         |> Machines.doIn
             pid
@@ -253,7 +253,7 @@ module TestUnixScheduling =
                 @ world.Events
         }
 
-    let private endOn (ended : EndedProcess<int, string>) (machine : SimulatedMachine<int, string>) =
+    let private endOn (ended : EndedProcess<int, string>) (machine : UnixSystem<int, string>) =
         match Machines.tryEndProcess ended machine with
         | Ok (_, machine) -> machine
         | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
@@ -644,10 +644,10 @@ module TestUnixScheduling =
             | [ first ; second ] -> first, second
             | other -> failwith $"expected two processes, got %A{other}"
 
-        let runningOn (pid : ProcessId) (machine : SimulatedMachine<int, string>) : CpuId option =
+        let runningOn (pid : ProcessId) (machine : UnixSystem<int, string>) : CpuId option =
             UnixScheduling.runningOn (Caller.make pid 0) (Machines.viewOf pid machine)
 
-        let getcpu (pid : ProcessId) (machine : SimulatedMachine<int, string>) : bool =
+        let getcpu (pid : ProcessId) (machine : UnixSystem<int, string>) : bool =
             not (throws (fun () -> UnixScheduling.tryGetcpu (Caller.make pid 0) (Machines.viewOf pid machine)))
 
         let mutable machine = machine
@@ -718,8 +718,8 @@ module TestUnixScheduling =
     /// public route can do.
     let private withOccupants
         (occupants : (CpuId * OsThreadId) list)
-        (machine : SimulatedMachine<int, string>)
-        : SimulatedMachine<int, string>
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
         =
         { machine with
             Scheduling =
@@ -728,7 +728,7 @@ module TestUnixScheduling =
                 }
         }
 
-    let private threadIdOf (pid : ProcessId) (thread : int) (machine : SimulatedMachine<int, string>) : OsThreadId =
+    let private threadIdOf (pid : ProcessId) (thread : int) (machine : UnixSystem<int, string>) : OsThreadId =
         (UnixThreadTable.get thread (Proc.threads pid (Machines.viewOf pid machine))).OsThreadId
 
     [<Test>]
@@ -748,9 +748,7 @@ module TestUnixScheduling =
         let defects = Machines.checkInvariants forged
 
         defects
-        |> List.contains (
-            SimulatedMachineDefect.Machine (UnixSystemDefect.OccupiedCpuBeyondMachine (CpuId 2, leader, 2))
-        )
+        |> List.contains (UnixSystemDefect.OccupiedCpuBeyondMachine (CpuId 2, leader, 2))
         |> shouldEqual true
 
     [<Test>]
@@ -781,23 +779,15 @@ module TestUnixScheduling =
 
             nobody, exited
 
-        // A thread ID no thread holds is reported by the machine and by each
-        // view.
+        // A thread ID no thread holds is reported.
         let forged = withOccupants [ CpuId 0, nobody ] machine
         let defect = UnixSystemDefect.OccupantWithoutThread (CpuId 0, nobody)
 
-        Machines.checkInvariants forged
-        |> shouldEqual [ SimulatedMachineDefect.Machine defect ]
+        Machines.checkInvariants forged |> shouldEqual [ defect ]
 
-        UnixSystem.checkInvariants (Machines.viewOf first forged)
-        |> shouldEqual [ defect ]
-
-        // Another process's running thread is no defect in a view that cannot
-        // see that process's threads.
+        // Another process's running thread is no defect.
         let shared = withOccupants [ CpuId 0, secondLeader ] machine
         Machines.checkInvariants shared |> shouldEqual []
-        UnixSystem.checkInvariants (Machines.viewOf first shared) |> shouldEqual []
-        UnixSystem.checkInvariants (Machines.viewOf second shared) |> shouldEqual []
 
     [<Test>]
     let ``checkInvariants reports a running thread whose processor is another`` () : unit =
@@ -814,10 +804,7 @@ module TestUnixScheduling =
         let forged = withOccupants [ CpuId 1, threadIdOf pid 0 machine ] machine
 
         Machines.checkInvariants forged
-        |> shouldEqual
-            [
-                SimulatedMachineDefect.Machine (UnixSystemDefect.OccupantOnAnotherCpu (0, CpuId 1, CpuId 0))
-            ]
+        |> shouldEqual [ UnixSystemDefect.OccupantOnAnotherCpu (Caller.make pid 0, CpuId 1, CpuId 0) ]
 
     [<Test>]
     let ``re-dispatching a running thread allocates nothing`` () : unit =

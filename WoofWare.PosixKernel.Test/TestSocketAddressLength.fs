@@ -120,7 +120,7 @@ module TestSocketAddressLength =
         (system : UnixSystem<int, string>)
         : SockaddrCopyAdmission
         =
-        match UnixSocket.tryAdmitSockaddrCopy syscall fd destination word system with
+        match Lone.UnixSocket.tryAdmitSockaddrCopy syscall fd destination word system with
         | Ok admission -> admission
         | Error refusal -> failwith $"word 0x%08x{word}: refused: %s{SockaddrCopyRefusal.describe refusal}"
 
@@ -498,7 +498,7 @@ module TestSocketAddressLength =
                             UserBuffer.Opaque
                             UserBuffer.Addressless
                         ] do
-                        UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination word system
+                        Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination word system
                         |> shouldEqual (Ok (SockaddrCopyAdmission.Answered UnixError.ENOTSOCK))
 
                         let length = int word
@@ -519,7 +519,7 @@ module TestSocketAddressLength =
                                 | UserBuffer.Opaque -> Ok (SockaddrCopyAdmission.Answered UnixError.ENOTSOCK)
 
                         let actual =
-                            UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination word system
+                            Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination word system
 
                         if actual <> expected then
                             failwith
@@ -554,7 +554,7 @@ module TestSocketAddressLength =
 
                 everyLength (fun word ->
                     for destination in [ UserBuffer.Mapped ; UserBuffer.Unmapped 4096UL ] do
-                        UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination word system
+                        Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Bind fd destination word system
                         |> shouldEqual refused
 
                         let length = int word
@@ -570,7 +570,7 @@ module TestSocketAddressLength =
                                 refused
 
                         let actual =
-                            UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination word system
+                            Lone.UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination word system
 
                         if actual <> expected then
                             failwith

@@ -2688,11 +2688,11 @@ module TestStartingDirectory =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        match UnixPathResolution.copyIn path system with
+        match Lone.UnixPathResolution.copyIn path system with
         | Error error -> Some $"%A{error}"
         | Ok path ->
 
-        match UnixPathResolution.walkStart (AtDirectory.decode flavour dirfd) path system with
+        match Lone.UnixPathResolution.walkStart (AtDirectory.decode flavour dirfd) path system with
         | Error error -> Some $"%A{error}"
         | Ok _ -> None
 
@@ -2945,17 +2945,17 @@ module TestStartingDirectory =
             let protection = system.Machine.ProtectedFiles.Symlinks
             let start = (Lone.proc system).CurrentDirectoryInode
 
-            UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
+            Lone.UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
             |> shouldEqual (PathWalk.resolveFull limits credentials protection start policy trailing path vfs)
 
-            UnixPathResolution.resolvePathParent AtDirectory.CurrentDirectory policy trailing path system
+            Lone.UnixPathResolution.resolvePathParent AtDirectory.CurrentDirectory policy trailing path system
             |> Result.bind PathWalk.completeResolution
             |> shouldEqual (
                 PathWalk.resolveParent limits credentials protection start policy trailing path vfs
                 |> Result.bind PathWalk.completeResolution
             )
 
-            UnixPathResolution.resolvePath AtDirectory.CurrentDirectory policy path system
+            Lone.UnixPathResolution.resolvePath AtDirectory.CurrentDirectory policy path system
             |> shouldEqual (PathWalk.resolveExisting limits credentials protection start policy path vfs)
 
         Check.One (config, Prop.forAll (Arb.fromGen walkCase) property)
@@ -2984,13 +2984,15 @@ module TestStartingDirectory =
 
             let inCwd = walkSystem platform credentials cwd
 
-            UnixPathResolution.resolvePathFull (AtDirectory.Descriptor fd) policy trailing path atRoot
-            |> shouldEqual (UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path inCwd)
+            Lone.UnixPathResolution.resolvePathFull (AtDirectory.Descriptor fd) policy trailing path atRoot
+            |> shouldEqual (
+                Lone.UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path inCwd
+            )
 
-            UnixPathResolution.resolvePathParent (AtDirectory.Descriptor fd) policy trailing path atRoot
+            Lone.UnixPathResolution.resolvePathParent (AtDirectory.Descriptor fd) policy trailing path atRoot
             |> Result.bind PathWalk.completeResolution
             |> shouldEqual (
-                UnixPathResolution.resolvePathParent AtDirectory.CurrentDirectory policy trailing path inCwd
+                Lone.UnixPathResolution.resolvePathParent AtDirectory.CurrentDirectory policy trailing path inCwd
                 |> Result.bind PathWalk.completeResolution
             )
 

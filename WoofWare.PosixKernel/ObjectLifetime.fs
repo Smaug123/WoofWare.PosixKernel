@@ -69,12 +69,9 @@ module internal DescriptionReleaseRefusal =
 [<RequireQualifiedAccess>]
 module ObjectLifetime =
 
-    /// `pinnedInodes`, with `graph` as the filesystem the closure climbs.
-    let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (graph : VirtualFileSystem)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Set<InodeNumber>
-        =
+    /// `pinnedInodes` of `machine`, with `graph` as the filesystem the closure
+    /// climbs.
+    let private pinnedOn (graph : VirtualFileSystem) (machine : UnixMachineState) : Set<InodeNumber> =
         let rec climb (frontier : InodeNumber list) (seen : Set<InodeNumber>) : Set<InodeNumber> =
             match frontier with
             | [] -> seen
@@ -98,7 +95,16 @@ module ObjectLifetime =
                 | Some (InodeContent.Symlink _)
                 | None -> climb rest seen
 
-        climb (Set.toList (UnixMachineState.heldInodes system.Machine)) Set.empty
+        climb (Set.toList (UnixMachineState.heldInodes machine)) Set.empty
+
+    /// `pinnedInodes` of `system`'s machine, with `graph` as the filesystem the
+    /// closure climbs.
+    let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (graph : VirtualFileSystem)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Set<InodeNumber>
+        =
+        pinnedOn graph system.Machine
 
     /// Every inode that must not be freed: every process's current directory
     /// and every open file description's inode, closed under
@@ -120,7 +126,7 @@ module ObjectLifetime =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<InodeNumber>
         =
-        pinnedIn system.Machine.FileSystem system
+        pinnedOn system.Machine.FileSystem system.Machine
 
     /// Whether `graph` has `inode` and names it nowhere, it is not the root,
     /// and this system holds no reference to it: whether a real kernel would

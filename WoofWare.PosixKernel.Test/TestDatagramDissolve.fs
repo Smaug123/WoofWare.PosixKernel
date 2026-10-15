@@ -85,7 +85,7 @@ module TestDatagramDissolve =
 
     let private dissolve (fd : int) (system : UnixSystem<int, string>) : SyscallAnswer * UnixSystem<int, string> =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 (socketOf fd system)
                 false
                 16u

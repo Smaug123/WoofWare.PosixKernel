@@ -33,7 +33,7 @@ module TestTimeWait =
             | other, _ -> failwith $"connect: %A{other}"
 
         let port =
-            match FileDescriptorRegistry.tryFindTarget client (UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget client (Lone.UnixSystemState.fileDescriptors system) with
             | Some (OpenFileTarget.Socket socketId) ->
                 match (UnixMachineState.socket socketId system.Machine).Ipv4Binding with
                 | Some binding -> binding.Endpoint.Port
@@ -391,7 +391,7 @@ module TestTimeWait =
         let value = OptionValue.ofLinger 1 0
 
         match
-            UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) (Some value) system
+            Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) (Some value) system
         with
         | Ok (SetSockOptAnswer.Set, system) -> system
         | other -> failwith $"SO_LINGER on fd %d{fd}: %A{other}"
@@ -510,7 +510,7 @@ module TestTimeWait =
             | SyscallAnswer.Failed UnixError.EADDRINUSE, system -> system
             | other, _ -> failwith $"connect: %A{other}"
 
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId system.Machine).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
@@ -539,7 +539,7 @@ module TestTimeWait =
                 )
 
             let system =
-                match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 4u off system with
+                match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 4u off system with
                 | Ok (SetSockOptAnswer.Set, system) -> system
                 | other -> failwith $"IPV6_V6ONLY: %A{other}"
 

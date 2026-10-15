@@ -261,13 +261,15 @@ module KeventWorld =
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level optionName UserBuffer.Mapped UserBuffer.Mapped system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName UserBuffer.Mapped UserBuffer.Mapped system with
             | Ok GetSockOptAdmission.ReadLength -> Some 4u
             | Ok GetSockOptAdmission.SkipLength
             | Ok (GetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped read system with
+        match
+            Lone.UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped read system
+        with
         | Ok answer -> answer
         | Error refusal -> failwith $"getsockopt refused: %s{SocketOptionRefusal.describe refusal}"
 

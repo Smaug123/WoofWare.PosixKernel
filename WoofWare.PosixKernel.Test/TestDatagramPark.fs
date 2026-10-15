@@ -94,16 +94,16 @@ module TestDatagramPark =
                             ParkedDatagramSend.Socket = socket
                         }
                 ] do
-                let asleep = UnixWait.park thread parked awake
+                let asleep = Lone.UnixWait.park thread parked awake
 
                 asleep
                 |> UnixSystem.checkInvariants
-                |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+                |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
                 // The park holds the description it names, once.
                 OpenFileTable.holdCount socket awake.Machine.OpenFiles |> shouldEqual (Some 0)
                 OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-                UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual []
+                Lone.deadlines (Set.singleton thread) asleep |> shouldEqual []
 
                 UnixWait.satisfied (Callers.thread thread asleep) asleep
                 |> shouldEqual (Some Set.empty)

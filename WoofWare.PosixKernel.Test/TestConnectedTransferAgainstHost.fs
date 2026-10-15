@@ -606,7 +606,7 @@ module TestConnectedTransferAgainstHost =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -769,7 +769,7 @@ module TestConnectedTransferAgainstHost =
                     | Some description -> description
                     | None -> failwith $"fd %d{fd} names no description"
 
-                $"epoll=0x%x{LinuxReadiness.ofDescription description system}"
+                $"epoll=0x%x{Lone.LinuxReadiness.ofDescription description system}"
             | SimulatedUnixFlavour.Darwin ->
                 let fflags (error : UnixError option) : int =
                     match error with
@@ -819,7 +819,14 @@ module TestConnectedTransferAgainstHost =
             let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
             match
-                UnixSocket.tryGetsockoptLength s level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
+                Lone.UnixSocket.tryGetsockoptLength
+                    s
+                    level
+                    optionName
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    (Some 4u)
+                    system
             with
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int 0), system) -> [ Seen.PendingError None ], system
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int raw), system) ->

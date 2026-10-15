@@ -415,7 +415,6 @@ module TestReadme =
             "UnixThreadLifecycle"
             "UnixScheduling"
             "UnixWait"
-            "SimulatedMachine"
             "EndedProcess"
         ]
 

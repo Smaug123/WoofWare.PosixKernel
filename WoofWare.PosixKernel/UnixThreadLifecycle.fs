@@ -147,7 +147,7 @@ module UnixThreadLifecycle =
         (thread : 'Thread)
         (status : int32)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
+        : Result<ViewFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
         // Measured on Linux 6.18.5 and Darwin 27.0.0 by
         // `docs/plans/2026-08-23-posix-kernel-extraction/leader-exits-first.c`: the
@@ -166,11 +166,11 @@ module UnixThreadLifecycle =
                 let termination =
                     ProcessTermination.Exited (ExitStatus.ofExitArgument SimulatedUnixFlavour.Linux status)
 
-                Ok (ProcessFate.ProcessEnded (endProcess termination system))
+                Ok (ViewFate.ProcessEnded (endProcess termination system))
             | SimulatedUnixFlavour.Darwin -> Error (ThreadExitRefusal.LastThreadOnDarwin thread)
         else
 
-        Ok (ProcessFate.Continues ((), leave thread system))
+        Ok (ViewFate.Continues ((), leave thread system))
 
     /// `exitThread`, with a refusal answered as the `Error` rather than raised.
     let internal tryExitThread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -353,7 +353,7 @@ module internal ProcessSignal =
     let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entry : PendingSignal<'Thread>)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, SignalReceiverRefusal>
+        : Result<ViewFate<KillOutcome, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         if isInit system then
             failwith
@@ -371,12 +371,12 @@ module internal ProcessSignal =
         match generation with
         | Error refusal -> Error refusal
         | Ok (SignalGeneration.ProcessContinues signals) ->
-            Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, UnixSystemState.withSignals signals system))
+            Ok (ViewFate.Continues (KillOutcome.ProcessRuns, UnixSystemState.withSignals signals system))
         | Ok (SignalGeneration.ProcessStopped (signal, signals)) ->
-            Ok (ProcessFate.Continues (KillOutcome.ProcessStopped signal, UnixSystemState.withSignals signals system))
+            Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, UnixSystemState.withSignals signals system))
         | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->
             Ok (
-                ProcessFate.ProcessEnded (
+                ViewFate.ProcessEnded (
                     UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) system
                 )
             )

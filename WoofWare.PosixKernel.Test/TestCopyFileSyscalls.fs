@@ -112,7 +112,7 @@ module TestCopyFileSyscalls =
 
     let private inodeAt (system : UnixSystem<int, string>) (fileName : string) : InodeNumber =
         match
-            UnixPathResolution.resolvePath
+            Lone.UnixPathResolution.resolvePath
                 AtDirectory.CurrentDirectory
                 SymlinkPolicy.NoFollowFinal
                 (UnixPath.parseOrFail context ("/" + fileName))

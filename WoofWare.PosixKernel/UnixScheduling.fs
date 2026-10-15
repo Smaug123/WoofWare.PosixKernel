@@ -59,14 +59,19 @@ module internal GetCpuRefusal =
 [<RequireQualifiedAccess>]
 module UnixScheduling =
 
-    /// `dispatch` once `Entry` has admitted its caller.
+    /// `dispatch` of `thread` of the process `pid`, whose slot is `slot`, once
+    /// `Entry` has admitted it. Works on the kernel and the one slot, rather
+    /// than on a view of the process, and allocates nothing when the thread is
+    /// already running on `cpu`.
     let private dispatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (pid : ProcessId)
+        (slot : ProcessSlot<'Thread, 'Handler>)
         (thread : 'Thread)
         (cpu : CpuId)
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        let state = UnixThreadTable.get thread system.Threads
+        let state = UnixThreadTable.get thread slot.Threads
 
         if not (UnixMachineState.hasProcessor cpu system.Machine) then
             failwith
@@ -87,20 +92,28 @@ module UnixScheduling =
                 Occupants = Map.add cpu state.OsThreadId vacated.Occupants
             }
 
-        let threads =
+        let processes =
             if state.Cpu = cpu then
-                system.Threads
+                system.Processes
             else
+                let threads =
+                    Map.add
+                        thread
+                        { state with
+                            Cpu = cpu
+                        }
+                        slot.Threads
+
                 Map.add
-                    thread
-                    { state with
-                        Cpu = cpu
+                    (ProcessId.toInt32 pid)
+                    { slot with
+                        Threads = threads
                     }
-                    system.Threads
+                    system.Processes
 
         { system with
             Scheduling = scheduling
-            Threads = threads
+            Processes = processes
         }
 
     /// The thread `caller` names is now running on the logical processor `cpu`:
@@ -126,11 +139,14 @@ module UnixScheduling =
         (system : UnixSystem<'Thread, 'Handler>)
         : UnixSystem<'Thread, 'Handler>
         =
-        // `Entry.call` with `Shape.system`, written out: a client reports the
-        // thread it runs before every instruction, and the closure `call` takes
-        // would make each report allocate.
-        Entry.admit "UnixScheduling.dispatch" CallerRequirement.Exists caller system
-        dispatchIn (Caller.thread caller) cpu system
+        // `Entry.call` with `Shape.system`, written out on the kernel: a client
+        // reports the thread it runs before every instruction, and the closure
+        // `call` takes, and the view it focuses, would make each report
+        // allocate.
+        let slot =
+            Entry.admitted "UnixScheduling.dispatch" CallerRequirement.Exists caller system
+
+        dispatchIn (Caller.processId caller) slot (Caller.thread caller) cpu system
 
     /// `runningOn` once `Entry` has admitted the process.
     let private runningOnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

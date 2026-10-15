@@ -287,7 +287,7 @@ module TestSigsuspend =
             match UnixThreadTable.parkedFor main (Lone.threads r.System) with
             | None -> Ok r
             | Some ParkedSyscall.SigSuspend ->
-                match UnixWait.wakes (Set.singleton main) r.System with
+                match Lone.wakes (Set.singleton main) r.System with
                 | [] -> Ok r
                 | _ ->
                     match UnixSignal.tryFinishSigsuspend (Callers.thread main r.System) r.System with
@@ -500,7 +500,7 @@ module TestSigsuspend =
     /// process as `kill` generates it once it has checked its arguments.
     let private parentKill (r : Replay) (signal : Signal) : Result<ProcessFate<KillOutcome, int, string>, UnixError> =
         match
-            ProcessSignal.generate
+            Lone.ProcessSignal.generate
                 {
                     Signal = signal
                     Target = ValueNone
@@ -1022,7 +1022,7 @@ module TestSigsuspend =
                         failwith "the model holds an ignored signal its sleeping main thread could take"
 
                     let due = modelHandlerDue model
-                    let woken = not (List.isEmpty (UnixWait.wakes (Set.singleton main) system))
+                    let woken = not (List.isEmpty (Lone.wakes (Set.singleton main) system))
                     woken |> shouldEqual due
 
                     if due then
@@ -1290,7 +1290,11 @@ module TestSigsuspend =
     /// `system`'s signals once `thread` has entered `sigsuspend` with an empty
     /// mask.
     let private suspended (thread : int) (system : UnixSystem<int, string>) : SignalState<int, string> =
-        SignalState.suspend (UnixSystemState.signalNumbering system) thread SignalMask.empty (Lone.proc system).Signals
+        SignalState.suspend
+            (Lone.UnixSystemState.signalNumbering system)
+            thread
+            SignalMask.empty
+            (Lone.proc system).Signals
 
     [<Test>]
     let ``a mask to restore for a thread the table does not hold is a defect`` () : unit =
@@ -1299,7 +1303,7 @@ module TestSigsuspend =
         system
         |> withSignals (suspended 42 system)
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutThread 42 ]
+        |> shouldEqual [ UnixSystemDefect.MaskToRestoreWithoutThread (Callers.ofDefault 42) ]
 
         // The control: a thread between its call's answer and its return to user
         // mode holds one, parked in nothing.
@@ -1324,7 +1328,10 @@ module TestSigsuspend =
         polling
         |> withSignals (suspended main polling)
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.MaskToRestoreOutsideSigsuspend (main, parked) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.MaskToRestoreOutsideSigsuspend (Callers.ofDefault main, parked)
+            ]
 
         polling |> UnixSystem.checkInvariants |> shouldEqual []
 
@@ -1343,7 +1350,7 @@ module TestSigsuspend =
             asleep
             |> withSignals (SignalState.initial (numberingOf flavour) Set.empty)
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.SigsuspendWithoutMaskToRestore main ]
+            |> shouldEqual [ UnixSystemDefect.SigsuspendWithoutMaskToRestore (Callers.ofDefault main) ]
 
     [<Test>]
     let ``a thread's exit and the process's end leave no mask to restore`` () : unit =
@@ -1396,7 +1403,11 @@ module TestSigsuspend =
             // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.
             let forgotten =
-                SignalState.suspend (UnixSystemState.signalNumbering blocking) helper usr1 (Lone.proc blocking).Signals
+                SignalState.suspend
+                    (Lone.UnixSystemState.signalNumbering blocking)
+                    helper
+                    usr1
+                    (Lone.proc blocking).Signals
                 |> SignalState.forgetThread helper
 
             SignalState.maskToRestore helper forgotten |> shouldEqual None
@@ -1474,7 +1485,7 @@ module TestSigsuspend =
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"sigsuspend: %A{other}"
 
-            UnixWait.wakes (Set.singleton main) asleep |> shouldEqual []
+            Lone.wakes (Set.singleton main) asleep |> shouldEqual []
 
             match
                 UnixSignal.trySigprocmask

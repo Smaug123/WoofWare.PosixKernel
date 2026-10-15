@@ -1968,7 +1968,7 @@ module TestShutdownAgainstHost =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -2115,7 +2115,7 @@ module TestShutdownAgainstHost =
                 let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
                 match
-                    UnixSocket.tryGetsockoptLength
+                    Lone.UnixSocket.tryGetsockoptLength
                         (this.Fd e)
                         level
                         optionName
@@ -2180,7 +2180,7 @@ module TestShutdownAgainstHost =
                 // Darwin answers EINVAL first once both directions are shut.
                 let supplied =
                     match
-                        UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
+                        Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped (uint32 value.Length) system
                     with
                     | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (value, 0, count))
                     | Ok SetSockOptAdmission.NoCopy
@@ -2189,7 +2189,14 @@ module TestShutdownAgainstHost =
                         failwith $"setsockopt(SO_LINGER) refused: %s{SocketOptionRefusal.describe refusal}"
 
                 match
-                    UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped (uint32 value.Length) supplied system
+                    Lone.UnixSocket.trySetsockoptBytes
+                        fd
+                        level
+                        name
+                        UserBuffer.Mapped
+                        (uint32 value.Length)
+                        supplied
+                        system
                 with
                 | Ok (answer, after) ->
                     system <- after
@@ -2240,7 +2247,7 @@ module TestShutdownAgainstHost =
                             | Some description -> description
                             | None -> failwith $"fd %d{fd} names no description"
 
-                        let level = LinuxReadiness.ofDescription description system
+                        let level = Lone.LinuxReadiness.ofDescription description system
                         $"epoll=0x%x{level &&& (uint32 (rdyEvents flavour) ||| 0x18u)}"
                     | SimulatedUnixFlavour.Darwin ->
                         let kq, s = KeventWorld.kqueue system
@@ -2450,7 +2457,7 @@ module TestShutdownAgainstHost =
                 let name = SimulatedUnixPlatform.reuseAddressOption platform
 
                 match
-                    UnixSocket.tryGetsockoptLength
+                    Lone.UnixSocket.tryGetsockoptLength
                         (this.Fd e)
                         level
                         name

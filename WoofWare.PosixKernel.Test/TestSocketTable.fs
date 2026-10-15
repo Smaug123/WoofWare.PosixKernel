@@ -56,20 +56,20 @@ module TestSocketTable =
         (kernel : UnixSystem<int, string>)
         : (uint64 * uint32) list * UnixSystem<int, string>
         =
-        let predicted = EpollReadyList.hasDeliverableEvent queueId kernel
-        let delivered, system = EpollReadyList.drain queueId maxCount kernel
+        let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId kernel
+        let delivered, system = Lone.EpollReadyList.drain queueId maxCount kernel
 
         if List.isEmpty delivered = predicted then
             failwith
-                $"EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
+                $"Lone.EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
 
         delivered, system
 
     let private hasDeliverableEpollEvents (queueId : OpenFileDescriptionId) (kernel : UnixSystem<int, string>) : bool =
-        EpollReadyList.hasDeliverableEvent queueId kernel
+        Lone.EpollReadyList.hasDeliverableEvent queueId kernel
 
     let private linuxReadiness (targetId : OpenFileDescriptionId) (kernel : UnixSystem<int, string>) : uint32 =
-        LinuxReadiness.ofDescription targetId kernel
+        Lone.LinuxReadiness.ofDescription targetId kernel
 
     /// A process launched with no descriptors at all, and so no pipes: the base
     /// for a descriptor table built wholly by hand.
@@ -512,7 +512,7 @@ module TestSocketTable =
                                     Machine =
                                         UnixMachineState.commitFileSystem ChangeNotice.Names mutation kernel.Machine
                                 }
-                                |> ObjectLifetime.forgetIfUnheld inode
+                                |> Lone.ObjectLifetime.forgetIfUnheld inode
 
                             cover LifetimeMixLabel.Unlink
 
@@ -795,7 +795,7 @@ module TestSocketTable =
         : SyscallAnswer * UnixSystem<int, string>
         =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 client
                 nonBlocking
                 16u
@@ -814,7 +814,7 @@ module TestSocketTable =
         : ConnectRefusal
         =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 client
                 false
                 16u
@@ -1181,7 +1181,9 @@ module TestSocketTable =
             | SocketPhase.Established (connectionId, ConnectionEnd.Client) -> connectionId
             | other -> failwith $"expected Established, got %A{other}"
 
-        let fd, tcpConnection, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
+        let fd, tcpConnection, kernel =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
+
         let firstClient = UnixMachineState.connection (connectionOf 1L) kernel.Machine
         tcpConnection |> shouldEqual firstClient
 
@@ -1217,10 +1219,12 @@ module TestSocketTable =
 
         UnixSystem.checkInvariants kernel |> shouldEqual []
 
-        let _, _, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
+        let _, _, kernel = Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
 
         let e =
-            Assert.Throws<System.Exception> (fun () -> UnixConnection.acceptConnection (SocketId 0L) kernel |> ignore)
+            Assert.Throws<System.Exception> (fun () ->
+                Lone.UnixConnection.acceptConnection (SocketId 0L) kernel |> ignore
+            )
 
         e.Message |> shouldContainText "the accept queue is empty"
 
@@ -1230,7 +1234,9 @@ module TestSocketTable =
     let ``closing the last reference sweeps the connection`` () : unit =
         let kernel = listenerAndClients 8 5000us 1
         let _, kernel = connect (SocketId 1L) false (loopback 5000us) kernel
-        let acceptedFd, _, kernel = UnixConnection.acceptConnection (SocketId 0L) kernel
+
+        let acceptedFd, _, kernel =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) kernel
 
         let connectionId =
             match (UnixMachineState.socket (SocketId 1L) kernel.Machine).Phase with
@@ -1319,7 +1325,7 @@ module TestSocketTable =
         // drops the implicit binding entirely, port included.
         let outcome, kernel =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     (SocketId 0L)
                     false
                     16u
@@ -1360,7 +1366,7 @@ module TestSocketTable =
 
         let outcome, _ =
             match
-                UnixConnection.connectSocket
+                Lone.UnixConnection.connectSocket
                     (SocketId 0L)
                     false
                     16u

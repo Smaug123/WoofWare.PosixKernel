@@ -57,7 +57,7 @@ module TestNonBlocking =
     /// What `poll` would report for `fd` right now.
     let private readinessOf (fd : int) (system : UnixSystem<int, string>) : uint32 =
         match FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) with
-        | Some id -> LinuxReadiness.ofDescription id system
+        | Some id -> Lone.LinuxReadiness.ofDescription id system
         | None -> failwith $"fd %d{fd} is not open"
 
     let private set (fd : int) (value : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

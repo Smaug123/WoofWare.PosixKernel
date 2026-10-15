@@ -114,11 +114,11 @@ module TestConnectionWriteResetMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         (SignalDisposition.Catch (SignalCatch.ofHandler "pipe"))
                     |> SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "usr1"))
             }
@@ -173,7 +173,7 @@ module TestConnectionWriteResetMeasured =
     /// `SIGPIPE`s it raised.
     let private answered
         (exact : int)
-        (outcome : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
         : string * int * UnixSystem<int, string>
         =
         let shown (answer : WriteAnswer) : string =
@@ -248,7 +248,7 @@ module TestConnectionWriteResetMeasured =
         let asleep, slept, (answer, sigPipe, system) =
             match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
             | Ok (WriteStep.WouldBlock (_, parked)) ->
-                match UnixWait.wakes (Set.singleton 1) parked with
+                match Lone.wakes (Set.singleton 1) parked with
                 // Asleep only until the reset its own bytes provoked, which
                 // has arrived.
                 | [ 1, _ ] -> false, true, answered 100 (finish bytes parked)
@@ -261,7 +261,7 @@ module TestConnectionWriteResetMeasured =
                         else
                             KeventWorld.close server parked
 
-                    match UnixWait.wakes (Set.singleton 1) ended with
+                    match Lone.wakes (Set.singleton 1) ended with
                     | [ 1, _ ] -> true, true, answered 100 (finish bytes ended)
                     | other -> failwith $"%O{platform} %s{peer}: the write was not woken by its end: %A{other}"
                 | other -> failwith $"%O{platform} %s{peer}: %A{other}"
@@ -360,7 +360,7 @@ module TestConnectionWriteResetMeasured =
                         { proc with
                             Signals =
                                 SignalState.enqueue
-                                    (UnixSystemState.signalNumbering system)
+                                    (Lone.UnixSystemState.signalNumbering system)
                                     {
                                         Signal = Signal.SIGUSR1
                                         Target = ValueSome 1
@@ -374,7 +374,7 @@ module TestConnectionWriteResetMeasured =
                 let outcome =
                     match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
                     | Ok (WriteStep.WouldBlock (_, parked)) ->
-                        UnixWait.wakes (Set.singleton 1) parked |> List.map fst |> shouldEqual [ 1 ]
+                        Lone.wakes (Set.singleton 1) parked |> List.map fst |> shouldEqual [ 1 ]
                         finish bytes parked
                     | written -> written
 
@@ -434,7 +434,7 @@ module TestConnectionWriteResetMeasured =
 
         let drained, system = drain 0L system
         let system = KeventWorld.close server system
-        UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+        Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
 
         match finish bytes system with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->

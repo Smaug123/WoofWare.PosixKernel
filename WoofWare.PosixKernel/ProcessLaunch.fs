@@ -215,7 +215,7 @@ module internal LaunchDefaults =
 /// How a process starts: everything about a process that is fixed before its
 /// first instruction, as its launcher sets it up before `exec`. Both the first
 /// process on a machine (`UnixBootImage.boot`) and every later one
-/// (`SimulatedMachine.launch`) are launched from one.
+/// (`UnixSystem.launch`) are launched from one.
 ///
 /// The process's ID is not here: the kernel chooses it, from the machine's
 /// counters, when the process is launched.

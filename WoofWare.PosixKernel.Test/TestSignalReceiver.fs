@@ -55,7 +55,7 @@ module TestSignalReceiver =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             disposition
                             proc.Signals
@@ -270,7 +270,7 @@ module TestSignalReceiver =
 
             let signals =
                 SignalState.enqueue
-                    (UnixSystemState.signalNumbering system)
+                    (Lone.UnixSystemState.signalNumbering system)
                     {
                         Signal = Signal.SIGUSR1
                         Target = ValueSome 2
@@ -326,12 +326,12 @@ module TestSignalReceiver =
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) ->
                 let after =
-                    { after with
-                        Process =
-                            { after.Process with
-                                Signals = HandlerFrames.leave 2 after.Process.Signals
-                            }
-                    }
+                    after
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = HandlerFrames.leave 2 proc.Signals
+                        }
+                    )
 
                 for thread in 0..3 do
                     match flavour, thread, UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
@@ -341,8 +341,8 @@ module TestSignalReceiver =
                     | SimulatedUnixFlavour.Linux, _, Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, resumed)) when
                         thread <> 2
                         ->
-                        SignalState.pending resumed.Process.Signals
-                        |> shouldEqual (SignalState.pending after.Process.Signals)
+                        SignalState.pending (Lone.proc resumed).Signals
+                        |> shouldEqual (SignalState.pending (Lone.proc after).Signals)
                     | SimulatedUnixFlavour.Darwin, _, Error refusal ->
                         refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
                     | _, _, other -> failwith $"%O{flavour}: thread %d{thread} was answered %A{other}"

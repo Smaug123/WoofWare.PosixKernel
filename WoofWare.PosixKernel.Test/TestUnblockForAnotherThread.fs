@@ -557,7 +557,7 @@ module TestUnblockForAnotherThread =
     /// What the sleeper would take, if `after` wakes it into an answer rather
     /// than into a refusal or a sleep resumed.
     let private wokenInto (case : Case) (after : UnixSystem<int, string>) : string option =
-        match UnixWait.wakes (Set.singleton case.Sleeper) after with
+        match Lone.wakes (Set.singleton case.Sleeper) after with
         | [] -> None
         | _ ->
             let threads = Lone.threads after |> Map.keys |> Set.ofSeq
@@ -574,7 +574,7 @@ module TestUnblockForAnotherThread =
             // refuses; and anything else refused or slept on.
             match
                 SignalState.onReturnToUser
-                    (UnixSystemState.signalNumbering after)
+                    (Lone.UnixSystemState.signalNumbering after)
                     (Lone.proc after).CoreDumps
                     (Lone.leader after)
                     threads
@@ -595,7 +595,7 @@ module TestUnblockForAnotherThread =
 
         // The perturbation reaches the sleeper only through the unblock: before
         // it, nothing wakes the sleeper.
-        if not (List.isEmpty (UnixWait.wakes (Set.singleton case.Sleeper) system)) then
+        if not (List.isEmpty (Lone.wakes (Set.singleton case.Sleeper) system)) then
             Some "the sleeper was woken before the unblock"
         else
 

@@ -66,17 +66,17 @@ module TestSocketEventDelivery =
         (kernel : UnixSystem<int, string>)
         : (uint64 * uint32) list * UnixSystem<int, string>
         =
-        let predicted = EpollReadyList.hasDeliverableEvent queueId kernel
-        let delivered, system = EpollReadyList.drain queueId maxCount kernel
+        let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId kernel
+        let delivered, system = Lone.EpollReadyList.drain queueId maxCount kernel
 
         if List.isEmpty delivered = predicted then
             failwith
-                $"EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
+                $"Lone.EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events. The two read the same annotated walk, so they cannot disagree."
 
         delivered, system
 
     let private hasDeliverableEpollEvents (queueId : OpenFileDescriptionId) (kernel : UnixSystem<int, string>) : bool =
-        EpollReadyList.hasDeliverableEvent queueId kernel
+        Lone.EpollReadyList.hasDeliverableEvent queueId kernel
 
     let private addEpoll (kernel : UnixSystem<int, string>) : int * OpenFileDescriptionId * UnixSystem<int, string> =
         let fd, registry =
@@ -173,7 +173,7 @@ module TestSocketEventDelivery =
         : SyscallAnswer * UnixSystem<int, string>
         =
         match
-            UnixConnection.connectSocket
+            Lone.UnixConnection.connectSocket
                 client
                 nonBlocking
                 16u
@@ -219,7 +219,7 @@ module TestSocketEventDelivery =
 
         readyOf queueId kernel |> List.length |> shouldEqual 1
 
-        let _, _, kernel = UnixConnection.acceptConnection listenerId kernel
+        let _, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
 
         let delivered, kernel = deliverEpollEvents queueId 8 kernel
         delivered |> shouldEqual []
@@ -266,7 +266,7 @@ module TestSocketEventDelivery =
         let delivered, kernel = deliverEpollEvents queueId 8 kernel
         dataOf delivered |> shouldEqual [ 7UL ]
 
-        let _, _, kernel = UnixConnection.acceptConnection listenerId kernel
+        let _, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
         let _, kernel = connect c2 false (loopback 5000us) kernel
 
         let delivered, kernel = deliverEpollEvents queueId 8 kernel
@@ -549,7 +549,7 @@ module TestSocketEventDelivery =
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
         match
-            UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) kernel
+            Lone.UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) kernel
         with
         | Ok (GetSockOptAnswer.Reported (OptionValue.Int value), kernel) -> value, kernel
         | other -> failwith $"getsockopt(SO_ERROR) answered %A{other}"
@@ -693,7 +693,7 @@ module TestSocketEventDelivery =
         let _, listenerId, kernel = addListener 5000us kernel
         let clientFd, clientId, kernel = addStream kernel
         let _, kernel = connect clientId false (loopback 5000us) kernel
-        let serverFd, _, kernel = UnixConnection.acceptConnection listenerId kernel
+        let serverFd, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
         let kernel = register queueFd clientFd 5UL kernel
 
         // Consume the ADD-of-ready edge (established, live peer: OUT).
@@ -731,7 +731,7 @@ module TestSocketEventDelivery =
         let _, listenerId, kernel = addListener 5000us kernel
         let clientFd, clientId, kernel = addStream kernel
         let _, kernel = connect clientId false (loopback 5000us) kernel
-        let serverFd, _, kernel = UnixConnection.acceptConnection listenerId kernel
+        let serverFd, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
 
         let kernel =
             match
@@ -793,7 +793,7 @@ module TestSocketEventDelivery =
         let _, listenerId, kernel = addListener 5000us kernel
         let clientFd, clientId, kernel = addStream kernel
         let _, kernel = connect clientId false (loopback 5000us) kernel
-        let serverFd, _, kernel = UnixConnection.acceptConnection listenerId kernel
+        let serverFd, _, kernel = Lone.UnixConnection.acceptConnection listenerId kernel
 
         let kernel =
             match closeFd serverFd kernel with
@@ -1118,7 +1118,7 @@ module TestSocketEventDelivery =
             let kernel =
                 kernel
                 |> Threads.spawn 1
-                |> UnixWait.park
+                |> Lone.UnixWait.park
                     1
                     (ParkedSyscall.EpollWait
                         {

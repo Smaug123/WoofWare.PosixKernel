@@ -119,13 +119,13 @@ module TestSignalWaitPark =
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
+            Lone.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
 
             // Which pending signals a wait may take is not modelled, so asking
             // fails loudly rather than guessing.

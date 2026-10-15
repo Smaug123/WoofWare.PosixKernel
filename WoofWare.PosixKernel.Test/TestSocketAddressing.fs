@@ -108,13 +108,13 @@ module TestSocketAddressing =
         let bytes = OptionValue.ofInt value
 
         let supplied =
-            match UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped 4u system with
+            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped 4u system with
             | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (bytes, 0, count))
             | Ok SetSockOptAdmission.NoCopy
             | Ok (SetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        match UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 4u supplied system with
+        match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 4u supplied system with
         | Ok (SetSockOptAnswer.Set, system) -> Answer.Succeeded, system
         | Ok (SetSockOptAnswer.Failed error, system) -> Answer.Failed error, system
         | Error _ -> Answer.Refused, system
@@ -123,11 +123,11 @@ module TestSocketAddressing =
         let level, name = ipv6OnlyOption system.Machine.UnixPlatform
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
             | Ok GetSockOptAdmission.ReadLength -> Some 4u
             | _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read system with
         | Ok (GetSockOptAnswer.Reported bytes, _) when bytes.Length = 4 ->
             Answer.Read (SimulatedUnixPlatform.decodeCInt system.Machine.UnixPlatform bytes 0)
         | Ok (GetSockOptAnswer.Reported bytes, _) -> failwith $"getsockopt reported %d{bytes.Length} bytes"

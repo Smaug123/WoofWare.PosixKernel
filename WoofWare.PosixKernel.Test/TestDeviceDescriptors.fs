@@ -154,7 +154,7 @@ module TestDeviceDescriptors =
         (system : UnixSystem<int, string>)
         : WriteAdmission * UnixSystem<int, string>
         =
-        match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
+        match Lone.UnixReadWrite.tryAdmitWrite thread fd buffer count system with
         | Ok (WriteStep.Returns (admission, system)) -> admission, system
         | other -> failwith $"admitWrite(%d{fd}, %A{buffer}, %d{count}): expected an admission, got %A{other}"
 
@@ -571,7 +571,7 @@ module TestDeviceDescriptors =
             let bytes = ImmutableArray.CreateRange (Seq.init count byte)
 
             if positioned then
-                match UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L system with
+                match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L system with
                 | Error (PWriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -591,7 +591,7 @@ module TestDeviceDescriptors =
                     answer |> shouldEqual (WriteAnswer.Completed (int64 count))
                 | Error other -> failwith $"pwrite: %A{other}"
             else
-                match UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) system with
+                match Lone.UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) system with
                 | Error (WriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -771,7 +771,7 @@ module TestDeviceDescriptors =
         let property (count : uint64) (buffer : UserBuffer) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadWrite booted
 
-            match UnixReadWrite.tryAdmitWrite thread fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite thread fd buffer count system with
             | Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer) ->
                 buffer |> shouldEqual UserBuffer.Opaque
                 count |> shouldNotEqual 0UL
@@ -830,7 +830,7 @@ module TestDeviceDescriptors =
         let property (device : CharacterDevice) (count : uint64) (offset : int64) =
             let fd, system = openDevice device FileAccessMode.WriteOnly booted
 
-            match UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped count offset system with
+            match Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped count offset system with
             | Error refusal -> failwith $"admitPWrite refused: %A{refusal}"
             | Ok admission ->
 
@@ -853,7 +853,7 @@ module TestDeviceDescriptors =
                 transfer |> shouldEqual (int count)
                 let bytes = ImmutableArray.CreateRange (Seq.init transfer byte)
 
-                match UnixReadWrite.tryApplyPWrite fd offset into bytes system with
+                match Lone.UnixReadWrite.tryApplyPWrite fd offset into bytes system with
                 | Ok (answer, after) ->
                     answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                     after |> shouldEqual system

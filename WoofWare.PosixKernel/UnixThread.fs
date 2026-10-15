@@ -197,8 +197,8 @@ type PollQueueId =
 /// in which order -- not only on what its descriptors present then.
 ///
 /// Held on the machine rather than in the call's park, because a socket event
-/// in any process's call activates its filters, as one does a kqueue's, and no
-/// process's view holds another's threads. It lives exactly as long as the park
+/// in any process's call activates its filters, as one does a kqueue's. It
+/// lives exactly as long as the park
 /// naming it (`ParkedKqueuePoll.Queue`): the park's end destroys it.
 ///
 /// Its representation is internal, so a later version may change what a

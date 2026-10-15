@@ -347,7 +347,7 @@ module TestLinkCount =
                 }
 
             let statOf (inode : InodeNumber) : FileStatus =
-                match UnixPathResolution.statOf inode system with
+                match Lone.UnixPathResolution.statOf inode system with
                 | Some (Ok status) -> status
                 | other -> failwith $"stat of inode %O{inode}: %A{other}"
 
@@ -423,7 +423,7 @@ module TestLinkCount =
                             }
                     }
 
-                match UnixPathResolution.statOf directory system with
+                match Lone.UnixPathResolution.statOf directory system with
                 | Some (Ok status) -> status.LinkCount |> shouldEqual expected
                 | other -> failwith $"stat of a directory of %d{count} on %O{platform}: %A{other}"
 

@@ -162,7 +162,7 @@ module TestBindingCount =
             let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 
             for inode in VirtualFileSystem.inodes vfs |> Map.keys do
-                match UnixPathResolution.statOf inode system, measuredLinkCount fsType inode vfs with
+                match Lone.UnixPathResolution.statOf inode system, measuredLinkCount fsType inode vfs with
                 | Some (Ok status), Some expected ->
                     if status.LinkCount <> expected then
                         failwith

@@ -89,7 +89,7 @@ type internal UnixMachineState =
             ThreadIds : ThreadIdAllocator
             /// Where the next process's ID comes from, and the ID of every
             /// process on the machine: see `ProcessIdTable`. A process joins it
-            /// when it is launched (`UnixBootImage.boot`, `SimulatedMachine.launch`)
+            /// when it is launched (`UnixBootImage.boot`, `UnixSystem.launch`)
             /// and leaves it when it ends.
             ProcessIds : ProcessIdTable
             /// For each directory some process stands in, how many processes
@@ -97,8 +97,8 @@ type internal UnixMachineState =
             ///
             /// The machine's rather than read off each process, because a
             /// directory one process stands in must outlive a removal by
-            /// another, and a process's view cannot see the other processes. A
-            /// launch takes a hold on the process's starting directory, `chdir`
+            /// another, whose call reads it here rather than in the other
+            /// processes. A launch takes a hold on the process's starting directory, `chdir`
             /// moves one, and the process's end lets its own go. An inode no
             /// process stands in has no entry.
             CurrentDirectories : Map<InodeNumber, int>

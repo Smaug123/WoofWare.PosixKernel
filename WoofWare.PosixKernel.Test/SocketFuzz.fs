@@ -383,7 +383,7 @@ module SocketFuzz =
 
             let outcome, kernel =
                 match
-                    UnixConnection.connectSocket
+                    Lone.UnixConnection.connectSocket
                         socketId
                         true
                         16u
@@ -409,7 +409,7 @@ module SocketFuzz =
 
             let outcome, kernel =
                 match
-                    UnixConnection.connectSocket
+                    Lone.UnixConnection.connectSocket
                         socketId
                         true
                         16u
@@ -440,7 +440,7 @@ module SocketFuzz =
                 "EAGAIN", state
             | _ ->
 
-            let fd, _, kernel = UnixConnection.acceptConnection socketId state.Kernel
+            let fd, _, kernel = Lone.UnixConnection.acceptConnection socketId state.Kernel
 
             "ok",
             assignSlot
@@ -518,12 +518,12 @@ module SocketFuzz =
             // cannot disagree; asked here because a generated sequence drives
             // the epoll instance through phases no hand-written row reaches.
             let system = state.Kernel
-            let predicted = EpollReadyList.hasDeliverableEvent queueId system
-            let delivered, system = EpollReadyList.drain queueId maxEvents system
+            let predicted = Lone.EpollReadyList.hasDeliverableEvent queueId system
+            let delivered, system = Lone.EpollReadyList.drain queueId maxEvents system
 
             if List.isEmpty delivered = predicted then
                 failwith
-                    $"FUZZ-DRIVER BUG: EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events."
+                    $"FUZZ-DRIVER BUG: Lone.EpollReadyList.hasDeliverableEvent answered %b{predicted} of epoll instance %O{queueId}, but draining it reported %d{List.length delivered} events."
 
             let kernel = system
 

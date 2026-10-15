@@ -250,7 +250,7 @@ module TestPipe =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (UnixSystemState.signalNumbering system)
+                        (Lone.UnixSystemState.signalNumbering system)
                         Signal.SIGPIPE
                         disposition
                         proc.Signals
@@ -360,8 +360,8 @@ module TestPipe =
 
                     let mutable transferred = None
 
-                    let actual : Result<WriteStep<WriteAnswer, int, string>, WriteRefusal> =
-                        match UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer (uint64 count) system with
+                    let actual : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal> =
+                        match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer (uint64 count) system with
                         | Error refusal -> Error refusal
                         | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) ->
                             Ok (WriteStep.Returns (answer, after))
@@ -657,7 +657,7 @@ module TestPipe =
                             (if modelWritable reference.Buffer then 0x104u else 0u)
                             ||| (if endOpen PipeEnd.Read reference then 0u else 0x8u)
 
-                    LinuxReadiness.ofDescription id system |> shouldEqual expected
+                    Lone.LinuxReadiness.ofDescription id system |> shouldEqual expected
                 | PipeOp.BytesAvailable fd ->
                     let actual =
                         UnixDescriptor.tryBytesAvailable (Callers.leader system) fd UserBuffer.Mapped system
@@ -1146,7 +1146,7 @@ module TestPipe =
             PReadUnchanged.pread w UserBuffer.Mapped 1UL 0L system
             |> shouldEqual (Ok (ReadAnswer.Failed tie))
 
-            match UnixReadWrite.tryAdmitPWrite 0 r UserBuffer.Mapped 1UL 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite 0 r UserBuffer.Mapped 1UL 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> error |> shouldEqual tie
             | other -> failwith $"%O{platform}: %A{other}"
 
@@ -1289,7 +1289,7 @@ module TestPipe =
             let id =
                 FileDescriptorRegistry.tryFindId fd (Lone.fileDescriptors system) |> Option.get
 
-            LinuxReadiness.ofDescription id system
+            Lone.LinuxReadiness.ofDescription id system
 
         (level r system, level w system) |> shouldEqual (0u, 0x104u)
         let _, full = writeOrFail w (payload 0 65536) system

@@ -93,11 +93,11 @@ module TestFifoOpenPark =
                         PartnerOpens = 0L
                     }
 
-            let asleep = UnixWait.park thread parked awake
+            let asleep = Lone.UnixWait.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
             let closed =
                 match UnixDescriptor.tryClose (Callers.leader asleep) 0 asleep with
@@ -108,9 +108,9 @@ module TestFifoOpenPark =
 
             closed
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.ReservedPark (thread, parked) ]
+            |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            UnixWait.deadlines (Set.singleton thread) closed |> shouldEqual []
+            Lone.deadlines (Set.singleton thread) closed |> shouldEqual []
 
             // This library keeps no count of a FIFO's opens, so the primitive
             // cannot be evaluated, and asking fails loudly rather than guessing.

@@ -619,7 +619,7 @@ module TestEpollCtl =
                 )
                 system
 
-        let delivered, _ = EpollReadyList.drain queueId 64 system
+        let delivered, _ = Lone.EpollReadyList.drain queueId 64 system
 
         let expected =
             rows

@@ -157,7 +157,7 @@ module TestDescriptorBound =
                     | other -> failwith $"filling the table at %d{target}: %A{other}"
                 )
 
-            UnixWait.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+            Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
 
             match UnixConnection.tryFinishAccept (Callers.thread 1 system) system with
             | Error (AcceptRefusal.DescriptorLimit refusal) -> refusal |> shouldEqual (refusalAt bound bound)
@@ -196,7 +196,7 @@ module TestDescriptorBound =
                 )
 
             let e =
-                Assert.Throws<exn> (fun () -> UnixConnection.acceptConnection listener full |> ignore<_>)
+                Assert.Throws<exn> (fun () -> Lone.UnixConnection.acceptConnection listener full |> ignore<_>)
 
             e.Message |> shouldContainText $"at or above %d{bound}"
 
@@ -205,7 +205,7 @@ module TestDescriptorBound =
                 | Ok (SyscallAnswer.Completed _, system) -> system
                 | other -> failwith $"%s{run.Name}: closing %d{bound - 1}: %A{other}"
 
-            let fd, _, after = UnixConnection.acceptConnection listener oneLeft
+            let fd, _, after = Lone.UnixConnection.acceptConnection listener oneLeft
             fd |> shouldEqual (bound - 1)
             UnixSystem.checkInvariants after |> shouldEqual []
 
@@ -245,7 +245,10 @@ module TestDescriptorBound =
                 | UnixSystemDefect.DescriptorAtOrAboveBound _ -> true
                 | _ -> false
             )
-            |> shouldEqual [ UnixSystemDefect.DescriptorAtOrAboveBound (bound, bound) ]
+            |> shouldEqual
+                [
+                    UnixSystemDefect.DescriptorAtOrAboveBound (UnixSystem.defaultProcessId, bound, bound)
+                ]
 
     /// A launch table naming a descriptor at the bound is refused.
     [<Test>]

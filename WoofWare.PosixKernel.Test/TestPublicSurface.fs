@@ -320,12 +320,13 @@ module TestPublicSurface =
         |> List.sort
         |> shouldBeEmpty
 
-    /// A process that has ended has no threads to make a call, so nothing public
-    /// hands back a system to make one in from what its end answered: not the
-    /// view it ended in, which for a call the process died part-way through is a
-    /// state no client ever held.
+    /// A process that has ended has no threads to make a call, so the one public
+    /// function that hands back a system from what its end answered is
+    /// `UnixSystem.endProcess`, whose system no longer holds the process: not
+    /// the view it ended in, which for a call the process died part-way through
+    /// is a state no client ever held.
     [<Test>]
-    let ``no public function hands back a system from an ended process`` () : unit =
+    let ``no public function but endProcess hands back a system from an ended process`` () : unit =
         let library = typeof<VirtualFileSystem>.Assembly
         let signatures = signatures library
         let ended = keyOf typedefof<EndedProcess<int, string>>
@@ -336,12 +337,12 @@ module TestPublicSurface =
             |> List.filter (fun (s : Signature) -> s.Needs |> List.exists (fun (t : Type) -> keyOf t = ended))
 
         // A control, so that this cannot pass by finding no function that takes
-        // an ended process: `SimulatedMachine.endProcess` takes one.
+        // an ended process.
         takesEnded
         |> List.map (fun (s : Signature) -> s.Name)
-        |> shouldContain "WoofWare.PosixKernel.SimulatedMachine.endProcess"
+        |> shouldContain "WoofWare.PosixKernel.EndedProcess.termination"
 
         takesEnded
         |> List.filter (fun (s : Signature) -> s.Gives |> List.exists (fun (t : Type) -> keyOf t = system))
         |> List.map (fun (s : Signature) -> s.Name)
-        |> shouldBeEmpty
+        |> shouldEqual [ "WoofWare.PosixKernel.UnixSystem.endProcess" ]

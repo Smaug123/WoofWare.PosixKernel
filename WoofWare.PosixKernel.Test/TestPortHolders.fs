@@ -525,7 +525,7 @@ module TestPortHolders =
     // ------------------------------------------------------------------
 
     let private socketOf (fd : int) (system : UnixSystem<int, string>) : SocketDescription =
-        match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) -> UnixMachineState.socket socketId system.Machine
         | other -> failwith $"fd %d{fd} is %A{other}, not a socket"
 

@@ -169,7 +169,14 @@ module TestPeerName =
 
         let system =
             match
-                UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
+                Lone.UnixSocket.tryGetsockoptLength
+                    fd
+                    level
+                    optionName
+                    UserBuffer.Mapped
+                    UserBuffer.Mapped
+                    (Some 4u)
+                    system
             with
             | Ok (GetSockOptAnswer.Reported (OptionValue.Int error), system) when error <> 0 -> system
             | other -> failwith $"SO_ERROR answered %A{other}"
@@ -255,7 +262,7 @@ module TestPeerName =
 
         let system =
             match
-                UnixSocket.tryGetsockoptLength
+                Lone.UnixSocket.tryGetsockoptLength
                     client
                     level
                     optionName

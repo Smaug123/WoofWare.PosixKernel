@@ -210,7 +210,10 @@ module TestUnixSystemInvariants =
 
             withFlags foreign
             |> UnixSystem.checkInvariants
-            |> shouldEqual [ UnixSystemDefect.DescriptorFlagsNotOfFlavour (fd, foreign, flavour) ]
+            |> shouldEqual
+                [
+                    UnixSystemDefect.DescriptorFlagsNotOfFlavour (UnixSystem.defaultProcessId, fd, foreign, flavour)
+                ]
 
             // The control: the machine's own flavour's flags, every one set.
             let own =
@@ -365,10 +368,15 @@ module TestUnixSystemInvariants =
                         }
                 })
 
+        // The registration's target, description 1, is no description, which
+        // the open file table's own rules report.
         UnixSystem.checkInvariants forged
         |> shouldEqual
             [
                 UnixSystemDefect.EventRegistrationOrdinalNotFresh (ordinal, queueId, ordinal)
+                UnixSystemDefect.OpenFiles (
+                    FileDescriptorRegistryDefect.EpollRegistrationTargetDead (queueId, OpenFileDescriptionId 1L)
+                )
             ]
 
     // ------------------------------------------------------------------
@@ -430,7 +438,10 @@ module TestUnixSystemInvariants =
         )
         |> Lone.restand
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.CurrentDirectoryIsNotADirectory file ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.CurrentDirectoryIsNotADirectory (UnixSystem.defaultProcessId, file)
+            ]
 
     [<Test>]
     let ``a current directory the filesystem does not contain is a defect`` () : unit =
@@ -448,7 +459,10 @@ module TestUnixSystemInvariants =
         )
         |> Lone.restand
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.CurrentDirectoryIsNotADirectory absent ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.CurrentDirectoryIsNotADirectory (UnixSystem.defaultProcessId, absent)
+            ]
 
     // ------------------------------------------------------------------
     // Threads against the descriptor table
@@ -466,7 +480,7 @@ module TestUnixSystemInvariants =
 
         match parked with
         | None -> registered
-        | Some parked -> UnixWait.park thread parked registered
+        | Some parked -> Lone.UnixWait.park thread parked registered
 
     /// `system` with one registered thread, parked as `parked` says on a
     /// description the open file table may not hold, which no syscall parks on.
@@ -531,7 +545,10 @@ module TestUnixSystemInvariants =
                 }
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, absentDescription) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault thread, absentDescription)
+            ]
 
     [<Test>]
     let ``a thread parked in an epoll_wait on an absent description is a defect`` () : unit =
@@ -546,7 +563,10 @@ module TestUnixSystemInvariants =
                 }
         )
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, absentDescription) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault thread, absentDescription)
+            ]
 
     [<Test>]
     let ``a thread parked in an epoll_wait on a description that is not an epoll instance is a defect`` () : unit =
@@ -571,7 +591,7 @@ module TestUnixSystemInvariants =
         |> UnixSystem.checkInvariants
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (thread, stdoutDescription, target)
+                UnixSystemDefect.ParkedEpollWaitOnNonEpoll (Callers.ofDefault thread, stdoutDescription, target)
             ]
 
     /// `system` with threads 1 and 2 parked on stdout's description, in that order.
@@ -591,8 +611,8 @@ module TestUnixSystemInvariants =
         system
         |> Threads.ensure 1
         |> Threads.ensure 2
-        |> UnixWait.park 1 parked
-        |> UnixWait.park 2 parked
+        |> Lone.UnixWait.park 1 parked
+        |> Lone.UnixWait.park 2 parked
 
     /// `system` with thread `name`'s park stamped `ordinal`, as only a record copy past
     /// `UnixWait.park` could.
@@ -634,7 +654,7 @@ module TestUnixSystemInvariants =
 
         forgeOrdinal 2 next twoParked
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.ParkOrdinalNotFresh (next, 2, next) ]
+        |> shouldEqual [ UnixSystemDefect.ParkOrdinalNotFresh (next, Callers.ofDefault 2, next) ]
 
     /// The control for the three rows above: a park onto a live object of the
     /// right kind is sound, so those rows are not passing because every park
@@ -974,8 +994,8 @@ module TestUnixSystemInvariants =
         |> UnixSystem.checkInvariants
         |> shouldEqual
             [
-                UnixSystemDefect.HandlerFramesWithoutThread 42
-                UnixSystemDefect.MaskWithoutThread 42
+                UnixSystemDefect.HandlerFramesWithoutThread (Callers.ofDefault 42)
+                UnixSystemDefect.MaskWithoutThread (Callers.ofDefault 42)
             ]
 
         system
@@ -998,7 +1018,7 @@ module TestUnixSystemInvariants =
         |> withThread None
         |> withSignals (blocking 42)
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.MaskWithoutThread 42 ]
+        |> shouldEqual [ UnixSystemDefect.MaskWithoutThread (Callers.ofDefault 42) ]
 
         system
         |> withThread None
@@ -1021,7 +1041,10 @@ module TestUnixSystemInvariants =
         |> withThread None
         |> withSignals (directedAt (ValueSome 43))
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.PendingSignalTargetWithoutThread (43, Signal.SIGCHLD) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.PendingSignalTargetWithoutThread (Callers.ofDefault 43, Signal.SIGCHLD)
+            ]
 
         // Directed at a live thread, or at the process: sound.
         system
@@ -1120,7 +1143,7 @@ module TestUnixSystemInvariants =
         system
         |> Lone.withLeader 7
         |> UnixSystem.checkInvariants
-        |> shouldEqual [ UnixSystemDefect.LeaderWithoutThread 7 ]
+        |> shouldEqual [ UnixSystemDefect.LeaderWithoutThread (Callers.ofDefault 7) ]
 
     [<Test>]
     let ``two threads with one thread ID are a defect`` () : unit =
@@ -1140,7 +1163,7 @@ module TestUnixSystemInvariants =
             |> UnixSystem.checkInvariants
             |> shouldEqual
                 [
-                    UnixSystemDefect.DuplicateOsThreadId (leader.OsThreadId, [ 0 ; 1 ])
+                    UnixSystemDefect.DuplicateOsThreadId (leader.OsThreadId, List.map Callers.ofDefault [ 0 ; 1 ])
                     // Thread 1's own ID, which the allocator still records, is
                     // held by no thread now.
                     UnixSystemDefect.LiveThreadIdsMismatch (
@@ -1151,13 +1174,34 @@ module TestUnixSystemInvariants =
 
     [<Test>]
     let ``on Linux a leader whose thread ID is not the process ID is a defect, and on Darwin it is not`` () : unit =
+        let seventeen = ProcessId.parseOrFail "test" 17
+
+        // The process, its ID 17 everywhere the kernel records it, but its
+        // leader's thread ID.
         let moved (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            system
-            |> Lone.mapProc (fun proc ->
-                { proc with
-                    ProcessId = ProcessId.parseOrFail "test" 17
-                }
-            )
+            let pid = Lone.pid system
+            let slot = system.Processes.[ProcessId.toInt32 pid]
+
+            { system with
+                Machine =
+                    { system.Machine with
+                        ProcessIds =
+                            system.Machine.ProcessIds
+                            |> ProcessIdTable.remove pid
+                            |> ProcessIdTable.add seventeen
+                    }
+                Processes =
+                    Map.ofList
+                        [
+                            ProcessId.toInt32 seventeen,
+                            { slot with
+                                Process =
+                                    { slot.Process with
+                                        ProcessId = seventeen
+                                    }
+                            }
+                        ]
+            }
 
         let linux = spawned SimulatedUnixPlatform.linuxX64
 
@@ -1166,7 +1210,7 @@ module TestUnixSystemInvariants =
         |> shouldEqual
             [
                 UnixSystemDefect.LeaderThreadIdNotProcessId (
-                    0,
+                    Caller.make seventeen 0,
                     UnixThreadState.osThreadId (UnixThreadTable.get 0 (Lone.threads linux)),
                     ProcessId.parseOrFail "test" 17
                 )
@@ -1228,7 +1272,10 @@ module TestUnixSystemInvariants =
         let foreign, at = withDarwinId 4194304UL
 
         UnixSystem.checkInvariants at
-        |> shouldEqual [ UnixSystemDefect.OsThreadIdNotMintable (1, foreign, at.Machine.ThreadIds) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.OsThreadIdNotMintable (Callers.ofDefault 1, foreign, at.Machine.ThreadIds)
+            ]
 
         // Darwin: an id the counter has not reached, which it would hand out again.
         let darwin = spawned SimulatedUnixPlatform.macOsArm64
@@ -1253,7 +1300,7 @@ module TestUnixSystemInvariants =
         |> shouldEqual
             [
                 UnixSystemDefect.OsThreadIdNotMintable (
-                    1,
+                    Callers.ofDefault 1,
                     UnixThreadState.osThreadId (UnixThreadTable.get 1 (Lone.threads darwin)),
                     behind
                 )

@@ -421,7 +421,7 @@ module TestThreadIds =
         fails (spawn 1 0 system) "already names a thread"
 
         let parked =
-            UnixWait.park
+            Lone.UnixWait.park
                 1
                 (ParkedSyscall.Poll
                     {
@@ -447,7 +447,7 @@ module TestThreadIds =
         // alone. The new thread's mask was exactly its creator's, and the
         // creator's own pending signal was not pending on it.
         for system in [ linux ; darwin ] do
-            let numbering = UnixSystemState.signalNumbering system
+            let numbering = Lone.UnixSystemState.signalNumbering system
 
             let blocking (signals : Signal list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match
@@ -514,7 +514,7 @@ module TestThreadIds =
         // return restores its own thread's mask alone.
         for system in [ linux ; darwin ] do
             let usr1 =
-                Signal.toRawSignoUnder (UnixSystemState.signalNumbering system) Signal.SIGUSR1
+                Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) Signal.SIGUSR1
 
             let system =
                 match

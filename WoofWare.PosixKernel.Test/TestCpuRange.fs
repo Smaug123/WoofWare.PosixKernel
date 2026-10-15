@@ -171,11 +171,13 @@ module TestCpuRange =
                 Machines.checkInvariants machine |> shouldEqual []
             else
                 cover Side.Outside
-                let defect = UnixSystemDefect.CpuBeyondMachine (1, CpuId cpu, count)
+
+                let defect =
+                    UnixSystemDefect.CpuBeyondMachine (Callers.ofDefault 1, CpuId cpu, count)
+
                 UnixSystem.checkInvariants system |> shouldEqual [ defect ]
 
-                Machines.checkInvariants machine
-                |> shouldEqual [ SimulatedMachineDefect.View (UnixSystem.defaultProcessId, defect) ]
+                Machines.checkInvariants machine |> shouldEqual [ defect ]
 
         CoverageSample.check propertyConfig (Arb.fromGen countAndCpu) property
         |> assertBothSides

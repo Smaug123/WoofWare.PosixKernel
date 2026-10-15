@@ -158,7 +158,7 @@ module TestBootImage =
         |> shouldEqual []
 
     [<Test>]
-    let ``a process starts only from a launch, by boot or by SimulatedMachine.tryLaunch`` () : unit =
+    let ``a process starts only from a launch, by boot or by UnixSystem.launch`` () : unit =
         let takes (definition : Type) (m : MethodInfo) : bool =
             m.GetParameters ()
             |> Array.exists (fun p -> isGenericOf definition p.ParameterType)
@@ -177,8 +177,8 @@ module TestBootImage =
             [
                 "WoofWare.PosixKernel.ProcessLaunch.leader"
                 "WoofWare.PosixKernel.ProcessLaunch.platform"
-                "WoofWare.PosixKernel.SimulatedMachine.launch"
                 "WoofWare.PosixKernel.UnixBootImage.boot"
+                "WoofWare.PosixKernel.UnixSystem.launch"
             ]
 
     [<Test>]
@@ -201,7 +201,7 @@ module TestBootImage =
         let records : Type list =
             [
                 typeof<UnixSystem<int, string>>
-                typeof<SimulatedMachine<int, string>>
+                typeof<UnixSystem<int, string>>
                 typeof<ProcessSlot<int, string>>
                 typeof<ProcessLaunch<int>>
                 typeof<UnixMachineState>

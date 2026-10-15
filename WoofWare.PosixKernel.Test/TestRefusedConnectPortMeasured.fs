@@ -141,7 +141,7 @@ module TestRefusedConnectPortMeasured =
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
         match
-            UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
+            Lone.UnixSocket.tryGetsockoptLength fd level optionName UserBuffer.Mapped UserBuffer.Mapped (Some 4u) system
         with
         | Ok (answer, system) ->
             let raw = OptionValue.readInt answer
@@ -207,8 +207,8 @@ module TestRefusedConnectPortMeasured =
                     if path = "b" then
                         system
                     else
-                        UnixSystemState.withFileDescriptors
-                            (FileDescriptorRegistry.setNonBlocking fd true (UnixSystemState.fileDescriptors system))
+                        Lone.UnixSystemState.withFileDescriptors
+                            (FileDescriptorRegistry.setNonBlocking fd true (Lone.UnixSystemState.fileDescriptors system))
                             system
 
                 let answer, system = connect fd closedPort system

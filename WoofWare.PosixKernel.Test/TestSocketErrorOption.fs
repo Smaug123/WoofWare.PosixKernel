@@ -133,13 +133,13 @@ module TestSocketErrorOption =
         let optionName = SimulatedUnixPlatform.socketErrorOption platform
 
         let read =
-            match UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
+            match Lone.UnixSocket.tryAdmitGetSockOpt fd level optionName value length system with
             | Ok GetSockOptAdmission.ReadLength -> Some declaredLength
             | Ok GetSockOptAdmission.SkipLength
             | Ok (GetSockOptAdmission.Answered _)
             | Error _ -> None
 
-        match UnixSocket.tryGetsockoptLength fd level optionName value length read system with
+        match Lone.UnixSocket.tryGetsockoptLength fd level optionName value length read system with
         | Ok answer -> answer
         | Error refusal -> failwith $"getsockopt refused: %s{SocketOptionRefusal.describe refusal}"
 
@@ -201,7 +201,7 @@ module TestSocketErrorOption =
                          let _, system = connect client (loopback listenerPort) system
 
                          let server, _, system =
-                             UnixConnection.acceptConnection (socketIdOf listener system) system
+                             Lone.UnixConnection.acceptConnection (socketIdOf listener system) system
 
                          "accepted server end", server, system)
                     yield

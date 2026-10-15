@@ -517,7 +517,7 @@ module internal InotifyReplay =
     /// The number of the inode `path` names, following a final symbolic link.
     let numberOf (path : string) (system : UnixSystem<int, string>) : InodeNumber =
         match
-            UnixPathResolution.resolvePath
+            Lone.UnixPathResolution.resolvePath
                 AtDirectory.CurrentDirectory
                 SymlinkPolicy.Follow
                 (UnixPath.parseOrFail context path)

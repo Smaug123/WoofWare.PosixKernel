@@ -165,7 +165,7 @@ module TestPollTimeout =
         | other -> failwith $"expected the poll to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match UnixWait.wakes (Set.singleton thread) system with
+        match Lone.wakes (Set.singleton thread) system with
         | [] -> None
         | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
@@ -197,7 +197,7 @@ module TestPollTimeout =
                 let _, parked = parks [ entry listener events ] milliseconds started
                 let deadline = start + int64 milliseconds * nanosecondsPerMillisecond
 
-                UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
+                Lone.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
 
                 // One nanosecond short: nothing wakes it, and a finish attempted
                 // anyway sleeps again on the same deadline.
@@ -205,8 +205,7 @@ module TestPollTimeout =
                 woken justBefore |> shouldEqual None
                 let parkedAgain = reparks justBefore
 
-                UnixWait.deadlines (Set.singleton thread) parkedAgain
-                |> shouldEqual [ deadline ]
+                Lone.deadlines (Set.singleton thread) parkedAgain |> shouldEqual [ deadline ]
 
                 let atDeadline = after (deadline - start) parked
 
@@ -299,7 +298,7 @@ module TestPollTimeout =
         for milliseconds in [ -1 ; -2 ; -1000 ; System.Int32.MinValue ] do
             let condition, parked = parks [ entry listener pollIn ] milliseconds idle
             WakeCondition.deadlines condition |> shouldEqual []
-            UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
+            Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
 
             let muchLater = after 1_000_000_000_000_000L parked
             woken muchLater |> shouldEqual None
@@ -326,8 +325,8 @@ module TestPollTimeout =
                     condition
                     |> shouldEqual (WakeCondition.Primitive WakePrimitive.SignalDeliverable)
 
-                    UnixWait.wakes (Set.singleton thread) parked |> shouldEqual []
-                    UnixWait.deadlines (Set.singleton thread) parked |> shouldEqual []
+                    Lone.wakes (Set.singleton thread) parked |> shouldEqual []
+                    Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
                 | other -> failwith $"expected the poll to sleep, got %A{other}"
 
     [<Test>]
@@ -347,7 +346,7 @@ module TestPollTimeout =
         let _, parked =
             parks [ entry listener pollIn ] 1 (nearTheEnd (System.Int64.MaxValue - timeout))
 
-        UnixWait.deadlines (Set.singleton thread) parked
+        Lone.deadlines (Set.singleton thread) parked
         |> shouldEqual [ System.Int64.MaxValue ]
 
     [<Test>]
@@ -371,8 +370,7 @@ module TestPollTimeout =
         let gone = becameReady |> withQueue []
         let parkedAgain = reparks gone
 
-        UnixWait.deadlines (Set.singleton thread) parkedAgain
-        |> shouldEqual [ 10_000_000L ]
+        Lone.deadlines (Set.singleton thread) parkedAgain |> shouldEqual [ 10_000_000L ]
 
         (UnixThreadTable.parkOf thread (Lone.threads parkedAgain) |> Option.get).Ordinal
         |> shouldBeGreaterThan (UnixThreadTable.parkOf thread (Lone.threads parked) |> Option.get).Ordinal
@@ -524,7 +522,12 @@ module TestPollTimeout =
         pollDefects rebound
         |> shouldEqual
             [
-                UnixSystemDefect.ParkedPollDescriptorRebound (thread, listener, watched, Some (idOf listener rebound))
+                UnixSystemDefect.ParkedPollDescriptorRebound (
+                    Callers.ofDefault thread,
+                    listener,
+                    watched,
+                    Some (idOf listener rebound)
+                )
             ]
 
         let exn =
@@ -537,7 +540,10 @@ module TestPollTimeout =
         let destroyed = forgeRebind listener parked
 
         pollDefects destroyed
-        |> shouldEqual [ UnixSystemDefect.ParkedOnAbsentDescription (thread, watched) ]
+        |> shouldEqual
+            [
+                UnixSystemDefect.ParkedOnAbsentDescription (Callers.ofDefault thread, watched)
+            ]
 
         let exn =
             Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll (Callers.thread thread destroyed) destroyed |> ignore)
@@ -582,6 +588,7 @@ module TestPollTimeout =
                         Deadline = None
                     }
             ] do
-            let exn = Assert.Throws<exn> (fun () -> UnixWait.park thread other parked |> ignore)
+            let exn =
+                Assert.Throws<exn> (fun () -> Lone.UnixWait.park thread other parked |> ignore)
 
             exn.Message |> shouldContainText "without clearing the first"

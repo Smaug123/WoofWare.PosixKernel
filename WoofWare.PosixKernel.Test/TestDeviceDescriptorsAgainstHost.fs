@@ -181,7 +181,7 @@ module TestDeviceDescriptorsAgainstHost =
             | other -> failwith $"the model's read: %A{other}"
 
         let admitWrite (buffer : UserBuffer) (count : uint64) : Answer =
-            match UnixReadWrite.tryAdmitWrite 0 fd buffer count system with
+            match Lone.UnixReadWrite.tryAdmitWrite 0 fd buffer count system with
             | Ok (WriteStep.Returns (WriteAdmission.Answered answer, _)) -> ofWrite answer
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), after)) ->
                 match
@@ -234,11 +234,11 @@ module TestDeviceDescriptorsAgainstHost =
 
                     $"pwrite 16@%d{offset}",
                     hostAnswer (int64 (hostPWrite (host, Array.zeroCreate 16, 16un, offset))),
-                    (match UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 16UL offset system with
+                    (match Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 16UL offset system with
                      | Ok (PWriteAdmission.Answered answer) -> ofWrite answer
                      | Ok (PWriteAdmission.Transfer (count, into)) ->
                          match
-                             UnixReadWrite.tryApplyPWrite
+                             Lone.UnixReadWrite.tryApplyPWrite
                                  fd
                                  offset
                                  into

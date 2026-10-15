@@ -13,7 +13,7 @@ module internal WriteOutcomes =
 
     /// The answer and system of `outcome`, failing if the write raised a signal.
     let returned<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (outcome : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>)
+        (outcome : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>)
         : Result<'Answer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
         outcome
@@ -28,20 +28,20 @@ module internal WriteOutcomes =
 
     /// The step after the copy of a `write` through `fd` that its admission
     /// said to transfer: `UnixReadWrite.tryApplyWrite` of `bytes` into `into`,
-    /// marked as a `write` is.
+    /// marked as a `write` is, in the view of the only process.
     let applyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryApplyWrite into bytes system
-        |> Result.map (UnixReadWrite.markedThrough fd system)
+        Lone.UnixReadWrite.tryApplyWriteThrough fd into bytes system
 
     /// The step after the copy of a blocking `write` by `thread` through `fd`
     /// that its admission said to transfer part of and sleep:
-    /// `UnixReadWrite.applyWriteThenSleep`, marked as a `write` is.
+    /// `UnixReadWrite.applyWriteThenSleep`, marked as a `write` is, in the view
+    /// of the only process.
     let applyWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -49,86 +49,121 @@ module internal WriteOutcomes =
         (into : WriteIntoThenSleep)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
         =
-        UnixReadWrite.applyWriteThenSleep thread total into bytes system
-        |> UnixReadWrite.markedThrough fd system
+        Lone.UnixReadWrite.applyWriteThenSleepThrough thread fd total into bytes system
 
-    /// A whole `write(2)` by `thread`, made a step at a time through the
-    /// library's internal steps: `UnixReadWrite.tryAdmitWrite`, and if it says
-    /// to transfer, `tryApplyWrite` or `applyWriteThenSleep` of the first that
-    /// many of `bytes` with the decision it made, marked as a `write` is. An
+    /// A whole `write(2)` by `caller`, made a step at a time through the
+    /// library's internal steps, in the view of the caller's process:
+    /// `UnixReadWrite.tryAdmitWrite`, and if it says to transfer,
+    /// `tryApplyWrite` or `applyWriteThenSleep` of the first that many of
+    /// `bytes` with the decision it made, marked as a `write` is. An
     /// admission's answer is reported as the write's. The oracle
     /// `admitThenWrite` holds the public protocol to.
     let private stepsThenWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
-        match UnixReadWrite.tryAdmitWrite thread fd buffer (uint64 bytes.Length) system with
-        | Error refusal -> Error refusal
-        | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
-            Ok (WriteStep.ReturnsRaising (answer, signal, after))
-        | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
-        | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-        | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
-        | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
-            if count > bytes.Length then
-                failwith $"admitWrite asked for %d{count} of %d{bytes.Length} bytes"
+        let thread = Caller.thread caller
 
-            applyWrite fd into (ImmutableArray.Create (bytes, 0, count)) admitted
-        | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (count, total, into), admitted)) ->
-            if total <> bytes.Length || count > bytes.Length then
-                failwith $"admitWrite asked for %d{count} of %d{total} bytes, given %d{bytes.Length}"
+        let stepped =
+            match
+                UnixReadWrite.tryAdmitWrite
+                    thread
+                    fd
+                    buffer
+                    (uint64 bytes.Length)
+                    (Proc.view (Caller.processId caller) system)
+            with
+            | Error refusal -> Error refusal
+            | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
+                Ok (WriteStep.ReturnsRaising (answer, signal, after))
+            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
+            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+            | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
+                if count > bytes.Length then
+                    failwith $"admitWrite asked for %d{count} of %d{bytes.Length} bytes"
 
-            Ok (applyWriteThenSleep thread fd total into (ImmutableArray.Create (bytes, 0, count)) admitted)
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer (count, _), signal, _))
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
-            failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
+                UnixReadWrite.tryApplyWrite into (ImmutableArray.Create (bytes, 0, count)) admitted
+                |> Result.map (UnixReadWrite.markedThrough fd admitted)
+            | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (count, total, into), admitted)) ->
+                if total <> bytes.Length || count > bytes.Length then
+                    failwith $"admitWrite asked for %d{count} of %d{total} bytes, given %d{bytes.Length}"
 
-    /// A whole `send(2)` by `thread` with the raw flag word `flags`, made a step
+                UnixReadWrite.applyWriteThenSleep thread total into (ImmutableArray.Create (bytes, 0, count)) admitted
+                |> UnixReadWrite.markedThrough fd admitted
+                |> Ok
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer (count, _), signal, _))
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
+                failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
+
+        stepped |> Result.map (WriteStep.map Proc.unview)
+
+    /// A whole `send(2)` by `caller` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
     /// `admitThenSend` holds the public protocol to.
     let private stepsThenSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (fd : int)
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
         =
-        match UnixReadWrite.tryAdmitSend thread fd buffer (uint64 bytes.Length) flags system with
-        | Error refusal -> Error refusal
-        | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
-            Ok (WriteStep.ReturnsRaising (answer, signal, after))
-        | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
-        | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-        | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
-        | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
-            if count > bytes.Length then
-                failwith $"admitSend asked for %d{count} of %d{bytes.Length} bytes"
+        let thread = Caller.thread caller
 
-            UnixReadWrite.tryApplySend into (ImmutableArray.Create (bytes, 0, count)) admitted
-        | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (count, total, into), admitted)) ->
-            if total <> bytes.Length || count > bytes.Length then
-                failwith $"admitSend asked for %d{count} of %d{total} bytes, given %d{bytes.Length}"
+        let stepped =
+            match
+                UnixReadWrite.tryAdmitSend
+                    thread
+                    fd
+                    buffer
+                    (uint64 bytes.Length)
+                    flags
+                    (Proc.view (Caller.processId caller) system)
+            with
+            | Error refusal -> Error refusal
+            | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
+                Ok (WriteStep.ReturnsRaising (answer, signal, after))
+            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
+            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+            | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
+                if count > bytes.Length then
+                    failwith $"admitSend asked for %d{count} of %d{bytes.Length} bytes"
 
-            Ok (UnixReadWrite.applyWriteThenSleep thread total into (ImmutableArray.Create (bytes, 0, count)) admitted)
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer (count, _), signal, _))
-        | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
-            failwith $"admitSend raised %A{signal} and still asked for %d{count} bytes"
+                UnixReadWrite.tryApplySend into (ImmutableArray.Create (bytes, 0, count)) admitted
+            | Ok (WriteStep.Returns (WriteAdmission.TransferThenSleep (count, total, into), admitted)) ->
+                if total <> bytes.Length || count > bytes.Length then
+                    failwith $"admitSend asked for %d{count} of %d{total} bytes, given %d{bytes.Length}"
+
+                Ok (
+                    UnixReadWrite.applyWriteThenSleep
+                        thread
+                        total
+                        into
+                        (ImmutableArray.Create (bytes, 0, count))
+                        admitted
+                )
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.Transfer (count, _), signal, _))
+            | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
+                failwith $"admitSend raised %A{signal} and still asked for %d{count} bytes"
+
+        stepped |> Result.map (WriteStep.map Proc.unview)
 
     /// A paused write's or send's answer, in the shape of the internal steps
     /// the tests match on.
     let private stepOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
         =
         match fate with
         | ProcessFate.ProcessEnded ended -> WriteStep.ProcessEnded ended
@@ -168,7 +203,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
             UnixReadWrite.tryWrite caller fd buffer (uint64 bytes.Length) system
@@ -177,7 +212,7 @@ module internal WriteOutcomes =
             )
             |> Result.map stepOf
 
-        agreeing "write" (stepsThenWrite (Caller.thread caller) fd buffer bytes system) actual
+        agreeing "write" (stepsThenWrite caller fd buffer bytes system) actual
 
     /// `admitThenWriteAs` the thread `thread` of the only process on the
     /// machine.
@@ -187,7 +222,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         admitThenWriteAs (Callers.thread thread system) fd buffer bytes system
 
@@ -201,7 +236,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
         =
         let actual =
             UnixReadWrite.trySend caller fd buffer (uint64 bytes.Length) flags system
@@ -210,7 +245,7 @@ module internal WriteOutcomes =
             )
             |> Result.map stepOf
 
-        agreeing "send" (stepsThenSend (Caller.thread caller) fd buffer bytes flags system) actual
+        agreeing "send" (stepsThenSend caller fd buffer bytes flags system) actual
 
     /// `admitThenSendAs` the thread `thread` of the only process on the
     /// machine.
@@ -221,7 +256,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
         =
         admitThenSendAs (Callers.thread thread system) fd buffer bytes flags system
 
@@ -230,23 +265,28 @@ module internal WriteOutcomes =
     /// `tryApplyResumedWrite` of `bytesAt offset count` with the decision it
     /// made. The oracle `finishWrite` holds the public protocol to.
     let private stepsThenFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+        (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
-        match UnixReadWrite.tryAdmitFinishWrite thread system with
-        | Error refusal -> Error refusal
-        | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
-            UnixReadWrite.tryApplyResumedWrite thread into (bytesAt offset count) admitted
-        | Ok (WriteStep.Returns (WriteResumption.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
-        | Ok (WriteStep.ReturnsRaising (WriteResumption.Answered answer, signal, after)) ->
-            Ok (WriteStep.ReturnsRaising (answer, signal, after))
-        | Ok (WriteStep.ReturnsRaising (WriteResumption.Transfer _ as resumption, signal, _)) ->
-            failwith $"admitFinishWrite raised %A{signal} and still asked for %A{resumption}"
-        | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
-        | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
-        | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+        let thread = Caller.thread caller
+
+        let stepped =
+            match UnixReadWrite.tryAdmitFinishWrite thread (Proc.view (Caller.processId caller) system) with
+            | Error refusal -> Error refusal
+            | Ok (WriteStep.Returns (WriteResumption.Transfer (offset, count, into), admitted)) ->
+                UnixReadWrite.tryApplyResumedWrite thread into (bytesAt offset count) admitted
+            | Ok (WriteStep.Returns (WriteResumption.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
+            | Ok (WriteStep.ReturnsRaising (WriteResumption.Answered answer, signal, after)) ->
+                Ok (WriteStep.ReturnsRaising (answer, signal, after))
+            | Ok (WriteStep.ReturnsRaising (WriteResumption.Transfer _ as resumption, signal, _)) ->
+                failwith $"admitFinishWrite raised %A{signal} and still asked for %A{resumption}"
+            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
+            | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
+
+        stepped |> Result.map (WriteStep.map Proc.unview)
 
     /// The woken `write` or `send` of `caller`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
@@ -257,7 +297,7 @@ module internal WriteOutcomes =
         (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         let actual =
             UnixReadWrite.tryFinishWrite caller system
@@ -271,14 +311,14 @@ module internal WriteOutcomes =
             )
             |> Result.map stepOf
 
-        agreeing "finishWrite" (stepsThenFinishWrite (Caller.thread caller) bytesAt system) actual
+        agreeing "finishWrite" (stepsThenFinishWrite caller bytesAt system) actual
 
     /// `finishWriteAs` the thread `thread` of the only process on the machine.
     let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         finishWriteAs (Callers.thread thread system) bytesAt system
 
@@ -290,7 +330,7 @@ module internal WriteOutcomes =
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         admitThenWriteAs caller fd UserBuffer.Mapped bytes system
 
@@ -300,7 +340,7 @@ module internal WriteOutcomes =
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
         =
         writeBytesAs (Callers.thread thread system) fd bytes system
 
@@ -312,7 +352,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
         =
         admitThenSend thread fd UserBuffer.Mapped bytes flags system
 
@@ -324,7 +364,7 @@ module internal WriteOutcomes =
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<WriteAdmission * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
-        UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system
+        Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer count system
         |> returned
 
     /// A whole `write(2)` of `bytes` by the leader, `admitThenWrite` from a
@@ -353,14 +393,14 @@ module internal WriteOutcomes =
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
         let steps =
-            match UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
+            match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
             | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
             | Ok (PWriteAdmission.Transfer (count, into)) ->
                 if count > bytes.Length then
                     failwith $"admitPWrite asked for %d{count} of %d{bytes.Length} bytes"
 
-                UnixReadWrite.tryApplyPWrite fd offset into (ImmutableArray.Create (bytes, 0, count)) system
+                Lone.UnixReadWrite.tryApplyPWrite fd offset into (ImmutableArray.Create (bytes, 0, count)) system
 
         let actual =
             UnixReadWrite.tryPwrite

@@ -140,11 +140,11 @@ module TestWakeCondition =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -336,15 +336,15 @@ module TestWakeCondition =
         // below leans on them.
         for primitive, truth in fixedTruths do
             for waiter in [ 0 ; signalled ] do
-                WakeCondition.satisfied waiter (WakeCondition.Primitive primitive) system
+                Lone.WakeCondition.satisfied waiter (WakeCondition.Primitive primitive) system
                 |> shouldEqual (if truth then Set.singleton primitive else Set.empty)
 
         let signal = WakePrimitive.SignalDeliverable
 
-        WakeCondition.satisfied 0 (WakeCondition.Primitive signal) system
+        Lone.WakeCondition.satisfied 0 (WakeCondition.Primitive signal) system
         |> shouldEqual Set.empty
 
-        WakeCondition.satisfied signalled (WakeCondition.Primitive signal) system
+        Lone.WakeCondition.satisfied signalled (WakeCondition.Primitive signal) system
         |> shouldEqual (Set.singleton signal)
 
     [<Test>]
@@ -358,7 +358,7 @@ module TestWakeCondition =
             ] do
             let exn =
                 Assert.Throws<exn> (fun () ->
-                    WakeCondition.satisfied 0 (WakeCondition.Primitive primitive) system
+                    Lone.WakeCondition.satisfied 0 (WakeCondition.Primitive primitive) system
                     |> ignore<Set<WakePrimitive>>
                 )
 
@@ -373,7 +373,7 @@ module TestWakeCondition =
     [<Test>]
     let ``satisfied agrees with the flattening oracle`` () : unit =
         let property (cover : SatisfiedLabel -> unit) (waiter : int, clock : int64, condition : WakeCondition) : unit =
-            let actual = WakeCondition.satisfied waiter condition (at clock)
+            let actual = Lone.WakeCondition.satisfied waiter condition (at clock)
 
             if Set.isEmpty actual then
                 cover SatisfiedLabel.Empty
@@ -403,10 +403,10 @@ module TestWakeCondition =
             <| fun (clock, first, rest) ->
                 let system = at clock
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (first, rest)) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (first, rest)) system
                 |> shouldEqual (
                     first :: rest
-                    |> List.map (fun c -> WakeCondition.satisfied signalled c system)
+                    |> List.map (fun c -> Lone.WakeCondition.satisfied signalled c system)
                     |> Set.unionMany
                 )
 
@@ -422,11 +422,11 @@ module TestWakeCondition =
                 let right = WakeCondition.AnyOf (a, [ WakeCondition.AnyOf (b, [ c ]) ])
                 let flat = WakeCondition.AnyOf (a, [ b ; c ])
 
-                WakeCondition.satisfied signalled left system
-                |> shouldEqual (WakeCondition.satisfied signalled right system)
+                Lone.WakeCondition.satisfied signalled left system
+                |> shouldEqual (Lone.WakeCondition.satisfied signalled right system)
 
-                WakeCondition.satisfied signalled left system
-                |> shouldEqual (WakeCondition.satisfied signalled flat system)
+                Lone.WakeCondition.satisfied signalled left system
+                |> shouldEqual (Lone.WakeCondition.satisfied signalled flat system)
 
         Check.One (propertyConfig, property)
 
@@ -436,12 +436,12 @@ module TestWakeCondition =
             Prop.forAll (Arb.fromGen (Gen.zip clockGen sizedCondition))
             <| fun (clock, a) ->
                 let system = at clock
-                let alone = WakeCondition.satisfied signalled a system
+                let alone = Lone.WakeCondition.satisfied signalled a system
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [ a ])) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [ a ])) system
                 |> shouldEqual alone
 
-                WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [])) system
+                Lone.WakeCondition.satisfied signalled (WakeCondition.AnyOf (a, [])) system
                 |> shouldEqual alone
 
         Check.One (propertyConfig, property)
@@ -460,7 +460,7 @@ module TestWakeCondition =
 
             let primitive = WakePrimitive.DeadlinePassed deadline
 
-            WakeCondition.satisfied signalled (WakeCondition.Primitive primitive) (at clock)
+            Lone.WakeCondition.satisfied signalled (WakeCondition.Primitive primitive) (at clock)
             |> shouldEqual (
                 if clock >= deadline then
                     Set.singleton primitive

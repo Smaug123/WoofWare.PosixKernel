@@ -106,12 +106,13 @@ module TestShape =
             (Shape.progress (Shape.result Shape.answer))
             (fun (answer : CallProgress<int, Result<int, int>>) -> answer, [])
 
-    /// A booted system, and what `Shape.map` puts back in its place: a system
-    /// whose clock has moved on, so that putting one back twice, or not at all,
-    /// shows.
-    let private system () : UnixSystem<int, string> =
+    /// The view of a booted system's process, which `Shape.map` puts back as a
+    /// system whose clock has moved on, so that putting one back twice, or not
+    /// at all, shows.
+    let private system () : ProcessView<int, string> =
         UnixSystem.initial SimulatedUnixPlatform.linuxX64
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+        |> Lone.view
 
     let private same<'T when 'T : not struct> (expected : 'T) (actual : 'T) : bool =
         obj.ReferenceEquals (expected, actual)
@@ -120,14 +121,14 @@ module TestShape =
     /// moves the clock on, beside each system `put` was given and what it made
     /// of that, in the order it was given them.
     let private mapSystems<'InView, 'InKernel>
-        (shape : Shape<UnixSystem<int, string>, UnixSystem<int, string>, 'InView, 'InKernel>)
+        (shape : Shape<ProcessView<int, string>, UnixSystem<int, string>, 'InView, 'InKernel>)
         (answer : 'InView)
-        : 'InKernel * (UnixSystem<int, string> * UnixSystem<int, string>) list
+        : 'InKernel * (ProcessView<int, string> * UnixSystem<int, string>) list
         =
-        let given = ResizeArray<UnixSystem<int, string> * UnixSystem<int, string>> ()
+        let given = ResizeArray<ProcessView<int, string> * UnixSystem<int, string>> ()
 
-        let put (view : UnixSystem<int, string>) : UnixSystem<int, string> =
-            let kernel = UnixSystem.advanceClock 1L view
+        let put (view : ProcessView<int, string>) : UnixSystem<int, string> =
+            let kernel = ProcessView.unfocus view |> UnixSystem.advanceClock 1L
             given.Add (view, kernel)
             kernel
 
@@ -137,9 +138,9 @@ module TestShape =
     /// Whether `put` was given exactly `view`, once, and `kernel` is what it
     /// made of it.
     let private putOnce
-        (view : UnixSystem<int, string>)
+        (view : ProcessView<int, string>)
         (kernel : UnixSystem<int, string>)
-        (given : (UnixSystem<int, string> * UnixSystem<int, string>) list)
+        (given : (ProcessView<int, string> * UnixSystem<int, string>) list)
         : bool
         =
         match given with
@@ -153,7 +154,7 @@ module TestShape =
         let view = system ()
         let outcome = obj ()
 
-        match mapSystems Shape.fate (ProcessFate.Continues (outcome, view)) with
+        match mapSystems Shape.fate (ViewFate.Continues (outcome, view)) with
         | ProcessFate.Continues (outcome', kernel), given ->
             same outcome outcome' |> shouldEqual true
             putOnce view kernel given |> shouldEqual true
@@ -165,7 +166,7 @@ module TestShape =
         let ended =
             UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) (system ())
 
-        match mapSystems Shape.fate (ProcessFate.ProcessEnded ended : ProcessFate<obj, _, _>) with
+        match mapSystems Shape.fate (ViewFate.ProcessEnded ended : ViewFate<obj, _, _>) with
         | ProcessFate.ProcessEnded ended', given ->
             same ended ended' |> shouldEqual true
             given |> shouldBeEmpty
@@ -185,8 +186,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.result Shape.fate))
-                (Ok (Ok (ProcessFate.Continues (outcome, view)))
-                : Result<Result<ProcessFate<obj, _, _>, UnixError>, obj>)
+                (Ok (Ok (ViewFate.Continues (outcome, view))) : Result<Result<ViewFate<obj, _, _>, UnixError>, obj>)
         with
         | Ok (Ok (ProcessFate.Continues (outcome', kernel))), given ->
             same outcome outcome' |> shouldEqual true
@@ -196,7 +196,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.result Shape.fate))
-                (Ok (Error UnixError.ESRCH) : Result<Result<ProcessFate<obj, _, _>, UnixError>, obj>)
+                (Ok (Error UnixError.ESRCH) : Result<Result<ViewFate<obj, _, _>, UnixError>, obj>)
         with
         | Ok (Error UnixError.ESRCH), given -> given |> shouldBeEmpty
         | other, _ -> failwith $"kill's shape answered %A{other}"
@@ -204,8 +204,8 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.progress Shape.fate))
-                (Ok (CallProgress.Answered (ProcessFate.Continues (outcome, view)))
-                : Result<CallProgress<obj, ProcessFate<obj, _, _>>, obj>)
+                (Ok (CallProgress.Answered (ViewFate.Continues (outcome, view)))
+                : Result<CallProgress<obj, ViewFate<obj, _, _>>, obj>)
         with
         | Ok (CallProgress.Answered (ProcessFate.Continues (outcome', kernel))), given ->
             same outcome outcome' |> shouldEqual true
@@ -217,7 +217,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.progress Shape.fate))
-                (Ok (CallProgress.NeedsCopyIn paused) : Result<CallProgress<obj, ProcessFate<obj, _, _>>, obj>)
+                (Ok (CallProgress.NeedsCopyIn paused) : Result<CallProgress<obj, ViewFate<obj, _, _>>, obj>)
         with
         | Ok (CallProgress.NeedsCopyIn paused'), given ->
             same paused paused' |> shouldEqual true

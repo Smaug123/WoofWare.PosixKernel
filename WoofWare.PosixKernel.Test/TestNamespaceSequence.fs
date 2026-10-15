@@ -683,7 +683,7 @@ module TestNamespaceSequence =
         let unchanged (outcome : Outcome) : Outcome * World = outcome, world
 
         let owner (choice : OwnerChoice) : UserId option * GroupId option =
-            let credentials = system.Process.Credentials
+            let credentials = (Lone.proc system).Credentials
 
             match choice with
             | OwnerChoice.Unchanged -> None, None
@@ -968,7 +968,7 @@ module TestNamespaceSequence =
             |> List.ofSeq
 
         let cwd =
-            if VirtualFileSystem.isOrphanedDirectory after.Process.CurrentDirectoryInode fileSystem then
+            if VirtualFileSystem.isOrphanedDirectory (Lone.proc after).CurrentDirectoryInode fileSystem then
                 [ Label.CurrentDirectoryOrphaned ]
             else
                 []

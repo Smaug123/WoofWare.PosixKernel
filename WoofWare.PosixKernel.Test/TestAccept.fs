@@ -678,7 +678,8 @@ module TestAccept =
                 (FileDescriptorRegistry.setNonBlocking fd true (Lone.fileDescriptors system))
                 system
 
-        let acceptedFd, _, system = UnixConnection.acceptConnection (SocketId 0L) system
+        let acceptedFd, _, system =
+            Lone.UnixConnection.acceptConnection (SocketId 0L) system
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual false
 
@@ -707,7 +708,7 @@ module TestAccept =
         let _, _, system = listenerWith SimulatedUnixPlatform.linuxX64 0
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
+            Assert.Throws<exn> (fun () -> Lone.UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
 
         e.Message |> shouldContainText "the accept queue is empty"
 
@@ -717,6 +718,6 @@ module TestAccept =
             withSocket (SocketId 0L) (streamSocket SocketPhase.Idle) (systemOn SimulatedUnixPlatform.linuxX64)
 
         let e =
-            Assert.Throws<exn> (fun () -> UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
+            Assert.Throws<exn> (fun () -> Lone.UnixConnection.acceptConnection (SocketId 0L) system |> ignore<_>)
 
         e.Message |> shouldContainText "not listening"

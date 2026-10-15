@@ -121,8 +121,8 @@ module TestUnixWait =
 
     let private apply (op : Op) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match op with
-        | Op.Park thread -> UnixWait.park thread (parkOfThread thread) system
-        | Op.Unpark thread -> UnixParkState.unpark thread system
+        | Op.Park thread -> Lone.UnixWait.park thread (parkOfThread thread) system
+        | Op.Unpark thread -> Lone.UnixParkState.unpark thread system
         | Op.AdvanceClock nanoseconds ->
             { system with
                 Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
@@ -203,23 +203,23 @@ module TestUnixWait =
     let ``a released lock wakes every waiter, in the order they parked`` () : unit =
         // Parked against the table's own key order, so that park order is told apart from it.
         let parked =
-            system |> UnixWait.park 4 (parkOfThread 4) |> UnixWait.park 3 (parkOfThread 3)
+            system
+            |> Lone.UnixWait.park 4 (parkOfThread 4)
+            |> Lone.UnixWait.park 3 (parkOfThread 3)
 
         let asleep = Set.ofList [ 3 ; 4 ]
 
         let fired =
             Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
 
-        UnixWait.wakes asleep parked |> shouldEqual []
+        Lone.wakes asleep parked |> shouldEqual []
 
-        UnixWait.wakes asleep (releaseLock parked)
-        |> shouldEqual [ 4, fired ; 3, fired ]
+        Lone.wakes asleep (releaseLock parked) |> shouldEqual [ 4, fired ; 3, fired ]
 
         // A re-park moves the waiter behind every park already made.
-        let reparked = parked |> UnixWait.park 4 (parkOfThread 4)
+        let reparked = parked |> Lone.UnixWait.park 4 (parkOfThread 4)
 
-        UnixWait.wakes asleep (releaseLock reparked)
-        |> shouldEqual [ 3, fired ; 4, fired ]
+        Lone.wakes asleep (releaseLock reparked) |> shouldEqual [ 3, fired ; 4, fired ]
 
     [<Test>]
     let ``only the threads the client holds asleep are woken`` () : unit =
@@ -227,11 +227,11 @@ module TestUnixWait =
         // it a second time.
         let released =
             system
-            |> UnixWait.park 3 (parkOfThread 3)
-            |> UnixWait.park 4 (parkOfThread 4)
+            |> Lone.UnixWait.park 3 (parkOfThread 3)
+            |> Lone.UnixWait.park 4 (parkOfThread 4)
             |> releaseLock
 
-        UnixWait.wakes (Set.singleton 4) released
+        Lone.wakes (Set.singleton 4) released
         |> shouldEqual (
             [
                 4, Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
@@ -241,12 +241,12 @@ module TestUnixWait =
     [<Test>]
     let ``a thread held asleep with no park is a client bug`` () : unit =
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.wakes (Set.singleton 1) system |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.wakes (Set.singleton 1) system |> ignore)
 
         exn.Message |> shouldContainText "records no park"
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.deadlines (Set.singleton 1) system |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.deadlines (Set.singleton 1) system |> ignore)
 
         exn.Message |> shouldContainText "records no park"
 
@@ -254,29 +254,31 @@ module TestUnixWait =
     let ``a quiet epoll instance wakes none of its waiters, however many there are`` () : unit =
         // An exclusive wake is about a deliverable event, not about sharing an epoll instance.
         let parked =
-            system |> UnixWait.park 1 (parkOfThread 1) |> UnixWait.park 2 (parkOfThread 2)
+            system
+            |> Lone.UnixWait.park 1 (parkOfThread 1)
+            |> Lone.UnixWait.park 2 (parkOfThread 2)
 
-        UnixWait.wakes (Set.ofList [ 1 ; 2 ]) parked |> shouldEqual []
+        Lone.wakes (Set.ofList [ 1 ; 2 ]) parked |> shouldEqual []
 
     [<Test>]
     let ``clearing a park lets another syscall park`` () : unit =
         // The refusal below is about an *unclosed* park, not about a thread's history: a
         // completion that clears its record leaves the thread free to block in anything.
         let cleared =
-            let parked = system |> UnixWait.park 1 (parkOfThread 1)
+            let parked = system |> Lone.UnixWait.park 1 (parkOfThread 1)
 
-            UnixParkState.unpark 1 parked
+            Lone.UnixParkState.unpark 1 parked
 
-        UnixWait.park 1 (parkOfThread 3) cleared
+        Lone.UnixWait.park 1 (parkOfThread 3) cleared
         |> fun system -> UnixThreadTable.parkedFor 1 (Lone.threads system)
         |> shouldEqual (Some (parkOfThread 3))
 
     [<Test>]
     let ``a park of a different syscall over an existing one is refused`` () : unit =
-        let parked = system |> UnixWait.park 1 (parkOfThread 1)
+        let parked = system |> Lone.UnixWait.park 1 (parkOfThread 1)
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.park 1 (parkOfThread 3) parked |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.UnixWait.park 1 (parkOfThread 3) parked |> ignore)
 
         exn.Message |> shouldContainText "without clearing the first"
 
@@ -288,12 +290,12 @@ module TestUnixWait =
 #if DEBUG
         // The lock the call waits for is free.
         let exn =
-            Assert.Throws<exn> (fun () -> UnixWait.parkWaiting 3 (parkOfThread 3) (releaseLock system) |> ignore)
+            Assert.Throws<exn> (fun () -> Lone.UnixWait.parkWaiting 3 (parkOfThread 3) (releaseLock system) |> ignore)
 
         exn.Message |> shouldContainText "FlockGrantable"
 
         // Held, it parks.
-        UnixWait.parkWaiting 3 (parkOfThread 3) system
+        Lone.UnixWait.parkWaiting 3 (parkOfThread 3) system
         |> fun parked -> UnixThreadTable.parkedFor 3 (Lone.threads parked)
         |> shouldEqual (Some (parkOfThread 3))
 
@@ -306,11 +308,11 @@ module TestUnixWait =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (UnixSystemState.signalNumbering system)
+                            (Lone.UnixSystemState.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -318,7 +320,7 @@ module TestUnixWait =
                 }
             )
 
-        let parked = UnixWait.parkWaiting 1 (parkOfThread 1) signalled
+        let parked = Lone.UnixWait.parkWaiting 1 (parkOfThread 1) signalled
 
         UnixWait.satisfied (Callers.thread 1 parked) parked
         |> shouldEqual (Some (Set.singleton WakePrimitive.SignalDeliverable))
