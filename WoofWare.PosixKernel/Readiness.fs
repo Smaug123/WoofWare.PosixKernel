@@ -41,7 +41,7 @@ module internal LinuxReadiness =
     /// otherwise.
     let ofDescription<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : uint32
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
@@ -169,8 +169,8 @@ module internal LinuxReadiness =
     /// pending entry each poll their targets so.
     let polled<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (targetId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         match OpenFileTable.tryFind targetId system.Machine.OpenFiles with
         | Some {
@@ -208,7 +208,7 @@ module internal EpollReadyList =
     /// readiness restricted to the registration's stored mask.
     let private annotatedReady<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollState : EpollState)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ((int * OpenFileDescriptionId) * EpollRegistration * uint32) list
         =
         epollState.Ready
@@ -238,7 +238,7 @@ module internal EpollReadyList =
     /// `EBADF` no kernel produces, and `false` sleeps for ever.
     let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind epollId system.Machine.OpenFiles with
@@ -279,8 +279,8 @@ module internal EpollReadyList =
     let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (epollId : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : (uint64 * uint32) list * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : (uint64 * uint32) list * ProcessView<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -545,7 +545,7 @@ module internal DarwinReadiness =
         (filter : KqueueFilter)
         (pipeId : PipeId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueFilterReport option
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -611,7 +611,7 @@ module internal KqueueQueue =
     let private stateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -625,8 +625,8 @@ module internal KqueueQueue =
     let private withState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (state : KqueueState)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
@@ -662,8 +662,8 @@ module internal KqueueQueue =
     let activateRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (key : int * KqueueFilter)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let state = stateOf "activateRegistration" kqueue system
 
@@ -794,7 +794,7 @@ module internal KqueueQueue =
     /// so the kqueue cannot have gone while something waits on it.
     let hasDeliverableEvent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -826,8 +826,8 @@ module internal KqueueQueue =
     let drain<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (maxCount : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : KqueueReport list * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : KqueueReport list * ProcessView<'Thread, 'Handler>
         =
         if maxCount <= 0 then
             failwith
@@ -993,8 +993,8 @@ module internal SocketWake =
     let signal<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
         (wake : SocketWake)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let system =
             UnixSystemState.mapOpenFiles
@@ -1017,8 +1017,8 @@ module internal SocketWake =
     let internal signalTransfer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (wakes : TcpWake list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         (system, wakes)
         ||> List.fold (fun system wake ->

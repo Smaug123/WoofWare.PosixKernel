@@ -379,7 +379,7 @@ type PausedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
             Range : CopyRange
             /// The system the call was made in: everything a `connect` does
             /// before the copy is a question.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -449,8 +449,8 @@ module UnixConnection =
         (nonBlocking : bool)
         (declaredLength : uint32)
         (address : ConnectAddress)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
         =
         let family = address.Family
         let destination = address.Destination
@@ -462,7 +462,7 @@ module UnixConnection =
 
         // An IPv6 socket's connect to a native IPv6 address, which needs an
         // IPv6 transport, refused at the point the ladder would use it.
-        let nativeDestination () : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> option =
+        let nativeDestination () : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal> option =
             address.NativeDestination
             |> Option.map (fun destination -> Error (ConnectRefusal.Ipv6Destination (socketId, destination)))
 
@@ -470,7 +470,7 @@ module UnixConnection =
         // binds nothing on the way: measured on both, at every v4-mapped
         // address including a group one and port 0 (`docs/probes/dual-mode/`,
         // A3 and G).
-        let ipv6Only () : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> option =
+        let ipv6Only () : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal> option =
             match sock.Addressing, nativeDestination () with
             | SocketAddressing.Inet6V6Only _, None ->
                 Some (Ok (SyscallAnswer.Failed (SimulatedUnixPlatform.ipv6OnlyConnectError platform), system))
@@ -479,23 +479,23 @@ module UnixConnection =
 
         let declaredLength = int declaredLength
 
-        let fail (error : UnixError) : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal> =
+        let fail (error : UnixError) : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal> =
             Ok (SyscallAnswer.Failed error, system)
 
         let failed
             (error : UnixError)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
             =
             Ok (SyscallAnswer.Failed error, system)
 
         let completed
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
             =
             Ok (SyscallAnswer.Completed 0L, system)
 
-        let withPhase (phase : SocketPhase) (system : UnixSystem<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
+        let withPhase (phase : SocketPhase) (system : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
             { system with
                 Machine =
                     { system.Machine with
@@ -572,8 +572,8 @@ module UnixConnection =
         let ensureBoundFrom
             (current : Ipv4Binding option)
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<Ipv4Binding * ProcessView<'Thread, 'Handler>, ConnectRefusal>
             =
             match current with
             | Some binding when not (PortHold.isHeld binding.PortHold) ->
@@ -716,8 +716,8 @@ module UnixConnection =
 
         let ensureBound
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<Ipv4Binding * ProcessView<'Thread, 'Handler>, ConnectRefusal>
             =
             ensureBoundFrom sock.Ipv4Binding dest system
 
@@ -733,8 +733,8 @@ module UnixConnection =
         let overTimeWaits
             (source : Ipv4Endpoint)
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<Result<UnixSystem<'Thread, 'Handler>, UnixError>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<Result<ProcessView<'Thread, 'Handler>, UnixError>, ConnectRefusal>
             =
             let machine = UnixMachineState.endTimeWait dest source system.Machine
 
@@ -767,8 +767,8 @@ module UnixConnection =
         // socket as it was.
         let ensureStreamBound
             (dest : Ipv4Endpoint)
-            (system : UnixSystem<'Thread, 'Handler>)
-            : Result<Result<Ipv4Binding * UnixSystem<'Thread, 'Handler>, UnixError>, ConnectRefusal>
+            (system : ProcessView<'Thread, 'Handler>)
+            : Result<Result<Ipv4Binding * ProcessView<'Thread, 'Handler>, UnixError>, ConnectRefusal>
             =
             match ensureBound dest system with
             | Ok bound -> Ok (Ok bound)
@@ -786,7 +786,7 @@ module UnixConnection =
         // per-flavour screens have let an idle stream socket through.
         let attemptStream
             (dest : Ipv4Endpoint)
-            : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+            : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
             =
             let dest = resolveWildcard dest
 
@@ -991,8 +991,8 @@ module UnixConnection =
                 // (`docs/probes/implicit-self-connect`), which is checked
                 // below, once that bind has chosen its port.
                 let selfTuple
-                    (system : UnixSystem<'Thread, 'Handler>)
-                    : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                    (system : ProcessView<'Thread, 'Handler>)
+                    : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
                     =
                     match flavour with
                     | SimulatedUnixFlavour.Linux -> Error (ConnectRefusal.SimultaneousOpen (SocketAddress.Inet dest))
@@ -1330,7 +1330,7 @@ module UnixConnection =
                 // `attemptStream` does.
                 let failBound
                     (error : UnixError)
-                    : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                    : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
                     =
                     match sock.Ipv4Binding with
                     | Some _ -> fail error
@@ -1418,7 +1418,7 @@ module UnixConnection =
             // `127.0.0.1:5556` reads back `0.0.0.0:5556`. Measured
             // (`sockaddr-connect-ladder.c`, U, and `sockaddr-dgram-connect.c`,
             // L and D).
-            let disconnectedFirst : UnixSystem<'Thread, 'Handler> =
+            let disconnectedFirst : ProcessView<'Thread, 'Handler> =
                 match flavour, sock.Phase, sock.Ipv4Binding with
                 | SimulatedUnixFlavour.Darwin, SocketPhase.DatagramPeer _, Some binding ->
                     { system with
@@ -1534,7 +1534,7 @@ module UnixConnection =
             // (`sockaddr-dgram-connect.c`, B, D and L).
             let failPrepared
                 (error : UnixError)
-                : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+                : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
                 =
                 match flavour with
                 | SimulatedUnixFlavour.Darwin -> failed error disconnectedFirst
@@ -1759,8 +1759,8 @@ module UnixConnection =
         (nonBlocking : bool)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -1801,8 +1801,8 @@ module UnixConnection =
         (destination : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ConnectRefusal>
         =
         match UnixSocket.tryAdmitSockaddrCopy SockaddrCopySyscall.Connect fd destination declaredLength system with
         | Error refusal -> Error (ConnectRefusal.Copy refusal)
@@ -1856,8 +1856,8 @@ module UnixConnection =
         (address : UserBuffer)
         (declaredLength : uint32)
         (copied : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, ConnectRefusal>
         =
         ignore<'Thread> thread
 
@@ -1870,9 +1870,9 @@ module UnixConnection =
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedConnect<'Thread, 'Handler>, SyscallOutcome * ProcessView<'Thread, 'Handler>>,
               ConnectRefusal
            >
         =
@@ -1960,7 +1960,7 @@ module UnixConnection =
     let private tryConnectWithAddressIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (copied : ImmutableArray<byte>)
         (paused : PausedConnect<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
+        : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, ConnectRefusal>
         =
         CallProgress.requirePaused "UnixConnection.connectWithAddress" "UnixConnection.connect" paused
         CopyRange.require "UnixConnection.connectWithAddress" paused.Range copied
@@ -2010,8 +2010,8 @@ module UnixConnection =
     /// the caller. Internal for that reason.
     let internal acceptConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : int * TcpConnection * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : int * TcpConnection * ProcessView<'Thread, 'Handler>
         =
         match
             FileDescriptorRegistry.room
@@ -2101,8 +2101,8 @@ module UnixConnection =
     /// identities those would spend.
     let private dropConnection<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (socketId : SocketId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let listener = UnixMachineState.socket socketId system.Machine
 
@@ -2197,8 +2197,8 @@ module UnixConnection =
         (nonBlocking : bool)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
         // A connection is there to take, which needs a descriptor below the
         // limit: at a limit of the bound, EMFILE (measured, `fcntl-dup.c`,
@@ -2226,7 +2226,7 @@ module UnixConnection =
             SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
             && int declaredLength < 0
 
-        let dropped () : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal> =
+        let dropped () : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal> =
             Ok (AcceptOutcome.DroppedConnection UnixError.EINVAL, dropConnection socketId system)
 
         match linuxNegative, destination with
@@ -2291,8 +2291,8 @@ module UnixConnection =
         (fd : int)
         (destination : UserBuffer)
         (declaredLength : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
         // The descriptor is classified before the destination is looked at, and
         // before the accept queue is: measured on both flavours, a closed
@@ -2461,8 +2461,8 @@ module UnixConnection =
 
     let private finishAcceptHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
         let parked =
             UnixThreadTable.expectParked
@@ -2547,8 +2547,8 @@ module UnixConnection =
     /// `tryFinishAccept` once `Entry` has admitted its caller.
     let private tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<AcceptOutcome * UnixSystem<'Thread, 'Handler>, AcceptRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
@@ -2620,8 +2620,8 @@ module UnixConnection =
     let private tryShutdownIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (how : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ShutdownAnswer * UnixSystem<'Thread, 'Handler>, ShutdownRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ShutdownAnswer * ProcessView<'Thread, 'Handler>, ShutdownRefusal>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
         | None -> Ok (ShutdownAnswer.Failed UnixError.EBADF, system)
@@ -2661,7 +2661,7 @@ module UnixConnection =
         | None -> Ok (ShutdownAnswer.Failed UnixError.EINVAL, system)
         | Some how ->
 
-        let unconnected () : Result<ShutdownAnswer * UnixSystem<'Thread, 'Handler>, ShutdownRefusal> =
+        let unconnected () : Result<ShutdownAnswer * ProcessView<'Thread, 'Handler>, ShutdownRefusal> =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
             | SimulatedUnixFlavour.Darwin -> Ok (ShutdownAnswer.Failed UnixError.ENOTCONN, system)
             | SimulatedUnixFlavour.Linux -> Error (ShutdownRefusal.LinuxUnconnected socketId)

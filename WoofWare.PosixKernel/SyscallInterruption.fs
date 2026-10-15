@@ -217,7 +217,7 @@ module SyscallInterruption =
     /// returned to user mode decides it.
     let internal suspension<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         (signals : SignalState<'Thread, 'Handler>)
         : Result<Suspension<'Thread, 'Handler>, SigsuspendRefusal>
         =
@@ -280,7 +280,7 @@ module SyscallInterruption =
     /// to user mode now: empty when it would run no handler.
     let private framesOnReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<HandlerFrame<'Thread, 'Handler> list, SyscallInterruptionRefusal>
         =
         let threads = system.Threads |> Map.keys |> Set.ofSeq
@@ -312,7 +312,7 @@ module SyscallInterruption =
     /// signal state, which its finishing call commits before it sleeps again.
     let internal wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         // Nothing pending is no handler to run, and every sleeping thread is
@@ -353,7 +353,7 @@ module SyscallInterruption =
     let internal stopsAtPageBoundary<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         let pageSize =
@@ -369,7 +369,7 @@ module SyscallInterruption =
     /// default action.
     let internal interrupts<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<bool, SyscallInterruptionRefusal>
         =
         framesOnReturn thread system |> Result.map (List.isEmpty >> not)
@@ -383,7 +383,7 @@ module SyscallInterruption =
     /// deliverable to the thread too.
     let internal beforeCompleting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<unit, SyscallInterruptionRefusal>
         =
         // Measured (`signal-interrupt-requeue.c`): with the sleeper held off
@@ -409,7 +409,7 @@ module SyscallInterruption =
     /// Fails loudly if `thread` is not asleep in a syscall.
     let internal ofPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallInterruption option, SyscallInterruptionRefusal>
         =
         let parked =

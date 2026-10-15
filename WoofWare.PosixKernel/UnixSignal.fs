@@ -170,7 +170,7 @@ type SigsuspendOutcome =
 module UnixSignal =
 
     let private threadsOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Set<'Thread>
         =
         system.Threads |> Map.keys |> Set.ofSeq
@@ -179,7 +179,7 @@ module UnixSignal =
     let private tryKillIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : int32)
         (signo : int32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, KillRefusal>
         =
         let self = ProcessId.toInt32 system.Process.ProcessId
@@ -298,7 +298,7 @@ module UnixSignal =
     /// `tryOnReturnToUser` once `Entry` has admitted its caller.
     let private tryOnReturnToUserIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         SignalState.onReturnToUser
@@ -436,8 +436,8 @@ module UnixSignal =
     let private sigreturnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (frame : HandlerFrameId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.withSignals (SignalState.sigreturn thread frame system.Process.Signals) system
 
@@ -468,7 +468,7 @@ module UnixSignal =
     let private tryPthreadKillIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (target : 'Thread)
         (signo : int32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, UnixError>, ThreadKillRefusal>
         =
         if not (Map.containsKey target system.Threads) then
@@ -556,8 +556,8 @@ module UnixSignal =
         (cLibrary : bool)
         (signo : int32)
         (newAction : SignalDisposition<'Handler> option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SignalDisposition<'Handler> * UnixSystem<'Thread, 'Handler>, UnixError>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SignalDisposition<'Handler> * ProcessView<'Thread, 'Handler>, UnixError>
         =
         let numbering = UnixSystemState.signalNumbering system
 
@@ -671,8 +671,8 @@ module UnixSignal =
         (thread : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>
         =
         let numbering = UnixSystemState.signalNumbering system
         let signals = system.Process.Signals
@@ -716,8 +716,8 @@ module UnixSignal =
         (thread : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>
         =
         // Measured by `sigprocmask-ops.c`: blocking every bit through glibc left
         // 0xfffffffe7ffbfeff (without 9, 19, 32 and 33), and through Darwin's
@@ -774,8 +774,8 @@ module UnixSignal =
     /// its mask in `after` does not.
     let private unblockedForAnother<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : 'Thread)
-        (before : UnixSystem<'Thread, 'Handler>)
-        (after : UnixSystem<'Thread, 'Handler>)
+        (before : ProcessView<'Thread, 'Handler>)
+        (after : ProcessView<'Thread, 'Handler>)
         : ('Thread * Signal) option
         =
         let was = before.Process.Signals
@@ -801,8 +801,8 @@ module UnixSignal =
         (thread : 'Thread)
         (how : int32)
         (set : SignalMask option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>, SigprocmaskRefusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>, SigprocmaskRefusal<'Thread>>
         =
         let numbering = UnixSystemState.signalNumbering system
 
@@ -882,8 +882,8 @@ module UnixSignal =
         (how : int32)
         (set : SignalMask option)
         (sigsetSize : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SignalMask * UnixSystem<'Thread, 'Handler>, UnixError>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SignalMask * ProcessView<'Thread, 'Handler>, UnixError>
         =
         match UnixSystemState.signalNumbering system with
         | SignalNumbering.Darwin ->
@@ -931,7 +931,7 @@ module UnixSignal =
     /// `sigpending` once `Entry` has admitted its caller.
     let private sigpendingIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : SignalMask
         =
         SignalState.pendingBlocked (UnixSystemState.signalNumbering system) system.Leader thread system.Process.Signals
@@ -957,8 +957,8 @@ module UnixSignal =
     let private suspendWith<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (temporary : SignalState<'Thread, 'Handler> -> SignalMask)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
         =
         let signals =
             SignalState.suspend
@@ -984,8 +984,8 @@ module UnixSignal =
     let private trySigsuspendIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (mask : SignalMask)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
         =
         suspendWith thread (fun _ -> mask) system
 
@@ -1054,8 +1054,8 @@ module UnixSignal =
     /// `tryPause` once `Entry` has admitted its caller.
     let private tryPauseIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
         =
         suspendWith thread (SignalState.maskOf thread) system
 
@@ -1094,8 +1094,8 @@ module UnixSignal =
         (thread : 'Thread)
         (mask : SignalMask)
         (sigsetSize : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
         =
         match UnixSystemState.signalNumbering system with
         | SignalNumbering.Darwin ->
@@ -1146,8 +1146,8 @@ module UnixSignal =
     /// `tryFinishSigsuspend` once `Entry` has admitted its caller.
     let private tryFinishSigsuspendIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SigsuspendOutcome * UnixSystem<'Thread, 'Handler>, SigsuspendRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
         =
         UnixThreadTable.expectParked
             "UnixSignal.finishSigsuspend"

@@ -905,7 +905,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Thread
         =
-        Entry.query "UnixSystem.leader" pid (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Leader) system
+        Entry.query "UnixSystem.leader" pid (fun (system : ProcessView<'Thread, 'Handler>) -> system.Leader) system
 
     /// Every thread the process `pid` has, by the client's name for it, which
     /// `UnixThreadState`'s readers read. A name the process has no thread by,
@@ -915,7 +915,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        Entry.query "UnixSystem.threads" pid (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Threads) system
+        Entry.query "UnixSystem.threads" pid (fun (system : ProcessView<'Thread, 'Handler>) -> system.Threads) system
 
     /// Every write that has reached a client draining one of the machine's
     /// pipes, oldest first: the bytes the outside world has received from the
@@ -941,7 +941,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.signals"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.signals system.Process)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.signals system.Process)
             system
 
     /// The environment the process `pid` was started with: the `envp` that
@@ -959,7 +959,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.environment"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.environment system.Process)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.environment system.Process)
             system
 
     /// The path of the executable that started the process `pid`, or `None` if
@@ -975,7 +975,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.processPath"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixProcessState.processPath system.Process)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixProcessState.processPath system.Process)
             system
 
     /// The platform the machine impersonates.
@@ -1028,7 +1028,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.fileDescriptors"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> UnixSystemState.fileDescriptors system)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixSystemState.fileDescriptors system)
             system
 
     /// The machine's open file descriptions, which `OpenFileTable`'s queries
@@ -1056,7 +1056,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.currentDirectoryInode"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.CurrentDirectoryInode)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.CurrentDirectoryInode)
             system
 
     /// Who the process `pid` is: all six of its IDs, and its supplementary
@@ -1069,7 +1069,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.credentials"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.Credentials)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.Credentials)
             system
 
     /// The file-mode creation mask of the process `pid`, without replacing it
@@ -1082,7 +1082,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.fileModeCreationMask"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) -> system.Process.Umask)
+            (fun (system : ProcessView<'Thread, 'Handler>) -> system.Process.Umask)
             system
 
     /// The machine's entropy pool, from which every random-bytes syscall draws.
@@ -1200,7 +1200,7 @@ module UnixSystem =
         Entry.query
             "UnixSystem.descriptorTarget"
             pid
-            (fun (system : UnixSystem<'Thread, 'Handler>) ->
+            (fun (system : ProcessView<'Thread, 'Handler>) ->
                 FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system)
             )
             system
@@ -1216,7 +1216,7 @@ module UnixSystem =
 
     /// `processId` once `Entry` has admitted its caller.
     let private processIdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ProcessId
         =
         system.Process.ProcessId
@@ -1234,8 +1234,8 @@ module UnixSystem =
     /// `umask` once `Entry` has admitted its caller.
     let private umaskIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mask : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : PermissionBits * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : PermissionBits * ProcessView<'Thread, 'Handler>
         =
         let kept =
             mask

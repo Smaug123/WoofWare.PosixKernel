@@ -540,11 +540,11 @@ type WriteOutcome<'Thread> =
 /// own answer, a `WriteAdmission`, a `WriteResumption` or a `WriteAnswer`.
 [<RequireQualifiedAccess>]
 type internal WriteStep<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    | Returns of answer : 'Answer * system : UnixSystem<'Thread, 'Handler>
-    | ReturnsRaising of answer : 'Answer * signal : PendingSignal<'Thread> * system : UnixSystem<'Thread, 'Handler>
+    | Returns of answer : 'Answer * system : ProcessView<'Thread, 'Handler>
+    | ReturnsRaising of answer : 'Answer * signal : PendingSignal<'Thread> * system : ProcessView<'Thread, 'Handler>
     | ProcessEnded of EndedProcess<'Thread, 'Handler>
-    | WouldBlock of condition : WakeCondition * system : UnixSystem<'Thread, 'Handler>
-    | Restarts of system : UnixSystem<'Thread, 'Handler>
+    | WouldBlock of condition : WakeCondition * system : ProcessView<'Thread, 'Handler>
+    | Restarts of system : ProcessView<'Thread, 'Handler>
 
 /// Whether a `pwrite` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitPWrite` answers it, as `WriteAdmission` is for
@@ -589,7 +589,7 @@ type PausedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
             Call : PausedWriteCall
             Range : CopyRange
             /// The system as the call stood when it reached the copy.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -627,7 +627,7 @@ type PausedSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             Call : PausedSendCall
             Range : CopyRange
             /// The system as the call stood when it reached the copy.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -659,7 +659,7 @@ type PausedPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
             /// The system as the call stood when it reached the copy, which is
             /// the one it was made in: everything a `pwrite` does before the
             /// copy is a question.
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -1013,8 +1013,8 @@ module UnixReadWrite =
     /// (`OpenFileStatus.markWritten`), if it is still in the table.
     let private markWritten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (id : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         match OpenFileTable.tryFind id system.Machine.OpenFiles with
         | Some _ -> UnixSystemState.mapOpenFiles (OpenFileTable.mapStatus id OpenFileStatus.markWritten) system
@@ -1054,7 +1054,7 @@ module UnixReadWrite =
     /// moved bytes (`markedAfterWrite`).
     let internal markedThrough<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         (outcome : WriteStep<WriteAnswer, 'Thread, 'Handler>)
         : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
@@ -1066,8 +1066,8 @@ module UnixReadWrite =
     let private withPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (pipe : PipeState)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -1080,8 +1080,8 @@ module UnixReadWrite =
     /// on Darwin, moves the read end's `st_atime` to now; on Linux, nothing.
     let private touchedByRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine = UnixMachineState.touchedByPipeRead pipeId system.Scheduling system.Machine
@@ -1092,8 +1092,8 @@ module UnixReadWrite =
     /// Linux, nothing.
     let private touchedByWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine = UnixMachineState.touchedByPipeWrite pipeId system.Scheduling system.Machine
@@ -1104,8 +1104,8 @@ module UnixReadWrite =
     let private leftUntaken<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
@@ -1163,7 +1163,7 @@ module UnixReadWrite =
         (nonBlocking : bool)
         (count : int)
         (buffer : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : PipeWriteStep
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -1243,7 +1243,7 @@ module UnixReadWrite =
         (answer : 'Answer)
         (thread : 'Thread)
         (target : BrokenWriteTarget)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         // Measured (pipe-sigpipe.c), a worker thread's write into a pipe:
@@ -1287,7 +1287,7 @@ module UnixReadWrite =
         (answer : 'Answer)
         (thread : 'Thread)
         (target : BrokenWriteTarget)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         match call with
@@ -1303,7 +1303,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (socketId : SocketId)
         (count : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
         let socket = UnixMachineState.socket socketId system.Machine
@@ -1321,7 +1321,7 @@ module UnixReadWrite =
             // implicit bind does. Measured on Linux, socket-unconnected-autobind.c:
             // `127.0.0.1:0` reads back `127.0.0.1:<ephemeral>` after the
             // failed write.
-            let bound : Result<UnixSystem<'Thread, 'Handler>, WriteRefusal> =
+            let bound : Result<ProcessView<'Thread, 'Handler>, WriteRefusal> =
                 match socket.Ipv4Binding with
                 | Some binding when binding.Endpoint.Port <> 0us -> Ok system
                 | _ when not (UnconnectedSocketRules.writeBindsFirst flavour socket.Domain socket.Kind) -> Ok system
@@ -1471,14 +1471,14 @@ module UnixReadWrite =
         (socketId : SocketId)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ConnectionCopyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ConnectionCopyRefusal>
         =
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
 
         let answer, wakes, after = TcpTransfer.read connectionEnd call count transfer
 
-        let committed () : UnixSystem<'Thread, 'Handler> =
+        let committed () : ProcessView<'Thread, 'Handler> =
             { system with
                 Machine =
                     UnixMachineState.withTransfer
@@ -1529,8 +1529,8 @@ module UnixReadWrite =
     let private takeFromPipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : ImmutableArray<byte> * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ImmutableArray<byte> * ProcessView<'Thread, 'Handler>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
 
@@ -1592,7 +1592,7 @@ module UnixReadWrite =
         (offset : int64)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
         =
         let entry =
@@ -1653,7 +1653,7 @@ module UnixReadWrite =
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteAnswer option, DeviceRefusal>
         =
         match device with
@@ -1696,8 +1696,8 @@ module UnixReadWrite =
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, DeviceRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadAnswer * ProcessView<'Thread, 'Handler>, DeviceRefusal>
         =
         match device with
         | CharacterDevice.Null ->
@@ -1766,13 +1766,13 @@ module UnixReadWrite =
         (instance : OpenFileDescriptionId)
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadAnswer * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         let state =
             OpenFileTable.inotifyState "UnixReadWrite.read" instance system.Machine.OpenFiles
 
-        let withQueue (queue : InotifyQueue) (system : UnixSystem<'Thread, 'Handler>) =
+        let withQueue (queue : InotifyQueue) (system : ProcessView<'Thread, 'Handler>) =
             UnixSystemState.mapOpenFiles
                 (OpenFileTable.setInotifyState
                     "UnixReadWrite.read"
@@ -1812,12 +1812,12 @@ module UnixReadWrite =
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
-        let answered (answer : ReadAnswer) (system : UnixSystem<'Thread, 'Handler>) =
+        let answered (answer : ReadAnswer) (system : ProcessView<'Thread, 'Handler>) =
             Ok (ReadOutcome.Answered answer, system)
 
         if countRefused platform count then
@@ -2199,7 +2199,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (description : OpenFileDescriptionId)
         (pipeEnd : PipeEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : PipeId
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -2225,7 +2225,7 @@ module UnixReadWrite =
     /// wakes neither (section I).
     let private givesUpWhenBeaten<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -2240,7 +2240,7 @@ module UnixReadWrite =
         (syscall : string)
         (thread : 'Thread)
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : SocketId * ConnectionId * ConnectionEnd
         =
         match OpenFileTable.tryFind description system.Machine.OpenFiles with
@@ -2264,7 +2264,7 @@ module UnixReadWrite =
     /// Whether the open file description `description` carries `O_NONBLOCK`.
     let private nonBlockingNow<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (description : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         (OpenFileTable.get "UnixReadWrite" description system.Machine.OpenFiles).NonBlocking
@@ -2272,8 +2272,8 @@ module UnixReadWrite =
     let private finishConnectionRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedConnectionRead)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         match parked.Socket with
         | SleepTarget.EndedByClose _ ->
@@ -2303,7 +2303,7 @@ module UnixReadWrite =
             let answer, wakes, after =
                 TcpTransfer.read connectionEnd parked.Call parked.Count transfer
 
-            let committed () : UnixSystem<'Thread, 'Handler> =
+            let committed () : ProcessView<'Thread, 'Handler> =
                 { finished with
                     Machine =
                         UnixMachineState.withTransfer
@@ -2357,8 +2357,8 @@ module UnixReadWrite =
     let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedPipeRead)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         match parked.Reader with
         | SleepTarget.EndedByClose _ ->
@@ -2431,8 +2431,8 @@ module UnixReadWrite =
     let private finishInotifyRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedInotifyRead)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         let finished = UnixParkState.unpark thread system
 
@@ -2470,8 +2470,8 @@ module UnixReadWrite =
 
     let private finishReadHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         UnixThreadTable.expectParked
             "UnixReadWrite.finishRead"
@@ -2488,8 +2488,8 @@ module UnixReadWrite =
     /// `tryFinishRead` once `Entry` has admitted its caller.
     let private tryFinishReadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
@@ -2578,7 +2578,7 @@ module UnixReadWrite =
     /// each end of a pipe).
     let private socketOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<OpenFileDescriptionId * OpenFileDescription * SocketId, UnixError>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
@@ -2605,7 +2605,7 @@ module UnixReadWrite =
     let private screenedFirst<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (buffer : UserBuffer)
         (count : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<bool, BufferRefusal>
         =
         UserBufferCheck.faultsBeforeOperationFor (UnixMachineState.userBufferCheck system.Machine) buffer (uint64 count)
@@ -2617,8 +2617,8 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadOutcome * UnixSystem<'Thread, 'Handler>, ReceiveRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReceiveRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -2737,8 +2737,8 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ReadAnswer * UnixSystem<'Thread, 'Handler>, PReadRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ReadAnswer * ProcessView<'Thread, 'Handler>, PReadRefusal>
         =
         let platform = system.Machine.UnixPlatform
 
@@ -2965,7 +2965,7 @@ module UnixReadWrite =
     /// pipe's write end.
     let private writeTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteTarget, UnixError>
         =
         match FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system) with
@@ -3035,7 +3035,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : int)
         (written : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : WriteStep<'Answer, 'Thread, 'Handler>
         =
         let reads =
@@ -3066,7 +3066,7 @@ module UnixReadWrite =
     let private resetByOwnBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         TcpTransfer.hasBeenReset connectionEnd (UnixMachineState.connection connectionId system.Machine).Transfer
@@ -3084,7 +3084,7 @@ module UnixReadWrite =
         (written : int)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : WriteStep<'Answer, 'Thread, 'Handler>
         =
         let parked =
@@ -3125,7 +3125,7 @@ module UnixReadWrite =
     let private returnsOnOwnReset<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         // Measured on Linux 6.18.5 (`connection-write-reset.c`, sections A
@@ -3146,8 +3146,8 @@ module UnixReadWrite =
         (writer : ConnectionEnd)
         (bytes : ImmutableArray<byte>)
         (transfer : TcpTransfer)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let wakes, transfer = TcpTransfer.write writer bytes transfer
 
@@ -3174,7 +3174,7 @@ module UnixReadWrite =
         (taken : int)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
         if returnsOnOwnReset connectionId connectionEnd system then
@@ -3198,10 +3198,10 @@ module UnixReadWrite =
         (socketId : SocketId)
         (connectionId : ConnectionId)
         (connectionEnd : ConnectionEnd)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
-        let withTransfer (transfer : TcpTransfer) : UnixSystem<'Thread, 'Handler> =
+        let withTransfer (transfer : TcpTransfer) : ProcessView<'Thread, 'Handler> =
             { system with
                 Machine =
                     UnixMachineState.withTransfer
@@ -3260,7 +3260,7 @@ module UnixReadWrite =
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, WriteRefusal>
         =
         let platform = system.Machine.UnixPlatform
@@ -3399,10 +3399,10 @@ module UnixReadWrite =
     let internal tryApplyWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
-        let returns (system : UnixSystem<'Thread, 'Handler>) =
+        let returns (system : ProcessView<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteAnswer.Completed (int64 bytes.Length), system))
 
         match into with
@@ -3522,7 +3522,7 @@ module UnixReadWrite =
         (total : int)
         (into : WriteIntoThenSleep)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : WriteStep<WriteAnswer, 'Thread, 'Handler>
         =
         match into with
@@ -3554,7 +3554,7 @@ module UnixReadWrite =
         (outcome : WriteStep<'Answer, 'Thread, 'Handler>)
         : WriteStep<'Answer, 'Thread, 'Handler>
         =
-        let release (system : UnixSystem<'Thread, 'Handler>) =
+        let release (system : ProcessView<'Thread, 'Handler>) =
             ObjectLifetime.releaseUnreferencedUnrefusable caller held system
 
         match outcome with
@@ -3571,7 +3571,7 @@ module UnixReadWrite =
     /// section W).
     let private waitingWriter<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : (OpenFileDescriptionId * int) option
         =
         match UnixThreadTable.parkedFor thread system.Threads with
@@ -3609,7 +3609,7 @@ module UnixReadWrite =
     let private parkedWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : ParkedPipeWrite
         =
         UnixThreadTable.expectParked
@@ -3638,7 +3638,7 @@ module UnixReadWrite =
         (parked : ParkedPipeWrite)
         (givesUp : bool)
         (answered : WriteAnswer -> 'Answer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<'Answer, 'Thread, 'Handler>, WriteRefusal>
         =
         match SyscallInterruption.interrupts thread system with
@@ -3653,10 +3653,10 @@ module UnixReadWrite =
     let private admitFinishConnectionWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedConnectionWrite)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
-        let answered (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
+        let answered (answer : WriteAnswer) (system : ProcessView<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteResumption.Answered answer, system))
 
         match parked.Socket with
@@ -3674,7 +3674,7 @@ module UnixReadWrite =
         let finished = UnixParkState.unpark thread system
         let remaining = parked.Count - parked.Written
 
-        let withTransfer (transfer : TcpTransfer) (system : UnixSystem<'Thread, 'Handler>) =
+        let withTransfer (transfer : TcpTransfer) (system : ProcessView<'Thread, 'Handler>) =
             { system with
                 Machine =
                     UnixMachineState.withTransfer
@@ -3832,7 +3832,7 @@ module UnixReadWrite =
         (fd : int)
         (parked : ParkedConnectionWrite)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let transfer = (UnixMachineState.connection connectionId system.Machine).Transfer
@@ -3866,7 +3866,7 @@ module UnixReadWrite =
 
     let private admitFinishWriteHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
         match UnixThreadTable.parkedFor thread system.Threads with
@@ -3905,7 +3905,7 @@ module UnixReadWrite =
         // without sleeping moves none (pipe-epipe-sweep.c).
         let finished = (UnixParkState.unpark thread system) |> touchedByWrite pipeId
 
-        let answered (answer : WriteAnswer) (system : UnixSystem<'Thread, 'Handler>) =
+        let answered (answer : WriteAnswer) (system : ProcessView<'Thread, 'Handler>) =
             Ok (WriteStep.Returns (WriteResumption.Answered answer, system))
 
         if not (UnixMachineState.pipeEndOpen pipeId pipe PipeEnd.Read system.Machine) then
@@ -3996,7 +3996,7 @@ module UnixReadWrite =
     /// answer.
     let internal tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteResumption, 'Thread, 'Handler>, WriteRefusal>
         =
         let held =
@@ -4029,7 +4029,7 @@ module UnixReadWrite =
         (fd : int)
         (parked : ParkedPipeWrite)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         let pipe = UnixMachineState.pipe pipeId system.Machine
@@ -4072,7 +4072,7 @@ module UnixReadWrite =
         (thread : 'Thread)
         (into : WriteResumed)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, WriteRefusal>
         =
         // What the call holds while it sleeps, which it lets go of as it
@@ -4129,7 +4129,7 @@ module UnixReadWrite =
     let internal tryApplySend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAnswer, 'Thread, 'Handler>, SendRefusal>
         =
         tryApplyWrite into bytes system |> Result.mapError sendRefusalOf
@@ -4146,7 +4146,7 @@ module UnixReadWrite =
     let private sendTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (flags : SendFlags)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<OpenFileDescriptionId * bool * SocketId * ConnectionId * ConnectionEnd, UnixError>, SendRefusal>
         =
         match socketOf fd system with
@@ -4177,7 +4177,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<WriteStep<WriteAdmission, 'Thread, 'Handler>, SendRefusal>
         =
         let platform = system.Machine.UnixPlatform
@@ -4228,7 +4228,7 @@ module UnixReadWrite =
     let private pwriteTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (offset : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<PWriteTarget, UnixError>
         =
         // **Ahead of the descriptor, on both flavours** — which is exactly where
@@ -4345,7 +4345,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<PWriteAdmission, PWriteRefusal>
         =
         let platform = system.Machine.UnixPlatform
@@ -4417,8 +4417,8 @@ module UnixReadWrite =
         (offset : int64)
         (into : PWriteInto)
         (bytes : ImmutableArray<byte>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<WriteAnswer * ProcessView<'Thread, 'Handler>, PWriteRefusal>
         =
         let written =
             match into with
@@ -4490,7 +4490,7 @@ module UnixReadWrite =
     /// with.
     let private progressOf<'Admission, 'Paused, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : string)
-        (decide : 'Admission -> Choice<WriteAnswer, UnixSystem<'Thread, 'Handler> -> 'Paused>)
+        (decide : 'Admission -> Choice<WriteAnswer, ProcessView<'Thread, 'Handler> -> 'Paused>)
         (step : WriteStep<'Admission, 'Thread, 'Handler>)
         : CallProgress<'Paused, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
         =
@@ -4517,7 +4517,7 @@ module UnixReadWrite =
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
               CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               WriteRefusal
@@ -4526,7 +4526,7 @@ module UnixReadWrite =
         let paused
             (call : PausedWriteCall)
             (count : int)
-            (system : UnixSystem<'Thread, 'Handler>)
+            (system : ProcessView<'Thread, 'Handler>)
             : PausedWrite<'Thread, 'Handler>
             =
             {
@@ -4633,7 +4633,7 @@ module UnixReadWrite =
     /// `tryFinishWrite` once `Entry` has admitted its caller.
     let private tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
               CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               WriteRefusal
@@ -4822,7 +4822,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
               CallProgress<PausedSend<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>,
               SendRefusal
@@ -4831,7 +4831,7 @@ module UnixReadWrite =
         let paused
             (call : PausedSendCall)
             (count : int)
-            (system : UnixSystem<'Thread, 'Handler>)
+            (system : ProcessView<'Thread, 'Handler>)
             : PausedSend<'Thread, 'Handler>
             =
             {
@@ -4967,9 +4967,9 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : uint64)
         (offset : int64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedPWrite<'Thread, 'Handler>, WriteAnswer * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedPWrite<'Thread, 'Handler>, WriteAnswer * ProcessView<'Thread, 'Handler>>,
               PWriteRefusal
            >
         =
@@ -5054,7 +5054,7 @@ module UnixReadWrite =
     let private tryPwriteWithBytesIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (bytes : ImmutableArray<byte>)
         (paused : PausedPWrite<'Thread, 'Handler>)
-        : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
+        : Result<WriteAnswer * ProcessView<'Thread, 'Handler>, PWriteRefusal>
         =
         CallProgress.requirePaused "UnixReadWrite.pwriteWithBytes" "UnixReadWrite.pwrite" paused
         CopyRange.require "UnixReadWrite.pwriteWithBytes" paused.Range bytes
@@ -5091,8 +5091,8 @@ module UnixReadWrite =
         (outFd : int)
         (length : uint64)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CopyFileRangeRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CopyFileRangeRefusal>
         =
         // Measured on Linux 6.18.5 (`copy-file-syscalls.c`, tmpfs and ext4
         // alike) over every pair of a file opened read-only, write-only and

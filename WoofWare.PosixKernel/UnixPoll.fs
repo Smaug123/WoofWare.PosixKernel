@@ -395,7 +395,7 @@ module UnixPoll =
         (fd : int)
         (maxEvents : int)
         (buffer : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Result<OpenFileDescriptionId, UnixError>, BufferRefusal>
         =
         // Measured on 6.18.5, each adjacent pair separated by an input that
@@ -465,8 +465,8 @@ module UnixPoll =
         (op : int)
         (fd : int)
         (event : EpollEventArgument)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<EpollCtlAnswer * UnixSystem<'Thread, 'Handler>, EpollCtlRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<EpollCtlAnswer * ProcessView<'Thread, 'Handler>, EpollCtlRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollCtlRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -608,7 +608,7 @@ module UnixPoll =
         // An ADD or MOD whose target is ready under the new mask makes the
         // registration pending at that moment (measured rows E, I and K), and
         // a MOD of an entry already pending leaves its place alone (row L).
-        let pendIfReady (system : UnixSystem<'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
+        let pendIfReady (system : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
             let alreadyPending = List.contains key epollState.Ready
 
             // The ADD's or MOD's poll of the target (`LinuxReadiness.polled`).
@@ -813,7 +813,7 @@ module UnixPoll =
     /// What `entry` reports right now under the Linux flavour, as `do_pollfd`
     /// computes it: by looking its descriptor up afresh.
     let private reportOne<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         (entry : PollEntry)
         : Result<int16, PollRefusal>
         =
@@ -871,7 +871,7 @@ module UnixPoll =
     /// cannot be answered: a real `poll` inspects its entries in order, so that
     /// is the entry a refusal names.
     let private scan<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         (entries : PollEntry list)
         : Result<int16 list * int, PollRefusal>
         =
@@ -895,8 +895,8 @@ module UnixPoll =
     /// descriptor's target is polled (`LinuxReadiness.polled`).
     let private polledEntries<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entries : PollEntry list)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         (system, entries)
         ||> List.fold (fun system entry ->
@@ -944,8 +944,8 @@ module UnixPoll =
         (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         match scan system entries with
         | Error refusal -> Error refusal
@@ -992,8 +992,8 @@ module UnixPoll =
     let private finishLinuxPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedPoll)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         let entries =
             parked.Entries
@@ -1094,7 +1094,7 @@ module UnixPoll =
     let private darwinRegistration<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (group : KqueueFilter option)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<DarwinRegistration, PollRefusal>
         =
         // Measured on Darwin 27.0.0 (`poll-darwin.c` section S), each row of
@@ -1140,7 +1140,7 @@ module UnixPoll =
     /// descriptors an `EVFILT_VNODE` registered on.
     let private darwinRegister<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entries : PollEntry list)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<int16 list * Map<int * KqueueFilter, PollRegistration> * int list, PollRefusal>
         =
         let rec registerGroups
@@ -1222,8 +1222,8 @@ module UnixPoll =
         (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         let count = List.length entries
 
@@ -1312,8 +1312,8 @@ module UnixPoll =
     let private finishDarwinPoll<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedKqueuePoll)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         let zero = parked.Entries |> List.map (fun _ -> 0s)
         let queue = UnixMachineState.pollQueue parked.Queue system.Machine
@@ -1378,8 +1378,8 @@ module UnixPoll =
         (thread : 'Thread)
         (entries : PollEntry list)
         (milliseconds : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> linuxPoll thread entries milliseconds system
@@ -1459,8 +1459,8 @@ module UnixPoll =
     /// `tryFinishPoll` once `Entry` has admitted its caller.
     let private tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<PollOutcome * UnixSystem<'Thread, 'Handler>, PollRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
         =
         UnixThreadTable.expectParked
             "UnixPoll.finishPoll"
@@ -1536,8 +1536,8 @@ module UnixPoll =
     /// `tryEpollCreate1` once `Entry` has admitted its caller.
     let private tryEpollCreate1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, EpollCreateRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollCreateRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -1637,8 +1637,8 @@ module UnixPoll =
         (maxEvents : int)
         (buffer : UserBuffer)
         (deadline : int64 option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : EpollWaitOutcome * UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : EpollWaitOutcome * ProcessView<'Thread, 'Handler>
         =
         let parked =
             ParkedSyscall.EpollWait
@@ -1658,8 +1658,8 @@ module UnixPoll =
         (maxEvents : int)
         (buffer : UserBuffer)
         (milliseconds : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * ProcessView<'Thread, 'Handler>, EpollWaitRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (EpollWaitRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
@@ -1754,8 +1754,8 @@ module UnixPoll =
 
     let private finishEpollWaitHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * ProcessView<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let parked =
             UnixThreadTable.expectParked
@@ -1796,8 +1796,8 @@ module UnixPoll =
     /// `tryFinishEpollWait` once `Entry` has admitted its caller.
     let private tryFinishEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<EpollWaitOutcome * UnixSystem<'Thread, 'Handler>, EpollWaitRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<EpollWaitOutcome * ProcessView<'Thread, 'Handler>, EpollWaitRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with

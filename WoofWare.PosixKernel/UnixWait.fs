@@ -103,8 +103,8 @@ module UnixWait =
     let internal park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
         let state = UnixThreadTable.get thread system.Threads
@@ -130,8 +130,8 @@ module UnixWait =
     let internal parkWaiting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedSyscall)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let asleep = park thread parked system
 
@@ -163,7 +163,7 @@ module UnixWait =
     /// `satisfied` once `Entry` has admitted the process.
     let private satisfiedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
         Map.tryFind thread system.Threads

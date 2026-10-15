@@ -73,6 +73,21 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             Origin : FocusOrigin<'Thread, 'Handler>
         }
 
+// One process's view of the system, which a call's body works on: `Entry`
+// gives a body the view of the caller's process, and puts each view in the
+// body's answer back into the `UnixSystem` the call hands back.
+//
+// A `UnixSystem` holds one process and no other, so this is the same type,
+// and the compiler does not tell the two apart. A function that takes a
+// `ProcessView` says that only a call's body, or a function a body hands its
+// view to, gives it one.
+//
+// A comment rather than a docstring: the compiler writes an abbreviation's
+// docstring to the documentation file as a type, which no type in the
+// assembly answers to, so `TestXmlDocumentation` cannot place it.
+type internal ProcessView<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    UnixSystem<'Thread, 'Handler>
+
 /// Reading and writing a `UnixSystem`'s process's descriptor table together
 /// with the machine's open file descriptions it names.
 [<RequireQualifiedAccess>]
@@ -80,7 +95,7 @@ module internal UnixSystemState =
     /// Whether the process's descriptor table is every descriptor on the
     /// machine: whether no other process is on it.
     let census<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : DescriptorCensus
         =
         let others =
@@ -94,7 +109,7 @@ module internal UnixSystemState =
     /// The process's descriptor table, read against the machine's open file
     /// descriptions.
     let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : FileDescriptorRegistry
         =
         FileDescriptorRegistry.ofTables (census system) system.Process.FileDescriptors system.Machine.OpenFiles
@@ -103,8 +118,8 @@ module internal UnixSystemState =
     /// file descriptions as the machine's.
     let withFileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (registry : FileDescriptorRegistry)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -120,8 +135,8 @@ module internal UnixSystemState =
     /// `system` with its machine's open file descriptions rewritten by `f`.
     let mapOpenFiles<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (f : OpenFileTable -> OpenFileTable)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine =
@@ -133,7 +148,7 @@ module internal UnixSystemState =
     /// The numbering `system`'s signals are read under: its machine's
     /// platform's.
     let signalNumbering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : SignalNumbering
         =
         SimulatedUnixPlatform.signalNumbering system.Machine.UnixPlatform
@@ -141,8 +156,8 @@ module internal UnixSystemState =
     /// `system` with `signals` as its process's signal state.
     let withSignals<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (signals : SignalState<'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Process =
@@ -212,8 +227,8 @@ module internal UnixParkState =
     let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (park : ThreadPark)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let previous = UnixThreadTable.parkOf thread system.Threads
 
@@ -233,8 +248,8 @@ module internal UnixParkState =
     /// kqueue, which nothing but its park reaches, goes with the park.
     let unpark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let previous = UnixThreadTable.parkOf thread system.Threads
 
@@ -312,7 +327,7 @@ type EndedProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
             /// `SimulatedMachine.endProcess` checks against the machine it ends the
             /// process on, as `SimulatedMachine.unfocus` checks a view, and reads
             /// the calls the process's threads had in flight from.
-            EndedIn : UnixSystem<'Thread, 'Handler>
+            EndedIn : ProcessView<'Thread, 'Handler>
         }
 
 [<RequireQualifiedAccess>]
@@ -421,13 +436,13 @@ module internal Shape =
     /// so it is left as it is.
     let ended<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         : Shape<
-              UnixSystem<'Thread, 'Handler>,
+              ProcessView<'Thread, 'Handler>,
               UnixSystem<'Thread, 'Handler>,
               EndedProcess<'Thread, 'Handler>,
               EndedProcess<'Thread, 'Handler>
            > =
         let leave
-            (_ : UnixSystem<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
+            (_ : ProcessView<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
             (ended : EndedProcess<'Thread, 'Handler>)
             : EndedProcess<'Thread, 'Handler>
             =
@@ -439,13 +454,13 @@ module internal Shape =
     /// ended, shaped as `ended` says.
     let fate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         : Shape<
-              UnixSystem<'Thread, 'Handler>,
+              ProcessView<'Thread, 'Handler>,
               UnixSystem<'Thread, 'Handler>,
               ProcessFate<'Outcome, 'Thread, 'Handler>,
               ProcessFate<'Outcome, 'Thread, 'Handler>
            > =
         let putBack
-            (put : UnixSystem<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
+            (put : ProcessView<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
             (fate : ProcessFate<'Outcome, 'Thread, 'Handler>)
             : ProcessFate<'Outcome, 'Thread, 'Handler>
             =
@@ -517,8 +532,8 @@ module internal Entry =
         (operation : string)
         (requirement : CallerRequirement)
         (caller : Caller<'Thread>)
-        (shape : Shape<UnixSystem<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
-        (body : UnixSystem<'Thread, 'Handler> -> 'InView)
+        (shape : Shape<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
+        (body : ProcessView<'Thread, 'Handler> -> 'InView)
         (system : UnixSystem<'Thread, 'Handler>)
         : 'InKernel
         =
@@ -535,7 +550,7 @@ module internal Entry =
     /// the paused value holds the system, so nothing can have happened to the
     /// caller since.
     let resume<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
-        (shape : Shape<UnixSystem<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
+        (shape : Shape<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
         (answer : 'InView)
         : 'InKernel
         =
@@ -552,7 +567,7 @@ module internal Entry =
     let query<'Thread, 'Handler, 'Answer when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (pid : ProcessId)
-        (body : UnixSystem<'Thread, 'Handler> -> 'Answer)
+        (body : ProcessView<'Thread, 'Handler> -> 'Answer)
         (system : UnixSystem<'Thread, 'Handler>)
         : 'Answer
         =

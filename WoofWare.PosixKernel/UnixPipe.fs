@@ -142,8 +142,8 @@ module UnixPipe =
     let private tryPipe2In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
         (destination : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Pipe2Answer * UnixSystem<'Thread, 'Handler>, Pipe2Refusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Pipe2Answer * ProcessView<'Thread, 'Handler>, Pipe2Refusal>
         =
         let platform = system.Machine.UnixPlatform
 

@@ -84,8 +84,8 @@ module UnixThreadLifecycle =
     /// entry in the table.
     let private leave<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         let state = UnixThreadTable.get thread system.Threads
 
@@ -110,7 +110,7 @@ module UnixThreadLifecycle =
     /// its process ID.
     let internal endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (termination : ProcessTermination)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
         let gone =
@@ -146,7 +146,7 @@ module UnixThreadLifecycle =
     let private tryExitThreadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (status : int32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<ProcessFate<unit, 'Thread, 'Handler>, ThreadExitRefusal<'Thread>>
         =
         // Measured on Linux 6.18.5 and Darwin 27.0.0 by
@@ -220,8 +220,8 @@ module UnixThreadLifecycle =
         (parent : 'Thread)
         (child : 'Thread)
         (cpu : CpuId)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SpawnAnswer * UnixSystem<'Thread, 'Handler>, SpawnRefusal<'Thread>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SpawnAnswer * ProcessView<'Thread, 'Handler>, SpawnRefusal<'Thread>>
         =
         if Map.containsKey child system.Threads then
             failwith
@@ -301,7 +301,7 @@ module UnixThreadLifecycle =
     /// `exitGroup` once `Entry` has admitted its caller.
     let private exitGroupIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (status : int32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : EndedProcess<'Thread, 'Handler>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -337,7 +337,7 @@ module internal ProcessSignal =
     /// installed a handler for, SIGKILL included, which this library does not
     /// model, so a call that would generate a signal for it refuses first.
     let isInit<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         ProcessId.toInt32 system.Process.ProcessId = 1
@@ -352,7 +352,7 @@ module internal ProcessSignal =
     /// first.
     let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (entry : PendingSignal<'Thread>)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, SignalReceiverRefusal>
         =
         if isInit system then

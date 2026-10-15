@@ -576,7 +576,7 @@ module internal GetCwdRefusal =
 type PausedAccess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
             Directory : AtDirectory
             Arguments : AccessArguments
         }
@@ -599,7 +599,7 @@ module UnixPathResolution =
     /// here calls this at the point its kernel copies the pathname in.
     let internal copyIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (argument : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<UnixPath, UnixError>
         =
         match PathArgument.copyIn (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform) argument with
@@ -619,7 +619,7 @@ module UnixPathResolution =
     let internal walkStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (directory : AtDirectory)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<InodeNumber, UnixError>
         =
         let rules = SimulatedUnixPlatform.startingPointRules system.Machine.UnixPlatform
@@ -673,7 +673,7 @@ module UnixPathResolution =
         (directory : AtDirectory)
         (emptyPath : EmptyPathMeaning)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<PathStart, PathFailure>
         =
         match AtPathTarget.classify emptyPath directory path with
@@ -712,7 +712,7 @@ module UnixPathResolution =
         (policy : SymlinkPolicy)
         (trailingSeparatorPolicy : TrailingSeparatorPolicy)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<Resolution, PathFailure>
         =
         // The held inode, not a re-walk of a path to it: a real process reaches
@@ -755,7 +755,7 @@ module UnixPathResolution =
         (policy : SymlinkPolicy)
         (trailingSeparatorPolicy : TrailingSeparatorPolicy)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<PausedResolution, PathFailure>
         =
         match walkStart directory path system with
@@ -782,7 +782,7 @@ module UnixPathResolution =
         (directory : AtDirectory)
         (policy : SymlinkPolicy)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<InodeNumber, PathFailure>
         =
         resolvePathFull directory policy TrailingSeparatorPolicy.Demand path system
@@ -794,7 +794,7 @@ module UnixPathResolution =
         (directory : AtDirectory)
         (policy : SymlinkPolicy)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<InodeNumber * ReachedThrough, PathFailure>
         =
         resolvePathFull directory policy TrailingSeparatorPolicy.Demand path system
@@ -806,7 +806,7 @@ module UnixPathResolution =
 
     /// The current directory, reached as the path "." reaches it.
     let private currentDirectoryReached<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : InodeNumber * ReachedThrough
         =
         let cwd = system.Process.CurrentDirectoryInode
@@ -844,7 +844,7 @@ module UnixPathResolution =
     /// for that reason, since a client given a bare inode could name one.
     let internal statOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatus, StatRefusal> option
         =
         match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
@@ -950,7 +950,7 @@ module UnixPathResolution =
         (directory : AtDirectory)
         (policy : SymlinkPolicy)
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, StatRefusal>
         =
         match resolvePath directory policy path system with
@@ -969,7 +969,7 @@ module UnixPathResolution =
     let private tryStatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (policy : SymlinkPolicy)
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, StatRefusal>
         =
         match copyIn path system with
@@ -1022,7 +1022,7 @@ module UnixPathResolution =
     /// `tryFstat` once `Entry` has admitted its caller.
     let private tryFstatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatRefusal>
         =
         match FileDescriptorRegistry.tryFindTarget fd (UnixSystemState.fileDescriptors system) with
@@ -1161,7 +1161,7 @@ module UnixPathResolution =
         (dirfd : int)
         (path : PathArgumentBytes)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileStatusAnswer, FStatAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -1283,8 +1283,8 @@ module UnixPathResolution =
         (through : ReachedThrough)
         (inode : InodeNumber)
         (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, AttributeChangeRefusal<ModeChangeRefusal>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, AttributeChangeRefusal<ModeChangeRefusal>>
         =
         let entry =
             VirtualFileSystem.get "UnixPathResolution.changeModeOf" inode system.Machine.FileSystem
@@ -1326,8 +1326,8 @@ module UnixPathResolution =
         (policy : SymlinkPolicy)
         (path : UnixPath)
         (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChModRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ChModRefusal>
         =
         // Measured on both platforms (`chmod-rules.c`): through a link to a
         // file or a directory the target changes and the link does not;
@@ -1369,7 +1369,7 @@ module UnixPathResolution =
     /// one lookup.
     let private objectReached<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : (ReachedDescription * OpenFileObject) option
         =
         FileDescriptorRegistry.tryFindReached fd (UnixSystemState.fileDescriptors system)
@@ -1379,8 +1379,8 @@ module UnixPathResolution =
     let private tryChmodIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChModRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ChModRefusal>
         =
         match copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -1451,7 +1451,7 @@ module UnixPathResolution =
     let private descriptorAttributeTarget<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : DescriptorAttributeTarget
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
@@ -1481,8 +1481,8 @@ module UnixPathResolution =
     let private withPipeStatus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pipeId : PipeId)
         (status : PipeStatus)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         { system with
             Machine = UnixMachineState.withMadePipeStatus pipeId status system.Machine
@@ -1492,8 +1492,8 @@ module UnixPathResolution =
     let private tryFchmodIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FChModRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FChModRefusal>
         =
         // Measured on both platforms (`chmod-rules.c`): a regular file open
         // read-only, write-only and read-write, a directory, and a file whose
@@ -1577,8 +1577,8 @@ module UnixPathResolution =
         (inode : InodeNumber)
         (user : UserId option)
         (group : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, AttributeChangeRefusal<OwnerChangeRefusal>>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, AttributeChangeRefusal<OwnerChangeRefusal>>
         =
         let entry =
             VirtualFileSystem.get "UnixPathResolution.changeOwnerOf" inode system.Machine.FileSystem
@@ -1660,8 +1660,8 @@ module UnixPathResolution =
         (path : UnixPath)
         (user : UserId option)
         (group : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChOwnRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ChOwnRefusal>
         =
         // Measured on both platforms (`chown-rules.c`): through a link to a
         // file or a directory the target changes and the link does not;
@@ -1688,8 +1688,8 @@ module UnixPathResolution =
         (path : PathArgumentBytes)
         (user : UserId option)
         (group : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChOwnRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ChOwnRefusal>
         =
         match copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -1744,8 +1744,8 @@ module UnixPathResolution =
         (path : PathArgumentBytes)
         (user : UserId option)
         (group : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, ChOwnRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, ChOwnRefusal>
         =
         match copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -1795,8 +1795,8 @@ module UnixPathResolution =
         (fd : int)
         (user : UserId option)
         (group : GroupId option)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FChOwnRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FChOwnRefusal>
         =
         // Measured on both platforms (`chown-rules.c`): a regular file open
         // read-only, write-only and read-write, a directory, and a file whose
@@ -1889,8 +1889,8 @@ module UnixPathResolution =
         (path : PathArgumentBytes)
         (mode : int)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FChModAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FChModAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -1996,8 +1996,8 @@ module UnixPathResolution =
         (user : UserId option)
         (group : GroupId option)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, FChOwnAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, FChOwnAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -2095,8 +2095,8 @@ module UnixPathResolution =
         (target : TimesTarget)
         (access : TimestampRequest)
         (modification : TimestampRequest)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UTimensAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, UTimensAtRefusal>
         =
         // Measured by `utimensat-rules.c` (ORDER, NSECOBJ): Linux checks the
         // nanosecond fields once the object is found, after a bad descriptor's
@@ -2272,8 +2272,8 @@ module UnixPathResolution =
         (fd : int)
         (access : TimestampRequest)
         (modification : TimestampRequest)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UTimensAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, UTimensAtRefusal>
         =
         match objectReached fd system with
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
@@ -2292,8 +2292,8 @@ module UnixPathResolution =
         (access : TimestampRequest)
         (modification : TimestampRequest)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UTimensAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, UTimensAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
@@ -2338,8 +2338,8 @@ module UnixPathResolution =
         (path : NullablePathArgument)
         (times : TimesArgument)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, UTimensAtRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, UTimensAtRefusal>
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
         let directory = AtDirectory.decode flavour dirfd
@@ -2452,7 +2452,7 @@ module UnixPathResolution =
     /// What `statfs(2)` reports for the filesystem `inode` is on.
     let private statisticsOfInode<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (inode : InodeNumber)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
         match VirtualFileSystem.mountedRootOf inode system.Machine.FileSystem with
@@ -2465,7 +2465,7 @@ module UnixPathResolution =
     /// `statfs`, of a path this kernel has already copied in.
     let internal statfsParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileSystemStatisticsAnswer, PathRefusal>
         =
         FileSystemStatistics.assertCoherent "UnixPathResolution.statfs" system.Machine.UnixPlatform system.Machine.Mount
@@ -2478,7 +2478,7 @@ module UnixPathResolution =
     /// `tryStatfs` once `Entry` has admitted its caller.
     let private tryStatfsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<FileSystemStatisticsAnswer, PathRefusal>
         =
         FileSystemStatistics.assertCoherent "UnixPathResolution.statfs" system.Machine.UnixPlatform system.Machine.Mount
@@ -2520,7 +2520,7 @@ module UnixPathResolution =
     /// `fstatfs` once `Entry` has admitted its caller.
     let private fstatfsIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : FileSystemStatisticsAnswer
         =
         FileSystemStatistics.assertCoherent
@@ -2552,7 +2552,7 @@ module UnixPathResolution =
 
     /// `currentDirectoryPath` once `Entry` has admitted the process.
     let private currentDirectoryPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : AbsoluteUnixPath option
         =
         // Measured on both flavours; see docs/probes/chdir.
@@ -2579,7 +2579,7 @@ module UnixPathResolution =
     let private tryGetcwdIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (destination : UserBuffer)
         (capacity : uint64)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<GetCwdAnswer, GetCwdRefusal>
         =
         // The whole measured ordering lives here, and the destination's
@@ -2725,8 +2725,8 @@ module UnixPathResolution =
     /// `chdir`, of a path this kernel has already copied in.
     let internal chdirParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : UnixPath)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, PathRefusal>
         =
         // Conformance across platforms was measured on both kernels across object type, final
         // symlink following, trailing separator, which permission bit, name length,
@@ -2814,8 +2814,8 @@ module UnixPathResolution =
     /// `tryChdir` once `Entry` has admitted its caller.
     let private tryChdirIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, PathRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, PathRefusal>
         =
         match copyIn path system with
         | Error error -> Ok (SyscallAnswer.Failed error, system)
@@ -2867,7 +2867,7 @@ module UnixPathResolution =
         (directory : AtDirectory)
         (mode : int)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<CallProgress<PausedAccess<'Thread, 'Handler>, SyscallAnswer>, AccessRefusal>
         =
         match AccessRules.screen (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) mode flags with
@@ -2888,7 +2888,7 @@ module UnixPathResolution =
         (dirfd : int)
         (mode : int)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<CallProgress<PausedAccess<'Thread, 'Handler>, SyscallAnswer>, AccessRefusal>
         =
         let directory =
@@ -2916,7 +2916,7 @@ module UnixPathResolution =
     /// `tryAccess` once `Entry` has admitted its caller.
     let private tryAccessIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (mode : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<CallProgress<PausedAccess<'Thread, 'Handler>, SyscallAnswer>, AccessRefusal>
         =
         screenFrom AtDirectory.CurrentDirectory mode 0 system
@@ -3095,7 +3095,7 @@ module UnixPathResolution =
         (path : PathArgumentBytes)
         (mode : int)
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
         tryFaccessatIn dirfd mode flags system

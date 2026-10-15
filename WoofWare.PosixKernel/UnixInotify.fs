@@ -94,7 +94,7 @@ module internal InotifyAddWatchRefusal =
 type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            System : UnixSystem<'Thread, 'Handler>
+            System : ProcessView<'Thread, 'Handler>
             Instance : OpenFileDescriptionId
             State : InotifyState
             Word : InotifyMaskWord
@@ -159,7 +159,7 @@ module UnixInotify =
     /// `inotify-instance-probe.c` section G).
     let private instanceOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<OpenFileDescriptionId * InotifyState, UnixError>
         =
         match FileDescriptorRegistry.tryFindWithId fd (UnixSystemState.fileDescriptors system) with
@@ -179,8 +179,8 @@ module UnixInotify =
     /// `tryInotifyInit1` once `Entry` has admitted its caller.
     let private tryInotifyInit1In<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<int * UnixSystem<'Thread, 'Handler>, UnixError>, InotifyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Result<int * ProcessView<'Thread, 'Handler>, UnixError>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)
@@ -271,9 +271,9 @@ module UnixInotify =
     let private tryInotifyAddWatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (mask : uint32)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<
-              CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * UnixSystem<'Thread, 'Handler>>,
+              CallProgress<PausedInotifyAddWatch<'Thread, 'Handler>, SyscallAnswer * ProcessView<'Thread, 'Handler>>,
               InotifyAddWatchRefusal
            >
         =
@@ -383,7 +383,7 @@ module UnixInotify =
     let private tryInotifyAddWatchWithPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (path : PathArgumentBytes)
         (paused : PausedInotifyAddWatch<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
         CallProgress.requirePaused "UnixInotify.inotifyAddWatchWithPath" "UnixInotify.inotifyAddWatch" paused
 
@@ -444,7 +444,7 @@ module UnixInotify =
 
         let modelledEvents = word.Events |> Set.filter InotifyEvent.modelled
 
-        let commit (state : InotifyState) : UnixSystem<'Thread, 'Handler> =
+        let commit (state : InotifyState) : ProcessView<'Thread, 'Handler> =
             UnixSystemState.mapOpenFiles
                 (OpenFileTable.setInotifyState "UnixInotify.inotifyAddWatch" instance state)
                 system
@@ -560,8 +560,8 @@ module UnixInotify =
     let private tryInotifyRmWatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fd : int)
         (wd : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, InotifyRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Darwin -> Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)

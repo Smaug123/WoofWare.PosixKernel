@@ -246,8 +246,8 @@ module UnixKqueue =
 
     /// `tryKqueue` once `Entry` has admitted its caller.
     let private tryKqueueIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<int * UnixSystem<'Thread, 'Handler>, KqueueRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<int * ProcessView<'Thread, 'Handler>, KqueueRefusal>
         =
         match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
         | SimulatedUnixFlavour.Linux -> Error (KqueueRefusal.UnmodelledFlavour SimulatedUnixFlavour.Linux)
@@ -315,7 +315,7 @@ module UnixKqueue =
     let private drained<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : bool
         =
         WakeCondition.satisfied thread (WakeCondition.Primitive (WakePrimitive.KqueueDrained kqueue)) system
@@ -324,7 +324,7 @@ module UnixKqueue =
 
     let private kqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : KqueueState
         =
         match OpenFileTable.tryFind kqueue system.Machine.OpenFiles with
@@ -338,8 +338,8 @@ module UnixKqueue =
     let private withKqueueState<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (state : KqueueState)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.mapOpenFiles (OpenFileTable.setKqueueState kqueue state) system
 
@@ -405,8 +405,8 @@ module UnixKqueue =
     let private applyChange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (kqueue : OpenFileDescriptionId)
         (change : Kevent)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixError option * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<UnixError option * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let add = KeventFlags.Add
         let delete = KeventFlags.Delete
@@ -535,8 +535,8 @@ module UnixKqueue =
     /// applied changes left.
     [<RequireQualifiedAccess>]
     type private ChangelistOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-        | Applied of echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
-        | Failed of error : UnixError * echoed : Kevent list * system : UnixSystem<'Thread, 'Handler>
+        | Applied of echoed : Kevent list * system : ProcessView<'Thread, 'Handler>
+        | Failed of error : UnixError * echoed : Kevent list * system : ProcessView<'Thread, 'Handler>
 
     /// Apply the readable `changes` of a changelist of `nchanges` entries in
     /// order, with room for `room` entries in `eventlist`.
@@ -546,7 +546,7 @@ module UnixKqueue =
         (changes : Kevent list)
         (room : int)
         (eventlist : UserBuffer)
-        (system : UnixSystem<'Thread, 'Handler>)
+        (system : ProcessView<'Thread, 'Handler>)
         : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
         =
         let numbering = SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform
@@ -561,7 +561,7 @@ module UnixKqueue =
         let rec apply
             (echoed : Kevent list)
             (room : int)
-            (system : UnixSystem<'Thread, 'Handler>)
+            (system : ProcessView<'Thread, 'Handler>)
             (remaining : Kevent list)
             : Result<ChangelistOutcome<'Thread, 'Handler>, KeventRefusal>
             =
@@ -614,8 +614,8 @@ module UnixKqueue =
         (nevents : int)
         (eventlist : UserBuffer)
         (timeout : KeventTimeout)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         if List.length changes > max nchanges 0 then
             failwith
@@ -800,8 +800,8 @@ module UnixKqueue =
 
     let private finishKeventHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let parked =
             UnixThreadTable.expectParked
@@ -820,7 +820,7 @@ module UnixKqueue =
 
         let timedOut = WakeCondition.deadlinePassed parked.Deadline system
 
-        let completing (outcome : KeventOutcome) (answered : UnixSystem<'Thread, 'Handler>) =
+        let completing (outcome : KeventOutcome) (answered : ProcessView<'Thread, 'Handler>) =
             SyscallInterruption.beforeCompleting thread system
             |> Result.mapError KeventRefusal.Interruption
             |> Result.map (fun () -> outcome, (UnixParkState.unpark thread answered))
@@ -872,8 +872,8 @@ module UnixKqueue =
     /// `tryFinishKevent` once `Entry` has admitted its caller.
     let private tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<KeventOutcome * UnixSystem<'Thread, 'Handler>, KeventRefusal>
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>
         =
         let held =
             match UnixThreadTable.parkedFor thread system.Threads with
