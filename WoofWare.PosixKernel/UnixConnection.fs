@@ -1973,7 +1973,7 @@ module UnixConnection =
         : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, ConnectRefusal>
         =
         let answer = tryConnectWithAddressIn copied paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `connect` `paused` stopped: `copied`, exactly the bytes

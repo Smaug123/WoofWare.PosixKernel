@@ -986,6 +986,49 @@ module SignalState =
         // signal can fall between them.
         | SignalNumbering.Darwin -> own @ shared |> List.sortBy (fun entry -> pickRank numbering entry.Signal)
 
+    /// A pending signal that is deliverable to `thread`: one its mask lets
+    /// through, in a set it takes from as it returns to user mode. That is its
+    /// own set; the process's, if it is the process's `leader`; and, under
+    /// Linux's numbering, the process's where the leader blocks the signal,
+    /// since any of Linux's threads takes from the process's set. The first
+    /// such in `pending`'s order, or `ValueNone` where there is none.
+    ///
+    /// Reads no disposition: the thread takes such a signal as it returns,
+    /// whether that runs a handler, applies a default or discards it, and
+    /// whether or not `takeOnReturn` refuses to say which.
+    let internal deliverable
+        (numbering : SignalNumbering)
+        (leader : 'Thread)
+        (thread : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : Signal voption
+        =
+        // Every call that may make a signal deliverable asks this of a
+        // thread, so nothing pending answers without reading a mask.
+        if List.isEmpty state.Pending then
+            ValueNone
+        else
+
+        let mask = maskOf thread state
+
+        let takesFrom (entry : PendingSignal<'Thread>) : bool =
+            match entry.Target with
+            | ValueSome target -> target = thread
+            | ValueNone ->
+                thread = leader
+                || (
+                    match numbering with
+                    | SignalNumbering.Linux -> SignalMask.contains entry.Signal (maskOf leader state)
+                    | SignalNumbering.Darwin -> false
+                )
+
+        match
+            state.Pending
+            |> List.tryFind (fun entry -> takesFrom entry && not (SignalMask.contains entry.Signal mask))
+        with
+        | Some entry -> ValueSome entry.Signal
+        | None -> ValueNone
+
     /// What `sigpending(2)` answers for `thread`: the signals pending that it
     /// would see and that its mask blocks. It sees its own set, and the
     /// process's: on Linux whichever thread asks, and on Darwin only if it is the

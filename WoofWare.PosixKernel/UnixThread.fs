@@ -879,10 +879,11 @@ type UnixThreadState =
             /// descriptor numbers are reused as soon as they are free.
             Parked : ThreadPark option
             /// Why the thread must return to user mode before it makes another
-            /// call, if it must: a signal interrupted its last call, or its last
-            /// call left it a signal to take. `UnixSignal.onReturnToUser` clears
-            /// it. Never set on a parked thread: a thread parks only in a call,
-            /// which it cannot make while it owes a return.
+            /// call, if it must: a signal interrupted its last call, or a signal
+            /// is deliverable to it. `UnixSignal.onReturnToUser` clears it. Never
+            /// set on a parked thread: a thread parks only in a call, which it
+            /// cannot make while it owes a return, and takes a signal only once
+            /// it has left the park.
             Owes : OwedReturn option
         }
 
@@ -1027,7 +1028,7 @@ module UnixThreadTable =
                 $"%s{operation}: thread %O{name} is making a call, but a signal (%O{interruption.Signal}) interrupted its last call, and it has not returned to user mode since. That return decides how the interrupted call ends, and a thread makes a call only from user mode: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
         | None, Some OwedReturn.SignalDue ->
             invalidOp
-                $"%s{operation}: thread %O{name} is making a call, but its last call left it a signal to take as it returns to user mode, and it has not returned since. A thread makes a call only from user mode, and takes its signals on the way there: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
+                $"%s{operation}: thread %O{name} is making a call, but a signal is deliverable to it, which it takes as it returns to user mode, and it has not returned since. A thread runs no more of its own code, so makes no call, before it takes a signal deliverable to it: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
         | None, None -> ()
 
     /// Fails with `InvalidOperationException` unless `name` is a thread asleep

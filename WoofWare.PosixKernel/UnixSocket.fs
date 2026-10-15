@@ -3121,7 +3121,7 @@ module UnixSocket =
         : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
         let answer = tryBindWithAddressIn copied paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `bind` `paused` stopped: `copied`, exactly the bytes
@@ -3289,7 +3289,7 @@ module UnixSocket =
         : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let answer = trySetsockoptWithValueIn copied paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `setsockopt` `paused` stopped: `copied`, exactly the
@@ -3437,7 +3437,7 @@ module UnixSocket =
         : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
         let answer = tryGetsockoptWithLengthIn declaredLength paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// The rest of the `getsockopt` `paused` stopped: `declaredLength` is the
     /// `socklen_t` the caller's length cell holds. See `getsockopt`.

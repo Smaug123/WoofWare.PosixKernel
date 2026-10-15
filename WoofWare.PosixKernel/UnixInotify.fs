@@ -541,7 +541,7 @@ module UnixInotify =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
         let answer = tryInotifyAddWatchWithPathIn path paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The second half of `inotify_add_watch(2)`: copy in `path`, the

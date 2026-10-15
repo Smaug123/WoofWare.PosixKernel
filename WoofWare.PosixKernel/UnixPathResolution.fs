@@ -3079,7 +3079,7 @@ module UnixPathResolution =
         : Result<SyscallAnswer, AccessRefusal>
         =
         let answer = tryAccessWithPathIn path paused
-        Entry.resume<'Thread, 'Handler, _, _> paused.Thread Shape.answer answer
+        Entry.resume<'Thread, 'Handler, _, _> Shape.answer answer
 
     /// <summary>
     /// The second half of <c>access(2)</c> or <c>faccessat(2)</c>: copy in <c>path</c>, and

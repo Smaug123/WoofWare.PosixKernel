@@ -2775,7 +2775,7 @@ module UnixNamespace =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
         let answer = tryRenameWithDestinationIn destination paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// The rest of `rename(2)` or `renameat(2)`, given the destination
     /// pathname the kernel has just reached the point of copying in. A
@@ -2942,7 +2942,7 @@ module UnixNamespace =
            >
         =
         let answer = tryCloneFileWithSourceIn source paused
-        Entry.resume paused.Thread (Shape.result (Shape.progress Shape.withSystem)) answer
+        Entry.resume (Shape.result (Shape.progress Shape.withSystem)) answer
 
     /// <summary>
     /// The next part of `clonefile(2)`, given the source pathname the kernel
@@ -3078,7 +3078,7 @@ module UnixNamespace =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
         =
         let answer = tryCloneFileWithDestinationIn destination paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of `clonefile(2)`, given the destination pathname the kernel
@@ -3272,7 +3272,7 @@ module UnixNamespace =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
         let answer = trySymlinkWithPathIn path paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// The second half of `symlink(2)` or `symlinkat(2)`: copy in `path`, the
     /// link's own pathname, and create the link the paused call describes.
@@ -3593,7 +3593,7 @@ module UnixNamespace =
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
         let answer = tryLinkWithDestinationIn newpath paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) answer
 
     /// The second half of `link(2)` or `linkat(2)`: copy in `newpath`, and give
     /// the paused call's source that name.

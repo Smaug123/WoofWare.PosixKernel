@@ -578,6 +578,11 @@ module internal ProcessSignal =
     /// pending, coalesced or discarded; it stops (`KillOutcome.ProcessStopped`),
     /// with the signals the generation left; or the signal kills it.
     ///
+    /// A signal left pending where its receiver does not block it is
+    /// deliverable to that receiver, which then owes a return to user mode
+    /// (`OwedReturns.markIfDue`): the thread it is sent to, or, for one sent
+    /// to the process, the leader, which takes the process's signals.
+    ///
     /// Fails loudly for an init process (`isInit`), which the caller refuses
     /// first.
     let effect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -598,10 +603,23 @@ module internal ProcessSignal =
                 entry
                 system.Process.Signals
 
+        // `SignalState.generate` leaves a signal sent to the process pending
+        // only where the leader takes it or every thread blocks it; one that
+        // only another thread could take is refused, or acts at once.
+        let receiver =
+            match entry.Target with
+            | ValueSome target -> target
+            | ValueNone -> system.Leader
+
         match generation with
         | Error refusal -> Error refusal
         | Ok (SignalGeneration.ProcessContinues signals) ->
-            Ok (SignalEffect.Applied (KillOutcome.ProcessRuns, UnixSystemState.withSignals signals system))
+            let applied =
+                UnixSystemState.withSignals signals system |> OwedReturns.markIfDue receiver
+
+            Ok (SignalEffect.Applied (KillOutcome.ProcessRuns, applied))
+        // A stop leaves nothing pending that was not: it acts at once, and
+        // discards any pending SIGCONT.
         | Ok (SignalGeneration.ProcessStopped (signal, signals)) ->
             Ok (SignalEffect.Applied (KillOutcome.ProcessStopped signal, UnixSystemState.withSignals signals system))
         | Ok (SignalGeneration.ProcessTerminated (signal, coreDumped)) ->

@@ -62,8 +62,10 @@ type internal Interruption =
 /// Why a thread must return to user mode before it makes another call.
 [<RequireQualifiedAccess>]
 type internal OwedReturn =
-    /// The thread's last call answered, and left it a signal it would take as
-    /// it returned to user mode.
+    /// A signal became deliverable to the thread while it was in no syscall,
+    /// or as it left one; or a return to user mode it began is not over
+    /// (`ReturnToUserOutcome.ContinueDiscarded`). The thread takes its signals
+    /// as it returns, whatever has become of that one since.
     | SignalDue
     /// A signal interrupted the thread's last call, and the thread's return to
     /// user mode decides how the call ends.
