@@ -405,6 +405,13 @@ module TestCallHolds =
                             let released =
                                 existing |> Option.map ParkedSyscall.descriptions |> Option.defaultValue []
 
+                            // A re-park is a woken thread's.
+                            let system =
+                                if existing.IsSome then
+                                    ForgedPark.woken thread system
+                                else
+                                    system
+
                             park thread parked system
                             |> Lone.ObjectLifetime.releaseUnreferencedUnrefusable "test" released,
                             { model with

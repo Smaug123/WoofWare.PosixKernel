@@ -155,6 +155,8 @@ module TestPollTimeout =
         | other -> failwith $"expected a park, got %A{other}"
 
     let private finishes (system : UnixSystem<int, string>) : int16 list * int * UnixSystem<int, string> =
+        let system = Woken.thread thread system
+
         match UnixPoll.tryFinishPoll (Callers.thread thread system) system with
         | Ok (PollOutcome.Answered (reported, count), finished) -> reported, count, finished
         | other -> failwith $"expected the poll to finish, got %A{other}"
@@ -165,7 +167,7 @@ module TestPollTimeout =
         | other -> failwith $"expected the poll to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match Lone.wakes (Set.singleton thread) system with
+        match Lone.wakes system with
         | [] -> None
         | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
@@ -197,15 +199,19 @@ module TestPollTimeout =
                 let _, parked = parks [ entry listener events ] milliseconds started
                 let deadline = start + int64 milliseconds * nanosecondsPerMillisecond
 
-                Lone.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
+                Lone.deadlines parked |> shouldEqual [ deadline ]
 
-                // One nanosecond short: nothing wakes it, and a finish attempted
-                // anyway sleeps again on the same deadline.
+                // One nanosecond short: nothing wakes it, so there is no call to
+                // finish, and it sleeps on to the same deadline.
                 let justBefore = after (deadline - start - 1L) parked
                 woken justBefore |> shouldEqual None
-                let parkedAgain = reparks justBefore
 
-                Lone.deadlines (Set.singleton thread) parkedAgain |> shouldEqual [ deadline ]
+                Assert.Throws<System.InvalidOperationException> (fun () ->
+                    UnixPoll.tryFinishPoll (Callers.thread thread justBefore) justBefore |> ignore
+                )
+                |> ignore<System.InvalidOperationException>
+
+                Lone.deadlines justBefore |> shouldEqual [ deadline ]
 
                 let atDeadline = after (deadline - start) parked
 
@@ -298,7 +304,7 @@ module TestPollTimeout =
         for milliseconds in [ -1 ; -2 ; -1000 ; System.Int32.MinValue ] do
             let condition, parked = parks [ entry listener pollIn ] milliseconds idle
             WakeCondition.deadlines condition |> shouldEqual []
-            Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
+            Lone.deadlines parked |> shouldEqual []
 
             let muchLater = after 1_000_000_000_000_000L parked
             woken muchLater |> shouldEqual None
@@ -325,8 +331,8 @@ module TestPollTimeout =
                     condition
                     |> shouldEqual (WakeCondition.Primitive WakePrimitive.SignalDeliverable)
 
-                    Lone.wakes (Set.singleton thread) parked |> shouldEqual []
-                    Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
+                    Lone.wakes parked |> shouldEqual []
+                    Lone.deadlines parked |> shouldEqual []
                 | other -> failwith $"expected the poll to sleep, got %A{other}"
 
     [<Test>]
@@ -346,8 +352,7 @@ module TestPollTimeout =
         let _, parked =
             parks [ entry listener pollIn ] 1 (nearTheEnd (System.Int64.MaxValue - timeout))
 
-        Lone.deadlines (Set.singleton thread) parked
-        |> shouldEqual [ System.Int64.MaxValue ]
+        Lone.deadlines parked |> shouldEqual [ System.Int64.MaxValue ]
 
     [<Test>]
     let ``a wait with nothing to watch and a deadline sleeps until it`` () : unit =
@@ -367,10 +372,10 @@ module TestPollTimeout =
         woken becameReady |> Option.isSome |> shouldEqual true
 
         // Taken by someone else before the woken poll ran.
-        let gone = becameReady |> withQueue []
+        let gone = becameReady |> Woken.thread thread |> withQueue []
         let parkedAgain = reparks gone
 
-        Lone.deadlines (Set.singleton thread) parkedAgain |> shouldEqual [ 10_000_000L ]
+        Lone.deadlines parkedAgain |> shouldEqual [ 10_000_000L ]
 
         (UnixThreadTable.parkOf thread (Lone.threads parkedAgain) |> Option.get).Ordinal
         |> shouldBeGreaterThan (UnixThreadTable.parkOf thread (Lone.threads parked) |> Option.get).Ordinal
@@ -531,7 +536,10 @@ module TestPollTimeout =
             ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll (Callers.thread thread rebound) rebound |> ignore)
+            Assert.Throws<exn> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread rebound) (ForgedPark.woken thread rebound)
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "now names"
 
@@ -546,7 +554,10 @@ module TestPollTimeout =
             ]
 
         let exn =
-            Assert.Throws<exn> (fun () -> UnixPoll.tryFinishPoll (Callers.thread thread destroyed) destroyed |> ignore)
+            Assert.Throws<exn> (fun () ->
+                UnixPoll.tryFinishPoll (Callers.thread thread destroyed) (ForgedPark.woken thread destroyed)
+                |> ignore
+            )
 
         exn.Message |> shouldContainText "a park holds its descriptions"
 

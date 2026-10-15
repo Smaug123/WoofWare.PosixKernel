@@ -51,7 +51,7 @@ The whole kernel is one value, a `UnixSystem<'Thread, 'Handler>`: the machine, a
 
 * the machine: the filesystem, the open file descriptions (with the state of each epoll instance, kqueue and inotify instance, and how many descriptors and calls in flight reference each), sockets, connections and pipes, the thread IDs live threads hold, the processes on it and the directories they stand in, the clock, the entropy pool, and the platform being simulated;
 * each process: its descriptor table, which says only which open file description each descriptor names, and its credentials, umask, current directory, environment and signal state;
-* each process's threads (`UnixThreadState`), and what each is blocked in, if anything. A client looks a thread up in `UnixSystem.threads` of its process by its own name for it, which has no entry for a thread that was never created or has exited, and reads what it finds with `UnixThreadState`'s readers: `UnixThreadState.parkedIn` (the syscall it sleeps in), `UnixThreadState.cpu` and `UnixThreadState.osThreadId` (what `gettid(2)` answers).
+* each process's threads (`UnixThreadState`), and what each is blocked in, if anything. A client looks a thread up in `UnixSystem.threads` of its process by its own name for it, which has no entry for a thread that was never created or has exited, and reads what it finds with `UnixThreadState`'s readers: `UnixThreadState.parkedIn` (the syscall it sleeps in), `UnixThreadState.park` (that syscall, where the park stands in park order, and whether the thread has been woken), `UnixThreadState.cpu` and `UnixThreadState.osThreadId` (what `gettid(2)` answers).
 
 Those records are opaque outside the library.
 A query about one process, such as `UnixSystem.threads`, `UnixSystem.signals`, `UnixSystem.credentials` or `UnixSystem.fileDescriptors`, takes the process's ID first, and throws `InvalidOperationException` for a process the system does not hold; one about a thread, such as `UnixWait.satisfied` or `UnixScheduling.runningOn`, takes a `Caller` naming the thread (see "Making a call").
@@ -74,9 +74,9 @@ Besides the syscalls, a client calls these between them (the system argument is 
 | the platform, and its flavour | `UnixSystem.platform` | `SimulatedUnixPlatform` |
 | the time since boot | `UnixSystem.nanosecondsSinceBoot` | `int64` |
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
-| which sleeping threads wake | `UnixWait.wakes (asleep : Set<Caller>)` | `(Caller * Set<WakePrimitive>) list` |
+| waking the sleeping threads that can go on | `UnixWait.wake` | `(Caller * Set<WakePrimitive>) list * UnixSystem` |
 | whether one sleeping thread could go on | `UnixWait.satisfied (caller : Caller)` | `Set<WakePrimitive> option` |
-| when sleeping calls time out | `UnixWait.deadlines (asleep : Set<Caller>)` | `int64 list` |
+| when sleeping calls time out | `UnixWait.deadlines` | `int64 list` |
 | another process starting | `UnixSystem.launch (launch : ProcessLaunch)` | `ProcessId * UnixSystem` |
 | every way the tables disagree | `UnixSystem.checkInvariants` | `UnixSystemDefect list` |
 
@@ -215,7 +215,7 @@ Every syscall takes the caller as its first argument, and so do the return to us
 A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength`, `UnixConnection.connectWithAddress`, `UnixReadWrite.writeWithBytes`, `UnixReadWrite.sendWithBytes` and `UnixReadWrite.pwriteWithBytes`.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish (see "Sleeping and waking").
+The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish, and woken (see "Sleeping and waking").
 `UnixSignal.onReturnToUser` requires a thread parked in no syscall, as a call does, and `UnixScheduling.dispatch` takes any thread of the process, parked or not.
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
@@ -309,7 +309,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
-A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
+A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
 
 ### Unions that gain cases
@@ -623,7 +623,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 **Writing.** A write stops where the kernel copies from the caller's buffer, as every call that copies in does (see "Calls that copy in from the caller's memory").
 
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
-2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wakes` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
+2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
 
 Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
@@ -645,12 +645,14 @@ It answers `WouldBlock` with a `WakeCondition`, and the system that comes with i
 That is the state the kernel sleeps in, which can differ from the one the call arrived with: `flock` gives up the caller's old lock before it waits for the new one.
 
 The library has no scheduler, and does not want one.
-Waking is pulled rather than pushed.
-The client keeps the set of threads it is holding asleep, each named by its `Caller`, and after each step asks `UnixWait.wakes asleep`, which answers the threads of that set that may wake now, in the order they parked.
-A woken thread stays parked until its call is finished, so the client takes it out of its set as it wakes it, and finishes the call when it chooses.
-`UnixWait.satisfied` asks of one thread whether its call could get any further, which is cheaper, but does not decide which of several waiters on one queue wakes: where a kernel wakes one waiter at a time, as for an epoll instance or a listener, only `wakes` chooses.
+Waking is pulled rather than pushed: nothing that makes a sleeping call able to go on wakes it.
+After each step, the client asks `UnixWait.wake`, which wakes every sleeping thread that may go on now, and answers each, by its `Caller`, in the order they parked, with the system in which they are woken.
+A woken thread stays parked until its call is finished, and the client finishes the call when it chooses, through its finishing function, which only a woken thread's call may have.
+A park records whether its thread has been woken (`ThreadPark.State`, `ParkState.Asleep` or `ParkState.Woken` with what woke it), so the client keeps no set of sleeping threads of its own; one it has woken and does not finish yet, it simply does not finish.
+A woken thread is not woken again, and where a kernel wakes one waiter of a queue at a time, as for an epoll instance, a listener or a Linux pipe, a woken thread that has not finished its call stands for whatever woke it, so no other waiter on that queue wakes meanwhile.
+`UnixWait.satisfied` asks of one thread whether its call could get any further, and changes nothing: it is cheaper, but does not decide which of several waiters on one queue wakes, which only `wake` chooses.
 
-A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, or say the call restarts because a signal handler interrupted it:
+A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, asleep, for a new wake, or say the call restarts because a signal handler interrupted it:
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
@@ -671,8 +673,8 @@ So are the primitives a FIFO open, a signal wait and a Unix-domain connect wait 
 The cases exist so that a client's matches already handle them when sleeps, FIFOs, `select`, signal waits, datagram transfers and sleeping connects arrive.
 
 A call that waits with a timeout (`poll`, `epoll_wait`, `kevent`) wakes once its deadline passes.
-With nothing runnable, the client asks `UnixWait.deadlines asleep`, which answers each deadline as an instant, in nanoseconds since boot.
-The earliest is when the first of those calls times out: the client advances the clock by it less `UnixSystem.nanosecondsSinceBoot`, and asks `UnixWait.wakes` again.
+With nothing runnable, the client asks `UnixWait.deadlines`, which answers each sleeping call's deadline as an instant, in nanoseconds since boot.
+The earliest is when the first of those calls times out: the client advances the clock by it less `UnixSystem.nanosecondsSinceBoot`, and asks `UnixWait.wake` again.
 
 A parked call holds the open file descriptions it waits on (`ParkedSyscall.descriptions`), as a real one holds a reference to each file: a description goes when no descriptor names it and no call holds it, so one closed under a sleeping call goes when the call returns.
 
@@ -716,10 +718,10 @@ let spawned =
     | SpawnAnswer.Spawned _, system -> resume first system
     | answer, _ -> failwith $"unexpected from spawn: %A{answer}"
 
-// Thread 1 reads the empty pipe, and sleeps. The client holds it asleep.
-let asleep, parked =
+// Thread 1 reads the empty pipe, and sleeps.
+let parked =
     match UnixReadWrite.read second readFd UserBuffer.Mapped 64UL spawned with
-    | ReadOutcome.WouldBlock _, system -> Set.singleton second, system
+    | ReadOutcome.WouldBlock _, system -> system
     | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
 
 // Thread 0 writes "hello": the call stops where the kernel copies from the
@@ -738,16 +740,16 @@ let written =
         | outcome -> failwith $"unexpected write: %A{outcome}"
     | CallProgress.Answered outcome -> failwith $"unexpected before the copy: %A{outcome}"
 
-// The write woke thread 1, and finishRead finishes its call.
+// The write lets thread 1 go on: the client wakes it, and finishRead finishes its call.
 let woken =
-    match UnixWait.wakes asleep written with
-    | [ woken, _ ] when woken = second ->
+    match UnixWait.wake written with
+    | [ woken, _ ], written when woken = second ->
         match UnixReadWrite.finishRead second written with
         | ReadOutcome.Answered (ReadAnswer.Completed bytes), system ->
             printfn "thread 1 read %s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
             resume second system
         | outcome, _ -> failwith $"unexpected read: %A{outcome}"
-    | wakes -> failwith $"expected thread 1 to wake: %A{wakes}"
+    | wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
 
 // Thread 1 exits, and then thread 0 calls exit_group(3), which ends the process:
 // it closes the process's descriptors, and answers the system without it.
@@ -934,12 +936,11 @@ printfn "processes left: %A" (UnixSystem.processIds remaining |> Seq.map Process
 ```
 
 A call asleep in one process wakes for what another process's call does: a connection queued on its listener, bytes arriving on its socket or room freed in its send buffer, a peer's FIN or reset, a lock let go of.
-`UnixWait.wakes asleep` asks of every process at once: `asleep` names, by `Caller`, the threads the client holds asleep, in every process.
-It must name every one: a parked thread it leaves out counts as one the client has woken and not yet finished, which, on a queue whose waiters wake one at a time, will take what arrives, so none of the others wakes for it.
-Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order.
+`UnixWait.wake` wakes the sleeping threads of every process at once.
+Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order; a woken thread that has not finished its call holds such a queue, in whichever process.
 A woken call is finished by its own thread's finishing call.
-A client that asks after every step, as one that interleaves instructions does, can ask `UnixWait.wakesRemembering memo asleep` instead, starting from `WakeSweepMemo.empty` and passing each call the memo the last one answered.
-It answers what `wakes` answers, and asks no wake condition when the last sweep woke nobody and nothing a condition reads has changed since but the clock, which has not reached any sleeping thread's deadline.
+A client that asks after every step, as one that interleaves instructions does, can ask `UnixWait.wakeRemembering memo` instead, starting from `WakeSweepMemo.empty` and passing each call the memo the last one answered.
+It answers what `wake` answers, and the system `wake` answers, and asks no wake condition when the last sweep woke nobody and nothing a condition reads has changed since but the clock, which has not reached any sleeping thread's deadline.
 Advancing the clock, a call that changes nothing, and dispatching a thread to the processor it is on leave the memo answering; a call that changes the system, and a dispatch that moves a thread to another processor, make the next call sweep.
 A kqueue registration, and a filter a sleeping Darwin `poll` registered, is attached to the socket its descriptor named, as XNU attaches a knote to the socket, so an event on the socket reaches it whichever process caused the event; a sleeping Darwin poll's kqueue (`PollQueue`) is the machine's for as long as the call sleeps.
 A client reads that kqueue through `UnixSystem.pollQueue`, then `PollQueue.registered`, `PollQueue.entry` and `PollQueue.activated`.
@@ -982,7 +983,7 @@ That is larger work, separate from the rest, and not yet scheduled.
 
 **Where they meet.** A thread the client holds blocked is parked in no call this library knows of, so as far as the library knows it could run.
 The client removes such threads from the set this library would call runnable (see the next part).
-`UnixWait.wakes` decides only the parks this library recorded: whether a signal or a deadline ends one of the client's own blocks is the client's to decide.
+`UnixWait.wake` decides only the parks this library recorded: whether a signal or a deadline ends one of the client's own blocks is the client's to decide.
 When nothing can run, the client advances the clock to the earlier of its own deadlines and those `UnixWait.deadlines` reports.
 
 ### Which thread runs
@@ -994,7 +995,7 @@ It answers which threads could run (not parked in the kernel; the client subtrac
 Choosing is policy, and a client that explores schedules, or a harness that steers one from outside, must own it; the kernel keeps only the facts a choice is made from.
 
 **Where they meet.** `UnixSystem.threads` lists a process's threads, and `UnixThreadState.parkedIn` says which are parked in a syscall.
-The client keeps the set of threads it holds asleep and passes it to `UnixWait.wakes`, which says which may wake now; it decides when a woken thread finishes its call.
+The client asks `UnixWait.wake`, which wakes the parked threads that may go on now and records them woken; it decides when a woken thread finishes its call.
 Which processor a thread belongs on is the client's policy too.
 The client reports each thread it runs with `UnixScheduling.dispatch caller cpu`: "the thread `caller` names is now running on processor c".
 The kernel keeps what Linux keeps.
@@ -1013,7 +1014,7 @@ Not built yet: recording the processor time a thread used, and a default policy 
 **Why the client's.** Only the client knows how long the process's code took to run, and how fast its simulated machine is.
 Nothing in this library moves the clock on its own.
 By decision, `UnixSystem.advanceClock` stays a function from one system to the next, with no other result.
-If clock-driven signals (`alarm`, `setitimer`, `timer_create`) are modelled later, an expiry will be written into the state as a pending signal, which the client finds through `UnixWait.wakes` as it finds a passed deadline.
+If clock-driven signals (`alarm`, `setitimer`, `timer_create`) are modelled later, an expiry will be written into the state as a pending signal, which the client finds through `UnixWait.wake` as it finds a passed deadline.
 
 **Where they meet.** The client calls `UnixSystem.advanceClock nanoseconds` between syscalls, to move the clock on by that many nanoseconds, and reads the time with `UnixSystem.nanosecondsSinceBoot`.
 With nothing runnable, the earliest of `UnixWait.deadlines` is the instant the first sleeping call times out (see "Sleeping and waking").

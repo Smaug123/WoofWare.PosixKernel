@@ -331,7 +331,7 @@ type UnixSystemDefect<'Thread> =
     /// would have no measured order.
     | DuplicateEventRegistrationOrdinal of registeredAt : int64
     /// A thread is parked on an open file description the table does not hold,
-    /// so its wait can never be satisfied, and asking `UnixWait.wakes` about
+    /// so its wait can never be satisfied, and asking `UnixWait.wake` about
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
     /// without the park being consulted.
@@ -362,7 +362,7 @@ type UnixSystemDefect<'Thread> =
         description : OpenFileDescriptionId *
         target : OpenFileTarget
     /// A thread is parked in a `kevent` on a description that is not a kqueue,
-    /// which no wait could have produced and on which `UnixWait.wakes`
+    /// which no wait could have produced and on which `UnixWait.wake`
     /// crashes.
     | ParkedKeventOnNonKqueue of
         thread : Caller<'Thread> *
@@ -470,7 +470,7 @@ type UnixSystemDefect<'Thread> =
     | PollQueueIdNotFresh of next : PollQueueId * existing : PollQueueId
     /// A thread is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
-    /// `UnixWait.wakes` crashes.
+    /// `UnixWait.wake` crashes.
     | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
@@ -496,7 +496,7 @@ type UnixSystemDefect<'Thread> =
     | ListenerDrainedUnderLinux of socket : SocketId
     /// A thread is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
-    /// call could have produced and on which `UnixWait.wakes` crashes.
+    /// call could have produced and on which `UnixWait.wake` crashes.
     | ParkedPipeTransferOnWrongTarget of
         thread : Caller<'Thread> *
         description : OpenFileDescriptionId *
@@ -510,7 +510,7 @@ type UnixSystemDefect<'Thread> =
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
-    /// `UnixWait.wakes` crashes.
+    /// `UnixWait.wake` crashes.
     | ParkedConnectionTransferOnNonConnection of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`

@@ -126,9 +126,8 @@ module UnixScheduling =
     /// to the processor it is already running on changes nothing, and answers
     /// `system` itself.
     ///
-    /// A parked thread may be dispatched. Whether it was woken is the client's
-    /// record (`UnixWait.wakes`), so this library does not refuse one that was
-    /// not.
+    /// A parked thread may be dispatched, whether or not `UnixWait.wake` has
+    /// woken it.
     ///
     /// Fails loudly if `caller` names no thread, or if `cpu` is not one of the
     /// machine's processors (`UnixSystem.processorCount`): each is a bug in

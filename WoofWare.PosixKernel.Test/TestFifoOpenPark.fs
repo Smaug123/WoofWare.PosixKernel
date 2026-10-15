@@ -110,7 +110,7 @@ module TestFifoOpenPark =
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            Lone.deadlines (Set.singleton thread) closed |> shouldEqual []
+            Lone.deadlines closed |> shouldEqual []
 
             // This library keeps no count of a FIFO's opens, so the primitive
             // cannot be evaluated, and asking fails loudly rather than guessing.

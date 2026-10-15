@@ -851,7 +851,7 @@ module TestKeventRegistration =
             let system =
                 system |> parkIn 1 kq KeventTimeout.Null |> parkIn 2 kq KeventTimeout.Null
 
-            Lone.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
+            Lone.wakes system |> shouldEqual []
 
             let flags =
                 if clear then
@@ -862,11 +862,13 @@ module TestKeventRegistration =
             let system = KeventWorld.register kq listener KeventFilter.Read flags 9UL system
 
             // Registered, but nothing is ready: nobody wakes.
-            Lone.wakes (Set.ofList [ 1 ; 2 ]) system |> shouldEqual []
+            Lone.wakes system |> shouldEqual []
 
             let _, system = KeventWorld.client 5000us system
 
-            Lone.wakes (Set.ofList [ 1 ; 2 ]) system
+            let woken, system = Lone.wake system
+
+            woken
             |> shouldEqual
                 [
                     1, Set.singleton (WakePrimitive.KqueueEventDeliverable kqueueId)
@@ -895,7 +897,7 @@ module TestKeventRegistration =
             | Ok (KeventOutcome.WouldBlock _, reparked) when clear ->
                 // Taken: the other sleeper walks an empty queue and sleeps again.
                 (KeventWorld.stateOf kq reparked).Active |> shouldEqual []
-                Lone.wakes (Set.singleton 1) reparked |> shouldEqual []
+                Lone.wakes reparked |> shouldEqual []
             | Ok (KeventOutcome.Answered [ event ], _) when not clear ->
                 // Without EV_CLEAR the registration stays queued while ready.
                 event |> shouldEqual expected
@@ -924,7 +926,7 @@ module TestKeventRegistration =
 
         let system = KeventWorld.connect socket 5000us system |> snd
 
-        match UnixKqueue.tryFinishKevent (Callers.thread 1 system) system with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 system) (Woken.thread 1 system) with
         | Ok (KeventOutcome.Answered [ event ], finished) ->
             event.Ident |> shouldEqual (uint64 socket)
 
@@ -947,7 +949,7 @@ module TestKeventRegistration =
         // Darwin answers whichever reached the sleeper first.
         let drained = KeventWorld.close kq withEvent
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 drained) drained
+        UnixKqueue.tryFinishKevent (Callers.thread 1 drained) (Woken.thread 1 drained)
         |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
 
         let expired =
@@ -955,7 +957,7 @@ module TestKeventRegistration =
                 Scheduling = UnixSchedulingState.advanceClock 5L withEvent.Scheduling
             }
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 expired) expired
+        UnixKqueue.tryFinishKevent (Callers.thread 1 expired) (Woken.thread 1 expired)
         |> shouldEqual (Error (KeventRefusal.EventsBesideDeadline kqueueId))
 
         let signalled =
@@ -977,7 +979,7 @@ module TestKeventRegistration =
                 }
             )
 
-        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalled) signalled with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalled) (Woken.thread 1 signalled) with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the event to be refused, got %A{other}"
@@ -996,7 +998,7 @@ module TestKeventRegistration =
         let system = parkIn 1 kq KeventTimeout.Null system |> KeventWorld.close kq
 
         let system =
-            match UnixKqueue.tryFinishKevent (Callers.thread 1 system) system with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 system) (Woken.thread 1 system) with
             | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
             | other -> failwith $"expected EBADF, got %A{other}"
 
@@ -1051,11 +1053,11 @@ module TestKeventRegistration =
         // An event can still reach the held kqueue, and then meets the drain.
         let withEvent = KeventWorld.client 5000us closed |> snd
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 withEvent) withEvent
+        UnixKqueue.tryFinishKevent (Callers.thread 1 withEvent) (Woken.thread 1 withEvent)
         |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
 
         let finished =
-            match UnixKqueue.tryFinishKevent (Callers.thread 1 closed) closed with
+            match UnixKqueue.tryFinishKevent (Callers.thread 1 closed) (Woken.thread 1 closed) with
             | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
             | other -> failwith $"expected EBADF, got %A{other}"
 

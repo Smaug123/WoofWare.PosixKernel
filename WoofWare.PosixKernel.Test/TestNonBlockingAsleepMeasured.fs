@@ -390,7 +390,7 @@ module TestNonBlockingAsleepMeasured =
 
         // Setting the flag wakes nothing: the call was still asleep at the
         // signal.
-        Lone.wakes (Set.singleton sleeper) system |> shouldEqual []
+        Lone.wakes system |> shouldEqual []
 
         let signo =
             Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
@@ -400,9 +400,7 @@ module TestNonBlockingAsleepMeasured =
             | Ok (ProcessFate.Continues (_, system)) -> system
             | other -> failwith $"%s{where}: pthread_kill came to %A{other}"
 
-        Lone.wakes (Set.singleton sleeper) system
-        |> List.map fst
-        |> shouldEqual [ sleeper ]
+        let system = Lone.waking [ sleeper ] system
 
         // As a client does: answered, the thread returns to user mode and runs
         // its handler; restarted, it runs its handler and makes the call again.
@@ -421,9 +419,7 @@ module TestNonBlockingAsleepMeasured =
                 | Step.Sleeps, system ->
                     let system = unstuck where row.Transfer otherFd system
 
-                    Lone.wakes (Set.singleton sleeper) system
-                    |> List.map fst
-                    |> shouldEqual [ sleeper ]
+                    let system = Lone.waking [ sleeper ] system
 
                     match finish where row.Transfer system with
                     | Step.Answered answer, system ->

@@ -136,7 +136,7 @@ type ReadOutcome =
     /// The call did not return: it is a blocking read of a pipe that holds
     /// nothing while a write end is open, of a connected socket with nothing
     /// to answer, or of an inotify instance holding no record. The calling thread is parked, and
-    /// sleeps until `UnixWait.wakes` wakes it; then `UnixReadWrite.finishRead`
+    /// sleeps until `UnixWait.wake` wakes it; then `UnixReadWrite.finishRead`
     /// finishes the call.
     | WouldBlock of WakeCondition
     /// The call was asleep, a signal with a handler interrupted it, and the call
@@ -535,7 +535,7 @@ type WriteOutcome<'Thread> =
     /// The call did not return: it is a blocking write into a pipe, or to a
     /// connected socket, with no room for the rest of it. The calling thread is
     /// parked in the system that comes with this, and sleeps until
-    /// `UnixWait.wakes` wakes it; then `UnixReadWrite.finishWrite` finishes
+    /// `UnixWait.wake` wakes it; then `UnixReadWrite.finishWrite` finishes
     /// the call.
     | WouldBlock of condition : WakeCondition
     /// The call was asleep with nothing written, a signal with a handler
@@ -2595,7 +2595,8 @@ module UnixReadWrite =
     /// `Restarts` or `Failed EINTR`, as for a pipe; and otherwise it sleeps
     /// again. No close ends it.
     ///
-    /// `caller` must be asleep in a `read` or a `recv`.
+    /// `caller` must be parked in a `read` or a `recv`, and woken
+    /// (`UnixWait.wake`).
     let finishRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
@@ -4778,7 +4779,8 @@ module UnixReadWrite =
     /// - **A close has ended it**, under Darwin: `EBADF`, whatever it had
     ///   taken.
     ///
-    /// `caller` must be asleep in a `write` or a `send`.
+    /// `caller` must be parked in a `write` or a `send`, and woken
+    /// (`UnixWait.wake`).
     /// </remarks>
     let finishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)

@@ -351,9 +351,11 @@ module TestSigcontGeneration =
             | None -> Ok r
             | Some _ ->
 
-            match Lone.wakes (Set.singleton row.Sleeper) r.System with
-            | [] -> Ok r
-            | _ ->
+            match Lone.wake r.System with
+            | [], _ -> Ok r
+            | _, woken ->
+
+            let r = withSystem woken r
 
             if row.InSigsuspend then
                 match UnixSignal.tryFinishSigsuspend (Callers.thread row.Sleeper r.System) r.System with

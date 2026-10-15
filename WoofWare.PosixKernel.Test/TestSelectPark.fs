@@ -83,7 +83,7 @@ module TestSelectPark =
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
-            Lone.deadlines (Set.singleton thread) asleep |> shouldEqual [ deadline ]
+            Lone.deadlines asleep |> shouldEqual [ deadline ]
 
             UnixWait.satisfied (Callers.thread thread asleep) asleep
             |> shouldEqual (Some Set.empty)

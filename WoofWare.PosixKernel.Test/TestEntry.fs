@@ -21,10 +21,14 @@ module TestEntry =
     type private ThreadState =
         | Absent
         | Unparked
-        | Parked
+        /// Parked, and asleep.
+        | Asleep
+        /// Parked, and woken.
+        | Woken
 
     /// Each of the systems the table runs over, with a thread in each state:
-    /// the leader 0 running, 1 parked, and 7 no thread at all.
+    /// the leader 0 running, 1 parked and asleep, 2 parked and woken, and 7 no
+    /// thread at all.
     let private systems () : (string * UnixSystem<int, string> * (int * ThreadState) list) list =
         [
             "Linux", SimulatedUnixPlatform.linuxX64
@@ -35,9 +39,19 @@ module TestEntry =
                 UnixSystem.initial platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
                 |> Threads.spawn 1
+                |> Threads.spawn 2
                 |> Lone.UnixWait.park 1 ParkedSyscall.SigSuspend
+                |> Lone.UnixWait.park 2 ParkedSyscall.SigSuspend
+                |> ForgedPark.woken 2
 
-            flavour, system, [ 0, ThreadState.Unparked ; 1, ThreadState.Parked ; 7, ThreadState.Absent ]
+            flavour,
+            system,
+            [
+                0, ThreadState.Unparked
+                1, ThreadState.Asleep
+                2, ThreadState.Woken
+                7, ThreadState.Absent
+            ]
         )
 
     let private requirements : CallerRequirement list =
@@ -53,14 +67,18 @@ module TestEntry =
     let private refusal (requirement : CallerRequirement) (state : ThreadState) : string option =
         match requirement, state with
         | _, ThreadState.Absent -> Some "is not one of the process's threads"
-        | CallerRequirement.Running, ThreadState.Parked -> Some "and is making another call"
-        | CallerRequirement.Returning, ThreadState.Parked -> Some "so it is not returning to user mode"
+        | CallerRequirement.Running, ThreadState.Asleep
+        | CallerRequirement.Running, ThreadState.Woken -> Some "and is making another call"
+        | CallerRequirement.Returning, ThreadState.Asleep
+        | CallerRequirement.Returning, ThreadState.Woken -> Some "so it is not returning to user mode"
         | CallerRequirement.Woken, ThreadState.Unparked -> Some "is not parked, so there is no call to finish"
+        | CallerRequirement.Woken, ThreadState.Asleep -> Some "and nothing has woken it"
         | CallerRequirement.Running, ThreadState.Unparked
         | CallerRequirement.Returning, ThreadState.Unparked
-        | CallerRequirement.Woken, ThreadState.Parked
+        | CallerRequirement.Woken, ThreadState.Woken
         | CallerRequirement.Exists, ThreadState.Unparked
-        | CallerRequirement.Exists, ThreadState.Parked -> None
+        | CallerRequirement.Exists, ThreadState.Asleep
+        | CallerRequirement.Exists, ThreadState.Woken -> None
 
     let private operation : string = "TestEntry.call"
 

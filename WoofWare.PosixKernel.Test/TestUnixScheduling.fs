@@ -396,14 +396,8 @@ module TestUnixScheduling =
                             | other -> failwith $"write: %A{other}"
                         )
 
-                let asleep =
-                    world.Live
-                    |> List.filter (fun live -> live.Asleep)
-                    |> List.groupBy (fun live -> live.Pid)
-                    |> List.map (fun (pid, threads) -> pid, threads |> List.map (fun live -> live.Name) |> Set.ofList)
-                    |> Map.ofList
-
-                let woken = Machines.wakes asleep machine |> List.map fst |> Set.ofList
+                let woken, machine = Machines.wake machine
+                let woken = woken |> List.map fst |> Set.ofList
 
                 { world with
                     Machine = machine

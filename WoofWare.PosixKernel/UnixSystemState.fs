@@ -533,8 +533,8 @@ type internal CallerRequirement =
     /// Running its own code, so parked in no syscall: what a call requires of
     /// the thread making it.
     | Running
-    /// Parked in a syscall: what a finishing function requires of the thread
-    /// whose call it finishes.
+    /// Parked in a syscall, and woken by `UnixWait.wake`: what a finishing
+    /// function requires of the thread whose call it finishes.
     | Woken
     /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
     /// thread returning to user mode.
@@ -573,9 +573,7 @@ module internal Entry =
 
         match requirement with
         | CallerRequirement.Running -> UnixThreadTable.requireIssuer operation thread slot.Threads
-        | CallerRequirement.Woken ->
-            UnixThreadTable.requireParked operation thread slot.Threads
-            |> ignore<ParkedSyscall>
+        | CallerRequirement.Woken -> UnixThreadTable.requireWoken operation thread slot.Threads
         | CallerRequirement.Returning -> UnixThreadTable.requireReturning operation thread slot.Threads
         | CallerRequirement.Exists ->
             UnixThreadTable.requireThread operation thread slot.Threads

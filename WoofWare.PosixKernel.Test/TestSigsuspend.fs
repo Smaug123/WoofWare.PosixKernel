@@ -287,10 +287,10 @@ module TestSigsuspend =
             match UnixThreadTable.parkedFor main (Lone.threads r.System) with
             | None -> Ok r
             | Some ParkedSyscall.SigSuspend ->
-                match Lone.wakes (Set.singleton main) r.System with
-                | [] -> Ok r
-                | _ ->
-                    match UnixSignal.tryFinishSigsuspend (Callers.thread main r.System) r.System with
+                match Lone.wake r.System with
+                | [], _ -> Ok r
+                | _, woken ->
+                    match UnixSignal.tryFinishSigsuspend (Callers.thread main woken) woken with
                     | Error refusal -> Error (Stop.Refused refusal)
                     | Ok (SigsuspendOutcome.Failed error, system) ->
                         mainReturns
@@ -1023,11 +1023,12 @@ module TestSigsuspend =
                         failwith "the model holds an ignored signal its sleeping main thread could take"
 
                     let due = modelHandlerDue model
-                    let woken = not (List.isEmpty (Lone.wakes (Set.singleton main) system))
-                    woken |> shouldEqual due
+                    let woken, wokenSystem = Lone.wake system
+                    not woken.IsEmpty |> shouldEqual due
 
                     if due then
                         cover ModelLabel.Wake
+                        system <- wokenSystem
 
                         match UnixSignal.tryFinishSigsuspend (Callers.thread main system) system with
                         | Ok (SigsuspendOutcome.Failed UnixError.EINTR, after) ->
@@ -1495,7 +1496,7 @@ module TestSigsuspend =
                 | Ok (SigsuspendOutcome.WouldBlock _, system) -> system
                 | other -> failwith $"sigsuspend: %A{other}"
 
-            Lone.wakes (Set.singleton main) asleep |> shouldEqual []
+            Lone.wakes asleep |> shouldEqual []
 
             match
                 UnixSignal.trySigprocmask

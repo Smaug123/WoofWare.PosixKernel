@@ -83,7 +83,7 @@ module TestConnectPark =
             |> shouldEqual [ UnixSystemDefect.ReservedPark (Callers.ofDefault thread, parked) ]
 
             OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-            Lone.deadlines (Set.singleton thread) asleep |> shouldEqual []
+            Lone.deadlines asleep |> shouldEqual []
 
             UnixWait.satisfied (Callers.thread thread asleep) asleep
             |> shouldEqual (Some Set.empty)

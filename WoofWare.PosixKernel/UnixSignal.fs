@@ -197,7 +197,7 @@ type SigsuspendOutcome =
     /// having changed nothing.
     | Failed of error : UnixError
     /// The call did not return. The calling thread is parked, with the temporary
-    /// mask in force, and sleeps until `UnixWait.wakes` wakes it for this
+    /// mask in force, and sleeps until `UnixWait.wake` wakes it for this
     /// condition; then `UnixSignal.finishSigsuspend` finishes the
     /// call.
     | WouldBlock of WakeCondition
@@ -1230,7 +1230,7 @@ module UnixSignal =
             system
 
     /// Finish the `sigsuspend(2)` or `pause(2)` `caller` is parked in, once
-    /// `UnixWait.wakes` has woken it: `Failed EINTR` if a signal it takes under
+    /// `UnixWait.wake` has woken it: `Failed EINTR` if a signal it takes under
     /// the temporary mask ends the call, as `sigsuspend` describes; and
     /// otherwise it parks again, as the call it was woken from, since what
     /// woke it has gone. Under Linux a SIGCONT at its default that woke it is
@@ -1241,7 +1241,7 @@ module UnixSignal =
     /// `UnixSignal.onReturnToUser` before anything else runs on the thread.
     ///
     /// Refuses as `sigsuspend` does, changing nothing. Fails loudly if `caller` is
-    /// not parked in one of these calls.
+    /// not parked in one of these calls, or has not been woken from it.
     let finishSigsuspend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)

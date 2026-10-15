@@ -555,6 +555,13 @@ module TestUnixThreadLifecycle =
                         system,
                     model
                 | Op.Park thread when live thread ->
+                    // A re-park is a woken thread's.
+                    let system =
+                        if Set.contains thread model.Parked then
+                            ForgedPark.woken thread system
+                        else
+                            system
+
                     Lone.UnixWait.park thread (flockOn queue) system,
                     { model with
                         Parked = Set.add thread model.Parked
