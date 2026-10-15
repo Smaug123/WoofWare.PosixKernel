@@ -1,0 +1,179 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, gcc:14 container (Apple `container`, --cap-add CAP_SYS_NICE)
+# nproc 5
+# Linux 6.18.5 aarch64, uid 0
+linux call=pause restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+linux call=pause restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=pause restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=pause restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+linux call=pause restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=pause restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+linux call=sigsuspend restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=sigsuspend restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+linux call=sigsuspend restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=sigsuspend restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=read restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=read restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=read restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=read restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=write restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=write restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=write restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=write restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=poll restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=poll restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=poll restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=poll restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=epoll restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=epoll restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=epoll restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=epoll restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=flock restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=flock restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=flock restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=flock restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=accept restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=6 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=accept restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=6 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=accept restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=6 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=6 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=accept restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=tcp-read restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=tcp-read restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=tcp-write restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=tcp-write restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=inotify restart=0 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=32 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=inotify restart=0 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=32 errno=- h1=0 h2=1 release-handler=0 end=exit0
+linux call=inotify restart=1 change=none mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=32 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=ign mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=32 errno=- h1=0 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=dfl mode=held s-state=R returned-at-change=0 h1-at-change=0 end=signal10
+linux call=inotify restart=1 change=swap mode=held s-state=R returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+linux call=pause restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=pause restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=sigsuspend restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=read restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=write restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=poll restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=epoll restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=flock restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=6 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=6 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=6 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=accept restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=6 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-read restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=tcp-write restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=32 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=32 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=32 errno=- h1=1 h2=0 release-handler=0 end=exit0
+linux call=inotify restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=32 errno=- h1=1 h2=0 release-handler=0 end=exit0

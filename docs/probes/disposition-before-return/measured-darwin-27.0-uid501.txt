@@ -1,0 +1,161 @@
+# Darwin 27.0.0 arm64, uid 501
+darwin call=pause restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+darwin call=pause restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=pause restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=pause restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+darwin call=pause restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=pause restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+darwin call=sigsuspend restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=sigsuspend restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=1 end=exit0
+darwin call=sigsuspend restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=sigsuspend restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=read restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=read restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=read restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=read restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=write restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=write restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=write restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=write restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=poll restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=poll restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=poll restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=poll restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=kevent restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=kevent restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=flock restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=flock restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=flock restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=0 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=flock restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=accept restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=7 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=accept restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=7 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=accept restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=7 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=7 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=accept restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=tcp-read restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=tcp-read restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=tcp-write restart=0 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=1 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=none mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=ign mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=0 ret=1000 errno=- h1=0 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=dfl mode=held s-state=- returned-at-change=0 h1-at-change=0 end=signal30
+darwin call=tcp-write restart=1 change=swap mode=held s-state=- returned-at-change=0 h1-at-change=0 returned-before-release=1 ret=-1 errno=Interrupted system call h1=0 h2=1 release-handler=0 end=exit0
+darwin call=pause restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=pause restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=sigsuspend restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=read restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=write restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=poll restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=kevent restart=1 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=flock restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=0 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=7 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=7 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=7 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=accept restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=7 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-read restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=none mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=ign mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=dfl mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=0 change=swap mode=free s-state=- returned-at-change=1 h1-at-change=1 returned-before-release=1 ret=-1 errno=Interrupted system call h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=none mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=ign mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=dfl mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0
+darwin call=tcp-write restart=1 change=swap mode=free s-state=- returned-at-change=0 h1-at-change=1 returned-before-release=0 ret=1000 errno=- h1=1 h2=0 release-handler=0 end=exit0

@@ -82,6 +82,7 @@
     <Compile Include="TestWakeCondition.fs" />
     <Compile Include="TestUnixWait.fs" />
     <Compile Include="TestSyscallInterruption.fs" />
+    <Compile Include="TestDispositionBeforeReturn.fs" />
     <Compile Include="TestUnixThreadLifecycle.fs" />
     <Compile Include="TestThreadIds.fs" />
     <Compile Include="TestCpuRange.fs" />
