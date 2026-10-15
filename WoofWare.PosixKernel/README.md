@@ -125,14 +125,14 @@ let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 
 let mkdir (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
     match UnixSystem.step leader (Syscall.MkDirAt (atFdCwd, path "/tmp", 0o755)) system with
-    | SyscallOutcome.Answered (SyscallAnswer.Completed result), system ->
+    | SteppedCall.MkDirAt (SyscallAnswer.Completed result, system) ->
         printfn "mkdir returned %d" result
         system
-    | SyscallOutcome.Answered (SyscallAnswer.Failed error), system ->
+    | SteppedCall.MkDirAt (SyscallAnswer.Failed error, system) ->
         let numbering = SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system)
         printfn "mkdir failed with errno %d" (UnixError.toRawErrnoUnder numbering error)
         system
-    | outcome, _ -> failwith $"unexpected from mkdir: %A{outcome}"
+    | _ -> failwith "step answers a Syscall.MkDirAt as a SteppedCall.MkDirAt"
 
 system |> mkdir |> mkdir |> ignore
 
@@ -319,6 +319,7 @@ From version 1.0, adding a case to any union whose cases are public is a breakin
 F# code compiled against a union dispatches on its case numbers, so code built against an older version can silently run the wrong arm for a new case.
 The model will still grow: a refusal becomes an answer once its behaviour is measured, and each newly measured difference between Linux and Darwin adds a place that throws `UnmodelledException` (see "Answers, and what this library will not answer"), which needs no new case.
 Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `FinishedCall.Sleep`, `FinishedCall.FifoOpen`, `FinishedCall.Select`, `FinishedCall.SignalWait`, `FinishedCall.DatagramReceive`, `FinishedCall.DatagramSend`, `FinishedCall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`.
+So are the cases of the calls not modelled yet that `Syscall` and `SteppedCall` reserve, eleven in each (see "One entry point"), from `Syscall.Nanosleep` and `SteppedCall.Nanosleep` to `Syscall.SendMsg` and `SteppedCall.SendMsg`; and since `Syscall` has a case for every call a thread makes, a call this library comes to model, such as `fork`, is a new case of each.
 Removing a case, changing a case's fields, or changing the shape of any other type is breaking too.
 
 The defects the `checkInvariants` functions report (`UnixSystemDefect` and `VirtualFileSystemDefect`) are open too, and have no patterns at all.
@@ -592,14 +593,118 @@ Nothing else can be done to the system in between, since the paused call holds i
 
 A call whose pathname is copied in after something observable stops there too, and takes that pathname in its resume function: `rename` and `renameat` stop before the destination (`UnixNamespace.renameWithDestination`), `link` and `linkat` before the new path (`UnixNamespace.linkWithDestination`), `symlink` and `symlinkat` before the link's own path (`UnixNamespace.symlinkWithPath`), `access` and `faccessat` before the path (`UnixPathResolution.accessWithPath`), since Linux answers a bad mode or flag word without reading it, and `inotify_add_watch` before the path (`UnixInotify.inotifyAddWatchWithPath`), since Linux answers a bad mask or descriptor without reading it.
 `clonefile` stops twice: before the source (`UnixNamespace.cloneFileWithSource`) and before the destination (`UnixNamespace.cloneFileWithDestination`).
-A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step` where the call has a `Syscall` case, or resumes each paused call as soon as it is answered.
+A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step`, whose `Syscall` case holds what each copy reads (see "One entry point"), or resumes each paused call as soon as it is answered.
 
 #### One entry point
 
-`UnixSystem.step (caller : Caller) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
-Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
-Whatever the call, `getpid` included, `caller` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
-Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
+`UnixSystem.step (caller : Caller) (call : Syscall)` makes any call a thread makes through one function, for a client that wants to log, replay or generate calls, and answers a `SteppedCall`.
+`Syscall` has a case for each function in the tables above that a thread calls as a syscall, named for the call (`Syscall.MkDirAt` for `UnixNamespace.mkdirat`, `Syscall.Open` for `UnixNamespace.openPath`) and holding its arguments in the order the call's C prototype takes them.
+`step` makes the call through that function, and answers the `SteppedCall` case of the same name, which holds exactly what the function answers: `SteppedCall.MkDirAt` holds a `SyscallAnswer` and the system, and `SteppedCall.GetEffectiveUserId` a `UserId` alone, since `geteuid` changes nothing.
+An argument the call copies in from the caller's memory is what that memory held: a pathname is its bytes, and a buffer the call reads, such as `write`'s, is a `CopiedArgument`, which holds the bytes (`CopiedArgument.Readable`) or why there are none, as `UserBuffer`'s cases say.
+`step` hands the function's resumptions what each copy reads, and so never stops at a copy: `SteppedCall.FAccessAt` holds what `UnixPathResolution.accessWithPath` answers.
+A buffer's copy is the bytes of `CopiedArgument.Readable` that the paused call's `copyRange` names, so the contents hold at least as many bytes as the call copies, and may hold more, which it does not read; `step` throws `InvalidOperationException` for contents that end before the bytes it copies.
+A buffer the call writes to stays a `UserBuffer`, since what the call writes is in its answer.
+The finishing functions, the return to user mode, `UnixScheduling.dispatch`, `UnixDescriptor.setNonBlocking` and `UnixDescriptor.isNonBlocking` have no case: no thread makes any of them as a call of its own.
+`Syscall.Nanosleep`, `Syscall.ClockNanosleep`, `Syscall.Select`, `Syscall.PSelect`, `Syscall.SigWait`, `Syscall.SigWaitInfo`, `Syscall.SigTimedWait`, `Syscall.RecvFrom`, `Syscall.RecvMsg`, `Syscall.SendTo` and `Syscall.SendMsg` are reserved for calls this library does not model yet (see "What is not modelled"): the types their arguments and answers are held in have internal representations, nothing makes one, and `step` throws `UnmodelledException` for one.
+Whatever the call, `getpid` included, `caller` must be one of the process's threads, not asleep in another call and owing no return to user mode, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
+
+A call that can end the process answers through `step` as through its own function: `SteppedCall.Kill`, `SteppedCall.PthreadKill` and `SteppedCall.ExitThread` hold a `ProcessFate`, which is `ProcessFate.ProcessEnded` where the call ended the process, and `SteppedCall.ExitGroup` holds the ended process beside the system without it.
+So does a call that sleeps, or that a signal interrupts: `SteppedCall.Accept` may hold `AcceptOutcome.WouldBlock`, which `UnixWait.finish` finishes once the thread is woken, and `SteppedCall.SigSuspend` may hold `SigsuspendOutcome.Interrupted`.
+The client's loop is the same as for the calls' own functions (see "The return to user mode"): make the call; once it has ended, return the thread to user mode; and on `InterruptedCall.Restarts`, step the same `Syscall` again.
+This client's second thread sleeps in an `accept` that a signal whose handler was installed with `SA_RESTART` interrupts, and the client steps the `accept` again:
+
+```fsharp
+open WoofWare.PosixKernel
+
+let platform = SimulatedUnixPlatform.linuxX64
+let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+let booted : UnixSystem<int, string> =
+    let launch =
+        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+    UnixSystem.initial platform |> UnixBootImage.boot launch
+
+let pid = Seq.exactlyOne (UnixSystem.processIds booted)
+let first = Caller.make pid 0
+let second = Caller.make pid 1
+let usr1 = Signal.toRawSignoUnder numbering Signal.SIGUSR1
+
+// A thread's return to user mode, as in "The return to user mode": each handler it
+// pushes runs and returns at once. The first return says how an interrupted call ends.
+let rec returnToUser (caller : Caller<int>) (system : UnixSystem<int, string>) : InterruptedCall option * UnixSystem<int, string> =
+    match UnixSignal.onReturnToUser caller system with
+    | ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system) -> interrupted, system
+    | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system) ->
+        let system =
+            (system, frames)
+            ||> List.fold (fun system frame ->
+                printfn "handler %s runs" frame.Action.Handler
+                UnixSignal.sigreturn caller frame.Id system |> returnToUser caller |> snd
+            )
+
+        interrupted, system
+    | other -> failwith $"unexpected at the return to user mode: %A{other}"
+
+// The client's loop, for the calls this client makes: step the call, and unless its
+// thread sleeps, return to user mode.
+let make (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    match UnixSystem.step caller call system with
+    | SteppedCall.Accept (AcceptOutcome.WouldBlock _, asleep) ->
+        printfn "thread %d sleeps in accept" (Caller.thread caller)
+        asleep
+    | SteppedCall.SigAction (Ok (_, system))
+    | SteppedCall.Listen (ListenAnswer.Listening _, system)
+    | SteppedCall.Spawn (SpawnAnswer.Spawned _, system)
+    | SteppedCall.PthreadKill (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        snd (returnToUser caller system)
+    | stepped -> failwith $"unexpected from %A{call}: %A{stepped}"
+
+// Once a wake has ended a thread's sleep: finish its call, and return to user mode;
+// on a restart, step the same call again.
+let resume (caller : Caller<int>) (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+    match UnixWait.finish caller system with
+    | FinishedCall.Accept (AcceptOutcome.Interrupted, system) ->
+        match returnToUser caller system with
+        | Some InterruptedCall.Restarts, system ->
+            printfn "the accept restarts"
+            make caller call system
+        | ending, _ -> failwith $"expected the accept to restart: %A{ending}"
+    | finished -> failwith $"unexpected finish: %A{finished}"
+
+// Thread 0 installs a handler for SIGUSR1 under SA_RESTART, and makes a socket:
+// socket(AF_INET, SOCK_STREAM, 0), in Linux's numbering.
+let listener, opened =
+    let restarting = SignalDisposition.Catch { SignalCatch.ofHandler "on-usr1" with Restart = true }
+    let installed = make first (Syscall.SigAction (usr1, Some restarting)) booted
+
+    match UnixSystem.step first (Syscall.Socket (2, 1, 0)) installed with
+    | SteppedCall.Socket (Ok (fd, system)) -> fd, snd (returnToUser first system)
+    | stepped -> failwith $"unexpected from socket: %A{stepped}"
+
+// It listens on the socket, which nothing will connect to, and starts thread 1, which
+// accepts on it and sleeps. Thread 0 sends thread 1 SIGUSR1.
+let accept = Syscall.Accept (listener, UserBuffer.Mapped, 16u)
+
+let signalled =
+    opened
+    |> make first (Syscall.Listen (listener, 1))
+    |> make first (Syscall.Spawn (1, CpuId 0))
+    |> make second accept
+    |> make first (Syscall.PthreadKill (1, usr1))
+
+// The signal wakes thread 1, and the client resumes its accept, which restarts and
+// sleeps again.
+match UnixWait.wake signalled with
+| [ woken, _ ], system when woken = second -> resume second accept system |> ignore
+| wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
+
+// Prints:
+// thread 1 sleeps in accept
+// handler on-usr1 runs
+// the accept restarts
+// thread 1 sleeps in accept
+```
 
 ### Checking the tables
 
@@ -1031,8 +1136,8 @@ let second, both = UnixSystem.launch launch booted
 // dup(1), made by thread 0 of the process `pid`.
 let dup (pid : ProcessId) (system : UnixSystem<int, unit>) : int64 * UnixSystem<int, unit> =
     match UnixSystem.step (Caller.make pid 0) (Syscall.Dup 1) system with
-    | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system -> fd, system
-    | outcome, _ -> failwith $"unexpected from dup: %A{outcome}"
+    | SteppedCall.Dup (SyscallAnswer.Completed fd, system) -> fd, system
+    | _ -> failwith "unexpected from dup"
 
 // Each process numbers its own descriptors, so each gets 3.
 let firstFd, afterFirst = dup first both

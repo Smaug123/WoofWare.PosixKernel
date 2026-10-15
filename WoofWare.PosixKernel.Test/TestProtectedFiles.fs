@@ -607,9 +607,7 @@ module TestProtectedFiles =
             "readlink", readlinkText
             "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
             "access-nofollow",
-            accessText (
-                UnixPathResolution.tryFaccessatEager (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system
-            )
+            accessText (Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system)
             "chown",
             UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
@@ -710,13 +708,7 @@ module TestProtectedFiles =
                         [
                             "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
-                            UnixPathResolution.tryFaccessatEager
-                                (Callers.leader system)
-                                -100
-                                (bytes "/ids/lf")
-                                4
-                                0x200
-                                system
+                            Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/ids/lf") 4 0x200 system
                             |> ok
                             |> answerText
                             "stat", statText SymlinkPolicy.Follow "/ids/lf" system
@@ -798,15 +790,17 @@ module TestProtectedFiles =
         | SyscallAnswer.Completed _ -> WalkOutcome.Answered None
         | SyscallAnswer.Failed error -> WalkOutcome.Answered (Some error)
 
-    let private ofStep (result : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) : WalkOutcome =
+    let private ofStep (result : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : WalkOutcome =
         match result with
-        | Ok (SyscallOutcome.Answered answer, _) -> ofSyscallAnswer answer
-        | Ok (outcome, _) -> WalkOutcome.Unexpected $"%A{outcome}"
+        | Ok stepped ->
+            match Stepped.syscallAnswer stepped with
+            | Some (answer, _) -> ofSyscallAnswer answer
+            | None -> WalkOutcome.Unexpected $"%A{Stepped.view stepped}"
         | Error (SyscallRefusal.ChDir refusal)
         | Error (SyscallRefusal.FChModAt (FChModAtRefusal.ChMod (ChModRefusal.Path refusal)))
         | Error (SyscallRefusal.FChOwnAt (FChOwnAtRefusal.ChOwn (ChOwnRefusal.Path refusal)))
-        | Error (SyscallRefusal.Access (AccessRefusal.Path refusal))
-        | Error (SyscallRefusal.Link (LinkRefusal.Path refusal)) -> WalkOutcome.Refused refusal
+        | Error (SyscallRefusal.FAccessAt (AccessRefusal.Path refusal))
+        | Error (SyscallRefusal.LinkAt (LinkRefusal.Path refusal)) -> WalkOutcome.Refused refusal
         | Error refusal -> WalkOutcome.Unexpected $"%A{refusal}"
 
     let private ofStatus (result : Result<FileStatusAnswer, StatRefusal>) : WalkOutcome =
@@ -843,9 +837,12 @@ module TestProtectedFiles =
         let linuxAtSymlinkNoFollow = 0x100
         let linuxAtEAccess = 0x200
 
-        let step (call : Syscall) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-            match UnixSystem.tryStep (Callers.thread 0 system) call system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed _), after) -> after
+        let step (call : Syscall<int, string>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match
+                UnixSystem.tryStep (Callers.thread 0 system) call system
+                |> Result.map Stepped.syscallAnswer
+            with
+            | Ok (Some (SyscallAnswer.Completed _, Some after)) -> after
             | other -> failwith $"setting up, %A{call}: %A{other}"
 
         let system : UnixSystem<int, string> =

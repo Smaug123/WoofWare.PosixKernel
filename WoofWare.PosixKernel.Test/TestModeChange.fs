@@ -823,10 +823,14 @@ module TestModeChange =
 
         let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
 
-        let answered (outcome : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) =
+        let answered
+            (outcome : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+            : SyscallAnswer * UnixSystem<int, string>
+            =
             match outcome with
-            | Ok (SyscallOutcome.Answered answer, after) -> answer, after
-            | other -> failwith $"step: %A{other}"
+            | Ok (SteppedCall.FChModAt (answer, after))
+            | Ok (SteppedCall.FChMod (answer, after)) -> answer, after
+            | other -> failwith $"step: %A{Result.map Stepped.view other}"
 
         // A success, so the comparison covers the state the call moves, and a
         // failure.

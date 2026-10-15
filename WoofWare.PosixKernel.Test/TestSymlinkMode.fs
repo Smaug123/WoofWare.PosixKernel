@@ -157,9 +157,7 @@ module TestSymlinkMode =
         let ask (linkBits : int) : SyscallAnswer =
             let system = systemWithLink darwin linkBits
 
-            match
-                UnixPathResolution.tryFaccessatEager (Callers.leader system) -2 (PathArg.ofText "/l") 4 0x20 system
-            with
+            match Eager.tryFaccessatAs (Callers.leader system) -2 (PathArg.ofText "/l") 4 0x20 system with
             | Ok answer -> answer
             | Error refusal -> failwith $"%s{context}: faccessat was refused: %s{AccessRefusal.describe refusal}"
 

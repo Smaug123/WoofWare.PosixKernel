@@ -1153,7 +1153,7 @@ module TestPermissionStanding =
         | Error refusal ->
             refusal
             |> shouldEqual (SyscallRefusal.FTruncate (TruncationRefusal.UnmeasuredSetIdChange (inode, truncated)))
-        | Ok (outcome, _) -> failwith $"step answered %A{outcome}"
+        | Ok stepped -> failwith $"step answered %A{Stepped.view stepped}"
 
         let truncating =
             { readOnly with
@@ -1197,7 +1197,7 @@ module TestPermissionStanding =
             (Callers.thread 0 system)
             (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirs"), 0))
             system
-        |> Result.map fst
+        |> Result.map Stepped.view
         |> shouldEqual (
             Error (
                 SyscallRefusal.UnlinkAt (
@@ -1218,7 +1218,7 @@ module TestPermissionStanding =
             (Callers.thread 0 system)
             (Syscall.UnlinkAt (-2, PathArg.ofPath (path "/tmp/base/own-sticky/theirdir"), 0x80))
             system
-        |> Result.map fst
+        |> Result.map Stepped.view
         |> shouldEqual (
             Error (
                 SyscallRefusal.UnlinkAt (

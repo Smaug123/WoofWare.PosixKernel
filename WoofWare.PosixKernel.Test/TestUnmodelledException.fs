@@ -435,7 +435,7 @@ module TestUnmodelledException =
                 Observed.Refused (RefusalKind.OutOfRange "")
             ]
 
-    let private syscallGen : Gen<Syscall> =
+    let private syscallGen : Gen<Syscall<int, string>> =
         let fd = Gen.choose (-1, 5)
         let word = Gen.oneof [ Gen.choose (-3, 40) ; Gen.choose (0, 0x2000) ]
 
@@ -465,8 +465,11 @@ module TestUnmodelledException =
                     agrees
                         SyscallRefusal.kind
                         SyscallRefusal.describe
-                        (fun () -> UnixSystem.tryStep (Callers.thread 0 system) call system)
-                        (fun () -> UnixSystem.step (Callers.thread 0 system) call system)
+                        (fun () ->
+                            UnixSystem.tryStep (Callers.thread 0 system) call system
+                            |> Result.map Stepped.view
+                        )
+                        (fun () -> UnixSystem.step (Callers.thread 0 system) call system |> Stepped.view)
 
                 let machine = Machines.ofSystem system
                 let pid = Lone.pid system
@@ -480,12 +483,8 @@ module TestUnmodelledException =
                     agrees
                         SyscallRefusal.kind
                         SyscallRefusal.describe
-                        (fun () ->
-                            match unwrap (Machines.tryStep pid 0 call machine) with
-                            | Ok outcome, machine -> Ok (outcome, machine)
-                            | Error refusal, _ -> Error refusal
-                        )
-                        (fun () -> unwrap (Machines.step pid 0 call machine))
+                        (fun () -> unwrap (Machines.tryStep pid 0 call machine) |> Result.map Stepped.view)
+                        (fun () -> unwrap (Machines.step pid 0 call machine) |> Stepped.view)
 
                 onMachine |> shouldEqual onSystem
                 onSystem

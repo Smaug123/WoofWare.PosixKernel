@@ -23,6 +23,8 @@
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
     <Compile Include="Callers.fs" />
+    <Compile Include="Stepped.fs" />
+    <Compile Include="IlCalls.fs" />
     <Compile Include="Woken.fs" />
     <Compile Include="Interruptions.fs" />
     <Compile Include="AnswersBeforeInterrupted.fs" />
@@ -122,6 +124,8 @@
     <Compile Include="TestUnionCaseOrder.fs" />
     <Compile Include="RecordLabels.fs" />
     <Compile Include="TestSurface.fs" />
+    <Compile Include="TestSyscall.fs" />
+    <Compile Include="TestStepOracle.fs" />
     <Compile Include="TestRecordLabels.fs" />
     <Compile Include="TestPathArgument.fs" />
     <Compile Include="TestPathCopyIn.fs" />
