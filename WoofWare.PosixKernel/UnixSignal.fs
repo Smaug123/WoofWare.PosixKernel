@@ -100,19 +100,31 @@ type internal ReturnToUserRefusal =
     /// `signal` interrupted the thread's Linux `poll`, which had a timeout,
     /// and no handler runs as the thread returns. Linux restarts such a call
     /// with what is left of its timeout, which the call as first made does
-    /// not.
-    | RestartWithRemainingTime of signal : Signal
+    /// not. `signal` is `None` where the signal that woke the call had gone
+    /// by the time the call was finished (`Interruption.Signal`).
+    | RestartWithRemainingTime of signal : Signal option
     /// `signal` interrupted the thread's call, no handler runs as the thread
-    /// returns, and what the call then does is unmeasured.
-    | UnmeasuredWithoutHandler of signal : Signal
+    /// returns, and what the call then does is unmeasured. `signal` is `None`
+    /// where the signal that woke the call had gone by the time the call was
+    /// finished.
+    | UnmeasuredWithoutHandler of signal : Signal option
     /// Under `flavour`, `signal` interrupted the thread's call, and how the
     /// call ends from the signals as the thread returns differs from how it
     /// ended from the signals as the call was interrupted: another thread
-    /// changed a disposition or a mask in between.
-    | ChangedSinceInterruption of signal : Signal * flavour : SimulatedUnixFlavour
+    /// changed a disposition or a mask in between. `signal` is `None` where
+    /// the signal that woke the call had gone by the time the call was
+    /// finished.
+    | ChangedSinceInterruption of signal : Signal option * flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal ReturnToUserRefusal =
+    /// The signal that interrupted a call, for a message: `signal`, or one
+    /// that had gone by the time the call was finished.
+    let private interrupter (signal : Signal option) : string =
+        match signal with
+        | Some signal -> $"%O{signal}"
+        | None -> "a signal that had gone by the time the call was finished"
+
     /// What this kernel knows about why it cannot answer. The client supplies
     /// its own half: which thread was returning.
     let describe (refusal : ReturnToUserRefusal) : string =
@@ -125,11 +137,11 @@ module internal ReturnToUserRefusal =
         | ReturnToUserRefusal.DefaultAction signal ->
             $"a signal interrupted the thread's call, and the first signal it takes as it returns is %O{signal}, at a default that stops or continues the process. What that does to the call is unmeasured."
         | ReturnToUserRefusal.RestartWithRemainingTime signal ->
-            $"%O{signal} interrupted the thread's poll, which had a timeout, and no handler runs as the thread returns. Linux restarts such a poll with what is left of its timeout (restart_syscall), which a client making the call again with its own arguments cannot do."
+            $"%s{interrupter signal} interrupted the thread's poll, which had a timeout, and no handler runs as the thread returns. Linux restarts such a poll with what is left of its timeout (restart_syscall), which a client making the call again with its own arguments cannot do."
         | ReturnToUserRefusal.UnmeasuredWithoutHandler signal ->
-            $"%O{signal} interrupted the thread's call, and no handler runs as the thread returns: by then the signal has been discarded or is blocked. What the call does then is unmeasured."
+            $"%s{interrupter signal} interrupted the thread's call, and no handler runs as the thread returns: by then the signal has been discarded or is blocked. What the call does then is unmeasured."
         | ReturnToUserRefusal.ChangedSinceInterruption (signal, flavour) ->
-            $"%O{signal} interrupted the thread's call, and since then another thread has changed what the thread takes as it returns, so that the handlers it runs now would end the call otherwise than those it would have run then. Under the %O{flavour} flavour, which of the two the kernel goes by is unmeasured."
+            $"%s{interrupter signal} interrupted the thread's call, and since then another thread has changed what the thread takes as it returns, so that the handlers it runs now would end the call otherwise than those it would have run then. Under the %O{flavour} flavour, which of the two the kernel goes by is unmeasured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReturnToUserRefusal) : RefusalKind =

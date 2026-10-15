@@ -1525,9 +1525,12 @@ module UnixPoll =
     /// close of a watched descriptor has left without that descriptor's
     /// filters. It answers the count when anything is reported, 0 when the
     /// deadline has passed, and `Interrupted` when the thread would take a
-    /// signal as it returned to user mode; and refuses each pair of those that
-    /// hold at once, since Darwin answers whichever reached the sleeping thread
-    /// first.
+    /// signal as it returned to user mode, or when a signal woke the thread and
+    /// has gone since (another thread ignored it), whose return then fails the
+    /// call with `EINTR`; and refuses each pair of those that hold at once,
+    /// since Darwin answers whichever reached the sleeping thread first. It
+    /// refuses a call with a timeout whose waking signal has gone, which is
+    /// unmeasured.
     ///
     /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
@@ -1846,10 +1849,13 @@ module UnixPoll =
     /// an expired deadline both holding as the waiter runs report the event);
     /// no events when the deadline has passed, whether or not a signal is
     /// pending; `Interrupted` when the thread would take a signal as it
-    /// returned to user mode; and otherwise re-parks the thread on the same epoll instance and deadline, since
+    /// returned to user mode, or when a signal woke the thread and has gone
+    /// since (another thread ignored it), whose return then fails the call with
+    /// `EINTR`; and otherwise re-parks the thread on the same epoll instance and deadline, since
     /// whatever woke it has gone again. A re-park goes to the back of park
     /// order, which puts it first in line for the epoll instance's next event. An answer
-    /// clears the park.
+    /// clears the park. A call with a timeout whose waking signal has gone is
+    /// refused, since what it does is unmeasured.
     ///
     /// Delivering events copies them out to the buffer the call was made with;
     /// see `epollWait` for the buffers that refuses.
