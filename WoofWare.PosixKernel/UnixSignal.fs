@@ -1176,7 +1176,7 @@ module UnixSignal =
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
+                Parking.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// `trySigsuspend` once `Entry` has admitted its caller.
@@ -1376,7 +1376,7 @@ module UnixSignal =
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
+                Parking.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// `finishSigsuspend`, with a refusal answered as the `Error` rather than raised.

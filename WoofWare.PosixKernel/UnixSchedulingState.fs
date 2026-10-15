@@ -32,7 +32,7 @@ type internal UnixSchedulingState =
             /// which puts it here, displacing whichever thread the processor ran
             /// before, whatever process that thread belongs to. A thread leaves it when
             /// it is dispatched elsewhere, when it parks in a syscall
-            /// (`UnixWait.park`), and when it exits or its process ends. Keyed by
+            /// (`Parking.park`), and when it exits or its process ends. Keyed by
             /// processor, so no processor runs two threads; the machine's rather
             /// than a process's, because the machine's processes share its
             /// processors; and by thread ID, which no two live threads on the machine

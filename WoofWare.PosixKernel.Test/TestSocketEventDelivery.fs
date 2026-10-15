@@ -1118,7 +1118,7 @@ module TestSocketEventDelivery =
             let kernel =
                 kernel
                 |> Threads.spawn 1
-                |> Lone.UnixWait.park
+                |> Lone.Parking.park
                     1
                     (ParkedSyscall.EpollWait
                         {

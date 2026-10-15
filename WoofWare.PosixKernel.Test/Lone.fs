@@ -253,17 +253,17 @@ module internal Lone =
             =
             withFileDescriptors registry system
 
-    /// `WoofWare.PosixKernel.UnixWait`'s parks, made in the view of the only
+    /// `WoofWare.PosixKernel.Parking`'s parks, made in the view of the only
     /// process.
     [<RequireQualifiedAccess>]
-    module UnixWait =
+    module Parking =
         let park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (thread : 'Thread)
             (parked : ParkedSyscall)
             (system : UnixSystem<'Thread, 'Handler>)
             : UnixSystem<'Thread, 'Handler>
             =
-            view system |> WoofWare.PosixKernel.UnixWait.park thread parked |> unview
+            view system |> WoofWare.PosixKernel.Parking.park thread parked |> unview
 
         let parkWaiting<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (thread : 'Thread)
@@ -271,7 +271,7 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : UnixSystem<'Thread, 'Handler>
             =
-            view system |> WoofWare.PosixKernel.UnixWait.parkWaiting thread parked |> unview
+            view system |> WoofWare.PosixKernel.Parking.parkWaiting thread parked |> unview
 
     /// `WoofWare.PosixKernel.UnixParkState`, made in the view of the only
     /// process.

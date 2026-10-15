@@ -40,8 +40,8 @@ module TestEntry =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
                 |> Threads.spawn 1
                 |> Threads.spawn 2
-                |> Lone.UnixWait.park 1 ParkedSyscall.SigSuspend
-                |> Lone.UnixWait.park 2 ParkedSyscall.SigSuspend
+                |> Lone.Parking.park 1 ParkedSyscall.SigSuspend
+                |> Lone.Parking.park 2 ParkedSyscall.SigSuspend
                 |> ForgedPark.woken 2
 
             flavour,

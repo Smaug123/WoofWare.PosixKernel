@@ -689,7 +689,7 @@ module TestCallerChecks =
                 // Darwin refuses an `flock` of a pipe, so its waiter is parked
                 // as the library would park it.
                 Proc.view own view
-                |> UnixWait.park
+                |> Parking.park
                     2
                     (ParkedSyscall.Flock
                         {

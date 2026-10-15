@@ -480,7 +480,7 @@ module TestUnixSystemInvariants =
 
         match parked with
         | None -> registered
-        | Some parked -> Lone.UnixWait.park thread parked registered
+        | Some parked -> Lone.Parking.park thread parked registered
 
     /// `system` with one registered thread, parked as `parked` says on a
     /// description the open file table may not hold, which no syscall parks on.
@@ -611,11 +611,11 @@ module TestUnixSystemInvariants =
         system
         |> Threads.ensure 1
         |> Threads.ensure 2
-        |> Lone.UnixWait.park 1 parked
-        |> Lone.UnixWait.park 2 parked
+        |> Lone.Parking.park 1 parked
+        |> Lone.Parking.park 2 parked
 
     /// `system` with thread `name`'s park stamped `ordinal`, as only a record copy past
-    /// `UnixWait.park` could.
+    /// `Parking.park` could.
     let private forgeOrdinal (name : int) (ordinal : ParkOrdinal) (system : UnixSystem<int, string>) =
         let thread = UnixThreadTable.get name (Lone.threads system)
 

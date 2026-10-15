@@ -119,7 +119,7 @@ module TestSignalWaitPark =
             let awake = boot flavour |> Threads.ensure thread
             awake |> UnixSystem.checkInvariants |> shouldEqual []
 
-            let asleep = Lone.UnixWait.park thread parked awake
+            let asleep = Lone.Parking.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants

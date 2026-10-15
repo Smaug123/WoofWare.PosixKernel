@@ -2386,7 +2386,7 @@ module UnixConnection =
                             DeclaredLength = declaredLength
                         }
 
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
@@ -2539,7 +2539,7 @@ module UnixConnection =
 
                 Ok (
                     AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                    UnixWait.parkWaiting thread parkedAgain system
+                    Parking.parkWaiting thread parkedAgain system
                 )
         | phase ->
             failwith

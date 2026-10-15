@@ -562,7 +562,7 @@ module TestBlockingAccept =
                         | Some _ -> ForgedPark.woken park.Waiter system
                         | None -> system
 
-                    Lone.UnixWait.park
+                    Lone.Parking.park
                         park.Waiter
                         (ParkedSyscall.Accept
                             {
@@ -1830,7 +1830,7 @@ module TestBlockingAccept =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
         let parkedOn (listener : OpenFileDescriptionId) (fd : int) : UnixSystem<int, string> =
-            Lone.UnixWait.park
+            Lone.Parking.park
                 1
                 (ParkedSyscall.Accept
                     {

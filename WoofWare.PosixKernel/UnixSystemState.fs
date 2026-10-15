@@ -351,7 +351,7 @@ module internal UnixParkState =
     ///
     /// Refuses to replace a park of one syscall with a park of another, as
     /// `UnixThreadTable.withPark` does. Writes `park` as it stands, ordinal and
-    /// all: `UnixWait.park` is what mints a fresh ordinal.
+    /// all: `Parking.park` is what mints a fresh ordinal.
     let setPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (park : ThreadPark)

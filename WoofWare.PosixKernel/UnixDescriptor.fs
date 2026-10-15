@@ -1528,7 +1528,7 @@ module UnixDescriptor =
             // The condition is derived from the record rather than built beside
             // it, so a thread cannot be parked on one lock while a client polls
             // for another.
-            Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked advanced)
+            Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked advanced)
         | None -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), advanced)
 
     /// `flock`, with a refusal answered as the `Error` rather than raised.
@@ -1642,10 +1642,7 @@ module UnixDescriptor =
                             Mode = mode
                         }
 
-                Ok (
-                    SyscallOutcome.WouldBlock (WakeCondition.ofPark parked),
-                    UnixWait.parkWaiting thread parked advanced
-                )
+                Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked advanced)
         | None ->
             // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, section
             // D): a lock that can be granted beats a pending signal. Darwin

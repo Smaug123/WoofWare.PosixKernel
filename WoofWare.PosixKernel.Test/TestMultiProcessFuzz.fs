@@ -2596,7 +2596,7 @@ module TestMultiProcessFuzz =
                     woken
                     |> Seq.collect (fun (pid, thread) ->
                         match UnixThreadTable.parkOf thread (Proc.threads pid machine) with
-                        | Some park -> UnixWait.exclusiveQueuesOfPark machine.Machine park.Syscall
+                        | Some park -> Parking.exclusiveQueuesOfPark machine.Machine park.Syscall
                         | None -> []
                     )
                     |> Set.ofSeq
@@ -2611,7 +2611,7 @@ module TestMultiProcessFuzz =
                            | Some fired ->
                                fired
                                |> Set.exists (fun primitive ->
-                                   match UnixWait.exclusiveQueueOf machine.Machine primitive with
+                                   match Parking.exclusiveQueueOf machine.Machine primitive with
                                    | Some queue -> Set.contains queue held
                                    | None -> false
                                )
