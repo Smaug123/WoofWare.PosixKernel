@@ -213,9 +213,11 @@ module TestSignalReceiver =
             let system = systemWith flavour SignalDisposition.Default (Set.ofList [ 0 ; 2 ])
 
             match UnixSignal.tryKill (Callers.leader system) (self system) (usr1 flavour) system with
-            | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
-                ended.Termination
+            | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+                EndedProcess.termination ended
                 |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
+
+                EndedMachine.assertAsExit (Callers.leader system) system after
             | other -> failwith $"%O{flavour}: %A{other}"
 
     [<Test>]
@@ -258,7 +260,11 @@ module TestSignalReceiver =
 
                 for thread in 0..3 do
                     match UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
-                    | Error refusal -> refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
+                    | Error refusal ->
+                        refusal
+                        |> shouldEqual (
+                            ReturnToUserRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
+                        )
                     | Ok answer -> failwith $"%O{flavour}: thread %d{thread} was answered %A{answer}"
             | other -> failwith $"%O{flavour}: %A{other}"
 
@@ -335,16 +341,21 @@ module TestSignalReceiver =
 
                 for thread in 0..3 do
                     match flavour, thread, UnixSignal.tryOnReturnToUser (Callers.thread thread after) after with
-                    | SimulatedUnixFlavour.Linux, 2, Ok (ProcessFate.ProcessEnded ended) ->
+                    | SimulatedUnixFlavour.Linux, 2, Ok (ProcessFate.ProcessEnded (ended, ended')) ->
                         EndedProcess.termination ended
                         |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
+
+                        EndedMachine.assertAsExit (Callers.thread 2 after) after ended'
                     | SimulatedUnixFlavour.Linux, _, Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, resumed)) when
                         thread <> 2
                         ->
                         SignalState.pending (Lone.proc resumed).Signals
                         |> shouldEqual (SignalState.pending (Lone.proc after).Signals)
                     | SimulatedUnixFlavour.Darwin, _, Error refusal ->
-                        refusal |> shouldEqual (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
+                        refusal
+                        |> shouldEqual (
+                            ReturnToUserRefusal.Receiver (SignalReceiverRefusal.LeaderBlocks Signal.SIGUSR1)
+                        )
                     | _, _, other -> failwith $"%O{flavour}: thread %d{thread} was answered %A{other}"
             | other -> failwith $"%O{flavour}: %A{other}"
 
@@ -499,12 +510,12 @@ module TestSignalReceiver =
                 Ok (UnblockEnd.Handled thread)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped signal, _)) ->
                 Ok (UnblockEnd.Stopped signal)
-            | Ok (ProcessFate.ProcessEnded ended) ->
+            | Ok (ProcessFate.ProcessEnded (ended, _)) ->
                 match EndedProcess.termination ended with
                 | ProcessTermination.Signaled (signal, _) -> Ok (UnblockEnd.Killed signal)
                 | other -> failwith $"%s{row.Line}: the process ended by %A{other}"
             | Ok other -> failwith $"%s{row.Line}: thread %d{thread} answered %A{other}"
-            | Error refusal -> Error (SignalReceiverRefusal.describe refusal)
+            | Error refusal -> Error (ReturnToUserRefusal.describe refusal)
 
         match row.Who with
         | "none" ->

@@ -829,22 +829,19 @@ module TestMultiProcessFuzz =
         | Answered of UnixSystem<int, string>
         /// The calling thread sleeps, in this.
         | Sleeps of UnixSystem<int, string>
-        /// The call ended the process.
-        | Ended of EndedProcess<int, string>
+        /// The call ended the process, and left the system without it.
+        | Ended of EndedProcess * UnixSystem<int, string>
         /// The library refused it, which changes nothing.
         | Refused
 
-    let private ofWrite
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        : Made
-        =
+    let private ofWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) : Made =
         match outcome with
         | Error _ -> Made.Refused
         | Ok (WriteStep.Returns (_, view))
         | Ok (WriteStep.ReturnsRaising (_, _, view))
         | Ok (WriteStep.Restarts view) -> Made.Answered view
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
-        | Ok (WriteStep.ProcessEnded ended) -> Made.Ended ended
+        | Ok (WriteStep.ProcessEnded (ended, after)) -> Made.Ended (ended, after)
 
     /// `bytes`, for a transcript: how many, and a checksum of them.
     let private bytesText (bytes : ImmutableArray<byte>) : string =
@@ -861,11 +858,11 @@ module TestMultiProcessFuzz =
     let private fateText<'Outcome> (fate : ProcessFate<'Outcome, int, string>) : string =
         match fate with
         | ProcessFate.Continues (outcome, _) -> $"continues %A{outcome}"
-        | ProcessFate.ProcessEnded ended -> $"ends %A{EndedProcess.termination ended}"
+        | ProcessFate.ProcessEnded (ended, _) -> $"ends %A{EndedProcess.termination ended}"
 
     /// What a write answered, for a transcript.
     let private writeText
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         : string
         =
         match outcome with
@@ -874,7 +871,7 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.ReturnsRaising (answer, signal, _)) -> $"returns %A{answer} raising %A{signal}"
         | Ok (WriteStep.WouldBlock (condition, _)) -> $"sleeps %A{condition}"
         | Ok (WriteStep.Restarts _) -> "restarts"
-        | Ok (WriteStep.ProcessEnded ended) -> $"ends %A{EndedProcess.termination ended}"
+        | Ok (WriteStep.ProcessEnded (ended, _)) -> $"ends %A{EndedProcess.termination ended}"
 
     /// `result`, having written to `log` what it answered, without the system.
     let private logged<'a, 'r>
@@ -903,8 +900,8 @@ module TestMultiProcessFuzz =
     /// `logged`, for a write.
     let private loggedWrite
         (log : string -> unit)
-        (result : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        (result : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         log $"  %s{writeText result}"
         result
@@ -1072,11 +1069,11 @@ module TestMultiProcessFuzz =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) ->
                 due |> shouldEqual Set.empty
                 Made.Answered after
-            | Ok (ProcessFate.ProcessEnded ended) ->
+            | Ok (ProcessFate.ProcessEnded (ended, kernel)) ->
                 match EndedProcess.termination ended with
                 | ProcessTermination.Signaled (signal, false) when Set.contains signal due ->
                     cover FuzzLabel.SignalDeath
-                    Made.Ended ended
+                    Made.Ended (ended, kernel)
                 | termination ->
                     failwith $"thread %d{thread}'s return ended the process with %O{termination}, with %O{due} due"
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, _) as other)
@@ -1543,9 +1540,14 @@ module TestMultiProcessFuzz =
             UnixNamespace.tryUnlink (Caller.make pid thread) (PathArg.ofText files.[path % files.Length]) view
             |> answered
         | Op.Exit status ->
-            let ended = UnixThreadLifecycle.exitGroup (Caller.make pid thread) status view
-            log $"  ends %A{EndedProcess.termination ended}"
-            Made.Ended ended
+            match UnixThreadLifecycle.tryExitGroup (Caller.make pid thread) status view with
+            | Ok (ended, after) ->
+                log $"  ends %A{EndedProcess.termination ended}"
+                Made.Ended (ended, after)
+            | Error refusal ->
+                log $"  end refused %A{refusal}"
+                cover FuzzLabel.ExitRefusal
+                Made.Refused
 
     /// The call `thread` of the view `view` is asleep in, finished.
     let private finish
@@ -1737,24 +1739,18 @@ module TestMultiProcessFuzz =
                 Machine = Machines.unfocus view world.Machine
                 Asleep = Set.add (pid, thread) world.Asleep
             }
-        | Made.Ended ended ->
-            match Machines.tryEndProcess ended world.Machine with
-            | Error refusal ->
-                log $"  end refused %A{refusal}"
-                cover FuzzLabel.ExitRefusal
-                world
-            | Ok (termination, machine) ->
-                log $"  ended %A{termination}"
-                cover FuzzLabel.Exit
-                othersUnmoved pid world.Machine machine
-                UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
+        | Made.Ended (ended, machine) ->
+            log $"  ended %A{EndedProcess.termination ended}"
+            cover FuzzLabel.Exit
+            othersUnmoved pid world.Machine machine
+            UnixSystem.processIds machine |> Set.contains pid |> shouldEqual false
 
-                {
-                    Machine = machine
-                    Live = world.Live |> List.filter ((<>) pid)
-                    Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
-                    Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
-                }
+            {
+                Machine = machine
+                Live = world.Live |> List.filter ((<>) pid)
+                Asleep = world.Asleep |> Set.filter (fun (owner, _) -> owner <> pid)
+                Woken = world.Woken |> List.filter (fun (owner, _) -> owner <> pid)
+            }
 
     let private step (cover : FuzzLabel -> unit) (log : string -> unit) (world : World) (next : Step) : World =
         match next with
@@ -2610,12 +2606,6 @@ module TestMultiProcessFuzz =
         /// The process cannot take the ending: why.
         | Inapplicable of reason : string
 
-    /// How the process the call that answered `ended` was made in ends, in
-    /// the system that call ended it in.
-    let private endedBy (ended : EndedProcess<int, string>) : Ended =
-        match UnixSystem.tryEndProcess ended with
-        | Ok (termination, kernel) -> Ended.Ended (termination, kernel)
-        | Error refusal -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
 
     /// `fate`, a call's answer, as an `Ended`; or, if the process carries on
     /// and `next` says nothing of the outcome, `onwards` of the system it
@@ -2627,7 +2617,7 @@ module TestMultiProcessFuzz =
         : Ended
         =
         match fate with
-        | ProcessFate.ProcessEnded ended -> endedBy ended
+        | ProcessFate.ProcessEnded (ended, kernel) -> Ended.Ended (EndedProcess.termination ended, kernel)
         | ProcessFate.Continues (outcome, kernel) ->
             match next outcome kernel with
             | Some ended -> ended
@@ -2664,6 +2654,7 @@ module TestMultiProcessFuzz =
         // unless it ends the process or takes something else.
         let returning (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) : Ended =
             match UnixSignal.tryOnReturnToUser caller kernel with
+            | Error (ReturnToUserRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
             | Error refusal -> Ended.Refused $"onReturnToUser: %A{refusal}"
             | Ok fate ->
                 fateThen
@@ -2691,14 +2682,19 @@ module TestMultiProcessFuzz =
             | Ok (_, kernel) -> returning onwards kernel
 
         match ending with
-        | Ending.ExitGroup -> endedBy (UnixThreadLifecycle.exitGroup caller 7 machine)
+        | Ending.ExitGroup ->
+            match UnixThreadLifecycle.tryExitGroup caller 7 machine with
+            | Ok (ended, kernel) -> Ended.Ended (EndedProcess.termination ended, kernel)
+            | Error refusal -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
         | Ending.Kill signal ->
             match UnixSignal.tryKill caller (ProcessId.toInt32 pid) (signo signal) machine with
+            | Error (KillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
             | Error refusal -> Ended.Refused $"kill: %A{refusal}"
             | Ok (Error errno) -> Ended.Refused $"kill: %O{errno}"
             | Ok (Ok fate) -> fateOnly "kill" fate
         | Ending.Raise ->
             match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) machine with
+            | Error (ThreadKillRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
             | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"
             | Ok (Error errno) -> Ended.Refused $"pthread_kill: %O{errno}"
             | Ok (Ok fate) -> fateOnly "pthread_kill" fate
@@ -2708,6 +2704,8 @@ module TestMultiProcessFuzz =
                 true
                 (fun kernel ->
                     match UnixSignal.tryPthreadKill caller thread (signo Signal.SIGTERM) kernel with
+                    | Error (ThreadKillRefusal.ProcessEnd refusal) ->
+                        Ended.EndRefused (ProcessEndRefusal.describe refusal)
                     | Error refusal -> Ended.Refused $"pthread_kill: %A{refusal}"
                     | Ok (Error errno) -> Ended.Refused $"pthread_kill: %O{errno}"
                     | Ok (Ok fate) ->
@@ -2729,6 +2727,7 @@ module TestMultiProcessFuzz =
 
             let exit (thread : int) (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) =
                 match UnixThreadLifecycle.tryExitThread (Caller.make pid thread) 0 kernel with
+                | Error (ThreadExitRefusal.ProcessEnd refusal) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
                 | Error refusal -> Ended.Refused $"exitThread %d{thread}: %A{refusal}"
                 | Ok fate -> fateThen fate (fun () _ -> None) onwards
 
@@ -2745,10 +2744,13 @@ module TestMultiProcessFuzz =
             match UnixDescriptor.tryClose caller readFd kernel with
             | Ok (SyscallAnswer.Completed 0L, kernel) ->
                 match UnixReadWrite.tryWrite caller writeFd UserBuffer.Mapped 1UL kernel with
+                | Error (WriteRefusal.ProcessEnd (_, refusal)) -> Ended.EndRefused (ProcessEndRefusal.describe refusal)
                 | Error refusal -> Ended.Refused $"write: %A{refusal}"
                 | Ok (CallProgress.Answered fate) -> fateOnly "write" fate
                 | Ok (CallProgress.NeedsCopyIn paused) ->
                     match UnixReadWrite.tryWriteWithBytes (ImmutableArray.Create 0uy) paused with
+                    | Error (WriteRefusal.ProcessEnd (_, refusal)) ->
+                        Ended.EndRefused (ProcessEndRefusal.describe refusal)
                     | Error refusal -> Ended.Refused $"write: %A{refusal}"
                     | Ok fate -> fateOnly "write" fate
             | other -> Ended.Refused $"close: %A{other}"
@@ -2845,6 +2847,8 @@ module TestMultiProcessFuzz =
         | None -> log "  no steps"
         | Some (world : World) ->
             for pid in world.Live do
+                let mutable exited = None
+
                 for ending in endings do
                     log $"  %d{ProcessId.toInt32 pid} %A{ending}"
 
@@ -2852,6 +2856,16 @@ module TestMultiProcessFuzz =
                     | Ended.Ended (termination, kernel) ->
                         log $"    ends %A{termination}"
                         observed log kernel
+
+                        // An ending that changes nothing outside the process before it
+                        // ends it leaves the very system `exit_group` leaves.
+                        match ending, exited with
+                        | Ending.ExitGroup, _ -> exited <- Some kernel
+                        | Ending.BrokenPipe, _ -> ()
+                        | _, Some exited ->
+                            kernel
+                            |> Expect.equal (fun () -> $"%A{ending} of %O{pid}, against exit_group") exited
+                        | _, None -> ()
                     | Ended.EndRefused reason -> log $"    end refused: %s{reason}"
                     | Ended.Carried (answer, kernel) ->
                         log $"    carries on: %s{answer}"
@@ -2894,7 +2908,9 @@ module TestMultiProcessFuzz =
     /// The oracle for how a process ends: in the world each case of the fixed
     /// sample leaves, each process still on the machine ends by every `Ending`,
     /// and what each came to, and what the system it left shows, is exactly
-    /// what the reference records. A difference names the cases whose
+    /// what the reference records. Besides, each ending that changes nothing
+    /// outside the process before it ends it, every one but the broken pipe's,
+    /// leaves the very system `exit_group` leaves. A difference names the cases whose
     /// transcripts moved; set `POSIXKERNEL_ORACLE_DUMP` to a directory and run
     /// `Update process-end oracle` on the commit that recorded the reference
     /// and on this one to compare them line by line.

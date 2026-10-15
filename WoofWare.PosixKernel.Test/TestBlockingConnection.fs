@@ -546,7 +546,7 @@ module TestBlockingConnection =
 
     /// What a write came to, and whether it raised `SIGPIPE`.
     let private fromWriteRaising
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         =
         match outcome with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) -> Seen.Wrote n, false, Some after
@@ -563,17 +563,15 @@ module TestBlockingConnection =
         | Error (WriteRefusal.ConnectionBecameNonBlocking _) -> Seen.RefusedNonBlocking, false, None
         | Error refusal -> failwith $"write refused: %s{WriteRefusal.describe refusal}"
 
-    let private fromWrite
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        =
+    let private fromWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) =
         let seen, _, after = fromWriteRaising outcome
         seen, after
 
     /// `send`'s outcome as a write's: every refusal a `send` gives here is
     /// one a `write` gives too.
     let private ofSend
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, SendRefusal>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, SendRefusal>)
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         match outcome with
         | Ok outcome -> Ok outcome
@@ -596,7 +594,7 @@ module TestBlockingConnection =
         (caller : Caller<int>)
         (payload : byte list)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         let bytesAt (offset : int) (count : int) =
             payload |> List.skip offset |> List.take count |> ImmutableArray.CreateRange
@@ -2121,7 +2119,7 @@ module TestBlockingConnection =
         (thread : int)
         (bytes : byte list)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         libraryFinishWrite thread bytes system
 
@@ -3574,7 +3572,7 @@ module TestBlockingConnection =
         (bytes : byte list)
         (flags : MessageFlag list)
         (system : UnixSystem<int, string>)
-        : WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>
+        : WriteStep<WriteAnswer, UnixSystem<int, string>, int>
         =
         match
             WriteOutcomes.admitThenSend

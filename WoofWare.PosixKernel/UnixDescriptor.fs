@@ -2405,17 +2405,17 @@ module UnixDescriptor =
                     else
 
                     match
-                        ProcessSignal.generate
+                        ProcessSignal.effect
                             {
                                 Signal = Signal.SIGPIPE
                                 Target = ValueNone
                             }
                             signalled
                     with
-                    | Ok (ViewFate.Continues (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
-                    | Ok (ViewFate.ProcessEnded _) ->
+                    | Ok (SignalEffect.Applied (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
+                    | Ok (SignalEffect.Kills _) ->
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess))
-                    | Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
+                    | Ok (SignalEffect.Applied (KillOutcome.ProcessStopped signal, _)) ->
                         failwith
                             $"UnixDescriptor.close: generating %O{signal} for a pipe write the close ended stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
                     | Error refusal ->

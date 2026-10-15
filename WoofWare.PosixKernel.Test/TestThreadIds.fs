@@ -825,19 +825,16 @@ module TestThreadIds =
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
                 let thread = live.[index % live.Length]
-                let ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
+                let _, ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
 
-                // Every thread's ID is freed with it, the process leaves the
-                // machine, and nothing else on the machine moves.
-                ThreadIdAllocator.live ended.Machine.ThreadIds |> shouldEqual Set.empty
-                ProcessIdTable.live ended.Machine.ProcessIds |> shouldEqual Set.empty
+                // Every thread's ID is freed with it, and the process leaves the
+                // machine, its descriptors closed; the counter the IDs come from
+                // is where it was.
+                EndedMachine.assertNoneLeft ended
+                ended.Machine.ThreadIds.Counter |> shouldEqual system.Machine.ThreadIds.Counter
 
-                { ended.Machine with
-                    ThreadIds = system.Machine.ThreadIds
-                    ProcessIds = system.Machine.ProcessIds
-                    CurrentDirectories = system.Machine.CurrentDirectories
-                }
-                |> shouldEqual system.Machine
+                ended.Machine.ProcessIds.Counter
+                |> shouldEqual system.Machine.ProcessIds.Counter
 
                 cover ThreadIdLabel.Groups
                 system, model, nextName, minted, last

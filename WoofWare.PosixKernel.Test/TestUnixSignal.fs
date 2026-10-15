@@ -66,18 +66,12 @@ module TestUnixSignal =
         let system = linux |> HandlerFrames.enterIn "h" 0 (Set.singleton Signal.SIGUSR1)
 
         match UnixSignal.tryKill (Callers.leader system) self 9 system with
-        | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
-            ended.Termination
+        | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+            EndedProcess.termination ended
             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGKILL, false))
 
-            EndedMachine.assertThreadsGone system ended
-            // The process's end takes its threads' per-thread entries with them.
-            SignalState.threadsWithFrames ended.FinalProcess.Signals |> shouldBeEmpty
-
-            { ended.FinalProcess with
-                Signals = (Lone.proc system).Signals
-            }
-            |> shouldEqual (Lone.proc system)
+            EndedProcess.processId ended |> shouldEqual (Lone.pid system)
+            EndedMachine.assertAsExit (Callers.leader system) system after
         | other -> failwith $"unexpected answer: %O{other}"
 
     [<Test>]
@@ -89,7 +83,7 @@ module TestUnixSignal =
 
                 let death (signo : int) : ProcessTermination =
                     match UnixSignal.tryKill (Callers.leader system) self signo system with
-                    | Ok (Ok (ProcessFate.ProcessEnded ended)) -> ended.Termination
+                    | Ok (Ok (ProcessFate.ProcessEnded (ended, _))) -> EndedProcess.termination ended
                     | other -> failwith $"kill(self, %d{signo}) under %O{flavour}: %O{other}"
 
                 death 3
@@ -244,12 +238,11 @@ module TestUnixSignal =
                     stoppedBy |> shouldEqual signal
                     (Lone.proc after).Signals |> shouldEqual signals
                     survivor after
-                | ProcessFate.ProcessEnded ended, SignalGeneration.ProcessTerminated (signal, coreDumped) ->
-                    ended.Termination
+                | ProcessFate.ProcessEnded (ended, after), SignalGeneration.ProcessTerminated (signal, coreDumped) ->
+                    EndedProcess.termination ended
                     |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                    EndedMachine.assertThreadsGone system ended
-                    ended.FinalProcess |> shouldEqual (Lone.proc system)
+                    EndedMachine.assertAsExit (Callers.leader system) system after
                 | _ ->
                     failwith
                         $"kill(self, %d{signo}) under %O{flavour} answered %O{outcome}, but generating it is %O{expected}"
@@ -320,20 +313,16 @@ module TestUnixSignal =
         | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
         | other -> failwith $"kill(self, %O{signal}) under %O{flavour}: %O{other}"
 
-    /// The process `before` was, ended by `onReturnToUser` of its only thread,
-    /// and then ended on its machine: the termination each reports.
-    let private endedOnReturn (before : UnixSystem<int, string>) : ProcessTermination * ProcessTermination =
+    /// The process `before` was, ended by `onReturnToUser` of its only thread:
+    /// how it ended. The system it leaves holds no process, and is what
+    /// `exit_group` leaves of `before`.
+    let private endedOnReturn (before : UnixSystem<int, string>) : ProcessTermination =
         match UnixSignal.tryOnReturnToUser (Callers.thread 0 before) before with
-        | Ok (ProcessFate.ProcessEnded ended) ->
-            let onMachine, machine =
-                match Machines.tryEndLoneProcess ended with
-                | Ok ended -> ended
-                | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
-
+        | Ok (ProcessFate.ProcessEnded (ended, after)) ->
             EndedProcess.processId ended |> shouldEqual (Lone.pid before)
-            Machines.processIds machine |> shouldBeEmpty
-            Machines.checkInvariants machine |> shouldEqual []
-            EndedProcess.termination ended, onMachine
+            EndedMachine.assertNoneLeft after
+            EndedMachine.assertAsExit (Callers.thread 0 before) before after
+            EndedProcess.termination ended
         | other -> failwith $"onReturnToUser answered %O{other}"
 
     [<Test>]
@@ -352,7 +341,7 @@ module TestUnixSignal =
                         | other -> failwith $"sigsuspend under %O{flavour}: %O{other}"
 
                     let expected = ProcessTermination.Signaled (signal, coreDumped)
-                    endedOnReturn suspended |> shouldEqual (expected, expected)
+                    endedOnReturn suspended |> shouldEqual expected
 
     [<Test>]
     let ``a pending default that terminates, which pthread_sigmask unblocks, ends the process as the thread returns``
@@ -378,7 +367,7 @@ module TestUnixSignal =
                         | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
                     let expected = ProcessTermination.Signaled (signal, coreDumped)
-                    endedOnReturn unblocked |> shouldEqual (expected, expected)
+                    endedOnReturn unblocked |> shouldEqual expected
 
     /// The signals the property below sends, between them at every default
     /// action: SIGTERM and SIGHUP terminate, SIGQUIT terminates with a core
@@ -578,7 +567,7 @@ module TestUnixSignal =
                 )
 
             match UnixSignal.tryOnReturnToUser (Callers.thread case.Returning system) system, decided with
-            | Error refusal, Error expected -> refusal |> shouldEqual expected
+            | Error refusal, Error expected -> refusal |> shouldEqual (ReturnToUserRefusal.Receiver expected)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)), Ok (None, signals) ->
                 after |> shouldEqual (withSignals signals)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)),
@@ -594,8 +583,8 @@ module TestUnixSignal =
               Ok (Some (SignalDelivery.DefaultContinue expected), signals) ->
                 signal |> shouldEqual expected
                 after |> shouldEqual (withSignals signals)
-            | Ok (ProcessFate.ProcessEnded death),
-              Ok (Some (SignalDelivery.DefaultTerminate (signal, coreDumped)), signals) ->
+            | Ok (ProcessFate.ProcessEnded (death, after)),
+              Ok (Some (SignalDelivery.DefaultTerminate (signal, coreDumped)), _) ->
                 cover ReturnLabel.Ended
 
                 if coreDumped then
@@ -608,27 +597,8 @@ module TestUnixSignal =
                 EndedProcess.termination death
                 |> shouldEqual (ProcessTermination.Signaled (signal, coreDumped))
 
-                EndedMachine.assertThreadsGone system death
-                SignalState.threadsWithFrames death.FinalProcess.Signals |> shouldBeEmpty
-
-                // The process as it stood once it had taken the signal, less
-                // what it held for its threads.
-                let final = withSignals signals
-
-                { death.FinalProcess with
-                    Signals = (Lone.proc final).Signals
-                }
-                |> shouldEqual (Lone.proc final)
-
-                SignalState.pending death.FinalProcess.Signals
-                |> shouldEqual (SignalState.pending signals |> List.filter (fun entry -> entry.Target.IsNone))
-
-                match Machines.tryEndLoneProcess death with
-                | Ok (termination, machine) ->
-                    termination |> shouldEqual (EndedProcess.termination death)
-                    Machines.processIds machine |> shouldBeEmpty
-                    Machines.checkInvariants machine |> shouldEqual []
-                | Error refusal -> failwith (ProcessEndRefusal.describe refusal)
+                EndedMachine.assertNoneLeft after
+                EndedMachine.assertAsExit (Callers.thread case.Returning system) system after
             | actual, expected ->
                 failwith $"onReturnToUser answered %A{actual}, but the signal state decided %A{expected}"
 

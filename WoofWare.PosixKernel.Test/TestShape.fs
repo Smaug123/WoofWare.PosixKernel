@@ -15,13 +15,17 @@ module TestShape =
 
     let private config : Config = Config.QuickThrowOnFailure.WithMaxTest 500
 
-    /// What `put` makes of the view `view`: never a value an answer could
-    /// already hold.
+    /// What `unfocus.Back` makes of the view `view`: never a value an answer
+    /// could already hold.
     let private kernel (view : int) : string = $"kernel %d{view}"
 
-    /// What `Shape.map` makes of `answer` through `shape`, with a `put` that
-    /// marks each view it puts back, beside the views `put` was given, in the
-    /// order it was given them.
+    /// What `unfocus.Without` makes of the view `view`: never a value an
+    /// answer could already hold, nor one `kernel` makes.
+    let private without (view : int) : string = $"without %d{view}"
+
+    /// What `Shape.map` makes of `answer` through `shape`, with an `unfocus`
+    /// whose two halves mark each view they are given differently, beside the
+    /// views they were given, in the order they were given them.
     let private mapMarked<'InView, 'InKernel>
         (shape : Shape<int, string, 'InView, 'InKernel>)
         (answer : 'InView)
@@ -29,11 +33,19 @@ module TestShape =
         =
         let given = ResizeArray<int> ()
 
-        let put (view : int) : string =
-            given.Add view
-            kernel view
+        let unfocus : Unfocus<int, string> =
+            {
+                Back =
+                    fun view ->
+                        given.Add view
+                        kernel view
+                Without =
+                    fun view ->
+                        given.Add view
+                        without view
+            }
 
-        let mapped = Shape.map put shape answer
+        let mapped = Shape.map unfocus shape answer
         mapped, List.ofSeq given
 
     /// For every generated answer, `Shape.map` through `shape` makes what
@@ -117,35 +129,57 @@ module TestShape =
     let private same<'T when 'T : not struct> (expected : 'T) (actual : 'T) : bool =
         obj.ReferenceEquals (expected, actual)
 
-    /// What `Shape.map` makes of `answer` through `shape`, with a `put` that
-    /// moves the clock on, beside each system `put` was given and what it made
-    /// of that, in the order it was given them.
+    /// What `Shape.map` makes of `answer` through `shape`, with an `unfocus`
+    /// whose halves move the clock on, `Back` by one nanosecond and `Without`
+    /// by two, beside each system either was given, which half it was given
+    /// to, and what that made of it, in the order they were given them.
     let private mapSystems<'InView, 'InKernel>
         (shape : Shape<ProcessView<int, string>, UnixSystem<int, string>, 'InView, 'InKernel>)
         (answer : 'InView)
-        : 'InKernel * (ProcessView<int, string> * UnixSystem<int, string>) list
+        : 'InKernel * (string * ProcessView<int, string> * UnixSystem<int, string>) list
         =
-        let given = ResizeArray<ProcessView<int, string> * UnixSystem<int, string>> ()
+        let given =
+            ResizeArray<string * ProcessView<int, string> * UnixSystem<int, string>> ()
 
-        let put (view : ProcessView<int, string>) : UnixSystem<int, string> =
-            let kernel = ProcessView.unfocus view |> UnixSystem.advanceClock 1L
-            given.Add (view, kernel)
-            kernel
+        let unfocus : Unfocus<ProcessView<int, string>, UnixSystem<int, string>> =
+            {
+                Back =
+                    fun view ->
+                        let kernel = ProcessView.unfocus view |> UnixSystem.advanceClock 1L
+                        given.Add ("back", view, kernel)
+                        kernel
+                Without =
+                    fun view ->
+                        let kernel = ProcessView.unfocusWithout view |> UnixSystem.advanceClock 2L
+                        given.Add ("without", view, kernel)
+                        kernel
+            }
 
-        let mapped = Shape.map put shape answer
+        let mapped = Shape.map unfocus shape answer
         mapped, List.ofSeq given
 
-    /// Whether `put` was given exactly `view`, once, and `kernel` is what it
-    /// made of it.
-    let private putOnce
+    /// Whether `half` alone was given anything, and exactly `view`, once, and
+    /// `kernel` is what it made of it.
+    let private givenOnce
+        (half : string)
         (view : ProcessView<int, string>)
         (kernel : UnixSystem<int, string>)
-        (given : (ProcessView<int, string> * UnixSystem<int, string>) list)
+        (given : (string * ProcessView<int, string> * UnixSystem<int, string>) list)
         : bool
         =
         match given with
-        | [ given, made ] -> same view given && same made kernel
+        | [ givenTo, given, made ] -> givenTo = half && same view given && same made kernel
         | _ -> false
+
+    /// Whether `unfocus.Back` alone was given anything, and exactly `view`,
+    /// once, and `kernel` is what it made of it.
+    let private putOnce
+        (view : ProcessView<int, string>)
+        (kernel : UnixSystem<int, string>)
+        (given : (string * ProcessView<int, string> * UnixSystem<int, string>) list)
+        : bool
+        =
+        givenOnce "back" view kernel given
 
     /// `Shape.fate` puts back the system a process carries on as, and leaves
     /// the outcome beside it.
@@ -160,21 +194,51 @@ module TestShape =
             putOnce view kernel given |> shouldEqual true
         | ProcessFate.ProcessEnded _, _ -> failwith "a process that continued came back ended"
 
-    /// `Shape.fate` and `Shape.ended` leave a process that ended as it is.
+    /// `Shape.fate` and `Shape.ended` make the kernel without a process that
+    /// ended of the view it ended in, through `unfocus.Without` alone, once,
+    /// and leave how it ended beside it.
     [<Test>]
-    let ``fate and ended leave an ended process`` () : unit =
-        let ended =
-            UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) (system ())
+    let ``fate and ended make the kernel without an ended process`` () : unit =
+        let ended, dead =
+            match
+                UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) (system ())
+            with
+            | Ok ended -> ended
+            | Error refusal -> failwith $"ending the process: %s{ProcessEndRefusal.describe refusal}"
 
-        match mapSystems Shape.fate (ViewFate.ProcessEnded ended : ViewFate<obj, _, _>) with
-        | ProcessFate.ProcessEnded ended', given ->
+        match mapSystems Shape.fate (ViewFate.ProcessEnded (ended, dead) : ViewFate<obj, _>) with
+        | ProcessFate.ProcessEnded (ended', kernel), given ->
             same ended ended' |> shouldEqual true
-            given |> shouldBeEmpty
+            givenOnce "without" dead kernel given |> shouldEqual true
         | ProcessFate.Continues _, _ -> failwith "an ended process came back continuing"
 
-        let ended', given = mapSystems Shape.ended ended
+        let (ended', kernel), given = mapSystems Shape.ended (ended, dead)
         same ended ended' |> shouldEqual true
-        given |> shouldBeEmpty
+        givenOnce "without" dead kernel given |> shouldEqual true
+
+        match mapSystems (Shape.result Shape.ended) (Ok (ended, dead) : Result<_, obj>) with
+        | Ok (ended', kernel), given ->
+            same ended ended' |> shouldEqual true
+            givenOnce "without" dead kernel given |> shouldEqual true
+        | Error _, _ -> failwith "an ended process came back an error"
+
+    /// `Shape.ended` with views that are `int`s: what is left of each is
+    /// `unfocus.Without`'s, never `unfocus.Back`'s, and how the process ended
+    /// is left as it is.
+    [<Test>]
+    let ``ended makes what is left of the view it is given without the process`` () : unit =
+        let ended : EndedProcess =
+            {
+                Termination = ProcessTermination.Signaled (Signal.SIGKILL, false)
+                ProcessId = ProcessId.parseOrFail "TestShape" 7
+            }
+
+        let property (view : int) : unit =
+            let (ended', made), given = mapMarked Shape.ended (ended, view)
+            same ended ended' |> shouldEqual true
+            (made, given) |> shouldEqual (without view, [ view ])
+
+        Check.One (config, Prop.forAll (Arb.fromGen (ArbMap.defaults |> ArbMap.generate<int>)) property)
 
     /// `kill`'s shape and `write`'s put back the system a process carries on
     /// as, at the depth it sits, and nothing in an errno or a paused call.
@@ -186,7 +250,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.result Shape.fate))
-                (Ok (Ok (ViewFate.Continues (outcome, view))) : Result<Result<ViewFate<obj, _, _>, UnixError>, obj>)
+                (Ok (Ok (ViewFate.Continues (outcome, view))) : Result<Result<ViewFate<obj, _>, UnixError>, obj>)
         with
         | Ok (Ok (ProcessFate.Continues (outcome', kernel))), given ->
             same outcome outcome' |> shouldEqual true
@@ -196,7 +260,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.result Shape.fate))
-                (Ok (Error UnixError.ESRCH) : Result<Result<ViewFate<obj, _, _>, UnixError>, obj>)
+                (Ok (Error UnixError.ESRCH) : Result<Result<ViewFate<obj, _>, UnixError>, obj>)
         with
         | Ok (Error UnixError.ESRCH), given -> given |> shouldBeEmpty
         | other, _ -> failwith $"kill's shape answered %A{other}"
@@ -205,7 +269,7 @@ module TestShape =
             mapSystems
                 (Shape.result (Shape.progress Shape.fate))
                 (Ok (CallProgress.Answered (ViewFate.Continues (outcome, view)))
-                : Result<CallProgress<obj, ViewFate<obj, _, _>>, obj>)
+                : Result<CallProgress<obj, ViewFate<obj, _>>, obj>)
         with
         | Ok (CallProgress.Answered (ProcessFate.Continues (outcome', kernel))), given ->
             same outcome outcome' |> shouldEqual true
@@ -217,7 +281,7 @@ module TestShape =
         match
             mapSystems
                 (Shape.result (Shape.progress Shape.fate))
-                (Ok (CallProgress.NeedsCopyIn paused) : Result<CallProgress<obj, ViewFate<obj, _, _>>, obj>)
+                (Ok (CallProgress.NeedsCopyIn paused) : Result<CallProgress<obj, ViewFate<obj, _>>, obj>)
         with
         | Ok (CallProgress.NeedsCopyIn paused'), given ->
             same paused paused' |> shouldEqual true

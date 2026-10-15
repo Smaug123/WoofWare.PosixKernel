@@ -43,6 +43,12 @@ module internal Lone =
         =
         Proc.unview view
 
+    /// `unview` of a view whose process carries on, and the system without
+    /// the process of one whose process has ended, as `Shape.map` takes them.
+    let unfocus<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        : Unfocus<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>> =
+        Proc.unfocus
+
     /// `f` in the view of the only process, and the system its view is a view
     /// of.
     let inView<'Thread, 'Handler, 'Result when 'Thread : comparison and 'Handler : equality>
@@ -541,10 +547,10 @@ module internal Lone =
 
     /// `answer`, with the view the step holds put back.
     let private unviewedStep<'Answer, 'Thread, 'Handler, 'Refusal when 'Thread : comparison and 'Handler : equality>
-        (answer : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, 'Refusal>)
-        : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, 'Refusal>
+        (answer : Result<WriteStep<'Answer, ProcessView<'Thread, 'Handler>, 'Thread>, 'Refusal>)
+        : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread>, 'Refusal>
         =
-        answer |> Result.map (WriteStep.map unview)
+        answer |> Result.map (WriteStep.map unfocus)
 
     /// `WoofWare.PosixKernel.UnixReadWrite`'s steps either side of the copy,
     /// made in the view of the only process.
@@ -556,7 +562,7 @@ module internal Lone =
             (buffer : UserBuffer)
             (count : uint64)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
             =
             WoofWare.PosixKernel.UnixReadWrite.tryAdmitWrite thread fd buffer count (view system)
             |> unviewedStep
@@ -568,7 +574,7 @@ module internal Lone =
             (count : uint64)
             (flags : int)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+            : Result<WriteStep<WriteAdmission, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
             =
             WoofWare.PosixKernel.UnixReadWrite.tryAdmitSend thread fd buffer count flags (view system)
             |> unviewedStep
@@ -576,7 +582,7 @@ module internal Lone =
         let tryAdmitFinishWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (thread : 'Thread)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteResumption, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+            : Result<WriteStep<WriteResumption, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
             =
             WoofWare.PosixKernel.UnixReadWrite.tryAdmitFinishWrite thread (view system)
             |> unviewedStep
@@ -608,7 +614,7 @@ module internal Lone =
             (into : WriteResumed)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
             =
             WoofWare.PosixKernel.UnixReadWrite.tryApplyResumedWrite thread into bytes (view system)
             |> unviewedStep
@@ -617,7 +623,7 @@ module internal Lone =
             (into : WriteInto)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
             =
             WoofWare.PosixKernel.UnixReadWrite.tryApplySend into bytes (view system)
             |> unviewedStep
@@ -629,7 +635,7 @@ module internal Lone =
             (into : WriteInto)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+            : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
             =
             let before = view system
 
@@ -646,13 +652,13 @@ module internal Lone =
             (into : WriteIntoThenSleep)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
+            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
             =
             let before = view system
 
             WoofWare.PosixKernel.UnixReadWrite.applyWriteThenSleep thread total into bytes before
             |> WoofWare.PosixKernel.UnixReadWrite.markedThrough fd before
-            |> WriteStep.map unview
+            |> WriteStep.map unfocus
 
         /// `applyWriteThenSleep`, unmarked, as a `send` makes it.
         let applyWriteThenSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -661,10 +667,10 @@ module internal Lone =
             (into : WriteIntoThenSleep)
             (bytes : System.Collections.Immutable.ImmutableArray<byte>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
+            : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
             =
             WoofWare.PosixKernel.UnixReadWrite.applyWriteThenSleep thread total into bytes (view system)
-            |> WriteStep.map unview
+            |> WriteStep.map unfocus
 
     /// `WoofWare.PosixKernel.UnixSocket`'s steps either side of the copy,
     /// made in the view of the only process.
@@ -770,18 +776,19 @@ module internal Lone =
         let generate<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (entry : PendingSignal<'Thread>)
             (system : UnixSystem<'Thread, 'Handler>)
-            : Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, SignalReceiverRefusal>
+            : Result<Result<ProcessFate<KillOutcome, 'Thread, 'Handler>, ProcessEndRefusal>, SignalReceiverRefusal>
             =
             WoofWare.PosixKernel.ProcessSignal.generate entry (view system)
-            |> Result.map (Shape.map unview Shape.fate)
+            |> Result.map (Result.map (Shape.map unfocus Shape.fate))
 
     /// `WoofWare.PosixKernel.UnixThreadLifecycle`, made in the view of the
     /// only process.
     [<RequireQualifiedAccess>]
     module UnixThreadLifecycle =
-        let endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        let tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (termination : ProcessTermination)
             (system : UnixSystem<'Thread, 'Handler>)
-            : EndedProcess<'Thread, 'Handler>
+            : Result<EndedProcess * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
             =
-            WoofWare.PosixKernel.UnixThreadLifecycle.endProcess termination (view system)
+            WoofWare.PosixKernel.UnixThreadLifecycle.tryEndProcess termination (view system)
+            |> Shape.map unfocus (Shape.result Shape.ended)

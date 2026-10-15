@@ -78,11 +78,10 @@ Besides the syscalls, a client calls these between them (the system argument is 
 | whether one sleeping thread could go on | `UnixWait.satisfied (caller : Caller)` | `Set<WakePrimitive> option` |
 | when sleeping calls time out | `UnixWait.deadlines (asleep : Set<Caller>)` | `int64 list` |
 | another process starting | `UnixSystem.launch (launch : ProcessLaunch)` | `ProcessId * UnixSystem` |
-| an ended process going | `UnixSystem.endProcess (ended : EndedProcess)` | `ProcessTermination * UnixSystem` |
 | every way the tables disagree | `UnixSystem.checkInvariants` | `UnixSystemDefect list` |
 
 `SimulatedUnixPlatform.flavour` of a platform is its `SimulatedUnixFlavour`, `SimulatedUnixFlavour.Linux` or `SimulatedUnixFlavour.Darwin`, which decides how a raw number is read.
-In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left out: `EndedProcess` is `EndedProcess<'Thread, 'Handler>`.
+In prose, as in the tables, a type's `'Thread` and `'Handler` arguments are left out: `PausedWrite` is `PausedWrite<'Thread, 'Handler>`.
 
 ## Booting a machine
 
@@ -236,7 +235,7 @@ A client replaying a record of raw system calls, such as an `strace` log, uses t
 
 A syscall answers what the kernel does: perhaps an errno (a `UnixError`), or the calling thread asleep (see "Sleeping and waking"). Either way it comes with the system after the call; a failing call can still change the system, just as a real one can.
 
-A call that can end the process answers a `ProcessFate`: `ProcessFate.Continues (outcome, system)`, with the call's own outcome and the system the process carries on as, or `ProcessFate.ProcessEnded ended`, with no system, since nothing can make another call in an ended process (see "Threads, and the end of the process").
+A call that can end the process answers a `ProcessFate`: `ProcessFate.Continues (outcome, system)`, with the call's own outcome and the system the process carries on as, or `ProcessFate.ProcessEnded (ended, system)`, with how the process ended and the system without it, since the process is gone from the system as it ends (see "Threads, and the end of the process").
 Those calls are a write or `send` that raises `SIGPIPE`, `kill` and `pthreadKill`, the return to user mode, and a thread's exit.
 
 A few functions answer a `Result` whose `Error` is an errno: those whose own failure is a value the client reports to the process, such as `UnixSocket.socket`, `UnixPoll.epollCreate1`, `UnixSignal.kill` and `UnixClock.clockGettime`, and the four that answer nothing else, `UnixSignal.sigaction`, `UnixSignal.sigactionSyscall`, `UnixSignal.pthreadSigmask` and `UnixSignal.rtSigprocmask`.
@@ -567,7 +566,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 | `setgroups(2)` | `UnixCredentials.setgroups (caller : Caller) (size : int) (words : GroupListWords)` | `SyscallAnswer * UnixSystem` |
 | `clone(2)` with `CLONE_THREAD`, as `pthread_create(3)` makes it | `UnixThreadLifecycle.spawn (caller : Caller) (child : 'Thread) (cpu : CpuId)` | `SpawnAnswer * UnixSystem` |
 | Linux's thread `exit(2)`, as `pthread_exit(3)` makes it | `UnixThreadLifecycle.exitThread (caller : Caller) (status : int)` | `ProcessFate<unit>` |
-| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (caller : Caller) (status : int)` | `EndedProcess` |
+| `exit_group(2)`, as `exit(3)` and `_exit(2)` make it | `UnixThreadLifecycle.exitGroup (caller : Caller) (status : int)` | `EndedProcess * UnixSystem` |
 | the client's report that a thread runs on a processor | `UnixScheduling.dispatch (caller : Caller) (cpu : CpuId)` | `UnixSystem` |
 | where a thread is running | `UnixScheduling.runningOn (caller : Caller)` | `CpuId option` |
 | Linux's `getcpu(2)` | `UnixScheduling.getcpu (caller : Caller)` | `GetCpuAnswer` |
@@ -626,7 +625,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
 2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wakes` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
 
-Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.ProcessEnded ended`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
+Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
 * `WriteOutcome.Returns answer`: the call answers.
 * `WriteOutcome.ReturnsRaising (answer, signal)`: the call answers, and raised `signal`, which is now pending (or was discarded). The one signal a write raises is `SIGPIPE`, with `EPIPE`, for a write into a pipe with no reader, into a Linux stream socket with no peer, or to a connection that was reset.
@@ -750,21 +749,23 @@ let woken =
         | outcome, _ -> failwith $"unexpected read: %A{outcome}"
     | wakes -> failwith $"expected thread 1 to wake: %A{wakes}"
 
-// Thread 1 exits, and then thread 0 calls exit_group(3), which ends the process.
-let ended =
+// Thread 1 exits, and then thread 0 calls exit_group(3), which ends the process:
+// it closes the process's descriptors, and answers the system without it.
+let ended, remaining =
     match UnixThreadLifecycle.exitThread second 0 woken with
     | ProcessFate.Continues ((), system) -> UnixThreadLifecycle.exitGroup first 3 system
     | other -> failwith $"thread 0 is still running, so expected the process to continue: %A{other}"
 
-// The client ends the process in the system, which closes its descriptors and removes it.
-let termination, _ = UnixSystem.endProcess ended
+let termination = EndedProcess.termination ended
 
 printfn "the process ended: shell status %d" (ProcessTermination.shellStatus (SimulatedUnixPlatform.signalNumbering platform) termination)
+printfn "processes left: %d" (UnixSystem.processIds remaining).Count
 
 // Prints:
 // thread 0 wrote 5 bytes
 // thread 1 read hello
 // the process ended: shell status 3
+// processes left: 0
 ```
 
 ## Signals
@@ -782,7 +783,7 @@ Under Linux, `kill` of such a signal that the leader blocks while another thread
 ### The return to user mode
 
 A signal is taken as a thread returns to user mode, so after each call a thread makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser caller`, the caller naming the thread.
-It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate.ProcessEnded ended`), because a signal whose default action terminates the process killed it (see below), or it carries on (`ProcessFate.Continues (outcome, system)`) with one of these outcomes:
+It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because a signal whose default action terminates the process killed it (see below), or it carries on (`ProcessFate.Continues (outcome, system)`) with one of these outcomes:
 
 * `ReturnToUserOutcome.Resumes`: the thread took nothing the client acts on, and runs its own code next.
 * `ReturnToUserOutcome.RunHandlers frames`: the frames the kernel pushed, innermost first, each with the signal, the disposition and the mask to restore. The client runs each handler, and when one returns it calls `UnixSignal.sigreturn` with that frame's `HandlerFrame.Id` and asks `onReturnToUser` again.
@@ -792,7 +793,7 @@ It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate
 A signal whose default terminates the process ends it where the library applies the default: at generation, when some thread can take it (from `kill`, `pthreadKill`, or a write that raises `SIGPIPE`), and otherwise when a thread that blocked it can take it, as the thread returns to user mode (from `onReturnToUser`): after a mask call or a `sigreturn` that unblocks it, or from a `sigsuspend` whose temporary mask lets it through.
 For a signal sent to the process while every thread blocked it, that thread may be any of the process's threads under Linux, whose threads all take from the process's pending set; a signal whose default stops the process is taken the same way.
 Under Darwin, which put such a signal in its leader's own set as it was sent, a thread other than the leader that unblocks it does not take it, and while it is pending so, `onReturnToUser` refuses every thread.
-Either answer is `ProcessFate.ProcessEnded` of the `EndedProcess`, killed by the signal (`ProcessTermination.Signaled`, with the core flag), and no handler runs, not even one whose frame was pushed at the same return; the client ends the process with `UnixSystem.endProcess`, as for an exit.
+Either answer is `ProcessFate.ProcessEnded` of the `EndedProcess`, killed by the signal (`ProcessTermination.Signaled`, with the core flag), and the system without the process, which ended as an exit ends it; no handler runs, not even one whose frame was pushed at the same return.
 
 A signal whose default stops the process is reported (`KillOutcome.ProcessStopped`, `ReturnToUserOutcome.ProcessStopped`) for the client to act on.
 The library holds no stopped state, and nothing here continues a stopped process, so a client should refuse a stop rather than carry on as if the process were still running.
@@ -846,8 +847,8 @@ let pending =
 // Unblocking it: as thread 0 returns to user mode it takes SIGTERM, whose
 // default action ends the process.
 match pending |> mask 1 |> returnToUser with
-| ProcessFate.ProcessEnded ended ->
-    let termination, _ = UnixSystem.endProcess ended
+| ProcessFate.ProcessEnded (ended, _) ->
+    let termination = EndedProcess.termination ended
 
     printfn "%A" termination
     printfn "shell status %d" (ProcessTermination.shellStatus numbering termination)
@@ -865,15 +866,15 @@ match pending |> mask 1 |> returnToUser with
 It throws `InvalidOperationException` for a thread parked in a syscall, and refuses the process's leader while any other thread lives and, on Darwin, the process's last thread: a Darwin client ends a process with `exitGroup`, never by its last thread exiting.
 `UnixThreadLifecycle.exitGroup caller status` ends every thread at once, parked ones included.
 
-A call that ends the process answers an `EndedProcess` instead of a system: `exitGroup`, an `exitThread` of the last thread, a `kill`, `pthreadKill` or write whose signal killed it, and a return to user mode that takes such a signal.
+A process ends in the call that ends it: `exitGroup`, an `exitThread` of the last thread, a `kill`, `pthreadKill`, write or `send` whose signal killed it, and a return to user mode that takes such a signal.
+That call answers an `EndedProcess` beside the system without the process, in which every other process is as the call left it: `exitGroup` answers the pair, and the others `ProcessFate.ProcessEnded (ended, system)`.
 `EndedProcess.termination` is how the process ended (`ProcessTermination.Exited` or `ProcessTermination.Signaled`), which is what its parent's `wait` reads; `ProcessTermination.waitpidStatus` encodes it as `waitpid(2)` would.
 `EndedProcess.processId` is which process it was.
-Only such a call makes one, and `UnixSystem.endProcess` takes nothing else.
 
-`UnixSystem.endProcess ended` ends the process in the system the call that ended it was made in: it releases what only the process's calls held, then closes every descriptor in the order each kernel measurably does (Linux drops them lowest first and releases the last let go of first; Darwin closes them highest first), as `close` closes each: sending its peers their FINs, or resets where it left bytes unread, resetting the clients left in its listeners' accept queues, whichever process holds them, and letting its locks, pipes, listeners and event queues go, and removes the process.
-It answers how the process ended, and the system without it, every other process as that call left it.
-It refuses where a close would: so far, the last close of a connected socket whose `SO_LINGER` would make it wait, and two Darwin closes whose outcome waits on a timer or on the peer's reads.
-Nothing hands back a system holding a process that has ended, so no call can be made in one.
+The end is what a real kernel does at exit, where another process can see it: every thread goes, with what only the process's calls held, and then every descriptor is closed, in the order each kernel measurably closes them (Linux drops them lowest first and releases the last let go of first; Darwin closes them highest first), as `close` closes each: sending its peers their FINs, or resets where it left bytes unread, resetting the clients left in its listeners' accept queues, whichever process holds them, and letting its locks, pipes, listeners and event queues go.
+The process is then gone: no `wait` is modelled, so nothing keeps it for a parent to reap, and no call can be made in it.
+A call refuses to end a process where a close would refuse: so far, the last close of a connected socket whose `SO_LINGER` would make it wait, and two Darwin closes whose outcome waits on a timer or on the peer's reads.
+Such a call throws `UnmodelledException`, and, as for any refusal, the system it was given still holds the process.
 
 ## Several processes
 
@@ -918,9 +919,10 @@ let firstFd, afterFirst = dup first both
 let secondFd, afterSecond = dup second afterFirst
 printfn "process %O got %d, process %O got %d" first firstFd second secondFd
 
-// The second process's thread 0 calls exit_group(0), and the client ends the process.
-let ended = UnixThreadLifecycle.exitGroup (Caller.make second 0) 0 afterSecond
-let termination, remaining = UnixSystem.endProcess ended
+// The second process's thread 0 calls exit_group(0), which ends the process
+// and answers the system without it.
+let ended, remaining = UnixThreadLifecycle.exitGroup (Caller.make second 0) 0 afterSecond
+let termination = EndedProcess.termination ended
 
 printfn "shell status %d" (ProcessTermination.shellStatus (SimulatedUnixPlatform.signalNumbering platform) termination)
 printfn "processes left: %A" (UnixSystem.processIds remaining |> Seq.map ProcessId.toInt32 |> List.ofSeq)
@@ -1057,7 +1059,7 @@ Loading and running a program is the client's, as running any of the process's c
 The descriptor table, signal dispositions, mask and credentials that `fork` and `exec` pass on are the kernel's, so those calls would be the library's to model; they are not modelled, and a client should refuse a process's request to create or replace a process.
 
 **Where they meet.** The client starts a process with `UnixSystem.launch` and a `ProcessLaunch`, which sets up what a launcher fixes before `exec`; the kernel chooses the process ID.
-When a call ends a process, its answer is an `EndedProcess`, which the client passes to `UnixSystem.endProcess`: that closes the process's descriptors, removes it, and answers how it ended, as a `ProcessTermination` holding the status a parent's `wait` would read.
+The call that ends a process closes its descriptors and removes it, and answers an `EndedProcess` beside the system without it: `EndedProcess.termination` is how it ended, a `ProcessTermination` holding the status a parent's `wait` would read.
 No `wait` is modelled, so nothing keeps the ended process for a parent to reap, and reporting its status is the client's.
 
 ### The far end of a launched pipe

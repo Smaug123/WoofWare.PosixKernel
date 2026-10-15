@@ -101,28 +101,6 @@ module internal Machines =
         =
         focus pid system |> Option.map (UnixSystem.step (Caller.make pid thread) call)
 
-    /// How the process `ended` ended, and the system it ended in without it,
-    /// its descriptors closed; or the refusal to end it. `ended` holds the rest
-    /// of that system, so `system` is not read.
-    let tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        (_ : UnixSystem<'Thread, 'Handler>)
-        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
-        =
-        UnixSystem.tryEndProcess ended
-
-    /// How the process `ended`, which ran alone, ended, and the system without
-    /// it, which holds no process; or the refusal to end it.
-    let tryEndLoneProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
-        =
-        UnixSystem.tryEndProcess ended
-        |> Result.map (fun (termination, after) ->
-            UnixSystem.processIds after |> shouldEqual Set.empty
-            termination, after
-        )
-
     /// Each thread `asleep` names, by process, as the `Caller` that names it.
     let private callers<'Thread when 'Thread : comparison>
         (asleep : Map<ProcessId, Set<'Thread>>)

@@ -19,6 +19,8 @@ type internal KillRefusal =
     /// The signal is sent to the calling process, and which of its threads would
     /// receive it is not modelled.
     | Receiver of SignalReceiverRefusal
+    /// The signal ends the calling process, and the process's end is refused.
+    | ProcessEnd of ProcessEndRefusal
 
 [<RequireQualifiedAccess>]
 module internal KillRefusal =
@@ -33,6 +35,8 @@ module internal KillRefusal =
         | KillRefusal.InitProcess ->
             "the calling process is process ID 1. An init process ignores, from inside its own PID namespace, every signal it has not installed a handler for, SIGKILL included, and this kernel does not model that."
         | KillRefusal.Receiver refusal -> SignalReceiverRefusal.describe refusal
+        | KillRefusal.ProcessEnd refusal ->
+            $"the signal ends the calling process; %s{ProcessEndRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : KillRefusal) : RefusalKind =
@@ -41,6 +45,7 @@ module internal KillRefusal =
         | KillRefusal.ProcessGroup _ -> RefusalKind.Unmodelled
         | KillRefusal.InitProcess -> RefusalKind.Unmodelled
         | KillRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
+        | KillRefusal.ProcessEnd inner -> ProcessEndRefusal.kind inner
 
 /// Why this library will not answer a `pthread_kill(3)`: something it does not
 /// model, rather than an error a kernel would report.
@@ -52,6 +57,8 @@ type internal ThreadKillRefusal =
     | InitProcess
     /// What the signal would do to the process is not modelled.
     | Receiver of SignalReceiverRefusal
+    /// The signal ends the process, and the process's end is refused.
+    | ProcessEnd of ProcessEndRefusal
 
 [<RequireQualifiedAccess>]
 module internal ThreadKillRefusal =
@@ -62,12 +69,41 @@ module internal ThreadKillRefusal =
         | ThreadKillRefusal.InitProcess ->
             "the calling process is process ID 1. An init process ignores, from inside its own PID namespace, every signal it has not installed a handler for, SIGKILL included, and this kernel does not model that."
         | ThreadKillRefusal.Receiver refusal -> SignalReceiverRefusal.describe refusal
+        | ThreadKillRefusal.ProcessEnd refusal -> $"the signal ends the process; %s{ProcessEndRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ThreadKillRefusal) : RefusalKind =
         match refusal with
         | ThreadKillRefusal.InitProcess -> RefusalKind.Unmodelled
         | ThreadKillRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
+        | ThreadKillRefusal.ProcessEnd inner -> ProcessEndRefusal.kind inner
+
+/// Why this library will not answer a thread's return to user mode: something
+/// it does not model, rather than anything a kernel would report.
+[<RequireQualifiedAccess>]
+type internal ReturnToUserRefusal =
+    /// What a signal the thread would take does is not modelled
+    /// (`SignalReceiverRefusal`).
+    | Receiver of SignalReceiverRefusal
+    /// The thread takes a signal whose default action ends the process, and
+    /// the process's end is refused.
+    | ProcessEnd of ProcessEndRefusal
+
+[<RequireQualifiedAccess>]
+module internal ReturnToUserRefusal =
+    /// What this kernel knows about why it cannot answer. The client supplies
+    /// its own half: which thread was returning.
+    let describe (refusal : ReturnToUserRefusal) : string =
+        match refusal with
+        | ReturnToUserRefusal.Receiver refusal -> SignalReceiverRefusal.describe refusal
+        | ReturnToUserRefusal.ProcessEnd refusal ->
+            $"the thread takes a signal that ends the process; %s{ProcessEndRefusal.describe refusal}"
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : ReturnToUserRefusal) : RefusalKind =
+        match refusal with
+        | ReturnToUserRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
+        | ReturnToUserRefusal.ProcessEnd inner -> ProcessEndRefusal.kind inner
 
 /// Why this library will not answer a `sigprocmask(2)`: something it does not
 /// model, rather than an error a kernel would report.
@@ -180,7 +216,7 @@ module UnixSignal =
         (pid : int32)
         (signo : int32)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ViewFate<KillOutcome, 'Thread, 'Handler>, UnixError>, KillRefusal>
+        : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, UnixError>, KillRefusal>
         =
         let self = ProcessId.toInt32 system.Process.ProcessId
 
@@ -203,14 +239,16 @@ module UnixSignal =
         match Signal.ofRawSignoUnder (UnixSystemState.signalNumbering system) signo with
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
-            ProcessSignal.generate
+            let entry =
                 {
                     Signal = signal
                     Target = ValueNone
                 }
-                system
-            |> Result.map Ok
-            |> Result.mapError KillRefusal.Receiver
+
+            match ProcessSignal.generate entry system with
+            | Error refusal -> Error (KillRefusal.Receiver refusal)
+            | Ok (Error refusal) -> Error (KillRefusal.ProcessEnd refusal)
+            | Ok (Ok fate) -> Ok (Ok fate)
 
     /// `kill`, with a refusal answered as the `Error` rather than raised.
     let internal tryKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -233,8 +271,10 @@ module UnixSignal =
     ///
     /// The signal is pending on the process as a whole, so its leader receives
     /// it unless it blocks the signal. A signal that kills the process ends it,
-    /// and the answer is then the ended process rather than a system to make
-    /// another call in.
+    /// and the answer is then the ended process, beside the system without it
+    /// (`ProcessFate.ProcessEnded`): its descriptors are closed as
+    /// `UnixThreadLifecycle.exitGroup` closes them, and refused where that
+    /// would be.
     ///
     /// What a signal does as it is generated, here and wherever else this
     /// library generates one (`pthreadKill`, and the `SIGPIPE` a write raises):
@@ -299,40 +339,40 @@ module UnixSignal =
     let private tryOnReturnToUserIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<ViewFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
+        : Result<ViewFate<ReturnToUserOutcome<'Thread, 'Handler>, ProcessView<'Thread, 'Handler>>, ReturnToUserRefusal>
         =
-        SignalState.onReturnToUser
-            (UnixSystemState.signalNumbering system)
-            system.Process.CoreDumps
-            system.Leader
-            (threadsOf system)
-            thread
-            system.Process.Signals
-        |> Result.map (fun (delivery, signals) ->
-            let after = UnixSystemState.withSignals signals system
+        match
+            SignalState.onReturnToUser
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                (threadsOf system)
+                thread
+                system.Process.Signals
+        with
+        | Error refusal -> Error (ReturnToUserRefusal.Receiver refusal)
+        | Ok (delivery, signals) ->
 
-            match delivery with
-            | None -> ViewFate.Continues (ReturnToUserOutcome.Resumes, after)
-            | Some (SignalDelivery.RunHandlers frames) ->
-                ViewFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)
-            | Some (SignalDelivery.DefaultStop signal) ->
-                ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after)
-            | Some (SignalDelivery.DefaultContinue signal) ->
-                ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after)
-            | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)) ->
-                // Ended as the walk left it: the signal that kills it is taken,
-                // so it is not pending in the process's final state, as one
-                // `kill` applies at once never is.
-                ViewFate.ProcessEnded (
-                    UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (signal, coreDumped)) after
-                )
-        )
+        let after = UnixSystemState.withSignals signals system
+
+        match delivery with
+        | None -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes, after))
+        | Some (SignalDelivery.RunHandlers frames) ->
+            Ok (ViewFate.Continues (ReturnToUserOutcome.RunHandlers frames, after))
+        | Some (SignalDelivery.DefaultStop signal) ->
+            Ok (ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after))
+        | Some (SignalDelivery.DefaultContinue signal) ->
+            Ok (ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after))
+        | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)) ->
+            match UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (signal, coreDumped)) after with
+            | Ok (ended, dead) -> Ok (ViewFate.ProcessEnded (ended, dead))
+            | Error refusal -> Error (ReturnToUserRefusal.ProcessEnd refusal)
 
     /// `onReturnToUser`, with a refusal answered as the `Error` rather than raised.
     let internal tryOnReturnToUser<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, SignalReceiverRefusal>
+        : Result<ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>, ReturnToUserRefusal>
         =
         Entry.call
             "UnixSignal.onReturnToUser"
@@ -408,9 +448,11 @@ module UnixSignal =
     /// restore included.
     ///
     /// A signal whose default terminates the process ends it here, and the
-    /// answer is then the ended process (`ProcessFate.ProcessEnded`) rather
-    /// than a system to make another call in, as `kill` answers one that kills
-    /// at once. `EndedProcess.termination` is `ProcessTermination.Signaled`
+    /// answer is then the ended process, beside the system without it
+    /// (`ProcessFate.ProcessEnded`), as `kill` answers one that kills at once:
+    /// its descriptors are closed as `UnixThreadLifecycle.exitGroup` closes
+    /// them, and the return is refused where that would be.
+    /// `EndedProcess.termination` is `ProcessTermination.Signaled`
     /// with the signal and the core flag: a parent's `wait` reports the process
     /// as killed by the signal (`WIFSIGNALED`, `WTERMSIG`), with the core flag
     /// set iff a core was dumped; `128 + signo` is only how a shell renders
@@ -430,7 +472,7 @@ module UnixSignal =
         : ProcessFate<ReturnToUserOutcome<'Thread, 'Handler>, 'Thread, 'Handler>
         =
         tryOnReturnToUser caller system
-        |> Refusal.orRaise "UnixSignal.onReturnToUser" SignalReceiverRefusal.kind SignalReceiverRefusal.describe
+        |> Refusal.orRaise "UnixSignal.onReturnToUser" ReturnToUserRefusal.kind ReturnToUserRefusal.describe
 
     /// `sigreturn` once `Entry` has admitted its caller.
     let private sigreturnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -469,7 +511,7 @@ module UnixSignal =
         (target : 'Thread)
         (signo : int32)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ViewFate<KillOutcome, 'Thread, 'Handler>, UnixError>, ThreadKillRefusal>
+        : Result<Result<ViewFate<KillOutcome, ProcessView<'Thread, 'Handler>>, UnixError>, ThreadKillRefusal>
         =
         if not (Map.containsKey target system.Threads) then
             failwith
@@ -494,14 +536,16 @@ module UnixSignal =
         | ValueNone -> Ok (Error UnixError.EINVAL)
         | ValueSome signal when reservedByCLibrary numbering signal -> Ok (Error UnixError.EINVAL)
         | ValueSome signal ->
-            ProcessSignal.generate
+            let entry =
                 {
                     Signal = signal
                     Target = ValueSome target
                 }
-                system
-            |> Result.map Ok
-            |> Result.mapError ThreadKillRefusal.Receiver
+
+            match ProcessSignal.generate entry system with
+            | Error refusal -> Error (ThreadKillRefusal.Receiver refusal)
+            | Ok (Error refusal) -> Error (ThreadKillRefusal.ProcessEnd refusal)
+            | Ok (Ok fate) -> Ok (Ok fate)
 
     /// `pthreadKill`, with a refusal answered as the `Error` rather than raised.
     let internal tryPthreadKill<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -527,9 +571,8 @@ module UnixSignal =
     /// while `target` blocks it and another thread does not. See `kill` for what
     /// the signal then does: a caught one that `target` does not block is
     /// delivered as `target` next returns to user mode, which for `raise(3)` is
-    /// before the call returns. A signal that
-    /// kills the process ends it, and the answer is then the ended process
-    /// rather than a system to make another call in.
+    /// before the call returns. A signal that kills the process ends it, as
+    /// `kill` says.
     ///
     /// Signal number 0 sends nothing, and a number that is neither 0 nor a
     /// signal is `EINVAL`. So, under Linux's numbering, are 32 and 33, which

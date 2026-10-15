@@ -659,11 +659,12 @@ module TestUnixSystemStep =
 
     /// Whether `outcome` is a process ended by `SIGPIPE`'s default action.
     let private endedBySigPipe
-        (outcome : Result<WriteStep<'Answer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<'Answer, UnixSystem<int, string>, int>, WriteRefusal>)
         : bool
         =
         match outcome with
-        | Ok (WriteStep.ProcessEnded ended) -> ended.Termination = ProcessTermination.Signaled (Signal.SIGPIPE, false)
+        | Ok (WriteStep.ProcessEnded (ended, _)) ->
+            EndedProcess.termination ended = ProcessTermination.Signaled (Signal.SIGPIPE, false)
         | _ -> false
 
     [<Test>]

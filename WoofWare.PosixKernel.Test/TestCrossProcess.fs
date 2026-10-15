@@ -837,24 +837,140 @@ module TestCrossProcess =
 
     // ------------------------------------------------------- a process's end
 
-    /// `pid`'s thread 0 calls `exit_group(status)`, and the machine ends the
-    /// process.
+    /// `pid`'s thread 0 calls `exit_group(status)`, which ends the process.
     let private exitIn
         (pid : ProcessId)
         (status : int32)
         (machine : UnixSystem<int, string>)
         : Result<ProcessTermination * UnixSystem<int, string>, ProcessEndRefusal>
         =
-        let ended =
-            UnixThreadLifecycle.exitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
-
-        Machines.tryEndProcess ended machine
+        UnixThreadLifecycle.tryExitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
+        |> Result.map (fun (ended, machine) -> EndedProcess.termination ended, machine)
 
     let private exitedOk (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         match exitIn pid 0 machine with
         | Ok (ProcessTermination.Exited _, machine) -> machine
-        | Ok (other, _) -> failwith $"endProcess: the process ended by %O{other}, not by its exit"
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+        | Ok (other, _) -> failwith $"exit_group: the process ended by %O{other}, not by its exit"
+        | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
+
+    /// A call that ends a process, made by its thread 0.
+    [<RequireQualifiedAccess>]
+    type private Ending =
+        /// `exit_group(0)`.
+        | ExitGroup
+        /// `kill(2)` of SIGKILL, to the process itself.
+        | Kill
+        /// `raise(3)` of SIGTERM.
+        | Raise
+        /// SIGTERM blocked, raised and unblocked, each call followed by the
+        /// return to user mode, the last of which ends the process.
+        | ReturnToUser
+        /// Every other thread exits, and then thread 0, the leader and the
+        /// last.
+        | LastThread
+        /// A write of one byte into a new pipe whose read end is closed, which
+        /// raises SIGPIPE at its default.
+        | BrokenPipe
+
+    /// Every `Ending` a process on `platform` can take: Darwin refuses the
+    /// last thread's exit.
+    let private endingsOn (platform : SimulatedUnixPlatform) : Ending list =
+        [
+            Ending.ExitGroup
+            Ending.Kill
+            Ending.Raise
+            Ending.ReturnToUser
+            if SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux then
+                Ending.LastThread
+            Ending.BrokenPipe
+        ]
+
+    /// The process `pid`, all of whose threads run, ended by `ending`: the
+    /// system the call that ended it answered.
+    let private endedBy
+        (ending : Ending)
+        (pid : ProcessId)
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let caller = Caller.make pid 0
+        let numbering = SimulatedUnixPlatform.signalNumbering (UnixSystem.platform machine)
+        let sigterm = Signal.toRawSignoUnder numbering Signal.SIGTERM
+
+        let ended (call : string) (fate : ProcessFate<'Outcome, int, string>) : UnixSystem<int, string> =
+            match fate with
+            | ProcessFate.ProcessEnded (_, machine) -> machine
+            | ProcessFate.Continues (outcome, _) ->
+                failwith $"%A{ending}: %s{call} left the process running, answering %A{outcome}"
+
+        let returned (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match UnixSignal.onReturnToUser caller machine with
+            | ProcessFate.Continues (ReturnToUserOutcome.Resumes, machine) -> machine
+            | other -> failwith $"%A{ending}: the return to user mode answered %A{other}"
+
+        let mask (how : SignalMaskChange) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
+            let how =
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform machine), how with
+                | SimulatedUnixFlavour.Linux, SignalMaskChange.Block -> 0
+                | SimulatedUnixFlavour.Linux, _ -> 1
+                | SimulatedUnixFlavour.Darwin, SignalMaskChange.Block -> 1
+                | SimulatedUnixFlavour.Darwin, _ -> 2
+
+            let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
+
+            match UnixSignal.pthreadSigmask caller how (Some set) machine with
+            | Ok (_, machine) -> machine
+            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+
+        match ending with
+        | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
+        | Ending.Kill ->
+            match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
+            | Ok fate -> ended "kill" fate
+            | Error errno -> failwith $"kill: %O{errno}"
+        | Ending.Raise ->
+            match UnixSignal.pthreadKill caller 0 sigterm machine with
+            | Ok fate -> ended "pthread_kill" fate
+            | Error errno -> failwith $"pthread_kill: %O{errno}"
+        | Ending.ReturnToUser ->
+            let machine = machine |> mask SignalMaskChange.Block |> returned
+
+            let machine =
+                match UnixSignal.pthreadKill caller 0 sigterm machine with
+                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
+
+            machine
+            |> mask SignalMaskChange.Unblock
+            |> UnixSignal.onReturnToUser caller
+            |> ended "onReturnToUser"
+        | Ending.LastThread ->
+            let others =
+                UnixSystem.threads pid machine |> Map.keys |> Seq.filter ((<>) 0) |> List.ofSeq
+
+            let machine =
+                (machine, others)
+                ||> List.fold (fun machine thread ->
+                    match UnixThreadLifecycle.exitThread (Caller.make pid thread) 0 machine with
+                    | ProcessFate.Continues ((), machine) -> machine
+                    | other -> failwith $"thread %d{thread}'s exit: %A{other}"
+                )
+
+            UnixThreadLifecycle.exitThread caller 0 machine
+            |> ended "the last thread's exit"
+        | Ending.BrokenPipe ->
+            match UnixPipe.pipe2 caller 0 UserBuffer.Mapped machine with
+            | Pipe2Answer.Created (readFd, writeFd), machine ->
+                let machine =
+                    match UnixDescriptor.close caller readFd machine with
+                    | SyscallAnswer.Completed 0L, machine -> machine
+                    | other, _ -> failwith $"close: %A{other}"
+
+                match UnixReadWrite.write caller writeFd UserBuffer.Mapped 1UL machine with
+                | CallProgress.Answered fate -> ended "write" fate
+                | CallProgress.NeedsCopyIn paused ->
+                    UnixReadWrite.writeWithBytes (ImmutableArray.Create 0uy) paused |> ended "write"
+            | other -> failwith $"pipe2: %A{other}"
 
     /// A `dup2` of `oldFd` onto `newFd`, and the close of `oldFd`, by the
     /// leader of the process `pid`.
@@ -892,14 +1008,18 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
             let view = Machines.viewOf pids.[0] machine
-            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 0 view) 3 view
 
-            match Machines.tryEndLoneProcess ended with
-            | Ok (termination, after) ->
-                termination |> shouldEqual (EndedProcess.termination ended)
-                Machines.processIds after |> shouldBeEmpty
+            match UnixThreadLifecycle.tryExitGroup (Callers.thread 0 view) 3 view with
+            | Ok (ended, after) ->
+                EndedProcess.termination ended
+                |> shouldEqual (
+                    ProcessTermination.Exited (ExitStatus.ofExitArgument (SimulatedUnixPlatform.flavour platform) 3)
+                )
+
+                EndedProcess.processId ended |> shouldEqual pids.[0]
+                EndedMachine.assertNoneLeft after
                 Machines.assertClean after
-            | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
     let private deliveries (machine : UnixSystem<int, string>) : (ExternalEndpoint * byte list) list =
@@ -958,7 +1078,9 @@ module TestCrossProcess =
         // holds three connections, made in the order 1, 2, 3, at the
         // descriptors `layout` gives each, and the other watches their peers in
         // one wait, registered in yet another order. Section D's first
-        // connection is at a second descriptor as well, a dup.
+        // connection is at a second descriptor as well, a dup. The probe's
+        // process exits; every other call that ends a process closes its
+        // descriptors as the exit does.
         let sections =
             [
                 [ 12 ; 10 ; 11 ], None, [ 1UL ; 3UL ; 2UL ], [ 1UL ; 3UL ; 2UL ]
@@ -966,7 +1088,7 @@ module TestCrossProcess =
             ]
 
         for platform in Machines.platforms do
-            for layout, alias, linux, darwin in sections do
+            for ending, (layout, alias, linux, darwin) in List.allPairs (endingsOn platform) sections do
                 let pids, machine = Machines.ofCount platform 2
                 let a, b = pids.[0], pids.[1]
 
@@ -1074,7 +1196,7 @@ module TestCrossProcess =
 
                 report machine |> fst |> shouldEqual []
 
-                let machine = exitedOk a machine
+                let machine = endedBy ending a machine
                 Machines.assertClean machine
 
                 let expected =
@@ -1082,7 +1204,8 @@ module TestCrossProcess =
                     | SimulatedUnixFlavour.Linux -> linux
                     | SimulatedUnixFlavour.Darwin -> darwin
 
-                report machine |> fst |> shouldEqual expected
+                (ending, layout, report machine |> fst)
+                |> shouldEqual (ending, layout, expected)
 
     [<Test>]
     let ``a process's end closes its pipes, kqueues and epoll instances, and lets its locks go`` () : unit =
@@ -1364,7 +1487,7 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let flavour = SimulatedUnixPlatform.flavour platform
 
-            let replayed (listenerFirst : bool) : string =
+            let replayed (ending : Ending) (listenerFirst : bool) : string =
                 let pids, machine = Machines.ofCount platform 2
                 let child, parent = pids.[0], pids.[1]
 
@@ -1463,7 +1586,7 @@ module TestCrossProcess =
                         machine
 
                 let _, machine = events machine
-                let machine = exitedOk child machine
+                let machine = endedBy ending child machine
                 Machines.assertClean machine
                 let reported, _ = events machine
 
@@ -1479,12 +1602,16 @@ module TestCrossProcess =
             let measured = listenerExitOrder flavour
             measured |> List.length |> shouldEqual 10
 
-            [
-                for _ in 1..5 do
-                    replayed true
-                    replayed false
-            ]
-            |> shouldEqual measured
+            // The probe's process exits; every other call that ends a process
+            // closes its descriptors as the exit does.
+            for ending in endingsOn platform do
+                (ending,
+                 [
+                     for _ in 1..5 do
+                         replayed ending true
+                         replayed ending false
+                 ])
+                |> shouldEqual (ending, measured)
 
     [<Test>]
     let ``a process's end closes its listener and its own queued client, in either order`` () : unit =
@@ -1589,7 +1716,7 @@ module TestCrossProcess =
                 OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
                 machine.Machine.Sockets |> shouldEqual Map.empty
                 machine.Machine.Connections |> shouldEqual Map.empty
-            | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Nothing yet passes a descriptor from one process to another, so no queue
     /// a kernel wakes one waiter of is shared by two processes. `fork` would
@@ -1769,16 +1896,12 @@ module TestCrossProcess =
 
         Machines.assertClean machine
 
-        let ended =
-            match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
-            | Ok (WriteStep.ProcessEnded ended) -> ended
-            | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
-
-        match Machines.tryEndProcess ended machine with
-        | Ok (_, machine) ->
+        match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
+        | Ok (WriteStep.ProcessEnded (_, dead)) ->
+            let machine = ProcessView.unfocusWithout dead
             Machines.assertClean machine
             machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+        | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
     [<Test>]
     let ``a process's end lets a listener only its sleeping accept held go after its own client`` () : unit =

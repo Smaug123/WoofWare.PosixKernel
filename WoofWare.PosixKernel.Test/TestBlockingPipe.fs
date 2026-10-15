@@ -535,9 +535,7 @@ module TestBlockingPipe =
         | Error (ReadRefusal.Interruption _) -> Seen.Refused, None
         | Error refusal -> failwith $"read refused: %A{refusal}"
 
-    let private fromWrite
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-        =
+    let private fromWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) =
         match outcome with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after))
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, _, after)) -> Seen.Wrote n, Some after

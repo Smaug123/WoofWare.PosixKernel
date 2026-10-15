@@ -173,7 +173,7 @@ module TestConnectionWriteResetMeasured =
     /// `SIGPIPE`s it raised.
     let private answered
         (exact : int)
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         : string * int * UnixSystem<int, string>
         =
         let shown (answer : WriteAnswer) : string =
