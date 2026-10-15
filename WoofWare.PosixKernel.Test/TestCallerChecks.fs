@@ -553,6 +553,13 @@ module TestCallerChecks =
                 pauser
                 everyFlavour
                 (fun caller system -> UnixSignal.finishSigsuspend caller system |> ignore)
+            // `UnixWait.finish`, which finishes each of those, of each sleeper.
+            for sleeper in [ 2 ; 3 ; poller ; eventWaiter ; pipeReader ; pipeWriter ; suspender ; pauser ] do
+                finishing
+                    "UnixWait.finish"
+                    sleeper
+                    everyFlavour
+                    (fun caller system -> UnixWait.finish caller system |> ignore<FinishedCall<int, string>>)
             // The thread has no handler frame, which `sigreturn` refuses only once
             // the caller is checked.
             running

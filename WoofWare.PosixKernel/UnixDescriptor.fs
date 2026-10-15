@@ -1573,7 +1573,7 @@ module UnixDescriptor =
         |> Refusal.orRaise "UnixDescriptor.flock" FLockRefusal.kind FLockRefusal.describe
 
     /// `tryFlockAcquire` once `Entry` has admitted its caller.
-    let private tryFlockAcquireIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFlockAcquireIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallOutcome * ProcessView<'Thread, 'Handler>, FLockRefusal>

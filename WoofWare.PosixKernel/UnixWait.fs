@@ -1,6 +1,224 @@
 namespace WoofWare.PosixKernel
 
-/// Deciding which parked threads a system wakes.
+/// What finishing a woken `nanosleep(2)` or `clock_nanosleep(2)` answers:
+/// what `FinishedCall.Sleep` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Sleep`.
+[<NoEquality ; NoComparison>]
+type FinishedSleep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the sleep's finishing function
+    // (`docs/design/nanosleep-options.md`).
+    internal | FinishedSleep
+
+/// What finishing a woken blocking `open(2)` of one end of a FIFO answers:
+/// what `FinishedCall.FifoOpen` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.FifoOpen`.
+[<NoEquality ; NoComparison>]
+type FinishedFifoOpen<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the FIFO open's finishing function
+    // (`docs/design/fifo-open-options.md`).
+    internal | FinishedFifoOpen
+
+/// What finishing a woken `select(2)` or `pselect(2)` answers: what
+/// `FinishedCall.Select` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Select`.
+[<NoEquality ; NoComparison>]
+type FinishedSelect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the select's finishing function
+    // (`docs/design/select-park-options.md`).
+    internal | FinishedSelect
+
+/// What finishing a woken `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`
+/// answers: what `FinishedCall.SignalWait` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.SignalWait`.
+[<NoEquality ; NoComparison>]
+type FinishedSignalWait<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the signal wait's finishing function
+    // (`docs/design/sigwait-options.md`).
+    internal | FinishedSignalWait
+
+/// What finishing a woken blocking receive on a datagram socket answers: what
+/// `FinishedCall.DatagramReceive` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.DatagramReceive`.
+[<NoEquality ; NoComparison>]
+type FinishedDatagramReceive<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the datagram data path
+    // (`docs/design/datagram-park-options.md`).
+    internal | FinishedDatagramReceive
+
+/// What finishing a woken blocking send of a datagram answers: what
+/// `FinishedCall.DatagramSend` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.DatagramSend`.
+[<NoEquality ; NoComparison>]
+type FinishedDatagramSend<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the datagram data path
+    // (`docs/design/datagram-park-options.md`).
+    internal | FinishedDatagramSend
+
+/// What finishing a woken blocking `connect(2)` answers: what
+/// `FinishedCall.Connect` holds.
+///
+/// Its representation is internal, so a later version may change what it
+/// holds without breaking a client; a client builds none. Nothing in this
+/// version makes one: see `ParkedSyscall.Connect`.
+[<NoEquality ; NoComparison>]
+type FinishedConnect<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    // What it holds is the design of the connect that sleeps
+    // (`docs/design/connect-park-options.md`).
+    internal | FinishedConnect
+
+/// What a woken thread's call answered once `UnixWait.finish` finished it: one
+/// case for each kind of call a thread parks in, named as that kind's
+/// `ParkedSyscall` case is, holding exactly what that kind's own finishing
+/// function answers.
+///
+/// As those answers do, it may hold the call's answer, the thread asleep in
+/// the call again, waiting for a new wake, or the call interrupted by a signal
+/// (`Interrupted`), whose end the thread's return to user mode says.
+///
+/// The cases of the reserved parks, `Sleep`, `FifoOpen`, `Select`,
+/// `SignalWait`, `DatagramReceive`, `DatagramSend` and `Connect`, hold types
+/// whose representations are internal. Nothing parks a thread in any of them
+/// yet, so `UnixWait.finish` answers none of them.
+[<RequireQualifiedAccess>]
+[<NoEquality ; NoComparison>]
+type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    /// An `epoll_wait(2)`, as `UnixPoll.finishEpollWait` answers it.
+    | EpollWait of outcome : EpollWaitOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `kevent(2)`, as `UnixKqueue.finishKevent` answers it.
+    | Kevent of outcome : KeventOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// An `flock(2)`, as `UnixDescriptor.flockAcquire` answers it.
+    | Flock of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A Linux `poll(2)`, as `UnixPoll.finishPoll` answers it.
+    | Poll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A Darwin `poll(2)`, as `UnixPoll.finishPoll` answers it.
+    | KqueuePoll of outcome : PollOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// An `accept(2)`, as `UnixConnection.finishAccept` answers it.
+    | Accept of outcome : AcceptOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `read(2)` of a pipe, as `UnixReadWrite.finishRead` answers it.
+    | PipeRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `write(2)` to a pipe, as `UnixReadWrite.finishWrite` answers it: the
+    /// call's answer, or the call stopped where the kernel copies its next
+    /// bytes, which `UnixReadWrite.writeWithBytes` takes.
+    | PipeWrite of
+        progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+    /// A `read(2)` or `recv(2)` of a connected socket, as
+    /// `UnixReadWrite.finishRead` answers it.
+    | ConnectionRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `write(2)` or `send(2)` to a connected socket, as
+    /// `UnixReadWrite.finishWrite` answers it, as for `PipeWrite`.
+    | ConnectionWrite of
+        progress : CallProgress<PausedWrite<'Thread, 'Handler>, ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>>
+    /// A `sigsuspend(2)`, `rt_sigsuspend(2)` or `pause(2)`, as
+    /// `UnixSignal.finishSigsuspend` answers it.
+    | SigSuspend of outcome : SigsuspendOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `nanosleep(2)` or `clock_nanosleep(2)`. Reserved: see
+    /// `FinishedSleep`.
+    | Sleep of finished : FinishedSleep<'Thread, 'Handler>
+    /// A blocking `open(2)` of one end of a FIFO. Reserved: see
+    /// `FinishedFifoOpen`.
+    | FifoOpen of finished : FinishedFifoOpen<'Thread, 'Handler>
+    /// A `read(2)` of an inotify instance, as `UnixReadWrite.finishRead`
+    /// answers it.
+    | InotifyRead of outcome : ReadOutcome * system : UnixSystem<'Thread, 'Handler>
+    /// A `select(2)` or `pselect(2)`. Reserved: see `FinishedSelect`.
+    | Select of finished : FinishedSelect<'Thread, 'Handler>
+    /// A `sigwait(3)`, `sigwaitinfo(2)` or `sigtimedwait(2)`. Reserved: see
+    /// `FinishedSignalWait`.
+    | SignalWait of finished : FinishedSignalWait<'Thread, 'Handler>
+    /// A blocking receive on a datagram socket. Reserved: see
+    /// `FinishedDatagramReceive`.
+    | DatagramReceive of finished : FinishedDatagramReceive<'Thread, 'Handler>
+    /// A blocking send of a datagram. Reserved: see `FinishedDatagramSend`.
+    | DatagramSend of finished : FinishedDatagramSend<'Thread, 'Handler>
+    /// A blocking `connect(2)`. Reserved: see `FinishedConnect`.
+    | Connect of finished : FinishedConnect<'Thread, 'Handler>
+
+/// What a woken call's finishing body answered, before `Entry` makes a kernel
+/// of its views: a `FinishedCall` of a modelled park whose systems are
+/// `'View`s.
+[<RequireQualifiedAccess>]
+[<NoEquality ; NoComparison>]
+type internal ViewFinishedCall<'View, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    | EpollWait of outcome : EpollWaitOutcome * view : 'View
+    | Kevent of outcome : KeventOutcome * view : 'View
+    | Flock of outcome : SyscallOutcome * view : 'View
+    | Poll of outcome : PollOutcome * view : 'View
+    | KqueuePoll of outcome : PollOutcome * view : 'View
+    | Accept of outcome : AcceptOutcome * view : 'View
+    | PipeRead of outcome : ReadOutcome * view : 'View
+    | PipeWrite of progress : CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'View>>
+    | ConnectionRead of outcome : ReadOutcome * view : 'View
+    | ConnectionWrite of progress : CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'View>>
+    | SigSuspend of outcome : SigsuspendOutcome * view : 'View
+    | InotifyRead of outcome : ReadOutcome * view : 'View
+
+/// Why this library will not finish a woken call (`UnixWait.finish`): the
+/// refusal of the finishing function of the call's family, or a reserved park,
+/// which has none.
+[<RequireQualifiedAccess>]
+type internal FinishRefusal =
+    | Flock of FLockRefusal
+    | Accept of AcceptRefusal
+    | Poll of PollRefusal
+    | EpollWait of EpollWaitRefusal
+    | Kevent of KeventRefusal
+    | Read of ReadRefusal
+    | Write of WriteRefusal
+    | Sigsuspend of SigsuspendRefusal
+    /// The thread is parked in `parked`, a reserved park: nothing parks a
+    /// thread in one yet, and no finishing function finishes one.
+    | Reserved of parked : ParkedSyscall
+
+[<RequireQualifiedAccess>]
+module internal FinishRefusal =
+    /// What this kernel knows about why it cannot answer: the family's own
+    /// description of its refusal.
+    let describe (refusal : FinishRefusal) : string =
+        match refusal with
+        | FinishRefusal.Flock refusal -> FLockRefusal.describe refusal
+        | FinishRefusal.Accept refusal -> AcceptRefusal.describe refusal
+        | FinishRefusal.Poll refusal -> PollRefusal.describe refusal
+        | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.describe refusal
+        | FinishRefusal.Kevent refusal -> KeventRefusal.describe refusal
+        | FinishRefusal.Read refusal -> ReadRefusal.describe refusal
+        | FinishRefusal.Write refusal -> WriteRefusal.describe refusal
+        | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.describe refusal
+        | FinishRefusal.Reserved parked ->
+            $"the thread is parked in %A{parked}, a call this library parks no thread in yet, and has no finishing function for."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : FinishRefusal) : RefusalKind =
+        match refusal with
+        | FinishRefusal.Flock refusal -> FLockRefusal.kind refusal
+        | FinishRefusal.Accept refusal -> AcceptRefusal.kind refusal
+        | FinishRefusal.Poll refusal -> PollRefusal.kind refusal
+        | FinishRefusal.EpollWait refusal -> EpollWaitRefusal.kind refusal
+        | FinishRefusal.Kevent refusal -> KeventRefusal.kind refusal
+        | FinishRefusal.Read refusal -> ReadRefusal.kind refusal
+        | FinishRefusal.Write refusal -> WriteRefusal.kind refusal
+        | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.kind refusal
+        | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
+
+/// Deciding which parked threads a system wakes, and finishing a woken
+/// thread's call.
 ///
 /// Wakes are pulled rather than pushed: nothing that makes a condition true
 /// wakes anyone. A client asks `wake` of each state it reaches instead, so no
@@ -339,3 +557,139 @@ module UnixWait =
                 Processes = processes
                 Sweep = WakeMemo.none
             }
+
+    /// The `FinishedCall` of what `tryFinishIn` answered, each view in it put
+    /// back through `shapes` where the shape of that family's own finishing
+    /// function puts it: `finish`'s cases, for `Shape.union`.
+    let private finishedCases<'View, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (shapes : ShapeMap<'View, UnixSystem<'Thread, 'Handler>>)
+        (finished : ViewFinishedCall<'View, 'Thread, 'Handler>)
+        : FinishedCall<'Thread, 'Handler>
+        =
+        match finished with
+        | ViewFinishedCall.EpollWait (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.EpollWait
+        | ViewFinishedCall.Kevent (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Kevent
+        | ViewFinishedCall.Flock (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Flock
+        | ViewFinishedCall.Poll (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Poll
+        | ViewFinishedCall.KqueuePoll (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.KqueuePoll
+        | ViewFinishedCall.Accept (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Accept
+        | ViewFinishedCall.PipeRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.PipeRead
+        | ViewFinishedCall.PipeWrite progress ->
+            shapes.Map (Shape.progress Shape.fate) progress |> FinishedCall.PipeWrite
+        | ViewFinishedCall.ConnectionRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.ConnectionRead
+        | ViewFinishedCall.ConnectionWrite progress ->
+            shapes.Map (Shape.progress Shape.fate) progress |> FinishedCall.ConnectionWrite
+        | ViewFinishedCall.SigSuspend (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.SigSuspend
+        | ViewFinishedCall.InotifyRead (outcome, view) ->
+            shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.InotifyRead
+
+    /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
+    /// parked in, finished by the finishing body of its family.
+    let private tryFinishIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ViewFinishedCall<ProcessView<'Thread, 'Handler>, 'Thread, 'Handler>, FinishRefusal>
+        =
+        let parked = UnixThreadTable.requireParked "UnixWait.finish" thread system.Threads
+
+        match parked with
+        | ParkedSyscall.EpollWait _ ->
+            UnixPoll.tryFinishEpollWaitIn thread system
+            |> Result.map ViewFinishedCall.EpollWait
+            |> Result.mapError FinishRefusal.EpollWait
+        | ParkedSyscall.Kevent _ ->
+            UnixKqueue.tryFinishKeventIn thread system
+            |> Result.map ViewFinishedCall.Kevent
+            |> Result.mapError FinishRefusal.Kevent
+        | ParkedSyscall.Flock _ ->
+            UnixDescriptor.tryFlockAcquireIn thread system
+            |> Result.map ViewFinishedCall.Flock
+            |> Result.mapError FinishRefusal.Flock
+        | ParkedSyscall.Poll _ ->
+            UnixPoll.tryFinishPollIn thread system
+            |> Result.map ViewFinishedCall.Poll
+            |> Result.mapError FinishRefusal.Poll
+        | ParkedSyscall.KqueuePoll _ ->
+            UnixPoll.tryFinishPollIn thread system
+            |> Result.map ViewFinishedCall.KqueuePoll
+            |> Result.mapError FinishRefusal.Poll
+        | ParkedSyscall.Accept _ ->
+            UnixConnection.tryFinishAcceptIn thread system
+            |> Result.map ViewFinishedCall.Accept
+            |> Result.mapError FinishRefusal.Accept
+        | ParkedSyscall.PipeRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.PipeRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.PipeWrite _ ->
+            UnixReadWrite.tryFinishWriteIn thread system
+            |> Result.map ViewFinishedCall.PipeWrite
+            |> Result.mapError FinishRefusal.Write
+        | ParkedSyscall.ConnectionRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.ConnectionRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.ConnectionWrite _ ->
+            UnixReadWrite.tryFinishWriteIn thread system
+            |> Result.map ViewFinishedCall.ConnectionWrite
+            |> Result.mapError FinishRefusal.Write
+        | ParkedSyscall.SigSuspend ->
+            UnixSignal.tryFinishSigsuspendIn thread system
+            |> Result.map ViewFinishedCall.SigSuspend
+            |> Result.mapError FinishRefusal.Sigsuspend
+        | ParkedSyscall.InotifyRead _ ->
+            UnixReadWrite.tryFinishReadIn thread system
+            |> Result.map ViewFinishedCall.InotifyRead
+            |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.DatagramReceive _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> Error (FinishRefusal.Reserved parked)
+
+    /// `finish`, with a refusal answered as the `Error` rather than raised.
+    let internal tryFinish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<FinishedCall<'Thread, 'Handler>, FinishRefusal>
+        =
+        Entry.call
+            "UnixWait.finish"
+            CallerRequirement.Woken
+            caller
+            (Shape.result (Shape.union finishedCases))
+            (tryFinishIn (Caller.thread caller))
+            system
+
+    /// Finish the call `caller` is parked in, once `wake` has woken it, through
+    /// the finishing function of that call's family, and answer the
+    /// `FinishedCall` case named as the call's `ParkedSyscall` case is, holding
+    /// exactly what that function answers.
+    ///
+    /// So it answers as that function would: the call's answer, which clears the
+    /// park; the thread parked again, asleep, for a new wake, where what woke it
+    /// has gone; or `Interrupted`, after which the thread owes its return to
+    /// user mode (`UnixSignal.onReturnToUser`), which says how the call ends. A
+    /// client that wants that function's own answer type calls it instead.
+    ///
+    /// Throws `InvalidOperationException` unless `caller` is a thread of one of
+    /// the system's processes, parked in a call and woken, and
+    /// `UnmodelledException` for a thread parked in one of the reserved calls
+    /// (`ParkedSyscall.Sleep`, `FifoOpen`, `Select`, `SignalWait`,
+    /// `DatagramReceive`, `DatagramSend` and `Connect`), which nothing parks a
+    /// thread in yet. Otherwise it throws what the family's finishing function
+    /// throws.
+    let finish<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : FinishedCall<'Thread, 'Handler>
+        =
+        tryFinish caller system
+        |> Refusal.orRaise "UnixWait.finish" FinishRefusal.kind FinishRefusal.describe

@@ -76,6 +76,7 @@ Besides the syscalls, a client calls these between them (the system argument is 
 | time passing | `UnixSystem.advanceClock (nanoseconds : int64)` | `UnixSystem` |
 | waking the sleeping threads that can go on | `UnixWait.wake` | `(Caller * Set<WakePrimitive>) list * UnixSystem` |
 | whether one sleeping thread could go on | `UnixWait.satisfied (caller : Caller)` | `Set<WakePrimitive> option` |
+| finishing a woken thread's call | `UnixWait.finish (caller : Caller)` | `FinishedCall` |
 | when sleeping calls time out | `UnixWait.deadlines` | `int64 list` |
 | another process starting | `UnixSystem.launch (launch : ProcessLaunch)` | `ProcessId * UnixSystem` |
 | every way the tables disagree | `UnixSystem.checkInvariants` | `UnixSystemDefect list` |
@@ -215,7 +216,7 @@ Every syscall takes the caller as its first argument, and so do the return to us
 A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength`, `UnixConnection.connectWithAddress`, `UnixReadWrite.writeWithBytes`, `UnixReadWrite.sendWithBytes` and `UnixReadWrite.pwriteWithBytes`.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall and owing no return to user mode (see "The return to user mode"); the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish, and woken (see "Sleeping and waking").
+The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall and owing no return to user mode (see "The return to user mode"); `UnixWait.finish` and the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish, and woken (see "Sleeping and waking").
 `UnixSignal.onReturnToUser` requires a thread parked in no syscall, whether or not it owes a return, and `UnixScheduling.dispatch` takes any thread of the process, parked or not.
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
@@ -317,7 +318,7 @@ A value no `parse` could have produced, such as one built with `Unchecked.defaul
 From version 1.0, adding a case to any union whose cases are public is a breaking change, and comes only in a major version.
 F# code compiled against a union dispatches on its case numbers, so code built against an older version can silently run the wrong arm for a new case.
 The model will still grow: a refusal becomes an answer once its behaviour is measured, and each newly measured difference between Linux and Darwin adds a place that throws `UnmodelledException` (see "Answers, and what this library will not answer"), which needs no new case.
-Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`.
+Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `FinishedCall.Sleep`, `FinishedCall.FifoOpen`, `FinishedCall.Select`, `FinishedCall.SignalWait`, `FinishedCall.DatagramReceive`, `FinishedCall.DatagramSend`, `FinishedCall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`.
 Removing a case, changing a case's fields, or changing the shape of any other type is breaking too.
 
 The defects the `checkInvariants` functions report (`UnixSystemDefect` and `VirtualFileSystemDefect`) are open too, and have no patterns at all.
@@ -584,7 +585,7 @@ These calls have no function, and a client should refuse them rather than guess:
 
 A real kernel copies an argument in from the caller's memory at a point in the call, and what happens before that point is observable: a bad descriptor is `EBADF` whatever the buffer holds.
 So a call that copies bytes in stops there.
-`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
+`UnixReadWrite.write`, `UnixReadWrite.send`, `UnixReadWrite.finishWrite`, `UnixReadWrite.pwrite`, `UnixSocket.bind`, `UnixConnection.connect`, `UnixSocket.setsockopt` and `UnixSocket.getsockopt` answer a `CallProgress`, and `UnixWait.finish` holds `finishWrite`'s in `FinishedCall.PipeWrite` and `FinishedCall.ConnectionWrite`: the call's answer, reached before the copy (`CallProgress.Answered`), or the call stopped at the copy (`CallProgress.NeedsCopyIn`), holding the system and everything the call has decided.
 The paused call's `copyRange` says which bytes of the caller's buffer to copy, and its resume function (`UnixReadWrite.writeWithBytes`, `sendWithBytes`, `pwriteWithBytes`, `UnixSocket.bindWithAddress`, `UnixConnection.connectWithAddress`, `UnixSocket.setsockoptWithValue`) takes exactly those and finishes the call, answering the same type `CallProgress.Answered` carries.
 A `getsockopt` stops where the kernel reads the caller's length cell instead, and `UnixSocket.getsockoptWithLength` takes the `socklen_t` it holds.
 Nothing else can be done to the system in between, since the paused call holds it.
@@ -623,7 +624,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 **Writing.** A write stops where the kernel copies from the caller's buffer, as every call that copies in does (see "Calls that copy in from the caller's memory").
 
 1. `UnixReadWrite.write` answers a `CallProgress`, before the kernel reads the caller's buffer: `CallProgress.Answered` is the call's answer, with no bytes read, and `CallProgress.NeedsCopyIn paused` is the call stopped at the copy. `PausedWrite.copyRange paused` says which bytes: the client copies exactly those from the caller's buffer and passes them to `UnixReadWrite.writeWithBytes`, which finishes the call. A blocking write with room for only part of it copies that part, and sleeps for the rest; a blocking write of more than a pipe holds (64 KiB on Linux) does that at once.
-2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
+2. A write that sleeps answers `WriteOutcome.WouldBlock`, before or after the copy. Once `UnixWait.wake` wakes it, `UnixReadWrite.finishWrite` answers a `CallProgress` again, as `UnixWait.finish` does in `FinishedCall.PipeWrite` or `FinishedCall.ConnectionWrite`: the call's answer, or the call stopped at the copy of its next bytes, which start `copyRange.Offset` bytes into the caller's buffer, past those already written. That may sleep again, and the client repeats this step.
 
 Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because the write raised `SIGPIPE` at its default (see "Ending the process"), or it carries on with one of these, and the system:
 
@@ -647,7 +648,7 @@ That is the state the kernel sleeps in, which can differ from the one the call a
 The library has no scheduler, and does not want one.
 Waking is pulled rather than pushed: nothing that makes a sleeping call able to go on wakes it.
 After each step, the client asks `UnixWait.wake`, which wakes every sleeping thread that may go on now, and answers each, by its `Caller`, in the order they parked, with the system in which they are woken.
-A woken thread stays parked until its call is finished, and the client finishes the call when it chooses, through its finishing function, which only a woken thread's call may have.
+A woken thread stays parked until its call is finished, and the client finishes the call when it chooses, with `UnixWait.finish`; only a woken thread's call may be finished.
 A park records whether its thread has been woken (`ThreadPark.State`, `ParkState.Asleep` or `ParkState.Woken` with what woke it), so the client keeps no set of sleeping threads of its own; one it has woken and does not finish yet, it simply does not finish.
 A woken thread is not woken again, and where a kernel wakes one waiter of a queue at a time, as for an epoll instance, a listener or a Linux pipe, a woken thread that has not finished its call stands for whatever woke it, so no other waiter on that queue wakes meanwhile.
 `UnixWait.satisfied` asks of one thread whether its call could get any further, and changes nothing: it is cheaper, but does not decide which of several waiters on one queue wakes, which only `wake` chooses.
@@ -658,7 +659,9 @@ Advancing the clock, a call that changes nothing, and dispatching a thread to th
 A sweep that wakes nobody answers a new system, equal to the one it was given, which remembers the sweep: so the client keeps the system `wake` answers, as it keeps every other.
 What a system remembers is no part of its value, and two systems that differ only in that are equal.
 
-A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, asleep, for a new wake, or say a signal interrupted the call (`Interrupted`), whose end the thread's return to user mode says (see "The return to user mode"):
+`UnixWait.finish caller` finishes the call the woken thread `caller` names is parked in, through the finishing function of the call's family.
+It answers a `FinishedCall`, whose case is named as the thread's `ParkedSyscall` case is and holds exactly what that function answers: the call's answer, the thread parked again, asleep, for a new wake, or the call interrupted by a signal (`Interrupted`), whose end the thread's return to user mode says (see "The return to user mode").
+A client that wants a family's own answer type calls its finishing function instead:
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
@@ -671,10 +674,10 @@ A woken thread finishes its call through its family's finishing function, which 
 | `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (caller : Caller)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
 | `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (caller : Caller)` |
 
-Each answers what the call that parked answered, as in the tables above.
+Each answers what the call that parked answered, as in the tables above, and `UnixWait.finish` holds that answer in the `FinishedCall` case of the same name.
 
-`ParkedSyscall.Sleep` (a `nanosleep` or `clock_nanosleep`, carrying a `ParkedSleep`), `ParkedSyscall.FifoOpen` (a blocking `open` of one end of a FIFO, carrying a `ParkedFifoOpen`), `ParkedSyscall.Select` (a `select` or `pselect`, carrying a `ParkedSelect`, whose representation is internal), `ParkedSyscall.SignalWait` (a `sigwait`, `sigwaitinfo` or `sigtimedwait`, carrying a `ParkedSignalWait`), `ParkedSyscall.DatagramReceive` (a blocking receive on a datagram socket, carrying a `ParkedDatagramReceive`), `ParkedSyscall.DatagramSend` (a blocking Linux Unix-domain datagram send, carrying a `ParkedDatagramSend`) and `ParkedSyscall.Connect` (a blocking Linux `connect` to a full listener, carrying a `ParkedConnect`) are reserved: nothing parks a thread in any of them yet, and none has a finishing function, so `UnixSystem.checkInvariants` reports a thread parked in one as a defect.
-The payloads of the datagram parks and the connect park have internal representations too.
+`ParkedSyscall.Sleep` (a `nanosleep` or `clock_nanosleep`, carrying a `ParkedSleep`), `ParkedSyscall.FifoOpen` (a blocking `open` of one end of a FIFO, carrying a `ParkedFifoOpen`), `ParkedSyscall.Select` (a `select` or `pselect`, carrying a `ParkedSelect`, whose representation is internal), `ParkedSyscall.SignalWait` (a `sigwait`, `sigwaitinfo` or `sigtimedwait`, carrying a `ParkedSignalWait`), `ParkedSyscall.DatagramReceive` (a blocking receive on a datagram socket, carrying a `ParkedDatagramReceive`), `ParkedSyscall.DatagramSend` (a blocking Linux Unix-domain datagram send, carrying a `ParkedDatagramSend`) and `ParkedSyscall.Connect` (a blocking Linux `connect` to a full listener, carrying a `ParkedConnect`) are reserved: nothing parks a thread in any of them yet, and none has a finishing function, so `UnixWait.finish` throws `UnmodelledException` for a thread parked in one, and `UnixSystem.checkInvariants` reports a thread parked in one as a defect.
+The payloads of the datagram parks and the connect park have internal representations too, as do `FinishedSleep`, `FinishedFifoOpen`, `FinishedSelect`, `FinishedSignalWait`, `FinishedDatagramReceive`, `FinishedDatagramSend` and `FinishedConnect`, which `FinishedCall.Sleep`, `FinishedCall.FifoOpen` and the other cases named for the reserved parks hold.
 So are the primitives a FIFO open, a signal wait and a Unix-domain connect wait for, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`, which no condition contains yet.
 The cases exist so that a client's matches already handle them when sleeps, FIFOs, `select`, signal waits, datagram transfers and sleeping connects arrive.
 
@@ -746,15 +749,16 @@ let written =
         | outcome -> failwith $"unexpected write: %A{outcome}"
     | CallProgress.Answered outcome -> failwith $"unexpected before the copy: %A{outcome}"
 
-// The write lets thread 1 go on: the client wakes it, and finishRead finishes its call.
+// The write lets thread 1 go on: the client wakes it, and finishes its call, a
+// read of a pipe.
 let woken =
     match UnixWait.wake written with
     | [ woken, _ ], written when woken = second ->
-        match UnixReadWrite.finishRead second written with
-        | ReadOutcome.Answered (ReadAnswer.Completed bytes), system ->
+        match UnixWait.finish second written with
+        | FinishedCall.PipeRead (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) ->
             printfn "thread 1 read %s" (System.Text.Encoding.ASCII.GetString (bytes.AsSpan ()))
             resume second system
-        | outcome, _ -> failwith $"unexpected read: %A{outcome}"
+        | finished -> failwith $"unexpected finish: %A{finished}"
     | wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
 
 // Thread 1 exits, and then thread 0 calls exit_group(3), which ends the process:
@@ -798,7 +802,7 @@ It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate
 * `ReturnToUserOutcome.ProcessStopped signal`: a signal whose default action stops the process stopped it (see below).
 * `ReturnToUserOutcome.ContinueDiscarded signal`: the kernel discarded a `SIGCONT` at its default, pending while the thread blocked it, as the thread took it, and the client asks `onReturnToUser` again, since the return goes on, under a `sigsuspend`'s temporary mask if the thread is returning from one.
 
-`interrupted` is `Some` only for the return from a call that answered `Interrupted`: from its finishing function, or, for a `sigsuspend` or `pause`, as it was made with a signal already pending.
+`interrupted` is `Some` only for the return from a call that answered `Interrupted`: as it was finished (through `UnixWait.finish` or its family's finishing function), or, for a `sigsuspend` or `pause`, as it was made with a signal already pending.
 Such a call ends here, as a real kernel ends it as the thread returns, from the signals as they are now, which another thread may have changed since the call was interrupted.
 `Some InterruptedCall.FailsWithEintr` is the call returning -1 with `EINTR`, once every handler pushed has returned.
 `Some InterruptedCall.Restarts` is the call restarting: once every handler pushed has returned, the client makes the same call again, with the arguments it was first made with, as a real kernel rewinds the thread to make it again.
@@ -808,7 +812,7 @@ The same holds where another thread ignores the signal after it has woken the th
 The return is refused for an interrupted call where the first signal it takes stops or continues the process, where the handlers it runs disagree about `SA_RESTART` for a call that restarts under it, where no handler runs for a Linux `poll` with a timeout (which Linux restarts with what is left of its timeout) or for an `epoll_wait`, `kevent` or Darwin `poll` with one, and, under Darwin, where the end it gives differs from the end the return would have given as the call was interrupted, since Darwin may decide as the woken thread runs.
 
 A thread owes its return to user mode after a call that answered `Interrupted`, and after any call that answered with the system and left it a signal it takes here; until it has returned, any other call it makes throws `InvalidOperationException`.
-So the client's loop is: make the call, or finish it once it is woken; return to user mode, running the handlers that return pushes; and on `InterruptedCall.Restarts` make the call again.
+So the client's loop is: make the call, or finish it with `UnixWait.finish` once it is woken; return to user mode, running the handlers that return pushes; and on `InterruptedCall.Restarts` make the call again.
 `onReturnToUser` may be asked at any other time the thread is in no syscall too, as at a preemption point, and answers `Resumes None` for a thread that takes nothing.
 
 A signal whose default terminates the process ends it where the library applies the default: at generation, when some thread can take it (from `kill`, `pthreadKill`, or a write that raises `SIGPIPE`), and otherwise when a thread that blocked it can take it, as the thread returns to user mode (from `onReturnToUser`): after a mask call or a `sigreturn` that unblocks it, or from a `sigsuspend` whose temporary mask lets it through.
@@ -951,8 +955,8 @@ let signalled =
 let restarted =
     match UnixWait.wake signalled with
     | [ woken, _ ], woken' when woken = second ->
-        match UnixReadWrite.finishRead second woken' with
-        | ReadOutcome.Interrupted, system ->
+        match UnixWait.finish second woken' with
+        | FinishedCall.PipeRead (ReadOutcome.Interrupted, system) ->
             printfn "the read was interrupted"
 
             match returnToUser second system with
@@ -960,7 +964,7 @@ let restarted =
                 printfn "the read restarts"
                 system
             | ending, _ -> failwith $"expected the read to restart: %A{ending}"
-        | outcome, _ -> failwith $"unexpected read: %A{outcome}"
+        | finished -> failwith $"unexpected finish: %A{finished}"
     | wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
 
 // The client makes the read again, as the restart says, and it sleeps again.
@@ -1052,7 +1056,7 @@ printfn "processes left: %A" (UnixSystem.processIds remaining |> Seq.map Process
 A call asleep in one process wakes for what another process's call does: a connection queued on its listener, bytes arriving on its socket or room freed in its send buffer, a peer's FIN or reset, a lock let go of.
 `UnixWait.wake` wakes the sleeping threads of every process at once.
 Each sleeping thread's condition is asked of its own process, and where a kernel wakes one waiter of a queue at a time, the one is chosen across every process by the machine's park order; a woken thread that has not finished its call holds such a queue, in whichever process.
-A woken call is finished by its own thread's finishing call.
+A woken call is finished by `UnixWait.finish` of its own thread's caller, in whichever process.
 A kqueue registration, and a filter a sleeping Darwin `poll` registered, is attached to the socket its descriptor named, as XNU attaches a knote to the socket, so an event on the socket reaches it whichever process caused the event; a sleeping Darwin poll's kqueue (`PollQueue`) is the machine's for as long as the call sleeps.
 A client reads that kqueue through `UnixSystem.pollQueue`, then `PollQueue.registered`, `PollQueue.entry` and `PollQueue.activated`.
 A kqueue's own registrations, and what each is attached to, are not public (`KqueueState`'s representation is internal), so a later version can attach a registration to a pipe or a timer without a change of shape.
@@ -1106,7 +1110,7 @@ It answers which threads could run (not parked in the kernel; the client subtrac
 Choosing is policy, and a client that explores schedules, or a harness that steers one from outside, must own it; the kernel keeps only the facts a choice is made from.
 
 **Where they meet.** `UnixSystem.threads` lists a process's threads, and `UnixThreadState.parkedIn` says which are parked in a syscall.
-The client asks `UnixWait.wake`, which wakes the parked threads that may go on now and records them woken; it decides when a woken thread finishes its call.
+The client asks `UnixWait.wake`, which wakes the parked threads that may go on now and records them woken; it decides when a woken thread finishes its call (`UnixWait.finish`).
 Which processor a thread belongs on is the client's policy too.
 The client reports each thread it runs with `UnixScheduling.dispatch caller cpu`: "the thread `caller` names is now running on processor c".
 The kernel keeps what Linux keeps.

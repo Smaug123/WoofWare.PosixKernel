@@ -595,6 +595,16 @@ type internal Shape<'View, 'Kernel, 'InView, 'InKernel> =
     // end without the view it ended in.
     private | Shape of map : (Unfocus<'View, 'Kernel> -> 'InView -> 'InKernel)
 
+/// What `Shape.union` hands the code that makes a union's answer, in place of
+/// the `Unfocus` the shape is given: a way to make a kernel of each view in a
+/// part of the answer only as one of the `Shape` module's shapes says.
+type internal ShapeMap<'View, 'Kernel> =
+    /// `answer` with a kernel made of each view in it, where `shape` says they
+    /// sit, as `Shape.map` makes it with the `Unfocus` the union's shape was
+    /// given.
+    abstract Map<'InView, 'InKernel> :
+        shape : Shape<'View, 'Kernel, 'InView, 'InKernel> -> answer : 'InView -> 'InKernel
+
 [<RequireQualifiedAccess>]
 module internal Shape =
 
@@ -671,6 +681,32 @@ module internal Shape =
             match fate with
             | ViewFate.Continues (outcome, view) -> ProcessFate.Continues (outcome, unfocus.Back view)
             | ViewFate.ProcessEnded (ended', view) -> ProcessFate.ProcessEnded (map unfocus ended (ended', view))
+        )
+
+    /// A union whose cases hold their systems each where a shape of its own
+    /// says: `cases` makes the answer of each case, putting back the views in
+    /// it through the `ShapeMap` it is handed, which maps each part as the
+    /// shape it is given says.
+    ///
+    /// `cases` is generic in the view, as every primitive is, so that the
+    /// compiler rejects one that leaves a view where it was; and it is handed no
+    /// `Unfocus`, so it puts a view back only as another shape does.
+    let union<'View, 'Kernel, 'InView, 'InKernel>
+        (cases : ShapeMap<'View, 'Kernel> -> 'InView -> 'InKernel)
+        : Shape<'View, 'Kernel, 'InView, 'InKernel>
+        =
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) (answer : 'InView) ->
+            let shapes =
+                { new ShapeMap<'View, 'Kernel> with
+                    member _.Map<'Part, 'PartInKernel>
+                        (shape : Shape<'View, 'Kernel, 'Part, 'PartInKernel>)
+                        (part : 'Part)
+                        : 'PartInKernel
+                        =
+                        map unfocus shape part
+                }
+
+            cases shapes answer
         )
 
 /// What the thread making a call must be doing as it makes it, which `Entry`

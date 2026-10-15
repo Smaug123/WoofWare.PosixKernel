@@ -1464,7 +1464,7 @@ module UnixPoll =
         |> Refusal.orRaise "UnixPoll.poll" PollRefusal.kind PollRefusal.describe
 
     /// `tryFinishPoll` once `Entry` has admitted its caller.
-    let private tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishPollIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<PollOutcome * ProcessView<'Thread, 'Handler>, PollRefusal>
@@ -1803,7 +1803,7 @@ module UnixPoll =
         | Ok None -> Ok (parkEpollWait thread parked.Epoll parked.MaxEvents parked.Buffer parked.Deadline system)
 
     /// `tryFinishEpollWait` once `Entry` has admitted its caller.
-    let private tryFinishEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishEpollWaitIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<EpollWaitOutcome * ProcessView<'Thread, 'Handler>, EpollWaitRefusal>

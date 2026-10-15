@@ -2518,7 +2518,7 @@ module UnixReadWrite =
             system.Threads
 
     /// `tryFinishRead` once `Entry` has admitted its caller.
-    let private tryFinishReadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishReadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
@@ -4668,7 +4668,7 @@ module UnixReadWrite =
         |> Refusal.orRaise "UnixReadWrite.write" WriteRefusal.kind WriteRefusal.describe
 
     /// `tryFinishWrite` once `Entry` has admitted its caller.
-    let private tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
