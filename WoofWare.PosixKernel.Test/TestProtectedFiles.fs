@@ -607,9 +607,7 @@ module TestProtectedFiles =
             "readlink", readlinkText
             "access", accessText (Eager.tryAccess (bytes "/s/lf") 4 system)
             "access-nofollow",
-            accessText (
-                UnixPathResolution.tryFaccessatEager (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system
-            )
+            accessText (Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/s/lf") 0 0x100 system)
             "chown",
             UnixPathResolution.tryChown (Callers.leader system) (PathArg.ofPath (path "/s/lf")) None None system
             |> ok
@@ -710,13 +708,7 @@ module TestProtectedFiles =
                         [
                             "access", Eager.tryAccess (bytes "/ids/lf") 4 system |> ok |> answerText
                             "access-eaccess",
-                            UnixPathResolution.tryFaccessatEager
-                                (Callers.leader system)
-                                -100
-                                (bytes "/ids/lf")
-                                4
-                                0x200
-                                system
+                            Eager.tryFaccessatAs (Callers.leader system) -100 (bytes "/ids/lf") 4 0x200 system
                             |> ok
                             |> answerText
                             "stat", statText SymlinkPolicy.Follow "/ids/lf" system

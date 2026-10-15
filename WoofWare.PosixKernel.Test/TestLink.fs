@@ -236,7 +236,7 @@ module TestLink =
         | None -> Eager.tryLink (text source) (text dest) system
         | Some flags ->
             let atFdCwd = AtDirectory.atFdCwd (SimulatedUnixPlatform.flavour platform)
-            UnixNamespace.tryLinkatEager (Callers.leader system) atFdCwd (text source) atFdCwd (text dest) flags system
+            Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) atFdCwd (text dest) flags system
 
     /// LINKSRC: link each source kind to "n" three ways; on success, what "n"
     /// is (the source itself or f, which a followed link names) and the
@@ -570,7 +570,7 @@ module TestLink =
                     let system = rulesSystem darwinFlavour protection caller
 
                     let actual =
-                        UnixNamespace.tryLinkatEager (Callers.leader system) atFdCwd (text source) destFd dest 0 system
+                        Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) destFd dest 0 system
                         |> rendered
 
                     if actual <> probe then
@@ -745,7 +745,7 @@ module TestLink =
                     | other -> failwith $"%s{context}: the probe has no EMPTY row %s{other}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager (Callers.leader system) fd (text path) -100 (text "n") flags system
+                    Eager.tryLinkatAs (Callers.leader system) fd (text path) -100 (text "n") flags system
                     |> rendered
 
                 let expected = expectedEmptyPath caller fd path flags probe
@@ -815,14 +815,7 @@ module TestLink =
                         failwith $"%s{context}: the probe has no CRED row %s{label}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager
-                        (Callers.leader system)
-                        dirfd
-                        (text path)
-                        linuxAtFdCwd
-                        (text "n")
-                        flags
-                        system
+                    Eager.tryLinkatAs (Callers.leader system) dirfd (text path) linuxAtFdCwd (text "n") flags system
                     |> rendered
 
                 let expected = expectedEmptyPath caller dirfd path flags probe
@@ -865,7 +858,7 @@ module TestLink =
                     | other -> failwith $"%s{context}: the probe has no UNLINKED row %s{other}"
 
                 let actual =
-                    UnixNamespace.tryLinkatEager (Callers.leader system) fd (text "") destFd dest linuxEmptyPath system
+                    Eager.tryLinkatAs (Callers.leader system) fd (text "") destFd dest linuxEmptyPath system
                     |> rendered
 
                 let expected = expectedEmptyPath caller fd "" linuxEmptyPath probe
@@ -985,14 +978,7 @@ module TestLink =
 
                 let direct =
                     match
-                        UnixNamespace.tryLinkatEager
-                            (Callers.leader system)
-                            atFdCwd
-                            (text source)
-                            atFdCwd
-                            (text dest)
-                            0
-                            system
+                        Eager.tryLinkatAs (Callers.leader system) atFdCwd (text source) atFdCwd (text dest) 0 system
                     with
                     | Ok answered -> Ok (SteppedCall.LinkAt answered)
                     | Error refusal -> Error (SyscallRefusal.LinkAt refusal)

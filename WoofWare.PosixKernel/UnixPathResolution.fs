@@ -3095,36 +3095,3 @@ module UnixPathResolution =
         =
         tryAccessWithPath path paused
         |> Refusal.orRaise "UnixPathResolution.accessWithPath" AccessRefusal.kind AccessRefusal.describe
-
-    /// `tryFaccessatEager` once `Entry` has admitted its caller.
-    let private tryFaccessatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (dirfd : int)
-        (path : PathArgumentBytes)
-        (mode : int)
-        (flags : int)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer, AccessRefusal>
-        =
-        tryFaccessatIn thread dirfd mode flags system
-        |> CallProgress.resumeWith (tryAccessWithPathIn path)
-
-    /// `faccessat(2)` given its path up front, as `UnixSystem.step`'s
-    /// `Syscall.FAccessAt` makes it: `tryFaccessat`, then `tryAccessWithPath` of
-    /// `path` if the call reaches the copy.
-    let internal tryFaccessatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (caller : Caller<'Thread>)
-        (dirfd : int)
-        (path : PathArgumentBytes)
-        (mode : int)
-        (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer, AccessRefusal>
-        =
-        Entry.call
-            "UnixPathResolution.faccessat"
-            CallerRequirement.Running
-            caller
-            Shape.answer
-            (tryFaccessatEagerIn (Caller.thread caller) dirfd path mode flags)
-            system

@@ -3105,40 +3105,6 @@ module UnixNamespace =
         tryCloneFileWithDestination destination paused
         |> Refusal.orRaise "UnixNamespace.cloneFileWithDestination" CloneFileRefusal.kind CloneFileRefusal.describe
 
-    /// `tryCloneFileEager` once `Entry` has admitted its caller.
-    let private tryCloneFileEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (source : PathArgumentBytes)
-        (destination : PathArgumentBytes)
-        (flags : int)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CloneFileRefusal>
-        =
-        tryCloneFileIn thread flags system
-        |> CallProgress.resumeWith (fun paused ->
-            tryCloneFileWithSourceIn source paused
-            |> CallProgress.resumeWith (tryCloneFileWithDestinationIn destination)
-        )
-
-    /// `clonefile(2)` given both pathnames up front, as `UnixSystem.step`'s
-    /// `Syscall.CloneFile` makes it: `tryCloneFile`, then each pathname as the
-    /// call reaches its copy.
-    let internal tryCloneFileEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (caller : Caller<'Thread>)
-        (source : PathArgumentBytes)
-        (destination : PathArgumentBytes)
-        (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
-        =
-        Entry.call
-            "UnixNamespace.cloneFile"
-            CallerRequirement.Running
-            caller
-            (Shape.result Shape.withSystem)
-            (tryCloneFileEagerIn (Caller.thread caller) source destination flags)
-            system
-
     let private symlinkTargetFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (directory : AtDirectory)
@@ -3330,37 +3296,6 @@ module UnixNamespace =
         =
         trySymlinkWithPath path paused
         |> Refusal.orRaise "UnixNamespace.symlinkWithPath" SymlinkRefusal.kind SymlinkRefusal.describe
-
-    /// `trySymlinkatEager` once `Entry` has admitted its caller.
-    let private trySymlinkatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (target : PathArgumentBytes)
-        (dirfd : int)
-        (path : PathArgumentBytes)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SymlinkRefusal>
-        =
-        Ok (symlinkatIn thread target dirfd system)
-        |> CallProgress.resumeWith (trySymlinkWithPathIn path)
-
-    /// `symlinkat(2)` given both pathnames up front, as `UnixSystem.step`'s
-    /// `Syscall.SymlinkAt` makes it: `symlinkat`, then `trySymlinkWithPath` of
-    /// `path` if the call reaches its copy.
-    let internal trySymlinkatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (caller : Caller<'Thread>)
-        (target : PathArgumentBytes)
-        (dirfd : int)
-        (path : PathArgumentBytes)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
-        =
-        Entry.call
-            "UnixNamespace.symlinkat"
-            CallerRequirement.Running
-            caller
-            (Shape.result Shape.withSystem)
-            (trySymlinkatEagerIn (Caller.thread caller) target dirfd path)
-            system
 
     let private linkSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -3676,38 +3611,3 @@ module UnixNamespace =
         =
         tryLinkWithDestination newpath paused
         |> Refusal.orRaise "UnixNamespace.linkWithDestination" LinkRefusal.kind LinkRefusal.describe
-
-    /// `tryLinkatEager` once `Entry` has admitted its caller.
-    let private tryLinkatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (olddirfd : int)
-        (oldpath : PathArgumentBytes)
-        (newdirfd : int)
-        (newpath : PathArgumentBytes)
-        (flags : int)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, LinkRefusal>
-        =
-        tryLinkatIn thread olddirfd oldpath newdirfd flags system
-        |> CallProgress.resumeWith (tryLinkWithDestinationIn newpath)
-
-    /// `linkat(2)` given both pathnames up front, as `UnixSystem.step`'s
-    /// `Syscall.LinkAt` makes it: `tryLinkat`, then `tryLinkWithDestination` of
-    /// `newpath` if the call reaches its copy.
-    let internal tryLinkatEager<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (caller : Caller<'Thread>)
-        (olddirfd : int)
-        (oldpath : PathArgumentBytes)
-        (newdirfd : int)
-        (newpath : PathArgumentBytes)
-        (flags : int)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
-        =
-        Entry.call
-            "UnixNamespace.linkat"
-            CallerRequirement.Running
-            caller
-            (Shape.result Shape.withSystem)
-            (tryLinkatEagerIn (Caller.thread caller) olddirfd oldpath newdirfd newpath flags)
-            system

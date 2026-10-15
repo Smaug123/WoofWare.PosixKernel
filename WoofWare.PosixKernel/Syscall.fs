@@ -18,6 +18,88 @@ type CopiedArgument<'T> =
     /// As `UserBuffer.Addressless`: not an address at all.
     | Addressless
 
+/// Making a call that copies in from the caller's memory with what that memory
+/// held already to hand, as `UnixSystem.step` makes it.
+[<RequireQualifiedAccess>]
+module internal CopiedArgument =
+
+    /// The `UserBuffer` a call's own function takes for `argument`: where the
+    /// caller's memory is, without what it held.
+    let userBuffer<'T> (argument : CopiedArgument<'T>) : UserBuffer =
+        match argument with
+        | CopiedArgument.Readable _ -> UserBuffer.Mapped
+        | CopiedArgument.Unmapped address -> UserBuffer.Unmapped address
+        | CopiedArgument.Opaque -> UserBuffer.Opaque
+        | CopiedArgument.Addressless -> UserBuffer.Addressless
+
+    /// The bytes of `contents` that `range` names. Fails with
+    /// `InvalidOperationException` if `contents` is the default
+    /// `ImmutableArray` or ends before `range` does: `operation` names the
+    /// function the client called.
+    let slice (operation : string) (range : CopyRange) (contents : ImmutableArray<byte>) : ImmutableArray<byte> =
+        if contents.IsDefault then
+            invalidOp
+                $"%s{operation}: the buffer's contents are the default ImmutableArray, whose underlying array is null. That is not an empty buffer; pass ImmutableArray<byte>.Empty."
+
+        if int64 range.FirstByte + int64 range.ByteCount > int64 contents.Length then
+            invalidOp
+                $"%s{operation}: the call copies %d{range.ByteCount} bytes, starting %d{range.FirstByte} bytes into the caller's buffer, but the buffer's contents (CopiedArgument.Readable) hold only %d{contents.Length}. A readable buffer holds every byte the call copies (this is a bug in the caller)."
+
+        ImmutableArray.Create (contents, range.FirstByte, range.ByteCount)
+
+    /// `call` made with the `UserBuffer` `argument` is, and, if it stops at
+    /// its copy, `resume` of what `read` takes of the contents for the paused
+    /// call. A call stops at its copy only from storage it was told is
+    /// readable, so one that stops for any other argument is a bug in this
+    /// library.
+    let private through<'T, 'Copied, 'Paused, 'Answer, 'Refusal>
+        (operation : string)
+        (read : 'Paused -> 'T -> 'Copied)
+        (resume : 'Copied -> 'Paused -> Result<'Answer, 'Refusal>)
+        (argument : CopiedArgument<'T>)
+        (call : UserBuffer -> Result<CallProgress<'Paused, 'Answer>, 'Refusal>)
+        : Result<'Answer, 'Refusal>
+        =
+        call (userBuffer argument)
+        |> CallProgress.resumeWith (fun paused ->
+            match argument with
+            | CopiedArgument.Readable contents -> resume (read paused contents) paused
+            | CopiedArgument.Unmapped _
+            | CopiedArgument.Opaque
+            | CopiedArgument.Addressless ->
+                failwith
+                    $"%s{operation}: the call stopped to copy from the caller's memory, which it was given as %A{userBuffer argument} rather than as readable storage (this is a bug in this library)."
+        )
+
+    /// A call that copies bytes in from the buffer `argument`: `call` made
+    /// with the `UserBuffer` `argument` is, and, if it stops at its copy,
+    /// `resume` of the bytes of the contents the paused call's `copyRange`
+    /// names.
+    ///
+    /// Fails with `InvalidOperationException` if the contents end before that
+    /// range does: `operation` names the function the client called.
+    let copyBytes<'Paused, 'Answer, 'Refusal>
+        (operation : string)
+        (copyRange : 'Paused -> CopyRange)
+        (resume : ImmutableArray<byte> -> 'Paused -> Result<'Answer, 'Refusal>)
+        (argument : CopiedArgument<ImmutableArray<byte>>)
+        (call : UserBuffer -> Result<CallProgress<'Paused, 'Answer>, 'Refusal>)
+        : Result<'Answer, 'Refusal>
+        =
+        through operation (fun paused contents -> slice operation (copyRange paused) contents) resume argument call
+
+    /// A call that reads one value in from the cell `argument`, such as
+    /// `getsockopt`'s `socklen_t`: `call` made with the `UserBuffer` `argument`
+    /// is, and, if it stops at the read, `resume` of the value the cell held.
+    let copyValue<'T, 'Paused, 'Answer, 'Refusal>
+        (operation : string)
+        (resume : 'T -> 'Paused -> Result<'Answer, 'Refusal>)
+        (argument : CopiedArgument<'T>)
+        (call : UserBuffer -> Result<CallProgress<'Paused, 'Answer>, 'Refusal>)
+        : Result<'Answer, 'Refusal>
+        =
+        through operation (fun _ value -> value) resume argument call
+
 /// The arguments of a `nanosleep(2)`: what `Syscall.Nanosleep` holds.
 ///
 /// Its representation is internal, so a later version may change what it
