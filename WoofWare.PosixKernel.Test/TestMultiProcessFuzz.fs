@@ -2118,10 +2118,11 @@ module TestMultiProcessFuzz =
         | Step.Dispatch (proc, thread, cpu) -> "Dispatch " + string proc + " " + string thread + " " + string cpu
 
     /// `case` run on a machine `configure` made, with `observe` shown each
-    /// step and the world it left.
-    let private runObserving
+    /// step and the world it left, and the world `observe` answers the one the
+    /// run goes on in.
+    let private runThreading
         (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
-        (observe : Step -> World -> unit)
+        (observe : Step -> World -> World)
         (cover : FuzzLabel -> unit)
         (log : string -> unit)
         (case : Case)
@@ -2225,9 +2226,28 @@ module TestMultiProcessFuzz =
                 cover FuzzLabel.QueuedClientResetWakesRead
 
             observe next world
-            world
         )
         |> ignore
+
+    /// `case` run on a machine `configure` made, with `observe` shown each
+    /// step and the world it left.
+    let private runObserving
+        (configure : UnixBootImage<int, string> -> UnixBootImage<int, string>)
+        (observe : Step -> World -> unit)
+        (cover : FuzzLabel -> unit)
+        (log : string -> unit)
+        (case : Case)
+        : unit
+        =
+        runThreading
+            configure
+            (fun step world ->
+                observe step world
+                world
+            )
+            cover
+            log
+            case
 
     let private run (cover : FuzzLabel -> unit) (case : Case) : unit =
         runObserving smallBuffers (fun _ _ -> ()) cover ignore case
@@ -2293,8 +2313,8 @@ module TestMultiProcessFuzz =
         coverage.Count FuzzLabel.Refusal * 10
         |> shouldBeSmallerThan (coverage.Count FuzzLabel.Call)
 
-    /// What a remembering sweep (`UnixWait.wakesRemembering`) did at a
-    /// step, each counted every time a step reaches it.
+    /// What `UnixWait.wake` did with the memo the system carries at a step,
+    /// each counted every time a step reaches it.
     [<RequireQualifiedAccess>]
     type private MemoLabel =
         /// The memo answered, sweeping nothing, after a step of this kind.
@@ -2352,29 +2372,52 @@ module TestMultiProcessFuzz =
         |> Configured.expectOk ProcessorCountRefusal.describe
 
     [<Test>]
-    let ``a remembering sweep answers what a full sweep answers, at every step of random interleavings`` () : unit =
+    let ``wake answers from the system's memo what the reference sweep answers, at every step of random interleavings``
+        ()
+        : unit
+        =
         let property (cover : MemoLabel -> unit) (case : Case) : unit =
-            let memo = ref WakeSweepMemo.empty<int, string>
             let lastSkipped = ref false
 
-            let observe (step : Step) (world : World) : unit =
+            let observe (step : Step) (world : World) : World =
                 let machine = world.Machine
-                let full, fullAfter = Machines.wake machine
+                let asleep = world.Asleep |> Set.map (fun (pid, thread) -> Caller.make pid thread)
+                let reference = ReferenceWake.wakes asleep machine
 
                 let skips, readsSame =
-                    match memo.Value.Remembered with
+                    match machine.Sweep.Remembered with
                     | ValueNone -> false, false
                     | ValueSome remembered ->
-                        WakeSweepMemo.covers remembered machine.Machine machine.Scheduling machine.Processes,
-                        WakeSweepMemo.readsSame remembered machine.Machine machine.Processes
+                        WakeMemo.covers remembered machine.Machine machine.Scheduling machine.Processes,
+                        WakeMemo.readsSame remembered machine.Machine machine.Processes
 
-                let answer, next, after = Machines.wakeRemembering memo.Value machine
-                answer |> shouldEqual full
+                let answer, after = UnixWait.wake machine
+                answer |> shouldEqual reference
                 obj.ReferenceEquals (after.Machine, machine.Machine) |> shouldEqual true
-                Machines.parkStates after |> shouldEqual (Machines.parkStates fullAfter)
+                obj.ReferenceEquals (after.Scheduling, machine.Scheduling) |> shouldEqual true
 
-                if answer.IsEmpty then
+                // What a memo remembers is no part of the system: forgetting it
+                // makes an equal system, which hashes alike.
+                let forgotten =
+                    { machine with
+                        Sweep = WakeMemo.none
+                    }
+
+                forgotten |> shouldEqual machine
+                hash forgotten |> shouldEqual (hash machine)
+
+                if skips then
                     obj.ReferenceEquals (after, machine) |> shouldEqual true
+                elif answer.IsEmpty then
+                    // The sweep woke nobody, and the system it answers remembers
+                    // so: equal to the one it was asked of, and made of the same
+                    // parts.
+                    after.Sweep.Remembered.IsSome |> shouldEqual true
+                    after |> shouldEqual machine
+                    hash after |> shouldEqual (hash machine)
+                    obj.ReferenceEquals (after.Processes, machine.Processes) |> shouldEqual true
+                else
+                    after.Sweep.Remembered.IsSome |> shouldEqual false
 
                 if skips then
                     let kind =
@@ -2405,10 +2448,19 @@ module TestMultiProcessFuzz =
                         if fired |> List.exists (deadline >> not) then
                             cover MemoLabel.SyscallWakeAfterSkip
 
-                memo.Value <- next
                 lastSkipped.Value <- skips
 
-            runObserving twoProcessors observe ignore ignore case
+                // The run goes on in the system that remembers the sweep. A
+                // sweep that woke a thread is left to the run's own wake passes,
+                // which keep the run's account of who sleeps.
+                if answer.IsEmpty then
+                    { world with
+                        Machine = after
+                    }
+                else
+                    world
+
+            runThreading twoProcessors observe ignore ignore case
 
         let coverage =
             CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen memoCaseGen) property
@@ -2513,7 +2565,8 @@ module TestMultiProcessFuzz =
                     slot.Threads.Count |> shouldEqual before.Threads.Count
 
                 if answer.IsEmpty then
-                    obj.ReferenceEquals (after, machine) |> shouldEqual true
+                    after |> shouldEqual machine
+                    obj.ReferenceEquals (after.Processes, machine.Processes) |> shouldEqual true
 
                 UnixWait.deadlines machine
                 |> shouldEqual (ReferenceWake.deadlines asleep machine)

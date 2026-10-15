@@ -12,48 +12,13 @@ type internal ExclusiveWaitQueue =
     /// The waiters in `write` for room in this pipe.
     | PipeWriters of PipeId
 
-/// What a sweep of a machine's sleeping threads that woke none of them read:
-/// everything a wake condition is asked of but the clock, among it which
-/// threads sleep, and the earliest deadline any of those threads waits for.
-type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    {
-        Machine : UnixMachineState
-        /// Every process's state and threads, whose parks say which threads
-        /// sleep.
-        Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
-        /// The earliest `WakePrimitive.DeadlinePassed` among the wake
-        /// conditions of the threads asleep in `Processes`, if any has one.
-        EarliestDeadline : int64 voption
-    }
-
-/// What `UnixWait.wakeRemembering` remembers between calls, so that it
-/// can tell, without asking any wake condition, that a system wakes no thread:
-/// the last sweep it made, if that sweep woke none.
-///
-/// Opaque. A client starts from `WakeSweepMemo.empty`, and passes each call the
-/// memo the last one answered.
-[<ReferenceEquality>]
-type WakeSweepMemo<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-    internal
-        {
-            Remembered : RememberedSweep<'Thread, 'Handler> voption
-#if DEBUG
-            /// How many answers `UnixWait.wakeRemembering` has given from `Remembered`
-            /// since it was swept, which decides the ones it checks against a sweep
-            /// (`WakeSweepMemo.crossChecks`).
-            HitsSinceSweep : int
-#endif
-        }
-
+/// Making and reading the wake memo a kernel carries (`UnixSystem.Sweep`).
 [<RequireQualifiedAccess>]
-module WakeSweepMemo =
-    /// A memo that remembers no sweep, so the next call sweeps.
-    let empty<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> : WakeSweepMemo<'Thread, 'Handler> =
+module internal WakeMemo =
+    /// A memo that remembers no sweep, so the next `UnixWait.wake` sweeps.
+    let none<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> : WakeMemo<'Thread, 'Handler> =
         {
             Remembered = ValueNone
-#if DEBUG
-            HitsSinceSweep = 0
-#endif
         }
 
     /// How many of the first answers after a sweep a Debug build checks every one of: see
@@ -77,6 +42,27 @@ module WakeSweepMemo =
     let internal crossChecks (hits : int) : bool =
         hits < CrossCheckedFirst || hits % CrossCheckedEvery = 0
 
+    /// Whether `processes` holds, under the same IDs, every process's state
+    /// and threads that `remembered` read, the same values rather than equal
+    /// ones.
+    let private sameSlots<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (remembered : RememberedSweep<'Thread, 'Handler>)
+        (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
+        : bool
+        =
+        remembered.Processes.Count = processes.Count
+        && processes
+           |> Map.forall (fun processId slot ->
+               match remembered.Processes.TryGetValue processId with
+               | true, before ->
+                   // The leader is not compared: it is fixed when its
+                   // process is launched, and every launch makes a new
+                   // process state, so the same state means the same leader.
+                   LanguagePrimitives.PhysicalEquality before.Process slot.Process
+                   && LanguagePrimitives.PhysicalEquality before.Threads slot.Threads
+               | false, _ -> false
+           )
+
     /// Whether `machine` and `processes` are the machine state and every
     /// process's state and threads that `remembered` read, the same values
     /// rather than equal ones: whether everything a wake condition reads but
@@ -87,23 +73,12 @@ module WakeSweepMemo =
         (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
         : bool
         =
-        let sameSlots () : bool =
-            remembered.Processes.Count = processes.Count
-            && processes
-               |> Map.forall (fun processId slot ->
-                   match remembered.Processes.TryGetValue processId with
-                   | true, before ->
-                       // The leader is not compared: it is fixed when its
-                       // process is launched, and every launch makes a new
-                       // process state, so the same state means the same leader.
-                       LanguagePrimitives.PhysicalEquality before.Process slot.Process
-                       && LanguagePrimitives.PhysicalEquality before.Threads slot.Threads
-                   | false, _ -> false
-               )
-
+        // `sameSlots`, which allocates, only when the process map is another
+        // value: it is the same one after a clock advance, a dispatch to the
+        // processor a thread is already on, and a call that changed nothing.
         LanguagePrimitives.PhysicalEquality remembered.Machine machine
         && (LanguagePrimitives.PhysicalEquality remembered.Processes processes
-            || sameSlots ())
+            || sameSlots remembered processes)
 
     /// Whether a sweep of a system would wake no thread because `remembered`
     /// woke none: whether it `readsSame` as `remembered`, and the clock has not
@@ -466,10 +441,56 @@ module UnixWait =
         )
         |> List.map (fun (_, caller, fired) -> caller, fired)
 
+    /// Every deadline the sleeping threads' calls are waiting for, in
+    /// nanoseconds since boot, with a repeat for each park that waits for it. A
+    /// woken thread's call is not counted: the thread is already the client's
+    /// to run.
+    ///
+    /// What a client with nothing runnable reads to learn how far it may advance
+    /// the clock before one of these calls times out.
+    let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : int64 list
+        =
+        parks "UnixWait.deadlines" system
+        |> List.collect (fun (_, _, park) ->
+            match park.State with
+            | ParkState.Asleep -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
+            | ParkState.Woken _ -> []
+        )
+
+    /// `system`, whose sweep woke no thread, remembering that sweep: what it
+    /// read, and the earliest deadline a sleeping thread waits for.
+    let private remembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let earliest =
+            match deadlines system with
+            | [] -> ValueNone
+            | deadlines -> ValueSome (List.min deadlines)
+
+        let remembered : RememberedSweep<'Thread, 'Handler> =
+            {
+                Machine = system.Machine
+                Processes = system.Processes
+                EarliestDeadline = earliest
+#if DEBUG
+                HitsSinceSweep = 0
+#endif
+            }
+
+        { system with
+            Sweep =
+                {
+                    Remembered = ValueSome remembered
+                }
+        }
+
     /// The sleeping threads `system` wakes now, in the order they parked, each
     /// with the primitives of its wake condition which hold; and the system
-    /// with each of them woken (`ParkState.Woken`), or `system` itself if
-    /// none wakes.
+    /// with each of them woken (`ParkState.Woken`). If none wakes, the system
+    /// answered is equal to `system`.
     ///
     /// A woken thread stays parked until the finishing function of the call it
     /// is parked in finishes it, and only a woken thread's call may be
@@ -501,12 +522,46 @@ module UnixWait =
     ///
     /// A woken thread is owed no success: several waiters for one lock all wake,
     /// and all but one find it taken again and re-park, asleep.
+    ///
+    /// A client asks this of every state it reaches, so it is cheap for a state
+    /// in which nothing it reads has changed. A system remembers the last
+    /// sweep of it that woke no thread, and `wake` answers from that, asking no
+    /// wake condition and answering `system` itself, while nothing that sweep
+    /// read has changed but the clock, and the clock has not reached the
+    /// earliest deadline any sleeping thread waits for. Nothing a syscall can
+    /// change counts as unchanged unless it is the same value, so a call that
+    /// changes the system makes the next `wake` sweep; moving the clock
+    /// (`UnixSystem.advanceClock`), a call that changes nothing, and reporting
+    /// a thread running on the processor it is already on
+    /// (`UnixScheduling.dispatch`) do not. A sweep that wakes no thread answers
+    /// a new system, which remembers it; so a client keeps the system this
+    /// answers, rather than the one it asked of. What a system remembers is no
+    /// part of its value: two systems that differ only in it are equal.
+    ///
+    /// A Debug build checks some of the answers it gives from what a system
+    /// remembers against a sweep, failing loudly if they differ.
     let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : (Caller<'Thread> * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
         =
+        match system.Sweep.Remembered with
+        | ValueSome remembered when WakeMemo.covers remembered system.Machine system.Scheduling system.Processes ->
+#if DEBUG
+            let hits = System.Threading.Interlocked.Increment &remembered.HitsSinceSweep - 1
+
+            if WakeMemo.crossChecks hits then
+                match wakesAmong system with
+                | [] -> ()
+                | woken ->
+                    failwith
+                        $"UnixWait.wake: the system's memo says it wakes no thread, but a sweep wakes %A{woken}, at answer %d{hits} since the memo's sweep (this is a bug in this library)."
+#endif
+            [], system
+        | ValueSome _
+        | ValueNone ->
+
         match wakesAmong system with
-        | [] -> [], system
+        | [] -> [], remembering system
         | woken ->
             let processes =
                 (system.Processes, woken)
@@ -525,93 +580,5 @@ module UnixWait =
             woken,
             { system with
                 Processes = processes
+                Sweep = WakeMemo.none
             }
-
-    /// Every deadline the sleeping threads' calls are waiting for, in
-    /// nanoseconds since boot, with a repeat for each park that waits for it. A
-    /// woken thread's call is not counted: the thread is already the client's
-    /// to run.
-    ///
-    /// What a client with nothing runnable reads to learn how far it may advance
-    /// the clock before one of these calls times out.
-    let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : UnixSystem<'Thread, 'Handler>)
-        : int64 list
-        =
-        parks "UnixWait.deadlines" system
-        |> List.collect (fun (_, _, park) ->
-            match park.State with
-            | ParkState.Asleep -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
-            | ParkState.Woken _ -> []
-        )
-
-    /// `wake`, which a client asks of every state it reaches, made cheap for
-    /// the states in which nothing it reads has changed: the threads it wakes,
-    /// the memo to pass the next call, and the system with those threads woken.
-    ///
-    /// Answers that no thread wakes, and `system` itself, without asking any
-    /// wake condition, when `memo` remembers a sweep that woke none, and
-    /// nothing that sweep read has changed since but the clock, which has not
-    /// reached the earliest deadline any sleeping thread waits for. Nothing a
-    /// syscall can change counts as unchanged unless it is the same value, so
-    /// a client that makes a syscall that changes the system is swept afresh;
-    /// a client that only moves the clock (`UnixSystem.advanceClock`), makes a
-    /// call that changes nothing, or reports which thread runs where
-    /// (`UnixScheduling.dispatch`, to a processor the thread is already on) is
-    /// not. Otherwise sweeps as `wake` does, and remembers the sweep if it woke
-    /// nobody.
-    ///
-    /// The answer is always `wake`'s, and `memo` decides only how much work it
-    /// takes.
-    ///
-    /// A Debug build checks some of the answers the memo gives against a sweep,
-    /// failing loudly if they differ, and answers a new memo after each of them,
-    /// which counts them.
-    let wakeRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (memo : WakeSweepMemo<'Thread, 'Handler>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : (Caller<'Thread> * Set<WakePrimitive>) list * WakeSweepMemo<'Thread, 'Handler> * UnixSystem<'Thread, 'Handler>
-        =
-        match memo.Remembered with
-        | ValueSome remembered when WakeSweepMemo.covers remembered system.Machine system.Scheduling system.Processes ->
-#if DEBUG
-            if WakeSweepMemo.crossChecks memo.HitsSinceSweep then
-                match wake system with
-                | [], _ -> ()
-                | woken, _ ->
-                    failwith
-                        $"UnixWait.wakeRemembering: the memo says the system wakes no thread, but a sweep wakes %A{woken}, at answer %d{memo.HitsSinceSweep} since the memo's sweep (this is a bug in this library)."
-
-            [],
-            { memo with
-                HitsSinceSweep = memo.HitsSinceSweep + 1
-            },
-            system
-#else
-            [], memo, system
-#endif
-        | ValueSome _
-        | ValueNone ->
-
-        match wake system with
-        | (_ :: _ as woken), woken' -> woken, WakeSweepMemo.empty, woken'
-        | [], _ ->
-            let earliest =
-                match deadlines system with
-                | [] -> ValueNone
-                | deadlines -> ValueSome (List.min deadlines)
-
-            [],
-            {
-                Remembered =
-                    ValueSome
-                        {
-                            Machine = system.Machine
-                            Processes = system.Processes
-                            EarliestDeadline = earliest
-                        }
-#if DEBUG
-                HitsSinceSweep = 0
-#endif
-            },
-            system

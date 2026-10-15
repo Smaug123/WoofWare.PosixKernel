@@ -6357,7 +6357,6 @@ WoofWare.PosixKernel.UnixWait inherit obj
 WoofWare.PosixKernel.UnixWait.deadlines [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.Int64 list
 WoofWare.PosixKernel.UnixWait.satisfied [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet option
 WoofWare.PosixKernel.UnixWait.wake [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
-WoofWare.PosixKernel.UnixWait.wakeRemembering [static method]: WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list * WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler> * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnlinkAtRules inherit obj
 WoofWare.PosixKernel.UnlinkAtRules.atRemoveDir [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> int
 WoofWare.PosixKernel.UnmodelledException inherit System.Exception
@@ -6780,9 +6779,6 @@ WoofWare.PosixKernel.WakePrimitive.NewPipeReadWhileNonBlocking [static method]: 
 WoofWare.PosixKernel.WakePrimitive.NewPipeWriteEndClosed [static method]: WoofWare.PosixKernel.OpenFileDescriptionId -> WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.SignalDeliverable [static property]: [read-only] WoofWare.PosixKernel.WakePrimitive
 WoofWare.PosixKernel.WakePrimitive.Tag [property]: [read-only] int
-WoofWare.PosixKernel.WakeSweepMemo inherit obj
-WoofWare.PosixKernel.WakeSweepMemo.empty [static method]: unit -> WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler>
-WoofWare.PosixKernel.WakeSweepMemo`2 inherit obj
 WoofWare.PosixKernel.WatchDescriptor inherit obj, implements WoofWare.PosixKernel.WatchDescriptor System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.WatchDescriptor System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 1 cases
 WoofWare.PosixKernel.WatchDescriptor.Equals [method]: (WoofWare.PosixKernel.WatchDescriptor, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.WatchDescriptor.get_Tag [method]: unit -> int

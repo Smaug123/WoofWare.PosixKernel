@@ -262,7 +262,10 @@ module TestUnixWait =
         UnixWait.satisfied (Callers.thread 3 after) after |> shouldEqual (Some fired)
 
     [<Test>]
-    let ``a sweep that wakes nobody answers the system it was given`` () : unit =
+    let ``a sweep that wakes nobody answers a system equal to the one it was given, which answers itself after``
+        ()
+        : unit
+        =
         let parked =
             system
             |> Lone.UnixWait.park 3 (parkOfThread 3)
@@ -270,7 +273,14 @@ module TestUnixWait =
 
         let woken, after = UnixWait.wake parked
         woken |> shouldEqual []
-        obj.ReferenceEquals (after, parked) |> shouldEqual true
+        after |> shouldEqual parked
+        obj.ReferenceEquals (after.Machine, parked.Machine) |> shouldEqual true
+        obj.ReferenceEquals (after.Scheduling, parked.Scheduling) |> shouldEqual true
+        obj.ReferenceEquals (after.Processes, parked.Processes) |> shouldEqual true
+
+        let woken, again = UnixWait.wake after
+        woken |> shouldEqual []
+        obj.ReferenceEquals (again, after) |> shouldEqual true
 
     /// Under Linux, a pipe's readers queue exclusively. Two readers sleep on an
     /// empty pipe, and the client names neither of them to the kernel: the

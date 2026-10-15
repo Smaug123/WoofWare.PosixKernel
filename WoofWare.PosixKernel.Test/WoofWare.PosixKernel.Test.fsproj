@@ -272,7 +272,7 @@
     <Compile Include="TestMultiProcessFuzz.fs" />
     <Compile Include="TestNamespaceSequence.fs" />
     <Compile Include="TestCrossProcess.fs" />
-    <Compile Include="TestWakeSweepMemo.fs" />
+    <Compile Include="TestWakeMemo.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
     <Compile Include="TestTimeWait.fs" />
     <Compile Include="TestTimeWaitMeasured.fs" />

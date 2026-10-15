@@ -472,6 +472,7 @@ module UnixBootImage =
                 Machine = machine
                 Scheduling = UnixSchedulingState.initial
                 Processes = Map.empty |> Map.add (ProcessId.toInt32 image.ProcessId) slot
+                Sweep = WakeMemo.none
             }
         )
 

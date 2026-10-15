@@ -17,6 +17,51 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
         Leader : 'Thread
     }
 
+/// What a sweep of a kernel's sleeping threads that woke none of them read:
+/// everything a wake condition is asked of but the clock, among it which
+/// threads sleep, and the earliest deadline any of those threads waits for.
+[<NoEquality ; NoComparison>]
+type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    {
+        Machine : UnixMachineState
+        /// Every process's state and threads, whose parks say which threads
+        /// sleep.
+        Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
+        /// The earliest `WakePrimitive.DeadlinePassed` among the wake
+        /// conditions of the threads asleep in `Processes`, if any has one.
+        EarliestDeadline : int64 voption
+#if DEBUG
+        /// How many answers `UnixWait.wake` has given from this sweep, which
+        /// decides the ones it checks against a sweep (`WakeMemo.crossChecks`).
+        ///
+        /// Mutable, and counted atomically, so that an answer from the memo
+        /// answers the very kernel it was asked of, allocating nothing, and
+        /// still counts itself. It decides only which answers are checked, never
+        /// what any answer is.
+        mutable HitsSinceSweep : int
+#endif
+    }
+
+/// The wake memo a kernel carries (`UnixSystem.Sweep`): the last sweep of it
+/// that woke no thread, if it remembers one, which lets `UnixWait.wake` answer
+/// without asking any wake condition while nothing that sweep read has changed.
+///
+/// Equality ignores it: any two are equal and hash alike, so two kernels that
+/// differ only in what their memos remember are equal. It has no comparison,
+/// as `UnixSystem` has none.
+[<Struct ; CustomEquality ; NoComparison>]
+type internal WakeMemo<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+    {
+        Remembered : RememberedSweep<'Thread, 'Handler> voption
+    }
+
+    override this.Equals (other : obj) : bool = other :? WakeMemo<'Thread, 'Handler>
+
+    override this.GetHashCode () : int = 0
+
+    interface System.IEquatable<WakeMemo<'Thread, 'Handler>> with
+        member this.Equals (_ : WakeMemo<'Thread, 'Handler>) : bool = true
+
 /// The whole simulated kernel: the machine, which thread each of its
 /// processors runs, and every process on it, with its threads.
 ///
@@ -37,6 +82,11 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
             /// Every process on the machine, keyed by its process ID's
             /// `pid_t` (`ProcessId.toInt32`).
             Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
+            /// The wake memo (`UnixWait.wake`), which equality ignores. Every
+            /// change but a wake carries it into the kernel it makes: it
+            /// compares what it read by reference, so it never answers for a
+            /// kernel that differs from the one it read.
+            Sweep : WakeMemo<'Thread, 'Handler>
         }
 
 // Keyed by the `pid_t` rather than by the `ProcessId`, a struct, because a
@@ -71,6 +121,9 @@ type internal ProcessView<'Thread, 'Handler when 'Thread : comparison and 'Handl
         /// Every process on the machine but this one, keyed as
         /// `UnixSystem.Processes` is.
         Others : Map<int32, ProcessSlot<'Thread, 'Handler>>
+        /// The kernel's wake memo (`UnixSystem.Sweep`), which no call's body
+        /// reads: held so that putting the view back puts it back too.
+        Sweep : WakeMemo<'Thread, 'Handler>
     }
 
 /// Moving between a `UnixSystem` and the view of it from one of its
@@ -93,6 +146,7 @@ module internal ProcessView =
             Threads = slot.Threads
             Leader = slot.Leader
             Others = Map.remove (ProcessId.toInt32 pid) system.Processes
+            Sweep = system.Sweep
         }
 
     /// The view of `system` from the process `pid`, or `None` if `system`
@@ -124,6 +178,7 @@ module internal ProcessView =
                         Leader = view.Leader
                     }
                     view.Others
+            Sweep = view.Sweep
         }
 
     /// The kernel `view` is a view of, as the view has it, without the view's
@@ -144,6 +199,7 @@ module internal ProcessView =
             Machine = view.Machine
             Scheduling = view.Scheduling
             Processes = view.Others
+            Sweep = view.Sweep
         }
 
     /// Whether every part of `view` is the very value `focused` holds: the
