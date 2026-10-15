@@ -104,7 +104,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// A whole `send(2)` by `caller` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
@@ -158,7 +158,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitSend raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// A paused write's or send's answer, in the shape of the internal steps
     /// the tests match on.
@@ -287,7 +287,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
             | Ok (WriteStep.Interrupted after) -> Ok (WriteStep.Interrupted after)
 
-        stepped |> Result.map (WriteStep.map (Proc.unfocusAfterCallBy thread))
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// The woken `write` or `send` of `caller`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
@@ -384,8 +384,7 @@ module internal WriteOutcomes =
     /// library's public protocol (`UnixReadWrite.pwrite`, and if it stops at
     /// the copy, `pwriteWithBytes` of the bytes `PausedPWrite.copyRange`
     /// names), held to the same call made a step at a time (`tryAdmitPWrite`,
-    /// then `tryApplyPWrite` with the decision it made), which leaves the
-    /// thread owing a return to user mode as `Entry` does.
+    /// then `tryApplyPWrite` with the decision it made).
     let admitThenPwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (fd : int)
@@ -397,13 +396,12 @@ module internal WriteOutcomes =
         let steps =
             match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 bytes.Length) offset system with
             | Error refusal -> Error refusal
-            | Ok (PWriteAdmission.Answered answer) -> Ok (answer, Lone.afterCallBy thread system)
+            | Ok (PWriteAdmission.Answered answer) -> Ok (answer, system)
             | Ok (PWriteAdmission.Transfer (count, into)) ->
                 if count > bytes.Length then
                     failwith $"admitPWrite asked for %d{count} of %d{bytes.Length} bytes"
 
                 Lone.UnixReadWrite.tryApplyPWrite fd offset into (ImmutableArray.Create (bytes, 0, count)) system
-                |> Result.map (fun (answer, after) -> answer, Lone.afterCallBy thread after)
 
         let actual =
             UnixReadWrite.tryPwrite

@@ -34,7 +34,9 @@ module PendingSignal =
             ]
 
     /// Whether `pending` leaves a signal the transferring thread takes as it
-    /// returns to user mode, which is what Linux's `signal_pending` asks.
+    /// returns to user mode, which is what Linux's `signal_pending` asks: one
+    /// deliverable to it, for which it owes that return before it makes
+    /// another call.
     let transferrerHasSignal (pending : PendingSignal) : bool =
         match pending with
         | PendingSignal.CaughtForTransferrer -> true
@@ -45,9 +47,8 @@ module PendingSignal =
 
     /// `system` with thread 1 beside `transferrer`, which must not be 1, and
     /// `pending` made so through the leader's `sigaction` and thread 1's
-    /// `pthread_kill`: thread 1 sends, so that a signal the transferrer would
-    /// take is pending as it makes its next call, as it is on a real kernel
-    /// only when another thread sent it.
+    /// `pthread_kill`. A signal the transferrer takes leaves it owing a return
+    /// to user mode, which `returned` makes.
     let make
         (transferrer : int)
         (pending : PendingSignal)
@@ -81,3 +82,25 @@ module PendingSignal =
             |> send 1 10
         | PendingSignal.IgnoredForTransferrer -> system |> install SignalDisposition.Ignore |> send transferrer 10
         | PendingSignal.DefaultForTransferrer -> system |> send transferrer 18
+
+    /// `system` with `transferrer`, of a system `make` made, returned to user
+    /// mode before its transfer, running and returning from any handler it
+    /// takes there: a thread takes a signal deliverable to it before it runs
+    /// more of its own code. Fails the test unless it owed that return exactly
+    /// where `pending` left it a signal to take.
+    let returned
+        (transferrer : int)
+        (pending : PendingSignal)
+        (system : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let owed = UnixThreadTable.owedBy transferrer (Lone.threads system)
+
+        match owed, transferrerHasSignal pending with
+        | Some OwedReturn.SignalDue, true
+        | None, false -> ()
+        | owed, _ ->
+            failwith
+                $"PendingSignal.returned: with %A{pending}, thread %d{transferrer} owes %A{owed} before its transfer"
+
+        ReturnsToUser.untilResumed (Callers.thread transferrer system) system

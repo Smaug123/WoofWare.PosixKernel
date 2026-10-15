@@ -507,45 +507,37 @@ module TestDeviceDescriptors =
         |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
 
     [<Test>]
-    let ``a urandom read longer than a page is refused while the reader has a signal pending`` () : unit =
+    let ``a urandom read by a reader a signal is deliverable to is made only once the reader has taken it`` () : unit =
         // Linux's read copies a 64-byte block at a time and, at each page
         // boundary with bytes still to copy, stops if a signal is pending: so a
         // read of more than a page with one already pending answers a page,
-        // short (`get_random_bytes_user`, drivers/char/random.c in 6.18). The
-        // check counts bytes copied, so where the buffer starts does not
-        // matter, and a read of exactly a page never reaches a check.
+        // short (`get_random_bytes_user`, drivers/char/random.c in 6.18). A
+        // thread takes a signal deliverable to it before it makes another
+        // call, so none is pending as the read is made, and every byte moves.
         let property (count : uint64) (pending : PendingSignal) (pread : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-            let system = PendingSignal.make thread pending system
+            let made = PendingSignal.make thread pending system
 
-            let outcome =
+            let read (system : UnixSystem<int, string>) =
                 if pread then
                     match
                         UnixReadWrite.tryPread (Callers.thread thread system) fd UserBuffer.Mapped count 0L system
                     with
-                    | Ok answer -> Ok answer
-                    | Error (PReadRefusal.SignalAtPageBoundary count) -> Error count
-                    | Error (PReadRefusal.Buffer refusal) -> failwith $"pread: %A{refusal}"
+                    | Ok (answer, _) -> answer
+                    | Error refusal -> failwith $"pread: %A{refusal}"
                 else
                     match UnixReadWrite.tryRead (Callers.thread thread system) fd UserBuffer.Mapped count system with
-                    | Ok (ReadOutcome.Answered answer, system) -> Ok (answer, system)
-                    | Error (ReadRefusal.SignalAtPageBoundary count) -> Error count
+                    | Ok (ReadOutcome.Answered answer, _) -> answer
                     | other -> failwith $"read: %A{other}"
 
-            match outcome with
-            | Error refused ->
-                refused |> shouldEqual (int count)
+            if PendingSignal.transferrerHasSignal pending then
+                Assert.Throws<System.InvalidOperationException> (fun () -> read made |> ignore)
+                |> ignore<System.InvalidOperationException>
 
-                (count > 4096UL && PendingSignal.transferrerHasSignal pending)
-                |> shouldEqual true
-            | Ok (answer, _) ->
-                (count > 4096UL && PendingSignal.transferrerHasSignal pending)
-                |> shouldEqual false
-
-                match answer with
-                | ReadAnswer.Drawn draw -> EntropyDraw.count draw |> shouldEqual (int count)
-                | ReadAnswer.Completed bytes -> bytes.Length |> shouldEqual (int count)
-                | ReadAnswer.Failed error -> failwith $"%O{error}"
+            match read (PendingSignal.returned thread pending made) with
+            | ReadAnswer.Drawn draw -> EntropyDraw.count draw |> shouldEqual (int count)
+            | ReadAnswer.Completed bytes -> bytes.Length |> shouldEqual (int count)
+            | ReadAnswer.Failed error -> failwith $"%O{error}"
 
         let countGen =
             Gen.oneof
@@ -562,16 +554,32 @@ module TestDeviceDescriptors =
         )
 
     [<Test>]
-    let ``a urandom write longer than a page is refused while the writer has a signal pending`` () : unit =
-        // `write_pool_user` stops at a page boundary as the read does.
+    let ``a urandom write's admission stops at a page for a signal, which its writer takes before it makes the write``
+        ()
+        : unit
+        =
+        // `write_pool_user` stops at a page boundary as the read does. The
+        // admission, below `Entry`, reads the signal state it is given; the
+        // whole call is made by a thread that has taken every signal
+        // deliverable to it, so none is pending, and every byte moves.
         let property (count : int) (pending : PendingSignal) (positioned : bool) =
             let fd, system = openDevice CharacterDevice.URandom FileAccessMode.WriteOnly booted
-            let system = PendingSignal.make thread pending system
+            let made = PendingSignal.make thread pending system
             let refused = count > 4096 && PendingSignal.transferrerHasSignal pending
             let bytes = ImmutableArray.CreateRange (Seq.init count byte)
 
+            let whole (system : UnixSystem<int, string>) : WriteAnswer =
+                if positioned then
+                    match WriteOutcomes.admitThenPwrite thread fd bytes 0L system with
+                    | Ok (answer, _) -> answer
+                    | Error other -> failwith $"pwrite: %A{other}"
+                else
+                    match WriteOutcomes.writeBytes thread fd bytes system with
+                    | Ok (WriteStep.Returns (answer, _)) -> answer
+                    | other -> failwith $"write: %A{other}"
+
             if positioned then
-                match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L system with
+                match Lone.UnixReadWrite.tryAdmitPWrite thread fd UserBuffer.Mapped (uint64 count) 0L made with
                 | Error (PWriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -582,16 +590,8 @@ module TestDeviceDescriptors =
                     | PWriteAdmission.Transfer (transfer, _) -> transfer |> shouldEqual count
                     | PWriteAdmission.Answered answer -> answer |> shouldEqual (WriteAnswer.Completed 0L)
                 | Error other -> failwith $"admitPWrite: %A{other}"
-
-                // The whole call answers as its admission did.
-                match WriteOutcomes.admitThenPwrite thread fd bytes 0L system with
-                | Error (PWriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
-                | Ok (answer, _) ->
-                    refused |> shouldEqual false
-                    answer |> shouldEqual (WriteAnswer.Completed (int64 count))
-                | Error other -> failwith $"pwrite: %A{other}"
             else
-                match Lone.UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) system with
+                match Lone.UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) made with
                 | Error (WriteRefusal.SignalAtPageBoundary refusedCount) ->
                     refused |> shouldEqual true
                     refusedCount |> shouldEqual count
@@ -604,12 +604,12 @@ module TestDeviceDescriptors =
                     | WriteAdmission.TransferThenSleep _ -> failwith "a device write never sleeps"
                 | other -> failwith $"admitWrite: %A{other}"
 
-                match WriteOutcomes.writeBytes thread fd bytes system with
-                | Error (WriteRefusal.SignalAtPageBoundary _) -> refused |> shouldEqual true
-                | Ok (WriteStep.Returns (answer, _)) ->
-                    refused |> shouldEqual false
-                    answer |> shouldEqual (WriteAnswer.Completed (int64 count))
-                | other -> failwith $"write: %A{other}"
+            if PendingSignal.transferrerHasSignal pending then
+                Assert.Throws<System.InvalidOperationException> (fun () -> whole made |> ignore)
+                |> ignore<System.InvalidOperationException>
+
+            whole (PendingSignal.returned thread pending made)
+            |> shouldEqual (WriteAnswer.Completed (int64 count))
 
         let countGen =
             Gen.oneof [ Gen.choose (0, 9000) ; Gen.elements [ 4095 ; 4096 ; 4097 ; 8192 ; 8193 ] ]
@@ -631,19 +631,22 @@ module TestDeviceDescriptors =
         |> shouldEqual (WriteAdmission.Answered (WriteAnswer.Completed 65536L))
 
     [<Test>]
-    let ``a pending signal changes nothing a read of null or a faulting read answers`` () : unit =
-        let fd, system = openDevice CharacterDevice.Null FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
+    let ``a reader a signal is deliverable to reads null, or faults, only once it has taken the signal`` () : unit =
+        let pending = PendingSignal.CaughtForTransferrer
 
-        readOf fd UserBuffer.Mapped 65536UL system
-        |> fst
+        let readOnce (device : CharacterDevice) (buffer : UserBuffer) : ReadAnswer =
+            let fd, system = openDevice device FileAccessMode.ReadOnly booted
+            let made = PendingSignal.make thread pending system
+
+            Assert.Throws<System.InvalidOperationException> (fun () -> readOf fd buffer 65536UL made |> ignore)
+            |> ignore<System.InvalidOperationException>
+
+            readOf fd buffer 65536UL (PendingSignal.returned thread pending made) |> fst
+
+        readOnce CharacterDevice.Null UserBuffer.Mapped
         |> shouldEqual (ReadAnswer.Completed ImmutableArray.Empty)
 
-        let fd, system = openDevice CharacterDevice.URandom FileAccessMode.ReadOnly booted
-        let system = PendingSignal.make thread PendingSignal.CaughtForTransferrer system
-
-        readOf fd (UserBuffer.Unmapped 0UL) 65536UL system
-        |> fst
+        readOnce CharacterDevice.URandom (UserBuffer.Unmapped 0UL)
         |> shouldEqual (ReadAnswer.Failed UnixError.EFAULT)
 
     [<Test>]

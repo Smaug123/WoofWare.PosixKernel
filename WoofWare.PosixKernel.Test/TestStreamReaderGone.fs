@@ -135,13 +135,24 @@ module TestStreamReaderGone =
                         Set.ofList (SignalState.pending (Lone.proc after).Signals)
                         |> shouldEqual pending
 
+                        // The signal is deliverable to the thread that takes
+                        // it: the writer on Linux, and the leader, which takes
+                        // the process's signals, on Darwin.
+                        let receiver =
+                            match raised.Target with
+                            | ValueSome thread -> thread
+                            | ValueNone -> Lone.leader system
+
+                        UnixThreadTable.owedBy receiver (Lone.threads after)
+                        |> shouldEqual (Some OwedReturn.SignalDue)
+
                         after
                         |> Lone.mapProc (fun proc ->
                             { proc with
                                 Signals = (Lone.proc system).Signals
                             }
                         )
-                        |> Lone.mapThreads (UnixThreadTable.settle thread)
+                        |> Lone.mapThreads (UnixThreadTable.settle receiver)
                         |> shouldEqual system
 
                         system <- after
@@ -159,10 +170,13 @@ module TestStreamReaderGone =
 
                 assertSound where system
 
-                // The writer returns to user mode, taking what it takes there:
-                // what stays pending is what it does not.
+                // The writer returns to user mode, taking what it takes there,
+                // and so does every other thread a signal is deliverable to:
+                // what stays pending is what none of them takes.
                 if not ended then
-                    system <- ReturnsToUser.untilResumed (Callers.thread thread system) system
+                    for returning in [ thread ; 1 - thread ] do
+                        system <- ReturnsToUser.untilResumed (Callers.thread returning system) system
+
                     pending <- Set.ofList (SignalState.pending (Lone.proc system).Signals)
 
                 let log =

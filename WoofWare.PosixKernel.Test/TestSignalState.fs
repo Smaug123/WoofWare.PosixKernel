@@ -2328,6 +2328,31 @@ module TestSignalState =
                 |> Set.ofList
             )
 
+            // Deliverable: unblocked, in the thread's own set, the process's
+            // for the leader, and under Linux the process's where the leader
+            // blocks it.
+            let takesFrom (e : PendingSignal<TestThread>) : bool =
+                match e.Target with
+                | ValueSome target -> target = tid
+                | ValueNone ->
+                    tid = referenceLeader
+                    || numbering = SignalNumbering.Linux && referenceBlocks r referenceLeader e.Signal
+
+            let deliverable =
+                r.Pending
+                |> List.filter (fun e -> takesFrom e && not (referenceBlocks r tid e.Signal))
+                |> List.map (fun e -> e.Signal)
+
+            match SignalState.deliverable numbering referenceLeader tid s with
+            | ValueSome signal -> List.contains signal deliverable |> shouldEqual true
+            | ValueNone -> deliverable |> shouldEqual []
+
+            // And the thread's return takes something exactly where a signal
+            // is deliverable to it, wherever the return is answered.
+            match SignalState.takeOnReturn numbering CoreDumps.Suppressed referenceLeader threads tid s with
+            | Error _ -> ()
+            | Ok (delivery, walked) -> (delivery.IsSome || walked <> s) |> shouldEqual (not deliverable.IsEmpty)
+
     /// Every signal `setDisposition` accepts: everything but SIGKILL and
     /// SIGSTOP, glibc's reserved pair included.
     let private settableSignals (numbering : SignalNumbering) : Signal list =

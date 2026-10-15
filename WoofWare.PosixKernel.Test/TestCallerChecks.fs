@@ -76,7 +76,7 @@ module TestCallerChecks =
     let private signalDebtor : int = 9
 
     /// The thread `world` leaves owing the return to user mode that ends a
-    /// `pause` a caught signal interrupted.
+    /// `sigsuspend` a caught signal interrupted.
     let private interruptedDebtor : int = 10
 
     /// A thread neither process has.
@@ -645,7 +645,7 @@ module TestCallerChecks =
         | Refused.Unparked -> "is not parked, so there is no call to finish"
         | Refused.Asleep -> "and nothing has woken it"
         | Refused.NotReturning -> "so it is not returning to user mode"
-        | Refused.OwesSignal -> "its last call left it a signal to take"
+        | Refused.OwesSignal -> "a signal is deliverable to it"
         | Refused.OwesInterrupted -> "interrupted its last call"
 
     /// A machine of `platform` holding two processes, each with threads 0 to 10,
@@ -793,13 +793,13 @@ module TestCallerChecks =
 
         // SIGUSR1 caught. `signalDebtor` sends it to itself, and takes it only
         // as it returns to user mode; the leader sends it to
-        // `interruptedDebtor`, which it interrupts in a `pause` as the pause is
-        // made, and which takes it as it returns from the pause.
+        // `interruptedDebtor` while that thread blocks it, and it interrupts a
+        // `sigsuspend` whose mask lets it through as the call is made, the
+        // thread taking it as it returns from the call.
         let view =
             let leader = Caller.make own 0
-
-            let usr1 =
-                Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering platform) Signal.SIGUSR1
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
+            let usr1 = Signal.toRawSignoUnder numbering Signal.SIGUSR1
 
             let send (sender : Caller<int>) (target : int) (view : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadKill sender target usr1 view with
@@ -814,12 +814,24 @@ module TestCallerChecks =
                 | Error error -> failwith $"sigaction: %O{error}"
 
             let view =
+                let block =
+                    match numbering with
+                    | SignalNumbering.Linux -> 0
+                    | SignalNumbering.Darwin -> 1
+
+                let usr1Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
+
+                match UnixSignal.pthreadSigmask (Caller.make own interruptedDebtor) block (Some usr1Mask) view with
+                | Ok (_, view) -> view
+                | Error error -> failwith $"pthread_sigmask: %O{error}"
+
+            let view =
                 send leader interruptedDebtor view
                 |> send (Caller.make own signalDebtor) signalDebtor
 
-            match UnixSignal.pause (Caller.make own interruptedDebtor) view with
+            match UnixSignal.sigsuspend (Caller.make own interruptedDebtor) SignalMask.empty view with
             | SigsuspendOutcome.Interrupted, view -> view
-            | other -> failwith $"the pause: expected the pending signal to interrupt it, got %A{other}"
+            | other -> failwith $"the sigsuspend: expected the pending signal to interrupt it, got %A{other}"
 
         own, other, view
 

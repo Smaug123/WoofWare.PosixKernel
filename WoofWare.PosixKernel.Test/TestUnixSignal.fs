@@ -543,7 +543,27 @@ module TestUnixSignal =
                 | Ok (Error errno) -> failwith $"sending %O{send.Signal}: %O{errno}"
             )
 
-        sent |> Option.map (setMask case.Returning case.MaskOnReturn)
+        // The mask the returning thread returns under, written into the state
+        // rather than set by a mask call: a send may have made a signal
+        // deliverable to the thread under the mask it was sent under, and a
+        // thread that owes a return to user mode makes no call.
+        let maskedOnReturn (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            let numbering = Lone.UnixSystemState.signalNumbering system
+
+            system
+            |> Lone.mapProc (fun proc ->
+                { proc with
+                    Signals =
+                        SignalState.changeMask
+                            numbering
+                            SignalMaskChange.SetMask
+                            (SignalMask.ofSignals numbering case.MaskOnReturn)
+                            case.Returning
+                            proc.Signals
+                }
+            )
+
+        sent |> Option.map maskedOnReturn
 
     [<Test>]
     let ``a thread's return to user mode answers what the signal state decides, and a default that terminates ends the process``
@@ -566,16 +586,64 @@ module TestUnixSignal =
                     case.Returning
                     (Lone.proc system).Signals
 
-            // The system with `signals`, the returning thread owing nothing
-            // more, as the return leaves it.
-            let withSignals (signals : SignalState<int, string>) : UnixSystem<int, string> =
-                system
-                |> Lone.mapProc (fun proc ->
-                    { proc with
-                        Signals = signals
-                    }
+            // Whether, under `signals`, a signal is deliverable to `thread`: one
+            // its mask lets through, of its own set, of the process's if it is
+            // the leader, and under Linux of the process's where the leader
+            // blocks it.
+            let deliverable (signals : SignalState<int, string>) (thread : int) : bool =
+                let leader = Lone.leader system
+
+                SignalState.pending signals
+                |> List.exists (fun entry ->
+                    not (SignalMask.contains entry.Signal (SignalState.maskOf thread signals))
+                    && (
+                        match entry.Target with
+                        | ValueSome target -> target = thread
+                        | ValueNone ->
+                            thread = leader
+                            || (case.Flavour = SimulatedUnixFlavour.Linux
+                                && SignalMask.contains entry.Signal (SignalState.maskOf leader signals))
+                    )
                 )
-                |> Lone.mapThreads (UnixThreadTable.settle case.Returning)
+
+            // The system with `signals`, as a return that `goesOn` or is over
+            // leaves it: the returning thread owing the rest of a return that
+            // goes on. One that is over leaves the thread owing the rest where
+            // a signal is still deliverable to it; and, for the leader, whose
+            // frames may come to block a signal of the process's, each other
+            // thread owing one where such a signal is now deliverable to it.
+            let withSignalsAfter (goesOn : bool) (signals : SignalState<int, string>) : UnixSystem<int, string> =
+                let returned =
+                    system
+                    |> Lone.mapProc (fun proc ->
+                        { proc with
+                            Signals = signals
+                        }
+                    )
+                    |> Lone.mapThreads (UnixThreadTable.settle case.Returning)
+
+                if goesOn then
+                    returned
+                    |> Lone.mapThreads (UnixThreadTable.owe case.Returning OwedReturn.SignalDue)
+                else
+
+                let marked =
+                    if case.Returning = Lone.leader system then
+                        threads
+                    else
+                        Set.singleton case.Returning
+
+                (returned, marked)
+                ||> Set.fold (fun returned thread ->
+                    match UnixThreadTable.owedBy thread (Lone.threads returned) with
+                    | None when deliverable signals thread ->
+                        returned |> Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue)
+                    | Some _
+                    | None -> returned
+                )
+
+            let withSignals : SignalState<int, string> -> UnixSystem<int, string> =
+                withSignalsAfter false
 
             match UnixSignal.tryOnReturnToUser (Callers.thread case.Returning system) system, decided with
             | Error refusal, Error expected -> refusal |> shouldEqual (ReturnToUserRefusal.Receiver expected)
@@ -595,11 +663,7 @@ module TestUnixSignal =
                 signal |> shouldEqual expected
 
                 // The return is not over: the thread owes the rest of it.
-                after
-                |> shouldEqual (
-                    withSignals signals
-                    |> Lone.mapThreads (UnixThreadTable.owe case.Returning OwedReturn.SignalDue)
-                )
+                after |> shouldEqual (withSignalsAfter true signals)
             | Ok (ProcessFate.ProcessEnded (death, after)),
               Ok (Some (SignalDelivery.DefaultTerminate (signal, coreDumped)), _) ->
                 cover ReturnLabel.Ended
