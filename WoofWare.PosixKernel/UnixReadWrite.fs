@@ -139,13 +139,13 @@ type ReadOutcome =
     /// sleeps until `UnixWait.wake` wakes it; then `UnixReadWrite.finishRead`
     /// finishes the call.
     | WouldBlock of WakeCondition
-    /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The thread is
-    /// no longer parked. Once the handlers have run, the client issues the
-    /// `read` again with the arguments it was first made with.
+    /// The call was asleep, and a signal interrupted it. The thread is no longer
+    /// parked, and owes a return to user mode (`UnixSignal.onReturnToUser`),
+    /// which it makes before any other call: that return says whether the
+    /// `read` fails with `EINTR` or restarts.
     ///
     /// Only `finishRead` answers this.
-    | Restarts
+    | Interrupted
 
 /// What `write(2)` did, for a request this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -538,13 +538,14 @@ type WriteOutcome<'Thread> =
     /// `UnixWait.wake` wakes it; then `UnixReadWrite.finishWrite` finishes
     /// the call.
     | WouldBlock of condition : WakeCondition
-    /// The call was asleep with nothing written, a signal with a handler
-    /// interrupted it, and the call restarts: it never returns. The thread is no
-    /// longer parked. Once the handlers have run, the client issues the
-    /// `write` or `send` again with the arguments it was first made with.
+    /// The call was asleep with nothing written, and a signal interrupted it.
+    /// The thread is no longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
+    /// that return says whether the `write` or `send` fails with `EINTR` or
+    /// restarts.
     ///
     /// Only `UnixReadWrite.finishWrite` answers this.
-    | Restarts
+    | Interrupted
 
 /// A step of a `write(2)` or `send(2)`, and what it did to the process: the
 /// shape `WriteOutcome` has within a `ProcessFate`, with `'Answer` the step's
@@ -559,7 +560,7 @@ type internal WriteStep<'Answer, 'System, 'Thread> =
     /// `ViewFate.ProcessEnded`.
     | ProcessEnded of ended : EndedProcess * system : 'System
     | WouldBlock of condition : WakeCondition * system : 'System
-    | Restarts of system : 'System
+    | Interrupted of system : 'System
 
 [<RequireQualifiedAccess>]
 module internal WriteStep =
@@ -577,7 +578,7 @@ module internal WriteStep =
             WriteStep.ReturnsRaising (answer, signal, unfocus.Back view)
         | WriteStep.ProcessEnded (ended, view) -> WriteStep.ProcessEnded (ended, unfocus.Without view)
         | WriteStep.WouldBlock (condition, view) -> WriteStep.WouldBlock (condition, unfocus.Back view)
-        | WriteStep.Restarts view -> WriteStep.Restarts (unfocus.Back view)
+        | WriteStep.Interrupted view -> WriteStep.Interrupted (unfocus.Back view)
 
 /// Whether a `pwrite` reaches the point at which it reads the caller's buffer,
 /// as `UnixReadWrite.tryAdmitPWrite` answers it, as `WriteAdmission` is for
@@ -1080,7 +1081,7 @@ module UnixReadWrite =
         | WriteStep.ReturnsRaising _
         | WriteStep.ProcessEnded _
         | WriteStep.WouldBlock _
-        | WriteStep.Restarts _ -> outcome
+        | WriteStep.Interrupted _ -> outcome
 
     /// `outcome`, a step of a `write` through `fd` made against `system`, with
     /// the description `fd` names marked written if the call returns having
@@ -2377,8 +2378,7 @@ module UnixReadWrite =
         // (`docs/probes/nonblocking-asleep`, row T-read).
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
-        | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
+        | Ok (Some interruption) -> Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None when nonBlockingNow reader system -> Error (ReadRefusal.ConnectionBecameNonBlocking socketId)
         | Ok None ->
             let parkedAgain = ParkedSyscall.ConnectionRead parked
@@ -2448,8 +2448,7 @@ module UnixReadWrite =
         // returns as soon as its sleep is interrupted.
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
-        | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
+        | Ok (Some interruption) -> Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None when givesUpWhenBeaten reader system ->
             Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EAGAIN), finished)
         | Ok None ->
@@ -2492,8 +2491,7 @@ module UnixReadWrite =
 
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (ReadRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), finished)
-        | Ok (Some SyscallInterruption.Restart) -> Ok (ReadOutcome.Restarts, finished)
+        | Ok (Some interruption) -> Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None ->
             let parkedAgain = ParkedSyscall.InotifyRead parked
 
@@ -2564,13 +2562,14 @@ module UnixReadWrite =
     /// whichever reached the sleeper first, which this library does not
     /// record, so both at once is refused.
     ///
-    /// A pipe still empty with a write end open, and a signal with a handler
-    /// pending, ends the call: `Restarts` if every handler that runs was
-    /// installed with `SA_RESTART`, and `Failed EINTR` if none was. With no such
-    /// signal, the thread sleeps again, behind every other park; except that on
-    /// Darwin, whose every sleeper wakes, one that finds nothing through a
-    /// description that has since become non-blocking answers `EAGAIN`. An
-    /// answer, `Restarts` included, clears the park.
+    /// A pipe still empty with a write end open, and a signal the thread would
+    /// take as it returned to user mode, interrupts the call
+    /// (`ReadOutcome.Interrupted`), and the thread's return
+    /// (`UnixSignal.onReturnToUser`) says whether it fails with `EINTR` or
+    /// restarts. With no such signal, the thread sleeps again, behind every
+    /// other park; except that on Darwin, whose every sleeper wakes, one that
+    /// finds nothing through a description that has since become non-blocking
+    /// answers `EAGAIN`. An answer, `Interrupted` included, clears the park.
     ///
     /// A read a close has ended (`SleepTarget.EndedByClose`, under Darwin)
     /// answers end of file, whatever the pipe holds by now and whatever signal
@@ -2583,7 +2582,7 @@ module UnixReadWrite =
     /// naming no storage, with bytes to copy, is refused. A signal is as for a
     /// pipe: under Linux
     /// the answer beats it, and under Darwin both at once are refused; with
-    /// nothing to answer, it ends the read, `Restarts` or `Failed EINTR`. With
+    /// nothing to answer, it interrupts the read, `Interrupted`. With
     /// neither, the read sleeps again, refused instead if its description has
     /// become non-blocking. One a
     /// close has ended, under Darwin, answers `EBADF`.
@@ -2591,8 +2590,8 @@ module UnixReadWrite =
     /// A read of an inotify instance answers, once the instance holds a
     /// record, as the same call made then would, the record beating a signal
     /// pending. With none, it answers `EAGAIN` if its description has become
-    /// non-blocking while it slept; otherwise a signal with a handler ends it,
-    /// `Restarts` or `Failed EINTR`, as for a pipe; and otherwise it sleeps
+    /// non-blocking while it slept; otherwise a signal interrupts it,
+    /// `Interrupted`, as for a pipe; and otherwise it sleeps
     /// again. No close ends it.
     ///
     /// `caller` must be parked in a `read` or a `recv`, and woken
@@ -3596,7 +3595,7 @@ module UnixReadWrite =
         | WriteStep.Returns (answer, system) -> WriteStep.Returns (answer, release system)
         | WriteStep.ReturnsRaising (answer, signal, system) -> WriteStep.ReturnsRaising (answer, signal, release system)
         | WriteStep.WouldBlock (condition, system) -> WriteStep.WouldBlock (condition, release system)
-        | WriteStep.Restarts system -> WriteStep.Restarts (release system)
+        | WriteStep.Interrupted system -> WriteStep.Interrupted (release system)
         // The process's end released everything nothing references any more.
         | WriteStep.ProcessEnded _ -> outcome
 
@@ -3808,8 +3807,7 @@ module UnixReadWrite =
 
             match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
-            | Ok (Some SyscallInterruption.Eintr) -> answered (WriteAnswer.Failed UnixError.EINTR) finished
-            | Ok (Some SyscallInterruption.Restart) -> Ok (WriteStep.Restarts finished)
+            | Ok (Some interruption) -> Ok (WriteStep.Interrupted (OwedReturns.interrupt thread interruption finished))
             | Ok None ->
                 failwith
                     $"UnixReadWrite.finishWrite: a signal interrupts thread %O{thread}'s write, and SyscallInterruption.ofPark says none does (this is a bug in this library)."
@@ -4017,8 +4015,7 @@ module UnixReadWrite =
         // nothing in returned EINTR without SA_RESTART and slept on with it.
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (WriteRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> answered (WriteAnswer.Failed UnixError.EINTR) finished
-        | Ok (Some SyscallInterruption.Restart) -> Ok (WriteStep.Restarts finished)
+        | Ok (Some interruption) -> Ok (WriteStep.Interrupted (OwedReturns.interrupt thread interruption finished))
         | Ok None when givesUpWhenBeaten writer system -> answered (WriteAnswer.Failed UnixError.EAGAIN) finished
         | Ok None ->
             // Measured on both (pipe-blocking.c section B): a writer that finds
@@ -4519,7 +4516,7 @@ module UnixReadWrite =
             ViewFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), system)
         | WriteStep.ProcessEnded (ended, dead) -> ViewFate.ProcessEnded (ended, dead)
         | WriteStep.WouldBlock (condition, system) -> ViewFate.Continues (WriteOutcome.WouldBlock condition, system)
-        | WriteStep.Restarts system -> ViewFate.Continues (WriteOutcome.Restarts, system)
+        | WriteStep.Interrupted system -> ViewFate.Continues (WriteOutcome.Interrupted, system)
 
     /// A write's or a send's step before the copy, as the call's progress:
     /// answered, or stopped at the copy, as `decide` says of the step's own
@@ -4546,7 +4543,7 @@ module UnixReadWrite =
         | WriteStep.ProcessEnded (ended, dead) -> CallProgress.Answered (ViewFate.ProcessEnded (ended, dead))
         | WriteStep.WouldBlock (condition, system) ->
             CallProgress.Answered (ViewFate.Continues (WriteOutcome.WouldBlock condition, system))
-        | WriteStep.Restarts system -> CallProgress.Answered (ViewFate.Continues (WriteOutcome.Restarts, system))
+        | WriteStep.Interrupted system -> CallProgress.Answered (ViewFate.Continues (WriteOutcome.Interrupted, system))
 
     /// `tryWrite` once `Entry` has admitted its caller.
     let private tryWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4741,8 +4738,8 @@ module UnixReadWrite =
     ///   write having put nothing in.
     /// - **Neither**, and a signal with a handler is pending for the thread: a
     ///   write that had put bytes in returns their count, whatever the
-    ///   handlers' flags; one that had not ends as `read` does,
-    ///   `WriteOutcome.Restarts` or `Failed EINTR`.
+    ///   handlers' flags; one that had not is interrupted as `read` is,
+    ///   `WriteOutcome.Interrupted`.
     /// - **Neither, and no signal**: the thread sleeps again, behind every other
     ///   park; except that on Darwin, whose every sleeper wakes, one whose
     ///   description has since become non-blocking gives up, answering the
@@ -4756,7 +4753,7 @@ module UnixReadWrite =
     /// Under Linux the first two beat a pending signal, whose handlers run as
     /// the call returns; under Darwin a kernel answers whichever reached the
     /// sleeper first, which this library does not record, so either beside a
-    /// signal is refused. An answer, `Restarts` included, clears the park, and
+    /// signal is refused. An answer, `Interrupted` included, clears the park, and
     /// on Darwin moves the pipe's timestamps, which do not move while the call
     /// sleeps.
     ///
@@ -4770,7 +4767,7 @@ module UnixReadWrite =
     ///   taken. A `send` with `MSG_NOSIGNAL` raises no `SIGPIPE`. Under
     ///   Darwin, a signal with a handler beside it is refused.
     /// - **A signal with a handler is pending.** The count it had taken, or
-    ///   with nothing taken `Restarts` or `Failed EINTR`. Under Linux this
+    ///   with nothing taken `Interrupted`. Under Linux this
     ///   beats room; under Darwin, room beside it is refused.
     /// - **There is room**, as a write made now would take: the call stops at
     ///   the copy, as for a pipe. A buffer naming no storage is refused.

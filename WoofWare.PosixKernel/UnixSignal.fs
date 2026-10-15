@@ -182,25 +182,24 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
 /// What became of a `sigsuspend(2)` or `pause(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
 type SigsuspendOutcome =
-    /// The call failed with this errno.
-    ///
-    /// `EINTR` is how every call that began ends: a signal the thread takes under
-    /// the temporary mask has ended it, and the thread returns to user mode
-    /// (`UnixSignal.onReturnToUser`) before the call's -1 is seen. That return
-    /// runs the handlers, the first of whose frames saves the mask from before
-    /// the call, or applies a default that terminates the process, which then
-    /// never sees the -1 at all. Until that return the thread's mask is still the
-    /// temporary one, with the mask to restore beside it
-    /// (`SignalState.maskToRestore`).
-    ///
-    /// Linux's `rt_sigsuspend` answers `EINVAL` for a set size other than 8,
-    /// having changed nothing.
+    /// The call failed with this errno: Linux's `rt_sigsuspend` answers
+    /// `EINVAL` for a set size other than 8, having changed nothing.
     | Failed of error : UnixError
     /// The call did not return. The calling thread is parked, with the temporary
     /// mask in force, and sleeps until `UnixWait.wake` wakes it for this
     /// condition; then `UnixSignal.finishSigsuspend` finishes the
     /// call.
     | WouldBlock of WakeCondition
+    /// A signal the thread takes under the temporary mask has ended the call,
+    /// which is how every call that began ends. The thread owes a return to
+    /// user mode (`UnixSignal.onReturnToUser`), which it makes before any
+    /// other call. That return says whether the call fails with `EINTR`, as
+    /// it does once a handler has run, the first of whose frames saves the
+    /// mask from before the call, or restarts; or it applies a default that
+    /// terminates the process, which then never sees the call return. Until
+    /// that return the thread's mask is still the temporary one, with the mask
+    /// to restore beside it (`SignalState.maskToRestore`).
+    | Interrupted
 
 [<RequireQualifiedAccess>]
 module UnixSignal =
@@ -1017,8 +1016,18 @@ module UnixSignal =
         // 50 ms), as a `poll` with something to report answers at once.
         match SyscallInterruption.suspension thread system signals with
         | Error refusal -> Error refusal
-        | Ok (SyscallInterruption.Suspension.Ends signals) ->
-            Ok (SigsuspendOutcome.Failed UnixError.EINTR, UnixSystemState.withSignals signals system)
+        | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
+            let interruption =
+                SyscallInterruption.interruptionOf
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    ParkedSyscall.SigSuspend
+                    delivery
+
+            Ok (
+                SigsuspendOutcome.Interrupted,
+                UnixSystemState.withSignals signals system
+                |> OwedReturns.interrupt thread interruption
+            )
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
@@ -1059,15 +1068,16 @@ module UnixSignal =
     /// call as it does out of `pthreadSigmask`. Only the caller's mask changes, on
     /// both flavours.
     ///
-    /// The call ends, failing with `EINTR`, once the thread would run a handler as
-    /// it returned to user mode, whatever `SA_RESTART` says: at once if a
-    /// signal `mask` lets through is already pending, and otherwise from the
-    /// sleep it parks in (`WouldBlock`, finished by `finishSigsuspend`). The
-    /// return to user mode runs every handler due before the call's -1 is seen;
-    /// the outermost frame saves the mask from before the call, so that its
-    /// `sigreturn` restores it (see `onReturnToUser`). A signal at its default
-    /// that terminates the process ends the call the same way, and the return
-    /// to user mode then terminates the process.
+    /// A signal ends the call (`SigsuspendOutcome.Interrupted`) once the thread
+    /// would run a handler as it returned to user mode: at once if a signal
+    /// `mask` lets through is already pending, and otherwise from the sleep it
+    /// parks in (`WouldBlock`, finished by `finishSigsuspend`). The return to
+    /// user mode then runs every handler due, and the call fails with `EINTR`
+    /// whatever `SA_RESTART` says; the outermost frame saves the mask from
+    /// before the call, so that its `sigreturn` restores it (see
+    /// `onReturnToUser`). A signal at its default that terminates the process
+    /// ends the call the same way, and the return to user mode then terminates
+    /// the process.
     ///
     /// An ignored signal ends nothing, and nor does a SIGCONT at its default.
     /// One sent during the call that `mask` lets through is discarded as it is
@@ -1206,10 +1216,17 @@ module UnixSignal =
 
         match SyscallInterruption.suspension thread system system.Process.Signals with
         | Error refusal -> Error refusal
-        | Ok (SyscallInterruption.Suspension.Ends signals) ->
+        | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
+            let interruption =
+                SyscallInterruption.interruptionOf
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    ParkedSyscall.SigSuspend
+                    delivery
+
             Ok (
-                SigsuspendOutcome.Failed UnixError.EINTR,
+                SigsuspendOutcome.Interrupted,
                 UnixSystemState.withSignals signals (UnixParkState.unpark thread system)
+                |> OwedReturns.interrupt thread interruption
             )
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
@@ -1232,7 +1249,7 @@ module UnixSignal =
             system
 
     /// Finish the `sigsuspend(2)` or `pause(2)` `caller` is parked in, once
-    /// `UnixWait.wake` has woken it: `Failed EINTR` if a signal it takes under
+    /// `UnixWait.wake` has woken it: `Interrupted` if a signal it takes under
     /// the temporary mask ends the call, as `sigsuspend` describes; and
     /// otherwise it parks again, as the call it was woken from, since what
     /// woke it has gone. Under Linux a SIGCONT at its default that woke it is

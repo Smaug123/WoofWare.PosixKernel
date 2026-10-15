@@ -1241,7 +1241,7 @@ module UnixNamespace =
     /// kernel: a blocking open of one end of a FIFO waits until the other end
     /// is opened. Nothing in this version makes a FIFO, so every open is
     /// answered at once (`SyscallOutcome.Answered`), and never `WouldBlock` or
-    /// `Restarts`. `caller` must be one of the process's threads, and must not
+    /// `Interrupted`. `caller` must be one of the process's threads, and must not
     /// already be parked: a thread blocks in one syscall at a time.
     ///
     /// `flags` is raw, in the simulated flavour's own `<fcntl.h>` numbering,

@@ -108,8 +108,7 @@ type KeventOutcome =
     ///
     /// Any change the call applied before it failed stays applied, with the
     /// system this rides with. A finishing call fails with `EBADF` when a close
-    /// has drained the kqueue (see `UnixDescriptor.close`), and with `EINTR`
-    /// when a signal with a handler interrupts the wait.
+    /// has drained the kqueue (see `UnixDescriptor.close`).
     | Failed of error : UnixError
     /// `kevent` returned these entries of its changelist, in changelist order:
     /// each change made with `EV_RECEIPT`, or that failed, while the eventlist
@@ -137,6 +136,13 @@ type KeventOutcome =
     /// `UnixWait.wake` wakes it; then `UnixKqueue.finishKevent` finishes the
     /// call.
     | WouldBlock of WakeCondition
+    /// The call was asleep, and a signal interrupted it. The thread is no
+    /// longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
+    /// that return says whether the call fails with `EINTR` or restarts.
+    ///
+    /// Only `UnixKqueue.finishKevent` answers this.
+    | Interrupted
 
 /// Why this kernel will not answer a `kevent(2)`.
 [<RequireQualifiedAccess>]
@@ -848,14 +854,15 @@ module UnixKqueue =
         else
 
         // Measured on 27.0.0 (`kqueue-kevent.c`, section D): a caught signal
-        // ends the wait with EINTR, under SA_RESTART or not.
+        // ends the wait with EINTR, under SA_RESTART or not, which the
+        // thread's return to user mode answers (`SyscallInterruption.ruleOf`).
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (KeventRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) ->
-            Ok (KeventOutcome.Failed UnixError.EINTR, (UnixParkState.unpark thread system))
-        | Ok (Some SyscallInterruption.Restart) ->
-            failwith
-                "UnixKqueue.finishKevent: a kevent restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
+        | Ok (Some interruption) ->
+            Ok (
+                KeventOutcome.Interrupted,
+                OwedReturns.interrupt thread interruption (UnixParkState.unpark thread system)
+            )
         | Ok None ->
             // Whatever woke the thread has gone again: another waiter took it, or
             // its filter is no longer ready. The thread walks the queue as a woken
@@ -907,12 +914,13 @@ module UnixKqueue =
     ///
     /// Answers `EBADF` when a close has drained the kqueue; the events it has to
     /// report (as `kevent` reports them), up to the call's `nevents`; no events
-    /// when the deadline has passed; `EINTR` when a signal with a handler
-    /// interrupts the wait; and otherwise re-parks the thread on the same kqueue
-    /// and deadline. Refused, since Darwin answers whichever reached the
-    /// sleeping thread first and this library does not record which did: a
-    /// drain beside an expired deadline or an event, an event beside an
-    /// expired deadline, and a signal pending beside any answer but `EINTR`.
+    /// when the deadline has passed; `Interrupted` when the thread would take a
+    /// signal as it returned to user mode; and otherwise re-parks the thread on
+    /// the same kqueue and deadline. Refused, since Darwin answers whichever
+    /// reached the sleeping thread first and this library does not record which
+    /// did: a drain beside an expired deadline or an event, an event beside an
+    /// expired deadline, and a signal pending beside any answer but
+    /// `Interrupted`.
     /// An answer clears the park, and with it the call's hold on the kqueue,
     /// which goes then if no descriptor names it any more.
     ///

@@ -39,13 +39,13 @@ type AcceptOutcome =
     /// `UnixWait.wake` wakes it; then `UnixConnection.finishAccept` finishes
     /// the call.
     | WouldBlock of WakeCondition
-    /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The thread is
-    /// no longer parked. Once the handlers have run, the client issues the
-    /// `accept` again with the arguments it was first made with.
+    /// The call was asleep, and a signal interrupted it. The thread is no longer
+    /// parked, and owes a return to user mode (`UnixSignal.onReturnToUser`),
+    /// which it makes before any other call: that return says whether the
+    /// `accept` fails with `EINTR` or restarts.
     ///
     /// Only `finishAccept` answers this.
-    | Restarts
+    | Interrupted
 
 /// Why this kernel will not answer an `accept`.
 ///
@@ -2532,8 +2532,8 @@ module UnixConnection =
             // every accepter that parked before it, so it has left the queue.
             match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (AcceptRefusal.Interruption refusal)
-            | Ok (Some SyscallInterruption.Eintr) -> Ok (AcceptOutcome.Failed UnixError.EINTR, finished)
-            | Ok (Some SyscallInterruption.Restart) -> Ok (AcceptOutcome.Restarts, finished)
+            | Ok (Some interruption) ->
+                Ok (AcceptOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
             | Ok None ->
                 let parkedAgain = ParkedSyscall.Accept parked
 
@@ -2593,11 +2593,12 @@ module UnixConnection =
     /// On the flavours whose accepted socket inherits `O_NONBLOCK`, it inherits
     /// the listening description's flag as it stands when the call finishes.
     ///
-    /// With the queue empty, a signal with a handler pending for the thread ends
-    /// the call: `Restarts` if every handler that runs was installed with
-    /// `SA_RESTART`, and `Failed EINTR` if none was. Either way the thread leaves
-    /// the listener's queue of accepters, and issuing the call again puts it at
-    /// the back. An answer, `Restarts` included, clears the park.
+    /// With the queue empty, a signal the thread would take as it returned to
+    /// user mode interrupts the call (`AcceptOutcome.Interrupted`), and the
+    /// thread's return (`UnixSignal.onReturnToUser`) says whether it fails
+    /// with `EINTR` or restarts. Either way the thread leaves the listener's
+    /// queue of accepters, and issuing the call again puts it at the back. An
+    /// answer, `Interrupted` included, clears the park.
     ///
     /// The sleeping call holds the listener, so it outlives its last descriptor
     /// until the call returns. A listener no descriptor names goes as the call

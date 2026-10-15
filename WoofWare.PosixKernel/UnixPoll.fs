@@ -70,13 +70,19 @@ type PollOutcome =
     /// the entries carrying anything.
     | Answered of revents : int16 list * count : int
     /// `poll` failed with this errno: under Darwin, `EINVAL` for more than
-    /// 10240 entries; and a poll that was asleep fails with `EINTR` when a
-    /// signal with a handler interrupts it.
+    /// 10240 entries.
     | Failed of error : UnixError
     /// `poll` did not return. The calling thread is parked, and sleeps until
     /// `UnixWait.wake` wakes it; then
     /// `UnixPoll.finishPoll` finishes the call.
     | WouldBlock of WakeCondition
+    /// The call was asleep, and a signal interrupted it. The thread is no
+    /// longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
+    /// that return says whether the call fails with `EINTR` or restarts.
+    ///
+    /// Only a finishing call answers this.
+    | Interrupted
 
 [<RequireQualifiedAccess>]
 module internal PollRefusal =
@@ -154,8 +160,8 @@ type EpollWaitOutcome =
     /// `epoll_wait` failed with this errno.
     ///
     /// The call as first made changes nothing when it fails. A finishing call
-    /// fails only with `EINTR`, when a signal with a handler interrupts the
-    /// wait, and what its walk of the epoll instance consumed stays consumed.
+    /// never fails: a signal interrupts it (`Interrupted`), and what its walk
+    /// of the epoll instance consumed stays consumed.
     | Failed of error : UnixError
     /// `epoll_wait` returned these events, in delivery order: each the
     /// registration's `data` and the `events` written for it, in Linux's
@@ -167,6 +173,13 @@ type EpollWaitOutcome =
     /// `UnixWait.wake` wakes it; then `UnixPoll.finishEpollWait` finishes the
     /// call.
     | WouldBlock of WakeCondition
+    /// The call was asleep, and a signal interrupted it. The thread is no
+    /// longer parked, and owes a return to user mode
+    /// (`UnixSignal.onReturnToUser`), which it makes before any other call:
+    /// that return says whether the call fails with `EINTR` or restarts.
+    ///
+    /// Only a finishing call answers this.
+    | Interrupted
 
 /// Why this kernel will not answer an `epoll_wait(2)`.
 [<RequireQualifiedAccess>]
@@ -1042,10 +1055,7 @@ module UnixPoll =
 
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (PollRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (PollOutcome.Failed UnixError.EINTR, finished)
-        | Ok (Some SyscallInterruption.Restart) ->
-            failwith
-                "UnixPoll.finishPoll: a poll restarted after a signal, where `SyscallInterruption.ruleOf` says a poll never restarts (this is a bug in this library)."
+        | Ok (Some interruption) -> Ok (PollOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None ->
 
         if timedOut then
@@ -1345,10 +1355,7 @@ module UnixPoll =
 
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (PollRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (PollOutcome.Failed UnixError.EINTR, finished)
-        | Ok (Some SyscallInterruption.Restart) ->
-            failwith
-                "UnixPoll.finishPoll: a poll restarted after a signal, where `SyscallInterruption.ruleOf` says a poll never restarts (this is a bug in this library)."
+        | Ok (Some interruption) -> Ok (PollOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None ->
             // Whatever woke the thread has gone again. Its scan consumed what
             // reported without adding anything, and dropped what is no longer
@@ -1510,16 +1517,17 @@ module UnixPoll =
     /// afresh; `close` refuses to close one a parked poll watches, so each
     /// still names the description the call went to sleep on. It answers the
     /// count when any entry carries anything, whether or not the deadline has
-    /// passed or a signal is pending too; `Failed EINTR` when a signal with a
-    /// handler interrupts it, whether or not the deadline has passed; and 0,
-    /// with every `revents` 0, when only the deadline has.
+    /// passed or a signal is pending too; `Interrupted` when the thread would
+    /// take a signal as it returned to user mode, whether or not the deadline
+    /// has passed; and 0, with every `revents` 0, when only the deadline has.
     ///
     /// **Under Darwin** it scans the kqueue the call made for itself, which a
     /// close of a watched descriptor has left without that descriptor's
     /// filters. It answers the count when anything is reported, 0 when the
-    /// deadline has passed, and `Failed EINTR` when a signal with a handler
-    /// interrupts it; and refuses each pair of those that hold at once, since
-    /// Darwin answers whichever reached the sleeping thread first.
+    /// deadline has passed, and `Interrupted` when the thread would take a
+    /// signal as it returned to user mode; and refuses each pair of those that
+    /// hold at once, since Darwin answers whichever reached the sleeping thread
+    /// first.
     ///
     /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
@@ -1787,10 +1795,8 @@ module UnixPoll =
 
         match SyscallInterruption.ofPark thread system with
         | Error refusal -> Error (EpollWaitRefusal.Interruption refusal)
-        | Ok (Some SyscallInterruption.Eintr) -> Ok (EpollWaitOutcome.Failed UnixError.EINTR, finished)
-        | Ok (Some SyscallInterruption.Restart) ->
-            failwith
-                "UnixPoll.finishEpollWait: an epoll_wait restarted after a signal, where `SyscallInterruption.ruleOf` says one never restarts (this is a bug in this library)."
+        | Ok (Some interruption) ->
+            Ok (EpollWaitOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         | Ok None -> Ok (parkEpollWait thread parked.Epoll parked.MaxEvents parked.Buffer parked.Deadline system)
 
     /// `tryFinishEpollWait` once `Entry` has admitted its caller.
@@ -1839,8 +1845,8 @@ module UnixPoll =
     /// signal is pending too (measured, `epoll-wait.c` section E: an event and
     /// an expired deadline both holding as the waiter runs report the event);
     /// no events when the deadline has passed, whether or not a signal is
-    /// pending; `Failed EINTR` when a signal with a handler interrupts it; and
-    /// otherwise re-parks the thread on the same epoll instance and deadline, since
+    /// pending; `Interrupted` when the thread would take a signal as it
+    /// returned to user mode; and otherwise re-parks the thread on the same epoll instance and deadline, since
     /// whatever woke it has gone again. A re-park goes to the back of park
     /// order, which puts it first in line for the epoll instance's next event. An answer
     /// clears the park.

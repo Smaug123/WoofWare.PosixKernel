@@ -541,11 +541,10 @@ type SyscallOutcome =
     /// nothing. That advance is the whole reason blocking is an outcome here
     /// rather than a refusal, which by design carries no system at all.
     | WouldBlock of WakeCondition
-    /// The call was asleep, a signal with a handler interrupted it, and the call
-    /// restarts: it never returns. The thread is
-    /// no longer parked. Once the handlers have run, the client issues the call
-    /// again with the arguments it was first made with, descriptor numbers
-    /// included, as a real kernel re-executes it.
+    /// The call was asleep, and a signal interrupted it. The thread is no longer
+    /// parked, and owes a return to user mode (`UnixSignal.onReturnToUser`),
+    /// which it makes before any other call: that return says whether the call
+    /// fails with `EINTR` or restarts, from the signals as they are then.
     ///
     /// Only a finishing call answers this, never the call as first made.
-    | Restarts
+    | Interrupted
