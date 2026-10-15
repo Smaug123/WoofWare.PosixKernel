@@ -4822,7 +4822,8 @@ module UnixReadWrite =
         (paused : PausedWrite<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
         =
-        Entry.resume (Shape.result Shape.fate) (tryWriteWithBytesIn bytes paused)
+        let answer = tryWriteWithBytesIn bytes paused
+        Entry.resume paused.Thread (Shape.result Shape.fate) answer
 
     /// <summary>
     /// The rest of the write `paused` stopped: `bytes`, exactly the ones
@@ -4984,7 +4985,8 @@ module UnixReadWrite =
         (paused : PausedSend<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
         =
-        Entry.resume (Shape.result Shape.fate) (trySendWithBytesIn bytes paused)
+        let answer = trySendWithBytesIn bytes paused
+        Entry.resume paused.Thread (Shape.result Shape.fate) answer
 
     /// <summary>
     /// The rest of the `send` `paused` stopped: `bytes`, exactly the ones
@@ -5113,7 +5115,8 @@ module UnixReadWrite =
         (paused : PausedPWrite<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryPwriteWithBytesIn bytes paused)
+        let answer = tryPwriteWithBytesIn bytes paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `pwrite` `paused` stopped: `bytes`, exactly the ones

@@ -505,6 +505,8 @@ type private DarwinAttach =
 type PausedBind<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             Fd : int
             Address : UserBuffer
             DeclaredLength : uint32
@@ -534,6 +536,8 @@ module PausedBind =
 type PausedSetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             Fd : int
             Level : int
             OptionName : int
@@ -566,6 +570,8 @@ module PausedSetSockOpt =
 type PausedGetSockOpt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             Fd : int
             Level : int
             OptionName : int
@@ -3002,6 +3008,7 @@ module UnixSocket =
 
     /// `tryBind` once `Entry` has admitted its caller.
     let private tryBindIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (address : UserBuffer)
         (declaredLength : uint32)
@@ -3019,6 +3026,7 @@ module UnixSocket =
             |> Result.map CallProgress.Answered
         | Ok (SockaddrCopyAdmission.Transfer length) ->
             {
+                Thread = thread
                 Fd = fd
                 Address = address
                 DeclaredLength = declaredLength
@@ -3042,7 +3050,7 @@ module UnixSocket =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryBindIn fd address declaredLength)
+            (tryBindIn (Caller.thread caller) fd address declaredLength)
             system
 
     /// <summary>
@@ -3112,7 +3120,8 @@ module UnixSocket =
         (paused : PausedBind<'Thread, 'Handler>)
         : Result<BindAnswer * UnixSystem<'Thread, 'Handler>, BindRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryBindWithAddressIn copied paused)
+        let answer = tryBindWithAddressIn copied paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `bind` `paused` stopped: `copied`, exactly the bytes
@@ -3130,6 +3139,7 @@ module UnixSocket =
 
     /// `trySetsockopt` once `Entry` has admitted its caller.
     let private trySetsockoptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (level : int)
         (optionName : int)
@@ -3149,6 +3159,7 @@ module UnixSocket =
             |> Result.map CallProgress.Answered
         | Ok (SetSockOptAdmission.Transfer length) ->
             {
+                Thread = thread
                 Fd = fd
                 Level = level
                 OptionName = optionName
@@ -3179,7 +3190,7 @@ module UnixSocket =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (trySetsockoptIn fd level optionName value optionLength)
+            (trySetsockoptIn (Caller.thread caller) fd level optionName value optionLength)
             system
 
     /// <summary>
@@ -3277,7 +3288,8 @@ module UnixSocket =
         (paused : PausedSetSockOpt<'Thread, 'Handler>)
         : Result<SetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (trySetsockoptWithValueIn copied paused)
+        let answer = trySetsockoptWithValueIn copied paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of the `setsockopt` `paused` stopped: `copied`, exactly the
@@ -3295,6 +3307,7 @@ module UnixSocket =
 
     /// `tryGetsockopt` once `Entry` has admitted its caller.
     let private tryGetsockoptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (fd : int)
         (level : int)
         (optionName : int)
@@ -3314,6 +3327,7 @@ module UnixSocket =
             |> Result.map CallProgress.Answered
         | Ok GetSockOptAdmission.ReadLength ->
             {
+                Thread = thread
                 Fd = fd
                 Level = level
                 OptionName = optionName
@@ -3343,7 +3357,7 @@ module UnixSocket =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryGetsockoptIn fd level optionName value length)
+            (tryGetsockoptIn (Caller.thread caller) fd level optionName value length)
             system
 
     /// <summary>
@@ -3422,7 +3436,8 @@ module UnixSocket =
         (paused : PausedGetSockOpt<'Thread, 'Handler>)
         : Result<GetSockOptAnswer * UnixSystem<'Thread, 'Handler>, SocketOptionRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryGetsockoptWithLengthIn declaredLength paused)
+        let answer = tryGetsockoptWithLengthIn declaredLength paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// The rest of the `getsockopt` `paused` stopped: `declaredLength` is the
     /// `socklen_t` the caller's length cell holds. See `getsockopt`.

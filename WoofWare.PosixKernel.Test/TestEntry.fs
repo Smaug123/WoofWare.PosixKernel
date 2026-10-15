@@ -463,6 +463,7 @@ module TestEntry =
     let ``a resumed call answers what its resumption gave`` () : unit =
         for flavour, system, _ in systems () do
             let sentinel = obj ()
+            let leader = Lone.leader system
             let after = changed (Lone.view system)
             let answered = ref (Some after)
             let ended = ended (Lone.view system)
@@ -470,12 +471,13 @@ module TestEntry =
             let answers : (string * bool) list =
                 [
                     "withSystem",
-                    (let answer, left = Entry.resume Shape.withSystem (sentinel, after)
+                    (let answer, left = Entry.resume leader Shape.withSystem (sentinel, after)
                      same sentinel answer && putBack answered left)
 
                     "result (progress withSystem), Answered",
                     (match
                         Entry.resume
+                            leader
                             (Shape.result (Shape.progress Shape.withSystem))
                             (Ok (CallProgress.Answered (sentinel, after)))
                      with
@@ -486,6 +488,7 @@ module TestEntry =
                     "result (progress withSystem), NeedsCopyIn",
                     (match
                         Entry.resume
+                            leader
                             (Shape.result (Shape.progress Shape.withSystem))
                             (Ok (CallProgress.NeedsCopyIn sentinel)
                             : Result<CallProgress<obj, obj * ProcessView<int, string>>, obj>)
@@ -495,13 +498,15 @@ module TestEntry =
                      | Error (_ : obj) -> false)
 
                     "result fate, Continues",
-                    (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.Continues (sentinel, after))) with
+                    (match
+                        Entry.resume leader (Shape.result Shape.fate) (Ok (ViewFate.Continues (sentinel, after)))
+                     with
                      | Ok (ProcessFate.Continues (outcome, left)) -> same sentinel outcome && putBack answered left
                      | Ok (ProcessFate.ProcessEnded _)
                      | Error (_ : obj) -> false)
 
                     "result fate, ProcessEnded",
-                    (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.ProcessEnded ended)) with
+                    (match Entry.resume leader (Shape.result Shape.fate) (Ok (ViewFate.ProcessEnded ended)) with
                      | Ok (ProcessFate.ProcessEnded (answered, left)) -> leftWithout (ref (Some ended)) answered left
                      | Ok (ProcessFate.Continues ((_ : obj), _))
                      | Error (_ : obj) -> false)

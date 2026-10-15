@@ -1,16 +1,5 @@
 namespace WoofWare.PosixKernel
 
-/// What a syscall a thread is asleep in does when a signal with a handler is to
-/// be delivered to that thread before the syscall has anything else to answer.
-[<RequireQualifiedAccess>]
-type SignalRestartRule =
-    /// The syscall fails with `EINTR`, whatever flags the handler was
-    /// installed with.
-    | FailsWithEintr
-    /// The syscall is restarted if the handler was installed with
-    /// `SA_RESTART`, and fails with `EINTR` otherwise.
-    | RestartsUnderSaRestart
-
 /// How a signal with a handler ends the syscall a thread is asleep in.
 [<RequireQualifiedAccess>]
 type internal SyscallInterruption =

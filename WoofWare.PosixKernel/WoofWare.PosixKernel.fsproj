@@ -65,6 +65,7 @@
         <Compile Include="OsThreadId.fs" />
         <Compile Include="ProcessIdTable.fs" />
         <Compile Include="WakePrimitive.fs" />
+        <Compile Include="InterruptedCall.fs" />
         <Compile Include="UnixThread.fs" />
         <Compile Include="Sockaddr.fs" />
         <Compile Include="MessageFlag.fs" />

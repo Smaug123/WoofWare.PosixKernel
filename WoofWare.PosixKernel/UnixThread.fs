@@ -878,6 +878,12 @@ type UnixThreadState =
             /// number: a sleeping thread keeps the object rather than the number, and
             /// descriptor numbers are reused as soon as they are free.
             Parked : ThreadPark option
+            /// Why the thread must return to user mode before it makes another
+            /// call, if it must: a signal interrupted its last call, or its last
+            /// call left it a signal to take. `UnixSignal.onReturnToUser` clears
+            /// it. Never set on a parked thread: a thread parks only in a call,
+            /// which it cannot make while it owes a return.
+            Owes : OwedReturn option
         }
 
 /// Reading one thread.
@@ -957,6 +963,7 @@ module UnixThreadTable =
                 Cpu = cpu
                 OsThreadId = osThreadId
                 Parked = None
+                Owes = None
             }
             threads
 
@@ -998,20 +1005,30 @@ module UnixThreadTable =
         thread
 
     /// Fails with `InvalidOperationException` unless `name` is a thread asleep
-    /// in no syscall, as the thread making a call must be: `operation` names
-    /// the function the client called. A thread blocks in one syscall at a
-    /// time, and a call it is asleep in is finished, not made again.
+    /// in no syscall and owing no return to user mode, as the thread making a
+    /// call must be: `operation` names the function the client called. A thread
+    /// blocks in one syscall at a time, and a call it is asleep in is finished,
+    /// not made again; and a thread runs its own code, which is what makes a
+    /// call, only once it has returned to user mode.
     let internal requireIssuer<'Thread when 'Thread : comparison>
         (operation : string)
         (name : 'Thread)
         (threads : Map<'Thread, UnixThreadState>)
         : unit
         =
-        match (requireThread operation name threads).Parked with
-        | Some park ->
+        let thread = requireThread operation name threads
+
+        match thread.Parked, thread.Owes with
+        | Some park, _ ->
             invalidOp
                 $"%s{operation}: thread %O{name} is parked in %A{park.Syscall}, and is making another call. A thread blocks in one syscall at a time: the call it is parked in is finished by that call's finishing function, not made again, and that call's completion must clear its record before the thread makes any other (this is a bug in the client)."
-        | None -> ()
+        | None, Some (OwedReturn.Interrupted interruption) ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is making a call, but a signal (%O{interruption.Signal}) interrupted its last call, and it has not returned to user mode since. That return decides how the interrupted call ends, and a thread makes a call only from user mode: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
+        | None, Some OwedReturn.SignalDue ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is making a call, but its last call left it a signal to take as it returns to user mode, and it has not returned since. A thread makes a call only from user mode, and takes its signals on the way there: the client calls `UnixSignal.onReturnToUser` for it first (this is a bug in the client)."
+        | None, None -> ()
 
     /// Fails with `InvalidOperationException` unless `name` is a thread asleep
     /// in no syscall, as a thread returning to user mode must be: `operation`
@@ -1122,6 +1139,12 @@ module UnixThreadTable =
         =
         let existing = get name threads
 
+        match existing.Owes with
+        | Some owed ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} owes a return to user mode (%A{owed}), and is being parked in %A{park}. A thread parks only in a call it makes, which it cannot make before that return (this is a bug in this library)."
+        | None -> ()
+
         // Which syscall a park is of, and nothing else about it.
         let kind (parked : ParkedSyscall) : int =
             match parked with
@@ -1217,6 +1240,62 @@ module UnixThreadTable =
         | None ->
             failwith
                 $"UnixThreadTable.markWoken: thread %O{name} is parked in no syscall, and is being woken for %A{fired} (this is a bug in this library)."
+
+    /// What `name` owes before it makes another call, if anything: see
+    /// `UnixThreadState.Owes`.
+    let internal owedBy<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : OwedReturn option
+        =
+        (get name threads).Owes
+
+    /// Record that `name` must return to user mode, for `owed`, before it makes
+    /// another call.
+    ///
+    /// Fails loudly if `name` is parked, or already owes a return: a thread
+    /// owes one only once its call has answered, and the return clears it
+    /// before the thread can make another.
+    let internal owe<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (owed : OwedReturn)
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
+        =
+        let existing = get name threads
+
+        match existing.Parked, existing.Owes with
+        | Some park, _ ->
+            failwith
+                $"UnixThreadTable.owe: thread %O{name} is parked in %A{park.Syscall}, so it is not returning to user mode, and cannot owe that return %A{owed} (this is a bug in this library)."
+        | None, Some before ->
+            failwith
+                $"UnixThreadTable.owe: thread %O{name} already owes a return to user mode (%A{before}), and is being marked again (%A{owed}); a return clears the first before the thread can make the call that would set the second (this is a bug in this library)."
+        | None, None ->
+            Map.add
+                name
+                { existing with
+                    Owes = Some owed
+                }
+                threads
+
+    /// Record that `name` has returned to user mode: it owes nothing.
+    let internal settle<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
+        =
+        let existing = get name threads
+
+        match existing.Owes with
+        | None -> threads
+        | Some _ ->
+            Map.add
+                name
+                { existing with
+                    Owes = None
+                }
+                threads
 
     /// Record that `name` is no longer parked: its syscall has finished.
     ///

@@ -353,7 +353,7 @@ module UnixSignal =
         | Error refusal -> Error (ReturnToUserRefusal.Receiver refusal)
         | Ok (delivery, signals) ->
 
-        let after = UnixSystemState.withSignals signals system
+        let after = UnixSystemState.withSignals signals system |> OwedReturns.settle thread
 
         match delivery with
         | None -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes, after))
@@ -362,7 +362,9 @@ module UnixSignal =
         | Some (SignalDelivery.DefaultStop signal) ->
             Ok (ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after))
         | Some (SignalDelivery.DefaultContinue signal) ->
-            Ok (ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after))
+            Ok (
+                ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, OwedReturns.returnGoesOn thread after)
+            )
         | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)) ->
             match UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (signal, coreDumped)) after with
             | Ok (ended, dead) -> Ok (ViewFate.ProcessEnded (ended, dead))

@@ -296,6 +296,8 @@ type internal RenameSourceProgress =
 type PausedRename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Rules : RenameRules
             SourceProgress : RenameSourceProgress
@@ -409,6 +411,8 @@ module internal CloneFileRefusal =
 type PausedCloneFileSource<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
         }
 
@@ -425,6 +429,8 @@ type PausedCloneFileSource<'Thread, 'Handler when 'Thread : comparison and 'Hand
 type PausedCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Source : InodeNumber
         }
@@ -463,6 +469,8 @@ module internal SymlinkRefusal =
 type PausedSymlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Directory : AtDirectory
             /// `None` for an empty target, which only a flavour that accepts one
@@ -526,6 +534,8 @@ module internal LinkRefusal =
 type PausedLink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Rules : LinkRules
             Source : InodeNumber
@@ -2361,6 +2371,7 @@ module UnixNamespace =
         CallProgress.Answered (SyscallAnswer.Failed error, system)
 
     let private renameSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (sourceDirectory : AtDirectory)
         (destinationDirectory : AtDirectory)
         (source : PathArgumentBytes)
@@ -2375,6 +2386,7 @@ module UnixNamespace =
         let paused (progress : RenameSourceProgress) =
             CallProgress.NeedsCopyIn
                 {
+                    Thread = thread
                     System = system
                     Rules = rules
                     SourceProgress = progress
@@ -2434,6 +2446,7 @@ module UnixNamespace =
 
     /// `tryRenameat` once `Entry` has admitted its caller.
     let private tryRenameatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
@@ -2445,7 +2458,12 @@ module UnixNamespace =
         =
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-        renameSourceFrom (AtDirectory.decode flavour olddirfd) (AtDirectory.decode flavour newdirfd) oldpath system
+        renameSourceFrom
+            thread
+            (AtDirectory.decode flavour olddirfd)
+            (AtDirectory.decode flavour newdirfd)
+            oldpath
+            system
 
     /// `renameat`, with a refusal answered as the `Error` rather than raised.
     let internal tryRenameat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2464,7 +2482,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryRenameatIn olddirfd oldpath newdirfd)
+            (tryRenameatIn (Caller.thread caller) olddirfd oldpath newdirfd)
             system
 
     /// <summary>
@@ -2499,6 +2517,7 @@ module UnixNamespace =
 
     /// `tryRename` once `Entry` has admitted its caller.
     let private tryRenameIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (source : PathArgumentBytes)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
@@ -2506,7 +2525,7 @@ module UnixNamespace =
               RenameRefusal
            >
         =
-        renameSourceFrom AtDirectory.CurrentDirectory AtDirectory.CurrentDirectory source system
+        renameSourceFrom thread AtDirectory.CurrentDirectory AtDirectory.CurrentDirectory source system
 
     /// `rename`, with a refusal answered as the `Error` rather than raised.
     let internal tryRename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2523,7 +2542,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryRenameIn source)
+            (tryRenameIn (Caller.thread caller) source)
             system
 
     /// `rename(2)`: `renameat` from `AT_FDCWD` on both sides.
@@ -2755,7 +2774,8 @@ module UnixNamespace =
         (paused : PausedRename<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, RenameRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryRenameWithDestinationIn destination paused)
+        let answer = tryRenameWithDestinationIn destination paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// The rest of `rename(2)` or `renameat(2)`, given the destination
     /// pathname the kernel has just reached the point of copying in. A
@@ -2776,6 +2796,7 @@ module UnixNamespace =
 
     /// `tryCloneFile` once `Entry` has admitted its caller.
     let private tryCloneFileIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
@@ -2810,6 +2831,7 @@ module UnixNamespace =
             Ok (
                 CallProgress.NeedsCopyIn
                     {
+                        Thread = thread
                         System = system
                     }
             )
@@ -2829,7 +2851,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryCloneFileIn flags)
+            (tryCloneFileIn (Caller.thread caller) flags)
             system
 
     /// <summary>
@@ -2891,6 +2913,7 @@ module UnixNamespace =
             Ok (
                 CallProgress.NeedsCopyIn
                     {
+                        Thread = paused.Thread
                         System = system
                         Source = inode
                     }
@@ -2918,7 +2941,8 @@ module UnixNamespace =
               CloneFileRefusal
            >
         =
-        Entry.resume (Shape.result (Shape.progress Shape.withSystem)) (tryCloneFileWithSourceIn source paused)
+        let answer = tryCloneFileWithSourceIn source paused
+        Entry.resume paused.Thread (Shape.result (Shape.progress Shape.withSystem)) answer
 
     /// <summary>
     /// The next part of `clonefile(2)`, given the source pathname the kernel
@@ -3053,7 +3077,8 @@ module UnixNamespace =
         (paused : PausedCloneFile<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryCloneFileWithDestinationIn destination paused)
+        let answer = tryCloneFileWithDestinationIn destination paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// <summary>
     /// The rest of `clonefile(2)`, given the destination pathname the kernel
@@ -3082,13 +3107,14 @@ module UnixNamespace =
 
     /// `tryCloneFileEager` once `Entry` has admitted its caller.
     let private tryCloneFileEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (source : PathArgumentBytes)
         (destination : PathArgumentBytes)
         (flags : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CloneFileRefusal>
         =
-        tryCloneFileIn flags system
+        tryCloneFileIn thread flags system
         |> CallProgress.resumeWith (fun paused ->
             tryCloneFileWithSourceIn source paused
             |> CallProgress.resumeWith (tryCloneFileWithDestinationIn destination)
@@ -3110,10 +3136,11 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryCloneFileEagerIn source destination flags)
+            (tryCloneFileEagerIn (Caller.thread caller) source destination flags)
             system
 
     let private symlinkTargetFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (directory : AtDirectory)
         (target : PathArgumentBytes)
         (system : ProcessView<'Thread, 'Handler>)
@@ -3132,6 +3159,7 @@ module UnixNamespace =
         | Ok target ->
             CallProgress.NeedsCopyIn
                 {
+                    Thread = thread
                     System = system
                     Directory = directory
                     Target = Some target
@@ -3142,6 +3170,7 @@ module UnixNamespace =
             | EmptySymlinkTarget.Accepted ->
                 CallProgress.NeedsCopyIn
                     {
+                        Thread = thread
                         System = system
                         Directory = directory
                         Target = None
@@ -3152,6 +3181,7 @@ module UnixNamespace =
 
     /// `symlinkat` once `Entry` has admitted its caller.
     let private symlinkatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (target : PathArgumentBytes)
         (dirfd : int)
         (system : ProcessView<'Thread, 'Handler>)
@@ -3160,7 +3190,7 @@ module UnixNamespace =
         let directory =
             AtDirectory.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) dirfd
 
-        symlinkTargetFrom directory target system
+        symlinkTargetFrom thread directory target system
 
     /// `symlinkat(2)`: create, at a pathname relative to `dirfd`, a symbolic
     /// link whose target is `target`.
@@ -3183,16 +3213,17 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.progress Shape.withSystem)
-            (symlinkatIn target dirfd)
+            (symlinkatIn (Caller.thread caller) target dirfd)
             system
 
     /// `symlink` once `Entry` has admitted its caller.
     let private symlinkIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (target : PathArgumentBytes)
         (system : ProcessView<'Thread, 'Handler>)
         : CallProgress<PausedSymlink<'Thread, 'Handler>, SyscallAnswer * ProcessView<'Thread, 'Handler>>
         =
-        symlinkTargetFrom AtDirectory.CurrentDirectory target system
+        symlinkTargetFrom thread AtDirectory.CurrentDirectory target system
 
     /// `symlink(2)`: `symlinkat` from the current directory.
     let symlink<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -3206,7 +3237,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.progress Shape.withSystem)
-            (symlinkIn target)
+            (symlinkIn (Caller.thread caller) target)
             system
 
     /// `trySymlinkWithPath`, before `Entry.resume` hands its answer back.
@@ -3274,7 +3305,8 @@ module UnixNamespace =
         (paused : PausedSymlink<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (trySymlinkWithPathIn path paused)
+        let answer = trySymlinkWithPathIn path paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// The second half of `symlink(2)` or `symlinkat(2)`: copy in `path`, the
     /// link's own pathname, and create the link the paused call describes.
@@ -3301,13 +3333,14 @@ module UnixNamespace =
 
     /// `trySymlinkatEager` once `Entry` has admitted its caller.
     let private trySymlinkatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (target : PathArgumentBytes)
         (dirfd : int)
         (path : PathArgumentBytes)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, SymlinkRefusal>
         =
-        Ok (symlinkatIn target dirfd system)
+        Ok (symlinkatIn thread target dirfd system)
         |> CallProgress.resumeWith (trySymlinkWithPathIn path)
 
     /// `symlinkat(2)` given both pathnames up front, as `UnixSystem.step`'s
@@ -3326,10 +3359,11 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (trySymlinkatEagerIn target dirfd path)
+            (trySymlinkatEagerIn (Caller.thread caller) target dirfd path)
             system
 
     let private linkSourceFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (arguments : AtFlagArguments)
         (source : AtDirectory)
         (destination : AtDirectory)
@@ -3427,6 +3461,7 @@ module UnixNamespace =
             Ok (
                 CallProgress.NeedsCopyIn
                     {
+                        Thread = thread
                         System = system
                         Rules = rules
                         Source = inode
@@ -3436,6 +3471,7 @@ module UnixNamespace =
 
     /// `tryLinkat` once `Entry` has admitted its caller.
     let private tryLinkatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
@@ -3453,6 +3489,7 @@ module UnixNamespace =
         | AtFlagScreen.Unmodelled refused -> Error (LinkRefusal.UnmodelledFlags refused)
         | AtFlagScreen.Screened arguments ->
             linkSourceFrom
+                thread
                 arguments
                 (AtDirectory.decode flavour olddirfd)
                 (AtDirectory.decode flavour newdirfd)
@@ -3474,7 +3511,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryLinkatIn olddirfd oldpath newdirfd flags)
+            (tryLinkatIn (Caller.thread caller) olddirfd oldpath newdirfd flags)
             system
 
     /// <summary>
@@ -3512,6 +3549,7 @@ module UnixNamespace =
 
     /// `tryLink` once `Entry` has admitted its caller.
     let private tryLinkIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (oldpath : PathArgumentBytes)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<
@@ -3522,6 +3560,7 @@ module UnixNamespace =
         let rules = SimulatedUnixPlatform.linkRules system.Machine.UnixPlatform
 
         linkSourceFrom
+            thread
             {
                 FinalSymlink = rules.PlainLinkSource
                 EmptyPath = EmptyPathMeaning.Walked
@@ -3543,7 +3582,7 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryLinkIn oldpath)
+            (tryLinkIn (Caller.thread caller) oldpath)
             system
 
     /// `link(2)`: `linkat` from the current directory on both sides,
@@ -3618,7 +3657,8 @@ module UnixNamespace =
         (paused : PausedLink<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
         =
-        Entry.resume (Shape.result Shape.withSystem) (tryLinkWithDestinationIn newpath paused)
+        let answer = tryLinkWithDestinationIn newpath paused
+        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
 
     /// The second half of `link(2)` or `linkat(2)`: copy in `newpath`, and give
     /// the paused call's source that name.
@@ -3639,6 +3679,7 @@ module UnixNamespace =
 
     /// `tryLinkatEager` once `Entry` has admitted its caller.
     let private tryLinkatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (olddirfd : int)
         (oldpath : PathArgumentBytes)
         (newdirfd : int)
@@ -3647,7 +3688,7 @@ module UnixNamespace =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, LinkRefusal>
         =
-        tryLinkatIn olddirfd oldpath newdirfd flags system
+        tryLinkatIn thread olddirfd oldpath newdirfd flags system
         |> CallProgress.resumeWith (tryLinkWithDestinationIn newpath)
 
     /// `linkat(2)` given both pathnames up front, as `UnixSystem.step`'s
@@ -3668,5 +3709,5 @@ module UnixNamespace =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryLinkatEagerIn olddirfd oldpath newdirfd newpath flags)
+            (tryLinkatEagerIn (Caller.thread caller) olddirfd oldpath newdirfd newpath flags)
             system

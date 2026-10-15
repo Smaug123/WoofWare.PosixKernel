@@ -390,6 +390,97 @@ module internal UnixParkState =
             Threads = UnixThreadTable.unpark thread system.Threads
         }
 
+/// Recording that a thread must return to user mode before it makes another
+/// call.
+[<RequireQualifiedAccess>]
+module internal OwedReturns =
+    /// Whether `thread` would take a signal as it returned to user mode now, as
+    /// `UnixSignal.onReturnToUser` takes them: run a handler, apply a default,
+    /// or discard an ignored signal it may now take. `false` where this library
+    /// will not say what the thread would take, which its return then refuses.
+    let takesOnReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : bool
+        =
+        let signals = system.Process.Signals
+
+        // Nothing pending is nothing to take, and every call asks this as it
+        // answers, so it answers without walking the signal state.
+        if List.isEmpty (SignalState.pending signals) then
+            false
+        else
+
+        match
+            SignalState.takeOnReturn
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                (system.Threads |> Map.keys |> Set.ofSeq)
+                thread
+                signals
+        with
+        | Error _ -> false
+        | Ok (Some _, _) -> true
+        | Ok (None, walked) -> walked <> signals
+
+    /// `system` with `thread` owing a return to user mode if the call it has
+    /// just answered left it a signal to take (`takesOnReturn`), and otherwise
+    /// `system` itself: a thread that has exited, is parked, or owes a return
+    /// already, is left as it is.
+    let markIfDue<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        match Map.tryFind thread system.Threads with
+        | Some {
+                   Parked = None
+                   Owes = None
+               } when takesOnReturn thread system ->
+            { system with
+                Threads = UnixThreadTable.owe thread OwedReturn.SignalDue system.Threads
+            }
+        | Some _
+        | None -> system
+
+    /// `system` with `thread` having returned to user mode, owing nothing.
+    let settle<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        match UnixThreadTable.owedBy thread system.Threads with
+        | None -> system
+        | Some _ ->
+            { system with
+                Threads = UnixThreadTable.settle thread system.Threads
+            }
+
+    /// `system` with `thread`, whose return to user mode is not over, owing
+    /// the rest of it.
+    let returnGoesOn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        { system with
+            Threads = UnixThreadTable.owe thread OwedReturn.SignalDue system.Threads
+        }
+
+    /// `system` with `thread`, whose call `interruption` interrupted and which
+    /// is parked no longer, owing the return to user mode that decides how the
+    /// call ends.
+    let interrupt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (interruption : Interruption)
+        (system : ProcessView<'Thread, 'Handler>)
+        : ProcessView<'Thread, 'Handler>
+        =
+        { system with
+            Threads = UnixThreadTable.owe thread (OwedReturn.Interrupted interruption) system.Threads
+        }
+
 /// A simulated machine before it has booted, with the ID its first process
 /// will have: what `UnixSystem.initial` makes, which the setters in
 /// `UnixBootImage` configure and `UnixBootImage.boot` turns, by launching that
@@ -586,14 +677,15 @@ module internal Shape =
 /// checks before the call runs.
 [<RequireQualifiedAccess>]
 type internal CallerRequirement =
-    /// Running its own code, so parked in no syscall: what a call requires of
-    /// the thread making it.
+    /// Running its own code, so parked in no syscall and owing no return to
+    /// user mode: what a call requires of the thread making it.
     | Running
     /// Parked in a syscall, and woken by `UnixWait.wake`: what a finishing
     /// function requires of the thread whose call it finishes.
     | Woken
-    /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
-    /// thread returning to user mode.
+    /// Parked in no syscall, whether or not it owes a return: what
+    /// `UnixSignal.onReturnToUser` requires of the thread returning to user
+    /// mode.
     | Returning
     /// Any thread of the process, parked or not: what `UnixScheduling.dispatch`
     /// requires of the thread it reports running.
@@ -659,6 +751,10 @@ module internal Entry =
     /// body changed nothing (`ProcessView.unfocusFrom`); or, for a process that
     /// ended, the kernel without it (`ProcessView.unfocusWithout`).
     /// `operation` names the function the client called.
+    ///
+    /// A running or woken thread whose call answers and leaves it a signal to
+    /// take as it returns to user mode owes that return, in each view the
+    /// process carries on as (`OwedReturns.markIfDue`).
     let call<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (requirement : CallerRequirement)
@@ -671,9 +767,18 @@ module internal Entry =
         let slot = admitted operation requirement caller system
         let focused = ProcessView.ofSlot (Caller.processId caller) slot system
 
+        let back =
+            match requirement with
+            | CallerRequirement.Running
+            | CallerRequirement.Woken ->
+                let thread = Caller.thread caller
+                fun view -> ProcessView.unfocusFrom system focused (OwedReturns.markIfDue thread view)
+            | CallerRequirement.Returning
+            | CallerRequirement.Exists -> ProcessView.unfocusFrom system focused
+
         let unfocus =
             {
-                Back = ProcessView.unfocusFrom system focused
+                Back = back
                 Without = ProcessView.unfocusWithout
             }
 
@@ -683,19 +788,23 @@ module internal Entry =
     /// `answer`, which the resumption gave from the view the paused value
     /// held. `shape` says where the views sit in it, and each is put back into
     /// the kernel as the resumption left it, or, for a process that ended,
-    /// leaves the kernel without it.
+    /// leaves the kernel without it. `thread`, the thread that made the call,
+    /// owes a return to user mode as `call` says. A caller reads `thread` from
+    /// the paused value only once the resumption has given `answer`, which
+    /// checks that the paused value is one a call made.
     ///
     /// The caller is not checked again. It was checked as the call began, and
     /// the paused value holds the view, with the rest of the kernel, so nothing
     /// can have happened to the caller since.
     let resume<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (shape : Shape<ProcessView<'Thread, 'Handler>, UnixSystem<'Thread, 'Handler>, 'InView, 'InKernel>)
         (answer : 'InView)
         : 'InKernel
         =
         let unfocus =
             {
-                Back = ProcessView.unfocus
+                Back = fun view -> ProcessView.unfocus (OwedReturns.markIfDue thread view)
                 Without = ProcessView.unfocusWithout
             }
 

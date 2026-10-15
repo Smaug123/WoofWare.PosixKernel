@@ -576,6 +576,8 @@ module internal GetCwdRefusal =
 type PausedAccess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
+            /// The thread making the call.
+            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Directory : AtDirectory
             Arguments : AccessArguments
@@ -2864,6 +2866,7 @@ module UnixPathResolution =
     // naming nothing.
 
     let private screenFrom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (directory : AtDirectory)
         (mode : int)
         (flags : int)
@@ -2877,6 +2880,7 @@ module UnixPathResolution =
             Ok (
                 CallProgress.NeedsCopyIn
                     {
+                        Thread = thread
                         System = system
                         Directory = directory
                         Arguments = arguments
@@ -2885,6 +2889,7 @@ module UnixPathResolution =
 
     /// `tryFaccessat` once `Entry` has admitted its caller.
     let private tryFaccessatIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (dirfd : int)
         (mode : int)
         (flags : int)
@@ -2894,7 +2899,7 @@ module UnixPathResolution =
         let directory =
             AtDirectory.decode (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) dirfd
 
-        screenFrom directory mode flags system
+        screenFrom thread directory mode flags system
 
     /// `faccessat`, with a refusal answered as the `Error` rather than raised.
     let internal tryFaccessat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2910,16 +2915,17 @@ module UnixPathResolution =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.answer))
-            (tryFaccessatIn dirfd mode flags)
+            (tryFaccessatIn (Caller.thread caller) dirfd mode flags)
             system
 
     /// `tryAccess` once `Entry` has admitted its caller.
     let private tryAccessIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (mode : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<CallProgress<PausedAccess<'Thread, 'Handler>, SyscallAnswer>, AccessRefusal>
         =
-        screenFrom AtDirectory.CurrentDirectory mode 0 system
+        screenFrom thread AtDirectory.CurrentDirectory mode 0 system
 
     /// `access`, with a refusal answered as the `Error` rather than raised.
     let internal tryAccess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2933,7 +2939,7 @@ module UnixPathResolution =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.answer))
-            (tryAccessIn mode)
+            (tryAccessIn (Caller.thread caller) mode)
             system
 
     /// <summary>
@@ -3072,7 +3078,8 @@ module UnixPathResolution =
         (paused : PausedAccess<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
-        Entry.resume<'Thread, 'Handler, _, _> Shape.answer (tryAccessWithPathIn path paused)
+        let answer = tryAccessWithPathIn path paused
+        Entry.resume<'Thread, 'Handler, _, _> paused.Thread Shape.answer answer
 
     /// <summary>
     /// The second half of <c>access(2)</c> or <c>faccessat(2)</c>: copy in <c>path</c>, and
@@ -3091,6 +3098,7 @@ module UnixPathResolution =
 
     /// `tryFaccessatEager` once `Entry` has admitted its caller.
     let private tryFaccessatEagerIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
         (dirfd : int)
         (path : PathArgumentBytes)
         (mode : int)
@@ -3098,7 +3106,7 @@ module UnixPathResolution =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer, AccessRefusal>
         =
-        tryFaccessatIn dirfd mode flags system
+        tryFaccessatIn thread dirfd mode flags system
         |> CallProgress.resumeWith (tryAccessWithPathIn path)
 
     /// `faccessat(2)` given its path up front, as `UnixSystem.step`'s
@@ -3118,5 +3126,5 @@ module UnixPathResolution =
             CallerRequirement.Running
             caller
             Shape.answer
-            (tryFaccessatEagerIn dirfd path mode flags)
+            (tryFaccessatEagerIn (Caller.thread caller) dirfd path mode flags)
             system
