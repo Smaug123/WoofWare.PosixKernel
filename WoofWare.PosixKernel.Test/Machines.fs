@@ -79,25 +79,21 @@ module internal Machines =
     let tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (thread : 'Thread)
-        (call : Syscall)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : (Result<SyscallOutcome, SyscallRefusal<'Thread>> * UnixSystem<'Thread, 'Handler>) option
+        : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>> option
         =
         focus pid system
-        |> Option.map (fun system ->
-            match UnixSystem.tryStep (Caller.make pid thread) call system with
-            | Ok (outcome, after) -> Ok outcome, after
-            | Error refusal -> Error refusal, system
-        )
+        |> Option.map (UnixSystem.tryStep (Caller.make pid thread) call)
 
     /// `UnixSystem.step` of `call` by `thread` of the process `pid`, with a
     /// refusal raised; `None` if `system` holds no process with that ID.
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (thread : 'Thread)
-        (call : Syscall)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : (SyscallOutcome * UnixSystem<'Thread, 'Handler>) option
+        : SteppedCall<'Thread, 'Handler> option
         =
         focus pid system |> Option.map (UnixSystem.step (Caller.make pid thread) call)
 

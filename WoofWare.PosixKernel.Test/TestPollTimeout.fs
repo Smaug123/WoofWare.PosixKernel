@@ -600,6 +600,6 @@ module TestPollTimeout =
                     }
             ] do
             let exn =
-                Assert.Throws<exn> (fun () -> Lone.UnixWait.park thread other parked |> ignore)
+                Assert.Throws<exn> (fun () -> Lone.Parking.park thread other parked |> ignore)
 
             exn.Message |> shouldContainText "without clearing the first"

@@ -76,7 +76,7 @@ module TestConnectPark =
                         ParkedConnect.Socket = socket
                     }
 
-            let asleep = Lone.UnixWait.park thread parked awake
+            let asleep = Lone.Parking.park thread parked awake
 
             asleep
             |> UnixSystem.checkInvariants

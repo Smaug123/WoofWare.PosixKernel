@@ -1176,7 +1176,7 @@ module UnixSignal =
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
+                Parking.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// `trySigsuspend` once `Entry` has admitted its caller.
@@ -1344,7 +1344,7 @@ module UnixSignal =
         |> Refusal.orRaise "UnixSignal.rtSigsuspend" SigsuspendRefusal.kind SigsuspendRefusal.describe
 
     /// `tryFinishSigsuspend` once `Entry` has admitted its caller.
-    let private tryFinishSigsuspendIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishSigsuspendIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SigsuspendOutcome * ProcessView<'Thread, 'Handler>, SigsuspendRefusal>
@@ -1376,7 +1376,7 @@ module UnixSignal =
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
-                UnixWait.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
+                Parking.parkWaiting thread ParkedSyscall.SigSuspend (UnixSystemState.withSignals signals system)
             )
 
     /// `finishSigsuspend`, with a refusal answered as the `Error` rather than raised.

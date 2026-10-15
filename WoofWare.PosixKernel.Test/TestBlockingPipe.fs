@@ -1170,6 +1170,11 @@ module TestBlockingPipe =
                     let call = reference.Parks.[thread].Call
                     let expected, after = referenceFinish thread reference
 
+                    // `UnixWait.finish` answers as the family's finishing
+                    // function does.
+                    let woken = Woken.thread thread system
+                    FinishOracle.agree (Callers.thread thread woken) woken |> ignore<string>
+
                     let seen, actual =
                         match call with
                         | Call.Reading _ ->

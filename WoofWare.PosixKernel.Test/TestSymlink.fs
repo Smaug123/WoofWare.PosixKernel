@@ -357,7 +357,7 @@ module TestSymlink =
                     let system = probeCell envelope
 
                     let actual =
-                        UnixNamespace.trySymlinkatEager
+                        Eager.trySymlinkatAs
                             (Callers.leader system)
                             (orderTarget envelope targetLabel)
                             dirfd
@@ -537,14 +537,12 @@ module TestSymlink =
                 let system = probeCell envelope
 
                 let direct =
-                    match
-                        UnixNamespace.trySymlinkatEager (Callers.leader system) (text target) atFdCwd (text path) system
-                    with
-                    | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
-                    | Error refusal -> Error (SyscallRefusal.Symlink refusal)
+                    match Eager.trySymlinkatAs (Callers.leader system) (text target) atFdCwd (text path) system with
+                    | Ok answered -> Ok (SteppedCall.SymlinkAt answered)
+                    | Error refusal -> Error (SyscallRefusal.SymlinkAt refusal)
 
                 UnixSystem.tryStep
                     (Callers.thread 0 system)
                     (Syscall.SymlinkAt (text target, atFdCwd, text path))
                     system
-                |> shouldEqual direct
+                |> Stepped.resultShouldBe direct

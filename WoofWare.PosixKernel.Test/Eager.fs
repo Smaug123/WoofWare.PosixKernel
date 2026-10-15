@@ -53,6 +53,65 @@ module internal Eager =
         UnixNamespace.tryLink (Callers.leader system) oldpath system
         |> CallProgress.resumeWith (UnixNamespace.tryLinkWithDestination newpath)
 
+    /// `symlinkat(2)` by `caller`: `UnixNamespace.symlinkat`, then
+    /// `trySymlinkWithPath` of `path`.
+    let trySymlinkatAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (target : PathArgumentBytes)
+        (dirfd : int)
+        (path : PathArgumentBytes)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, SymlinkRefusal>
+        =
+        Ok (UnixNamespace.symlinkat caller target dirfd system)
+        |> CallProgress.resumeWith (UnixNamespace.trySymlinkWithPath path)
+
+    /// `linkat(2)` by `caller`: `UnixNamespace.tryLinkat`, then
+    /// `tryLinkWithDestination` of `newpath`.
+    let tryLinkatAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (olddirfd : int)
+        (oldpath : PathArgumentBytes)
+        (newdirfd : int)
+        (newpath : PathArgumentBytes)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, LinkRefusal>
+        =
+        UnixNamespace.tryLinkat caller olddirfd oldpath newdirfd flags system
+        |> CallProgress.resumeWith (UnixNamespace.tryLinkWithDestination newpath)
+
+    /// Darwin's `clonefile(2)` by `caller`: `UnixNamespace.tryCloneFile`, then
+    /// `tryCloneFileWithSource` of `source` and `tryCloneFileWithDestination`
+    /// of `destination`.
+    let tryCloneFileAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (source : PathArgumentBytes)
+        (destination : PathArgumentBytes)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, CloneFileRefusal>
+        =
+        UnixNamespace.tryCloneFile caller flags system
+        |> CallProgress.resumeWith (fun paused ->
+            UnixNamespace.tryCloneFileWithSource source paused
+            |> CallProgress.resumeWith (UnixNamespace.tryCloneFileWithDestination destination)
+        )
+
+    /// `faccessat(2)` by `caller`: `UnixPathResolution.tryFaccessat`, then
+    /// `tryAccessWithPath` of `path`.
+    let tryFaccessatAs<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (dirfd : int)
+        (path : PathArgumentBytes)
+        (mode : int)
+        (flags : int)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Result<SyscallAnswer, AccessRefusal>
+        =
+        UnixPathResolution.tryFaccessat caller dirfd mode flags system
+        |> CallProgress.resumeWith (UnixPathResolution.tryAccessWithPath path)
+
     /// `access(2)`: `UnixPathResolution.tryAccess`, then `tryAccessWithPath`
     /// of `path`.
     let tryAccess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

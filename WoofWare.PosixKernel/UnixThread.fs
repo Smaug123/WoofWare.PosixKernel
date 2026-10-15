@@ -1129,7 +1129,7 @@ module UnixThreadTable =
     /// becomes woken.
     ///
     /// The table alone: it moves no hold on an open file description. Internal
-    /// so that `UnixWait.park`, which mints the ordinal, and `UnixParkState`,
+    /// so that `Parking.park`, which mints the ordinal, and `UnixParkState`,
     /// which moves the holds, are the ways a park is written.
     let internal withPark<'Thread when 'Thread : comparison>
         (name : 'Thread)

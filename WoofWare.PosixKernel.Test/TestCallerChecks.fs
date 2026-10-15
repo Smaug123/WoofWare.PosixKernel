@@ -387,13 +387,6 @@ module TestCallerChecks =
             running
                 "UnixPathResolution.faccessat"
                 (fun caller system -> UnixPathResolution.faccessat caller 0 4 0 system |> ignore)
-            // Internal: `UnixSystem.step`'s way into `faccessat`.
-            running
-                "UnixPathResolution.faccessat"
-                (fun caller system ->
-                    UnixPathResolution.tryFaccessatEager caller 0 root 4 0 system
-                    |> ignore<Result<SyscallAnswer, AccessRefusal>>
-                )
             running
                 "UnixCredentials.getresuid"
                 (fun caller system ->
@@ -480,26 +473,6 @@ module TestCallerChecks =
             running
                 "UnixNamespace.linkat"
                 (fun caller system -> UnixNamespace.linkat caller 0 root 0 0 system |> ignore)
-            // Internal: `UnixSystem.step`'s ways into `symlinkat`, `linkat` and
-            // `clonefile`.
-            running
-                "UnixNamespace.symlinkat"
-                (fun caller system ->
-                    UnixNamespace.trySymlinkatEager caller root 0 file system
-                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, SymlinkRefusal>>
-                )
-            running
-                "UnixNamespace.linkat"
-                (fun caller system ->
-                    UnixNamespace.tryLinkatEager caller 0 root 0 file 0 system
-                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, LinkRefusal>>
-                )
-            running
-                "UnixNamespace.cloneFile"
-                (fun caller system ->
-                    UnixNamespace.tryCloneFileEager caller root file 0 system
-                    |> ignore<Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>>
-                )
             running "UnixInotify.inotifyInit1" (fun caller system -> UnixInotify.inotifyInit1 caller 0 system |> ignore)
             // IN_CREATE.
             running
@@ -553,6 +526,13 @@ module TestCallerChecks =
                 pauser
                 everyFlavour
                 (fun caller system -> UnixSignal.finishSigsuspend caller system |> ignore)
+            // `UnixWait.finish`, which finishes each of those, of each sleeper.
+            for sleeper in [ 2 ; 3 ; poller ; eventWaiter ; pipeReader ; pipeWriter ; suspender ; pauser ] do
+                finishing
+                    "UnixWait.finish"
+                    sleeper
+                    everyFlavour
+                    (fun caller system -> UnixWait.finish caller system |> ignore<FinishedCall<int, string>>)
             // The thread has no handler frame, which `sigreturn` refuses only once
             // the caller is checked.
             running
@@ -689,7 +669,7 @@ module TestCallerChecks =
                 // Darwin refuses an `flock` of a pipe, so its waiter is parked
                 // as the library would park it.
                 Proc.view own view
-                |> UnixWait.park
+                |> Parking.park
                     2
                     (ParkedSyscall.Flock
                         {

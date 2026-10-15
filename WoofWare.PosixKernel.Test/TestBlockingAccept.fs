@@ -562,7 +562,7 @@ module TestBlockingAccept =
                         | Some _ -> ForgedPark.woken park.Waiter system
                         | None -> system
 
-                    Lone.UnixWait.park
+                    Lone.Parking.park
                         park.Waiter
                         (ParkedSyscall.Accept
                             {
@@ -1615,6 +1615,8 @@ module TestBlockingAccept =
                 | AcceptOp.Finish thread ->
                     let park = reference.Parks.[thread]
                     let signalled = Set.contains thread reference.Signalled
+                    // `UnixWait.finish` answers as `finishAccept` does.
+                    FinishOracle.agree (Callers.thread thread system) system |> ignore<string>
                     let answer = UnixConnection.tryFinishAccept (Callers.thread thread system) system
 
                     let settle (r : AcceptReference) (after : UnixSystem<int, string>) =
@@ -1830,7 +1832,7 @@ module TestBlockingAccept =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
         let parkedOn (listener : OpenFileDescriptionId) (fd : int) : UnixSystem<int, string> =
-            Lone.UnixWait.park
+            Lone.Parking.park
                 1
                 (ParkedSyscall.Accept
                     {

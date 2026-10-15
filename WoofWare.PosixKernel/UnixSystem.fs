@@ -2,141 +2,108 @@ namespace WoofWare.PosixKernel
 
 open System.Collections.Immutable
 
-/// A request to this kernel, in the vocabulary of the kernel ABI rather than of
-/// any client's foreign-function layer.
-///
-/// Arguments a real kernel validates arrive raw — `LSeek`'s `whence`, and every
-/// `fd` — because rejecting them is behaviour this library models, and models
-/// per flavour. Arguments only the client can classify arrive classified.
-///
-/// Every pathname is the argument's bytes (`PathArgumentBytes`), which this
-/// kernel copies in at the point the call's kernel does.
-type Syscall =
-    | GetEffectiveUserId
-    | GetEffectiveGroupId
-    | GetProcessId
-    | Dup of fd : int
-    /// `command` and `argument` are raw, in the flavour's `<fcntl.h>`
-    /// numbering; see `UnixDescriptor.fcntl`.
-    | Fcntl of fd : int * command : int * argument : int
-    | Dup2 of oldFd : int * newFd : int
-    /// `flags` is raw, in Linux's numbering.
-    | Dup3 of oldFd : int * newFd : int * flags : int
-    | LSeek of fd : int * offset : int64 * whence : int
-    /// `operation` is raw: which combinations of LOCK_SH/LOCK_EX/LOCK_UN/LOCK_NB
-    /// are legal, and what an illegal one earns, is behaviour this kernel models
-    /// and models per flavour.
-    | FLock of fd : int * operation : int
-    | FTruncate of fd : int * length : int64
-    | Close of fd : int
-    /// `dirfd` and `mode` are raw, as `mkdirat(2)` takes them: how `mode`
-    /// combines with the umask and with the parent's set-group-ID bit is
-    /// behaviour this kernel models, and models per flavour. `mkdir(2)` is
-    /// this with the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`).
-    | MkDirAt of dirfd : int * path : PathArgumentBytes * mode : int
-    /// `dirfd` and `flags` are raw, as `unlinkat(2)` takes them: each flavour
-    /// numbers `AT_FDCWD` and `AT_REMOVEDIR` its own way, and which other bits
-    /// it rejects is behaviour this kernel models per flavour. `unlink(2)` is
-    /// this with the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`) and no
-    /// flags, and `rmdir(2)` with `AT_REMOVEDIR` (`UnlinkAtRules.atRemoveDir`).
-    | UnlinkAt of dirfd : int * path : PathArgumentBytes * flags : int
-    | ChDir of path : PathArgumentBytes
-    /// `dirfd`, `mode` and `flags` are raw, as `fchmodat(2)` takes them: each
-    /// flavour numbers `AT_FDCWD` and the flags its own way, and which bits of
-    /// `mode` the inode gets is behaviour this kernel models. `chmod(2)` is
-    /// this with the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`) and no
-    /// flags.
-    | FChModAt of dirfd : int * path : PathArgumentBytes * mode : int * flags : int
-    /// `mode` is raw, as `fchmod(2)` takes it.
-    | FChMod of fd : int * mode : int
-    /// `dirfd` and `flags` are raw, as `fchownat(2)` takes them. `None` is
-    /// `(uid_t)-1` or `(gid_t)-1`: leave that ID as it is. `chown(2)` is this
-    /// with the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`) and no flags, and
-    /// `lchown(2)` with `AT_SYMLINK_NOFOLLOW` (0x100 on Linux, 0x20 on Darwin).
-    | FChOwnAt of dirfd : int * path : PathArgumentBytes * user : UserId option * group : GroupId option * flags : int
-    /// As `FChOwnAt`'s `chown(2)`, of the inode `fd` names.
-    | FChOwn of fd : int * user : UserId option * group : GroupId option
-    /// `mask` is raw, as `umask(2)` takes it: which of its bits the process
-    /// keeps is behaviour this kernel models, and models per flavour. Answers
-    /// the previous mask.
-    | UMask of mask : int
-    /// `dirfd`, `mode` and `flags` are raw, as `faccessat(2)` takes them: each
-    /// flavour numbers `AT_FDCWD` and the flags its own way, and which bits of
-    /// `mode` are rejected is behaviour this kernel models per flavour.
-    /// `access(2)` is this with the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`)
-    /// and no flags.
-    | FAccessAt of dirfd : int * path : PathArgumentBytes * mode : int * flags : int
-    /// `dirfd` is raw, as `symlinkat(2)` takes it. `symlink(2)` is this with
-    /// the flavour's `AT_FDCWD` (`AtDirectory.atFdCwd`).
-    | SymlinkAt of target : PathArgumentBytes * dirfd : int * path : PathArgumentBytes
-    /// `olddirfd`, `newdirfd` and `flags` are raw, as `linkat(2)` takes them.
-    /// `link(2)` is this with the flavour's `AT_FDCWD` on both sides and the
-    /// flags `LinkRules.PlainLinkSource` stands for.
-    | LinkAt of
-        olddirfd : int *
-        oldpath : PathArgumentBytes *
-        newdirfd : int *
-        newpath : PathArgumentBytes *
-        flags : int
-    /// `dirfd` and `flags` are raw, as `utimensat(2)` takes them: each flavour
-    /// numbers `AT_FDCWD` and the flags its own way, and `times` holds the
-    /// fields the caller stored, which each flavour reads its own way (see
-    /// `UnixPathResolution.utimensat`). A null `path` means something of its
-    /// own on Linux. `futimens(2)` is, on Linux, this with `fd` as `dirfd`, a
-    /// null `path` and no flags.
-    | UTimensAt of dirfd : int * path : NullablePathArgument * times : TimesArgument * flags : int
-    /// `copy_file_range(2)` at both descriptions' own offsets. `length` is the
-    /// `size_t` asked for and `flags` is raw, since any flag is refused.
-    | CopyFileRange of inFd : int * outFd : int * length : uint64 * flags : int
-    /// `ioctl(destination, FICLONE, source)`.
-    | FileClone of destination : int * source : int
-    /// `clonefile(2)`. The pathnames are their arguments' bytes, which this
-    /// kernel copies in at the points it measured; `flags` is raw.
-    | CloneFile of source : PathArgumentBytes * destination : PathArgumentBytes * flags : int
-    /// `setresuid(2)`. `None` is `(uid_t)-1`: leave that ID as it is.
-    | SetResUid of real : UserId option * effective : UserId option * saved : UserId option
-    /// `setresgid(2)`. `None` is `(gid_t)-1`: leave that ID as it is.
-    | SetResGid of real : GroupId option * effective : GroupId option * saved : GroupId option
-    /// `setgroups(2)` of a list of `size` groups, whose words are as the caller
-    /// read them.
-    | SetGroups of size : int * words : GroupListWords
-    /// `inotify_init1(2)`. `flags` is raw, in Linux's numbering; see
-    /// `UnixInotify.inotifyInit1`. Answers the new descriptor.
-    | InotifyInit1 of flags : int
-    /// `inotify_rm_watch(2)` of the watch descriptor `wd`.
-    | InotifyRmWatch of fd : int * wd : int
-
-/// Why this kernel will not answer a syscall at all. The client decides what a
-/// refusal means for it; nothing here is recoverable by retrying.
+/// Why this kernel will not answer a syscall `UnixSystem.step` was asked to
+/// make: the refusal of the call's own function, named for the call's
+/// `Syscall` case, or a reserved call, which this library does not model yet.
+/// The client decides what a refusal means for it; nothing here is recoverable
+/// by retrying.
 [<RequireQualifiedAccess>]
 type internal SyscallRefusal<'Thread> =
     | Dup of DescriptorLimitRefusal
-    | Fcntl of FcntlRefusal
     | Dup2 of Dup2Refusal<'Thread>
     | Dup3 of Dup3Refusal<'Thread>
+    | Fcntl of FcntlRefusal
     | LSeek of LSeekRefusal
     | FLock of FLockRefusal
     | FTruncate of TruncationRefusal
-    | MkDir of PathRefusal
-    | UnlinkAt of UnlinkAtRefusal
-    | ChDir of PathRefusal
-    | FChModAt of FChModAtRefusal
-    | FChMod of FChModRefusal
-    | FChOwnAt of FChOwnAtRefusal
-    | FChOwn of FChOwnRefusal
-    | Access of AccessRefusal
-    | Symlink of SymlinkRefusal
-    | Link of LinkRefusal
+    | PosixFAdvise of PosixFadviseRefusal
     | Close of CloseRefusal<'Thread>
-    | UTimensAt of UTimensAtRefusal
-    | CopyFileRange of CopyFileRangeRefusal
+    | BytesAvailable of BytesAvailableRefusal
     | FileClone of FileCloneRefusal
+    | GetGroups of GetGroupsRefusal
+    | Stat of StatRefusal
+    | FStat of FStatRefusal
+    | FStatAt of FStatAtRefusal
+    | ChMod of ChModRefusal
+    | FChMod of FChModRefusal
+    | FChModAt of FChModAtRefusal
+    | ChOwn of ChOwnRefusal
+    | LChOwn of ChOwnRefusal
+    | FChOwn of FChOwnRefusal
+    | FChOwnAt of FChOwnAtRefusal
+    | UTimensAt of UTimensAtRefusal
+    | StatFs of PathRefusal
+    | GetCwd of GetCwdRefusal
+    | ChDir of PathRefusal
+    | Access of AccessRefusal
+    | FAccessAt of AccessRefusal
+    | Open of OpenRefusal
+    | OpenAt of OpenRefusal
+    | ReadLink of ReadLinkRefusal
+    | ReadLinkAt of ReadLinkRefusal
+    | ReadDirectoryEntry of ReadDirectoryRefusal
+    | MkDir of PathRefusal
+    | MkDirAt of PathRefusal
+    | MkNod of MkNodRefusal
+    | MkNodAt of MkNodRefusal
+    | Unlink of RemovalRefusal
+    | RmDir of RemovalRefusal
+    | UnlinkAt of UnlinkAtRefusal
+    | Rename of RenameRefusal
+    | RenameAt of RenameRefusal
     | CloneFile of CloneFileRefusal
-    /// `setresuid(2)` and `setresgid(2)` alike.
-    | SetIds of SetIdsRefusal
+    | Symlink of SymlinkRefusal
+    | SymlinkAt of SymlinkRefusal
+    | Link of LinkRefusal
+    | LinkAt of LinkRefusal
+    | Read of ReadRefusal
+    | Recv of ReceiveRefusal
+    | PRead of PReadRefusal
+    | Write of WriteRefusal
+    | Send of SendRefusal
+    | PWrite of PWriteRefusal
+    | CopyFileRange of CopyFileRangeRefusal
+    | Pipe2 of Pipe2Refusal
+    | Socket of SocketRefusal
+    | Bind of BindRefusal
+    | Connect of ConnectRefusal
+    | Listen of ListenRefusal
+    | Accept of AcceptRefusal
+    | Shutdown of ShutdownRefusal
+    | GetSockName of GetSockNameRefusal
+    | GetPeerName of GetSockNameRefusal
+    | SetSockOpt of SocketOptionRefusal
+    | GetSockOpt of SocketOptionRefusal
+    | Poll of PollRefusal
+    | EpollCreate1 of EpollCreateRefusal
+    | EpollCtl of EpollCtlRefusal
+    | EpollWait of EpollWaitRefusal
+    | Kqueue of KqueueRefusal
+    | Kevent of KeventRefusal
+    | InotifyInit1 of InotifyRefusal
+    | InotifyAddWatch of InotifyAddWatchRefusal
+    | InotifyRmWatch of InotifyRefusal
+    | Kill of KillRefusal
+    | PthreadKill of ThreadKillRefusal
+    | SigProcMask of SigprocmaskRefusal<'Thread>
+    | SigSuspend of SigsuspendRefusal
+    | RtSigSuspend of SigsuspendRefusal
+    | Pause of SigsuspendRefusal
+    | ClockGetTime of ClockGettimeRefusal
+    | GetRandom of GetRandomRefusal
+    | GetEntropy of GetEntropyRefusal
+    | GetResUid of GetIdsRefusal
+    | GetResGid of GetIdsRefusal
+    | SetResUid of SetIdsRefusal
+    | SetResGid of SetIdsRefusal
     | SetGroups of SetGroupsRefusal
-    /// `inotify_init1(2)` and `inotify_rm_watch(2)` alike.
-    | Inotify of InotifyRefusal
+    | Spawn of SpawnRefusal<'Thread>
+    | ExitThread of ThreadExitRefusal<'Thread>
+    | ExitGroup of ProcessEndRefusal
+    | GetCpu of GetCpuRefusal
+    /// The call is `call`, a reserved case: this library does not model the
+    /// call it names yet.
+    | Reserved of call : string
 
 [<RequireQualifiedAccess>]
 module internal SyscallRefusal =
@@ -146,59 +113,197 @@ module internal SyscallRefusal =
     let describe<'Thread> (refusal : SyscallRefusal<'Thread>) : string =
         match refusal with
         | SyscallRefusal.Dup refusal -> $"dup: %s{DescriptorLimitRefusal.describe refusal}"
-        | SyscallRefusal.Fcntl refusal -> $"fcntl: %s{FcntlRefusal.describe refusal}"
         | SyscallRefusal.Dup2 refusal -> $"dup2: %s{Dup2Refusal.describe refusal}"
         | SyscallRefusal.Dup3 refusal -> $"dup3: %s{Dup3Refusal.describe refusal}"
+        | SyscallRefusal.Fcntl refusal -> $"fcntl: %s{FcntlRefusal.describe refusal}"
         | SyscallRefusal.LSeek refusal -> $"lseek: %s{LSeekRefusal.describe refusal}"
         | SyscallRefusal.FLock refusal -> $"flock: %s{FLockRefusal.describe refusal}"
         | SyscallRefusal.FTruncate refusal -> $"ftruncate: %s{TruncationRefusal.describe refusal}"
-        | SyscallRefusal.MkDir refusal -> $"mkdirat: %s{PathRefusal.describe refusal}"
-        | SyscallRefusal.UnlinkAt refusal -> $"unlinkat: %s{UnlinkAtRefusal.describe refusal}"
-        | SyscallRefusal.ChDir refusal -> $"chdir: %s{PathRefusal.describe refusal}"
-        | SyscallRefusal.FChModAt refusal -> $"fchmodat: %s{FChModAtRefusal.describe refusal}"
-        | SyscallRefusal.FChMod refusal -> $"fchmod: %s{FChModRefusal.describe refusal}"
-        | SyscallRefusal.FChOwnAt refusal -> $"fchownat: %s{FChOwnAtRefusal.describe refusal}"
-        | SyscallRefusal.FChOwn refusal -> $"fchown: %s{FChOwnRefusal.describe refusal}"
-        | SyscallRefusal.Access refusal -> $"faccessat: %s{AccessRefusal.describe refusal}"
-        | SyscallRefusal.Symlink refusal -> $"symlinkat: %s{SymlinkRefusal.describe refusal}"
-        | SyscallRefusal.Link refusal -> $"linkat: %s{LinkRefusal.describe refusal}"
+        | SyscallRefusal.PosixFAdvise refusal -> $"posix_fadvise: %s{PosixFadviseRefusal.describe refusal}"
         | SyscallRefusal.Close refusal -> $"close: %s{CloseRefusal.describe refusal}"
-        | SyscallRefusal.UTimensAt refusal -> $"utimensat: %s{UTimensAtRefusal.describe refusal}"
-        | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
+        | SyscallRefusal.BytesAvailable refusal -> $"ioctl(FIONREAD): %s{BytesAvailableRefusal.describe refusal}"
         | SyscallRefusal.FileClone refusal -> $"ioctl(FICLONE): %s{FileCloneRefusal.describe refusal}"
+        | SyscallRefusal.GetGroups refusal -> $"getgroups: %s{GetGroupsRefusal.describe refusal}"
+        | SyscallRefusal.Stat refusal -> $"stat: %s{StatRefusal.describe refusal}"
+        | SyscallRefusal.FStat refusal -> $"fstat: %s{FStatRefusal.describe refusal}"
+        | SyscallRefusal.FStatAt refusal -> $"fstatat: %s{FStatAtRefusal.describe refusal}"
+        | SyscallRefusal.ChMod refusal -> $"chmod: %s{ChModRefusal.describe refusal}"
+        | SyscallRefusal.FChMod refusal -> $"fchmod: %s{FChModRefusal.describe refusal}"
+        | SyscallRefusal.FChModAt refusal -> $"fchmodat: %s{FChModAtRefusal.describe refusal}"
+        | SyscallRefusal.ChOwn refusal -> $"chown: %s{ChOwnRefusal.describe refusal}"
+        | SyscallRefusal.LChOwn refusal -> $"lchown: %s{ChOwnRefusal.describe refusal}"
+        | SyscallRefusal.FChOwn refusal -> $"fchown: %s{FChOwnRefusal.describe refusal}"
+        | SyscallRefusal.FChOwnAt refusal -> $"fchownat: %s{FChOwnAtRefusal.describe refusal}"
+        | SyscallRefusal.UTimensAt refusal -> $"utimensat: %s{UTimensAtRefusal.describe refusal}"
+        | SyscallRefusal.StatFs refusal -> $"statfs: %s{PathRefusal.describe refusal}"
+        | SyscallRefusal.GetCwd refusal -> $"getcwd: %s{GetCwdRefusal.describe refusal}"
+        | SyscallRefusal.ChDir refusal -> $"chdir: %s{PathRefusal.describe refusal}"
+        | SyscallRefusal.Access refusal -> $"access: %s{AccessRefusal.describe refusal}"
+        | SyscallRefusal.FAccessAt refusal -> $"faccessat: %s{AccessRefusal.describe refusal}"
+        | SyscallRefusal.Open refusal -> $"open: %s{OpenRefusal.describe refusal}"
+        | SyscallRefusal.OpenAt refusal -> $"openat: %s{OpenRefusal.describe refusal}"
+        | SyscallRefusal.ReadLink refusal -> $"readlink: %s{ReadLinkRefusal.describe refusal}"
+        | SyscallRefusal.ReadLinkAt refusal -> $"readlinkat: %s{ReadLinkRefusal.describe refusal}"
+        | SyscallRefusal.ReadDirectoryEntry refusal ->
+            $"getdents or getdirentries: %s{ReadDirectoryRefusal.describe refusal}"
+        | SyscallRefusal.MkDir refusal -> $"mkdir: %s{PathRefusal.describe refusal}"
+        | SyscallRefusal.MkDirAt refusal -> $"mkdirat: %s{PathRefusal.describe refusal}"
+        | SyscallRefusal.MkNod refusal -> $"mknod: %s{MkNodRefusal.describe refusal}"
+        | SyscallRefusal.MkNodAt refusal -> $"mknodat: %s{MkNodRefusal.describe refusal}"
+        | SyscallRefusal.Unlink refusal -> $"unlink: %s{RemovalRefusal.describe refusal}"
+        | SyscallRefusal.RmDir refusal -> $"rmdir: %s{RemovalRefusal.describe refusal}"
+        | SyscallRefusal.UnlinkAt refusal -> $"unlinkat: %s{UnlinkAtRefusal.describe refusal}"
+        | SyscallRefusal.Rename refusal -> $"rename: %s{RenameRefusal.describe refusal}"
+        | SyscallRefusal.RenameAt refusal -> $"renameat: %s{RenameRefusal.describe refusal}"
         | SyscallRefusal.CloneFile refusal -> $"clonefile: %s{CloneFileRefusal.describe refusal}"
-        | SyscallRefusal.SetIds refusal -> $"setresuid or setresgid: %s{SetIdsRefusal.describe refusal}"
+        | SyscallRefusal.Symlink refusal -> $"symlink: %s{SymlinkRefusal.describe refusal}"
+        | SyscallRefusal.SymlinkAt refusal -> $"symlinkat: %s{SymlinkRefusal.describe refusal}"
+        | SyscallRefusal.Link refusal -> $"link: %s{LinkRefusal.describe refusal}"
+        | SyscallRefusal.LinkAt refusal -> $"linkat: %s{LinkRefusal.describe refusal}"
+        | SyscallRefusal.Read refusal -> $"read: %s{ReadRefusal.describe refusal}"
+        | SyscallRefusal.Recv refusal -> $"recv: %s{ReceiveRefusal.describe refusal}"
+        | SyscallRefusal.PRead refusal -> $"pread: %s{PReadRefusal.describe refusal}"
+        | SyscallRefusal.Write refusal -> $"write: %s{WriteRefusal.describe refusal}"
+        | SyscallRefusal.Send refusal -> $"send: %s{SendRefusal.describe refusal}"
+        | SyscallRefusal.PWrite refusal -> $"pwrite: %s{PWriteRefusal.describe refusal}"
+        | SyscallRefusal.CopyFileRange refusal -> $"copy_file_range: %s{CopyFileRangeRefusal.describe refusal}"
+        | SyscallRefusal.Pipe2 refusal -> $"pipe2: %s{Pipe2Refusal.describe refusal}"
+        | SyscallRefusal.Socket refusal -> $"socket: %s{SocketRefusal.describe refusal}"
+        | SyscallRefusal.Bind refusal -> $"bind: %s{BindRefusal.describe refusal}"
+        | SyscallRefusal.Connect refusal -> $"connect: %s{ConnectRefusal.describe refusal}"
+        | SyscallRefusal.Listen refusal -> $"listen: %s{ListenRefusal.describe refusal}"
+        | SyscallRefusal.Accept refusal -> $"accept: %s{AcceptRefusal.describe refusal}"
+        | SyscallRefusal.Shutdown refusal -> $"shutdown: %s{ShutdownRefusal.describe refusal}"
+        | SyscallRefusal.GetSockName refusal -> $"getsockname: %s{GetSockNameRefusal.describe refusal}"
+        | SyscallRefusal.GetPeerName refusal -> $"getpeername: %s{GetSockNameRefusal.describe refusal}"
+        | SyscallRefusal.SetSockOpt refusal -> $"setsockopt: %s{SocketOptionRefusal.describe refusal}"
+        | SyscallRefusal.GetSockOpt refusal -> $"getsockopt: %s{SocketOptionRefusal.describe refusal}"
+        | SyscallRefusal.Poll refusal -> $"poll: %s{PollRefusal.describe refusal}"
+        | SyscallRefusal.EpollCreate1 refusal -> $"epoll_create1: %s{EpollCreateRefusal.describe refusal}"
+        | SyscallRefusal.EpollCtl refusal -> $"epoll_ctl: %s{EpollCtlRefusal.describe refusal}"
+        | SyscallRefusal.EpollWait refusal -> $"epoll_wait: %s{EpollWaitRefusal.describe refusal}"
+        | SyscallRefusal.Kqueue refusal -> $"kqueue: %s{KqueueRefusal.describe refusal}"
+        | SyscallRefusal.Kevent refusal -> $"kevent: %s{KeventRefusal.describe refusal}"
+        | SyscallRefusal.InotifyInit1 refusal -> $"inotify_init1: %s{InotifyRefusal.describe refusal}"
+        | SyscallRefusal.InotifyAddWatch refusal -> $"inotify_add_watch: %s{InotifyAddWatchRefusal.describe refusal}"
+        | SyscallRefusal.InotifyRmWatch refusal -> $"inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
+        | SyscallRefusal.Kill refusal -> $"kill: %s{KillRefusal.describe refusal}"
+        | SyscallRefusal.PthreadKill refusal -> $"pthread_kill: %s{ThreadKillRefusal.describe refusal}"
+        | SyscallRefusal.SigProcMask refusal -> $"sigprocmask: %s{SigprocmaskRefusal.describe refusal}"
+        | SyscallRefusal.SigSuspend refusal -> $"sigsuspend: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.RtSigSuspend refusal -> $"rt_sigsuspend: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.Pause refusal -> $"pause: %s{SigsuspendRefusal.describe refusal}"
+        | SyscallRefusal.ClockGetTime refusal -> $"clock_gettime: %s{ClockGettimeRefusal.describe refusal}"
+        | SyscallRefusal.GetRandom refusal -> $"getrandom: %s{GetRandomRefusal.describe refusal}"
+        | SyscallRefusal.GetEntropy refusal -> $"getentropy: %s{GetEntropyRefusal.describe refusal}"
+        | SyscallRefusal.GetResUid refusal -> $"getresuid: %s{GetIdsRefusal.describe refusal}"
+        | SyscallRefusal.GetResGid refusal -> $"getresgid: %s{GetIdsRefusal.describe refusal}"
+        | SyscallRefusal.SetResUid refusal -> $"setresuid: %s{SetIdsRefusal.describe refusal}"
+        | SyscallRefusal.SetResGid refusal -> $"setresgid: %s{SetIdsRefusal.describe refusal}"
         | SyscallRefusal.SetGroups refusal -> $"setgroups: %s{SetGroupsRefusal.describe refusal}"
-        | SyscallRefusal.Inotify refusal -> $"inotify_init1 or inotify_rm_watch: %s{InotifyRefusal.describe refusal}"
+        | SyscallRefusal.Spawn refusal -> $"clone(CLONE_THREAD): %s{SpawnRefusal.describe refusal}"
+        | SyscallRefusal.ExitThread refusal -> $"exit: %s{ThreadExitRefusal.describe refusal}"
+        | SyscallRefusal.ExitGroup refusal -> $"exit_group: %s{ProcessEndRefusal.describe refusal}"
+        | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
+        | SyscallRefusal.Reserved call ->
+            $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallRefusal<'Thread>) : RefusalKind =
         match refusal with
         | SyscallRefusal.Dup _ -> RefusalKind.Unmodelled
-        | SyscallRefusal.Fcntl inner -> FcntlRefusal.kind inner
         | SyscallRefusal.Dup2 inner -> Dup2Refusal.kind inner
         | SyscallRefusal.Dup3 inner -> Dup3Refusal.kind inner
+        | SyscallRefusal.Fcntl inner -> FcntlRefusal.kind inner
         | SyscallRefusal.LSeek inner -> LSeekRefusal.kind inner
         | SyscallRefusal.FLock inner -> FLockRefusal.kind inner
         | SyscallRefusal.FTruncate inner -> TruncationRefusal.kind inner
-        | SyscallRefusal.MkDir inner -> PathRefusal.kind inner
-        | SyscallRefusal.UnlinkAt inner -> UnlinkAtRefusal.kind inner
-        | SyscallRefusal.ChDir inner -> PathRefusal.kind inner
-        | SyscallRefusal.FChModAt inner -> FChModAtRefusal.kind inner
-        | SyscallRefusal.FChMod inner -> FChModRefusal.kind inner
-        | SyscallRefusal.FChOwnAt inner -> FChOwnAtRefusal.kind inner
-        | SyscallRefusal.FChOwn inner -> FChOwnRefusal.kind inner
-        | SyscallRefusal.Access inner -> AccessRefusal.kind inner
-        | SyscallRefusal.Symlink inner -> SymlinkRefusal.kind inner
-        | SyscallRefusal.Link inner -> LinkRefusal.kind inner
+        | SyscallRefusal.PosixFAdvise inner -> PosixFadviseRefusal.kind inner
         | SyscallRefusal.Close inner -> CloseRefusal.kind inner
-        | SyscallRefusal.UTimensAt inner -> UTimensAtRefusal.kind inner
-        | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
+        | SyscallRefusal.BytesAvailable inner -> BytesAvailableRefusal.kind inner
         | SyscallRefusal.FileClone inner -> FileCloneRefusal.kind inner
+        | SyscallRefusal.GetGroups inner -> GetGroupsRefusal.kind inner
+        | SyscallRefusal.Stat inner -> StatRefusal.kind inner
+        | SyscallRefusal.FStat inner -> FStatRefusal.kind inner
+        | SyscallRefusal.FStatAt inner -> FStatAtRefusal.kind inner
+        | SyscallRefusal.ChMod inner -> ChModRefusal.kind inner
+        | SyscallRefusal.FChMod inner -> FChModRefusal.kind inner
+        | SyscallRefusal.FChModAt inner -> FChModAtRefusal.kind inner
+        | SyscallRefusal.ChOwn inner -> ChOwnRefusal.kind inner
+        | SyscallRefusal.LChOwn inner -> ChOwnRefusal.kind inner
+        | SyscallRefusal.FChOwn inner -> FChOwnRefusal.kind inner
+        | SyscallRefusal.FChOwnAt inner -> FChOwnAtRefusal.kind inner
+        | SyscallRefusal.UTimensAt inner -> UTimensAtRefusal.kind inner
+        | SyscallRefusal.StatFs inner -> PathRefusal.kind inner
+        | SyscallRefusal.GetCwd inner -> GetCwdRefusal.kind inner
+        | SyscallRefusal.ChDir inner -> PathRefusal.kind inner
+        | SyscallRefusal.Access inner -> AccessRefusal.kind inner
+        | SyscallRefusal.FAccessAt inner -> AccessRefusal.kind inner
+        | SyscallRefusal.Open inner -> OpenRefusal.kind inner
+        | SyscallRefusal.OpenAt inner -> OpenRefusal.kind inner
+        | SyscallRefusal.ReadLink inner -> ReadLinkRefusal.kind inner
+        | SyscallRefusal.ReadLinkAt inner -> ReadLinkRefusal.kind inner
+        | SyscallRefusal.ReadDirectoryEntry inner -> ReadDirectoryRefusal.kind inner
+        | SyscallRefusal.MkDir inner -> PathRefusal.kind inner
+        | SyscallRefusal.MkDirAt inner -> PathRefusal.kind inner
+        | SyscallRefusal.MkNod inner -> MkNodRefusal.kind inner
+        | SyscallRefusal.MkNodAt inner -> MkNodRefusal.kind inner
+        | SyscallRefusal.Unlink inner -> RemovalRefusal.kind inner
+        | SyscallRefusal.RmDir inner -> RemovalRefusal.kind inner
+        | SyscallRefusal.UnlinkAt inner -> UnlinkAtRefusal.kind inner
+        | SyscallRefusal.Rename inner -> RenameRefusal.kind inner
+        | SyscallRefusal.RenameAt inner -> RenameRefusal.kind inner
         | SyscallRefusal.CloneFile inner -> CloneFileRefusal.kind inner
-        | SyscallRefusal.SetIds inner -> SetIdsRefusal.kind inner
+        | SyscallRefusal.Symlink inner -> SymlinkRefusal.kind inner
+        | SyscallRefusal.SymlinkAt inner -> SymlinkRefusal.kind inner
+        | SyscallRefusal.Link inner -> LinkRefusal.kind inner
+        | SyscallRefusal.LinkAt inner -> LinkRefusal.kind inner
+        | SyscallRefusal.Read inner -> ReadRefusal.kind inner
+        | SyscallRefusal.Recv inner -> ReceiveRefusal.kind inner
+        | SyscallRefusal.PRead inner -> PReadRefusal.kind inner
+        | SyscallRefusal.Write inner -> WriteRefusal.kind inner
+        | SyscallRefusal.Send inner -> SendRefusal.kind inner
+        | SyscallRefusal.PWrite inner -> PWriteRefusal.kind inner
+        | SyscallRefusal.CopyFileRange inner -> CopyFileRangeRefusal.kind inner
+        | SyscallRefusal.Pipe2 inner -> Pipe2Refusal.kind inner
+        | SyscallRefusal.Socket inner -> SocketRefusal.kind inner
+        | SyscallRefusal.Bind inner -> BindRefusal.kind inner
+        | SyscallRefusal.Connect inner -> ConnectRefusal.kind inner
+        | SyscallRefusal.Listen inner -> ListenRefusal.kind inner
+        | SyscallRefusal.Accept inner -> AcceptRefusal.kind inner
+        | SyscallRefusal.Shutdown inner -> ShutdownRefusal.kind inner
+        | SyscallRefusal.GetSockName inner -> GetSockNameRefusal.kind inner
+        | SyscallRefusal.GetPeerName inner -> GetSockNameRefusal.kind inner
+        | SyscallRefusal.SetSockOpt inner -> SocketOptionRefusal.kind inner
+        | SyscallRefusal.GetSockOpt inner -> SocketOptionRefusal.kind inner
+        | SyscallRefusal.Poll inner -> PollRefusal.kind inner
+        | SyscallRefusal.EpollCreate1 inner -> EpollCreateRefusal.kind inner
+        | SyscallRefusal.EpollCtl inner -> EpollCtlRefusal.kind inner
+        | SyscallRefusal.EpollWait inner -> EpollWaitRefusal.kind inner
+        | SyscallRefusal.Kqueue inner -> KqueueRefusal.kind inner
+        | SyscallRefusal.Kevent inner -> KeventRefusal.kind inner
+        | SyscallRefusal.InotifyInit1 inner -> InotifyRefusal.kind inner
+        | SyscallRefusal.InotifyAddWatch inner -> InotifyAddWatchRefusal.kind inner
+        | SyscallRefusal.InotifyRmWatch inner -> InotifyRefusal.kind inner
+        | SyscallRefusal.Kill inner -> KillRefusal.kind inner
+        | SyscallRefusal.PthreadKill inner -> ThreadKillRefusal.kind inner
+        | SyscallRefusal.SigProcMask inner -> SigprocmaskRefusal.kind inner
+        | SyscallRefusal.SigSuspend inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.RtSigSuspend inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.Pause inner -> SigsuspendRefusal.kind inner
+        | SyscallRefusal.ClockGetTime inner -> ClockGettimeRefusal.kind inner
+        | SyscallRefusal.GetRandom inner -> GetRandomRefusal.kind inner
+        | SyscallRefusal.GetEntropy inner -> GetEntropyRefusal.kind inner
+        | SyscallRefusal.GetResUid inner -> GetIdsRefusal.kind inner
+        | SyscallRefusal.GetResGid inner -> GetIdsRefusal.kind inner
+        | SyscallRefusal.SetResUid inner -> SetIdsRefusal.kind inner
+        | SyscallRefusal.SetResGid inner -> SetIdsRefusal.kind inner
         | SyscallRefusal.SetGroups inner -> SetGroupsRefusal.kind inner
-        | SyscallRefusal.Inotify inner -> InotifyRefusal.kind inner
+        | SyscallRefusal.Spawn inner -> SpawnRefusal.kind inner
+        | SyscallRefusal.ExitThread inner -> ThreadExitRefusal.kind inner
+        | SyscallRefusal.ExitGroup inner -> ProcessEndRefusal.kind inner
+        | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
+        | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
 
 /// A way this system's tables disagree with each other — a state no kernel
 /// could be in, and which the operations here exist to keep unreachable.
@@ -1282,188 +1387,512 @@ module UnixSystem =
 
     /// `step`, with a refusal answered as the `Error` rather than raised.
     ///
-    /// Takes no caller check of its own: each case is made through its own
-    /// family's function, whose `Entry` checks `caller` before anything else.
+    /// Each call `step` makes is made through its own family's function, whose
+    /// `Entry` checks `caller` before anything else; a reserved call checks
+    /// `caller` here, before it is refused.
     let internal tryStep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (call : Syscall)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, SyscallRefusal<'Thread>>
+        : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>>
         =
-        // `flock` is the only one of these that can block, so it is the only one
-        // whose own function already speaks `SyscallOutcome`; the rest answer
-        // and are lifted. That is this layer being uniform where the individual
-        // functions are precise, which is what its docstring above says it is
-        // for.
-        let answered
-            (result : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, 'refusal>)
-            : Result<SyscallOutcome * UnixSystem<'Thread, 'Handler>, 'refusal>
-            =
-            result
-            |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
+        let reserved (call : string) : Result<SteppedCall<'Thread, 'Handler>, SyscallRefusal<'Thread>> =
+            Entry.admit "UnixSystem.step" CallerRequirement.Running caller system
+            Error (SyscallRefusal.Reserved call)
 
         match call with
-        | Syscall.GetEffectiveUserId ->
-            Ok (
-                SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId caller system)))
-                ),
-                system
-            )
-        | Syscall.GetEffectiveGroupId ->
-            Ok (
-                SyscallOutcome.Answered (
-                    SyscallAnswer.Completed (int64 (GroupId.toUInt32 (UnixDescriptor.effectiveGroupId caller system)))
-                ),
-                system
-            )
-        | Syscall.GetProcessId ->
-            Ok (
-                SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (ProcessId.toInt32 (processId caller system)))),
-                system
-            )
         | Syscall.Dup fd ->
             UnixDescriptor.tryDup caller fd system
-            |> answered
+            |> Result.map SteppedCall.Dup
             |> Result.mapError SyscallRefusal.Dup
-        | Syscall.Fcntl (fd, command, argument) ->
-            UnixDescriptor.tryFcntl caller fd command argument system
-            |> answered
-            |> Result.mapError SyscallRefusal.Fcntl
         | Syscall.Dup2 (oldFd, newFd) ->
             UnixDescriptor.tryDup2 caller oldFd newFd system
-            |> answered
+            |> Result.map SteppedCall.Dup2
             |> Result.mapError SyscallRefusal.Dup2
         | Syscall.Dup3 (oldFd, newFd, flags) ->
             UnixDescriptor.tryDup3 caller oldFd newFd flags system
-            |> answered
+            |> Result.map SteppedCall.Dup3
             |> Result.mapError SyscallRefusal.Dup3
+        | Syscall.Fcntl (fd, command, argument) ->
+            UnixDescriptor.tryFcntl caller fd command argument system
+            |> Result.map SteppedCall.Fcntl
+            |> Result.mapError SyscallRefusal.Fcntl
         | Syscall.LSeek (fd, offset, whence) ->
             UnixDescriptor.tryLseek caller fd offset whence system
-            |> answered
+            |> Result.map SteppedCall.LSeek
             |> Result.mapError SyscallRefusal.LSeek
         | Syscall.FLock (fd, operation) ->
             UnixDescriptor.tryFlock caller fd operation system
+            |> Result.map SteppedCall.FLock
             |> Result.mapError SyscallRefusal.FLock
         | Syscall.FTruncate (fd, length) ->
             UnixDescriptor.tryFtruncate caller fd length system
-            |> answered
+            |> Result.map SteppedCall.FTruncate
             |> Result.mapError SyscallRefusal.FTruncate
+        | Syscall.PosixFAdvise (fd, offset, length, advice) ->
+            UnixDescriptor.tryPosixFadvise caller fd offset length advice system
+            |> Result.map SteppedCall.PosixFAdvise
+            |> Result.mapError SyscallRefusal.PosixFAdvise
         | Syscall.Close fd ->
             UnixDescriptor.tryClose caller fd system
-            |> answered
+            |> Result.map SteppedCall.Close
             |> Result.mapError SyscallRefusal.Close
-        | Syscall.MkDirAt (dirfd, path, mode) ->
-            UnixNamespace.tryMkdirat caller dirfd path mode system
-            |> answered
-            |> Result.mapError SyscallRefusal.MkDir
-        | Syscall.UnlinkAt (dirfd, path, flags) ->
-            UnixNamespace.tryUnlinkat caller dirfd path flags system
-            |> answered
-            |> Result.mapError SyscallRefusal.UnlinkAt
-        | Syscall.ChDir path ->
-            UnixPathResolution.tryChdir caller path system
-            |> answered
-            |> Result.mapError SyscallRefusal.ChDir
-        | Syscall.FChModAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFchmodat caller dirfd path mode flags system
-            |> answered
-            |> Result.mapError SyscallRefusal.FChModAt
-        | Syscall.FChMod (fd, mode) ->
-            UnixPathResolution.tryFchmod caller fd mode system
-            |> answered
-            |> Result.mapError SyscallRefusal.FChMod
-        | Syscall.FChOwnAt (dirfd, path, user, group, flags) ->
-            UnixPathResolution.tryFchownat caller dirfd path user group flags system
-            |> answered
-            |> Result.mapError SyscallRefusal.FChOwnAt
-        | Syscall.FChOwn (fd, user, group) ->
-            UnixPathResolution.tryFchown caller fd user group system
-            |> answered
-            |> Result.mapError SyscallRefusal.FChOwn
-        | Syscall.UMask mask ->
-            let previous, system = umask caller mask system
-
-            Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 (PermissionBits.toInt previous))), system)
-        | Syscall.FAccessAt (dirfd, path, mode, flags) ->
-            UnixPathResolution.tryFaccessatEager caller dirfd path mode flags system
-            |> Result.map (fun answer -> SyscallOutcome.Answered answer, system)
-            |> Result.mapError SyscallRefusal.Access
-        | Syscall.SymlinkAt (target, dirfd, path) ->
-            UnixNamespace.trySymlinkatEager caller target dirfd path system
-            |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
-            |> Result.mapError SyscallRefusal.Symlink
-        | Syscall.LinkAt (olddirfd, oldpath, newdirfd, newpath, flags) ->
-            UnixNamespace.tryLinkatEager caller olddirfd oldpath newdirfd newpath flags system
-            |> Result.map (fun (answer, system) -> SyscallOutcome.Answered answer, system)
-            |> Result.mapError SyscallRefusal.Link
-        | Syscall.UTimensAt (dirfd, path, times, flags) ->
-            UnixPathResolution.tryUtimensat caller dirfd path times flags system
-            |> answered
-            |> Result.mapError SyscallRefusal.UTimensAt
-        | Syscall.CopyFileRange (inFd, outFd, length, flags) ->
-            UnixReadWrite.tryCopyFileRange caller inFd outFd length flags system
-            |> answered
-            |> Result.mapError SyscallRefusal.CopyFileRange
+        | Syscall.BytesAvailable (fd, destination) ->
+            UnixDescriptor.tryBytesAvailable caller fd destination system
+            |> Result.map SteppedCall.BytesAvailable
+            |> Result.mapError SyscallRefusal.BytesAvailable
         | Syscall.FileClone (destination, source) ->
             UnixDescriptor.tryFileClone caller destination source system
-            |> Result.map (fun error -> SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
+            |> Result.map SteppedCall.FileClone
             |> Result.mapError SyscallRefusal.FileClone
+        | Syscall.TerminalAttributes fd ->
+            Ok (SteppedCall.TerminalAttributes (UnixDescriptor.terminalAttributes caller fd system))
+        | Syscall.GetEffectiveUserId ->
+            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId caller system))
+        | Syscall.GetEffectiveGroupId ->
+            Ok (SteppedCall.GetEffectiveGroupId (UnixDescriptor.effectiveGroupId caller system))
+        | Syscall.GetGroups (size, destination) ->
+            UnixDescriptor.tryGetgroups caller destination size system
+            |> Result.map SteppedCall.GetGroups
+            |> Result.mapError SyscallRefusal.GetGroups
+        | Syscall.Stat (policy, path) ->
+            UnixPathResolution.tryStat caller policy path system
+            |> Result.map SteppedCall.Stat
+            |> Result.mapError SyscallRefusal.Stat
+        | Syscall.FStat fd ->
+            UnixPathResolution.tryFstat caller fd system
+            |> Result.map SteppedCall.FStat
+            |> Result.mapError SyscallRefusal.FStat
+        | Syscall.FStatAt (dirfd, path, flags) ->
+            UnixPathResolution.tryFstatat caller dirfd path flags system
+            |> Result.map SteppedCall.FStatAt
+            |> Result.mapError SyscallRefusal.FStatAt
+        | Syscall.ChMod (path, mode) ->
+            UnixPathResolution.tryChmod caller path mode system
+            |> Result.map SteppedCall.ChMod
+            |> Result.mapError SyscallRefusal.ChMod
+        | Syscall.FChMod (fd, mode) ->
+            UnixPathResolution.tryFchmod caller fd mode system
+            |> Result.map SteppedCall.FChMod
+            |> Result.mapError SyscallRefusal.FChMod
+        | Syscall.FChModAt (dirfd, path, mode, flags) ->
+            UnixPathResolution.tryFchmodat caller dirfd path mode flags system
+            |> Result.map SteppedCall.FChModAt
+            |> Result.mapError SyscallRefusal.FChModAt
+        | Syscall.ChOwn (path, user, group) ->
+            UnixPathResolution.tryChown caller path user group system
+            |> Result.map SteppedCall.ChOwn
+            |> Result.mapError SyscallRefusal.ChOwn
+        | Syscall.LChOwn (path, user, group) ->
+            UnixPathResolution.tryLchown caller path user group system
+            |> Result.map SteppedCall.LChOwn
+            |> Result.mapError SyscallRefusal.LChOwn
+        | Syscall.FChOwn (fd, user, group) ->
+            UnixPathResolution.tryFchown caller fd user group system
+            |> Result.map SteppedCall.FChOwn
+            |> Result.mapError SyscallRefusal.FChOwn
+        | Syscall.FChOwnAt (dirfd, path, user, group, flags) ->
+            UnixPathResolution.tryFchownat caller dirfd path user group flags system
+            |> Result.map SteppedCall.FChOwnAt
+            |> Result.mapError SyscallRefusal.FChOwnAt
+        | Syscall.UTimensAt (dirfd, path, times, flags) ->
+            UnixPathResolution.tryUtimensat caller dirfd path times flags system
+            |> Result.map SteppedCall.UTimensAt
+            |> Result.mapError SyscallRefusal.UTimensAt
+        | Syscall.StatFs path ->
+            UnixPathResolution.tryStatfs caller path system
+            |> Result.map SteppedCall.StatFs
+            |> Result.mapError SyscallRefusal.StatFs
+        | Syscall.FStatFs fd -> Ok (SteppedCall.FStatFs (UnixPathResolution.fstatfs caller fd system))
+        | Syscall.GetCwd (destination, capacity) ->
+            UnixPathResolution.tryGetcwd caller destination capacity system
+            |> Result.map SteppedCall.GetCwd
+            |> Result.mapError SyscallRefusal.GetCwd
+        | Syscall.ChDir path ->
+            UnixPathResolution.tryChdir caller path system
+            |> Result.map SteppedCall.ChDir
+            |> Result.mapError SyscallRefusal.ChDir
+        | Syscall.Access (path, mode) ->
+            UnixPathResolution.tryAccess caller mode system
+            |> CallProgress.resumeWith (UnixPathResolution.tryAccessWithPath path)
+            |> Result.map SteppedCall.Access
+            |> Result.mapError SyscallRefusal.Access
+        | Syscall.FAccessAt (dirfd, path, mode, flags) ->
+            UnixPathResolution.tryFaccessat caller dirfd mode flags system
+            |> CallProgress.resumeWith (UnixPathResolution.tryAccessWithPath path)
+            |> Result.map SteppedCall.FAccessAt
+            |> Result.mapError SyscallRefusal.FAccessAt
+        | Syscall.Open (path, flags, mode) ->
+            UnixNamespace.tryOpenPath caller flags path mode system
+            |> Result.map SteppedCall.Open
+            |> Result.mapError SyscallRefusal.Open
+        | Syscall.OpenAt (dirfd, path, flags, mode) ->
+            UnixNamespace.tryOpenat caller dirfd path flags mode system
+            |> Result.map SteppedCall.OpenAt
+            |> Result.mapError SyscallRefusal.OpenAt
+        | Syscall.ReadLink (path, destination, capacity) ->
+            UnixNamespace.tryReadlink caller path destination capacity system
+            |> Result.map SteppedCall.ReadLink
+            |> Result.mapError SyscallRefusal.ReadLink
+        | Syscall.ReadLinkAt (dirfd, path, destination, capacity) ->
+            UnixNamespace.tryReadlinkat caller dirfd path destination capacity system
+            |> Result.map SteppedCall.ReadLinkAt
+            |> Result.mapError SyscallRefusal.ReadLinkAt
+        | Syscall.ReadDirectoryEntry fd ->
+            UnixNamespace.tryReadDirectoryEntry caller fd system
+            |> Result.map SteppedCall.ReadDirectoryEntry
+            |> Result.mapError SyscallRefusal.ReadDirectoryEntry
+        | Syscall.MkDir (path, mode) ->
+            UnixNamespace.tryMkdir caller path mode system
+            |> Result.map SteppedCall.MkDir
+            |> Result.mapError SyscallRefusal.MkDir
+        | Syscall.MkDirAt (dirfd, path, mode) ->
+            UnixNamespace.tryMkdirat caller dirfd path mode system
+            |> Result.map SteppedCall.MkDirAt
+            |> Result.mapError SyscallRefusal.MkDirAt
+        | Syscall.MkNod (path, mode, dev) ->
+            UnixNamespace.tryMknod caller path mode dev system
+            |> Result.map SteppedCall.MkNod
+            |> Result.mapError SyscallRefusal.MkNod
+        | Syscall.MkNodAt (dirfd, path, mode, dev) ->
+            UnixNamespace.tryMknodat caller dirfd path mode dev system
+            |> Result.map SteppedCall.MkNodAt
+            |> Result.mapError SyscallRefusal.MkNodAt
+        | Syscall.Unlink path ->
+            UnixNamespace.tryUnlink caller path system
+            |> Result.map SteppedCall.Unlink
+            |> Result.mapError SyscallRefusal.Unlink
+        | Syscall.RmDir path ->
+            UnixNamespace.tryRmdir caller path system
+            |> Result.map SteppedCall.RmDir
+            |> Result.mapError SyscallRefusal.RmDir
+        | Syscall.UnlinkAt (dirfd, path, flags) ->
+            UnixNamespace.tryUnlinkat caller dirfd path flags system
+            |> Result.map SteppedCall.UnlinkAt
+            |> Result.mapError SyscallRefusal.UnlinkAt
+        | Syscall.Rename (source, destination) ->
+            UnixNamespace.tryRename caller source system
+            |> CallProgress.resumeWith (UnixNamespace.tryRenameWithDestination destination)
+            |> Result.map SteppedCall.Rename
+            |> Result.mapError SyscallRefusal.Rename
+        | Syscall.RenameAt (olddirfd, oldpath, newdirfd, newpath) ->
+            UnixNamespace.tryRenameat caller olddirfd oldpath newdirfd system
+            |> CallProgress.resumeWith (UnixNamespace.tryRenameWithDestination newpath)
+            |> Result.map SteppedCall.RenameAt
+            |> Result.mapError SyscallRefusal.RenameAt
         | Syscall.CloneFile (source, destination, flags) ->
-            UnixNamespace.tryCloneFileEager caller source destination flags system
-            |> answered
+            UnixNamespace.tryCloneFile caller flags system
+            |> CallProgress.resumeWith (fun paused ->
+                UnixNamespace.tryCloneFileWithSource source paused
+                |> CallProgress.resumeWith (UnixNamespace.tryCloneFileWithDestination destination)
+            )
+            |> Result.map SteppedCall.CloneFile
             |> Result.mapError SyscallRefusal.CloneFile
-        | Syscall.SetResUid (real, effective, saved) ->
-            UnixCredentials.trySetresuid caller real effective saved system
-            |> answered
-            |> Result.mapError SyscallRefusal.SetIds
-        | Syscall.SetResGid (real, effective, saved) ->
-            UnixCredentials.trySetresgid caller real effective saved system
-            |> answered
-            |> Result.mapError SyscallRefusal.SetIds
-        | Syscall.SetGroups (size, words) ->
-            UnixCredentials.trySetgroups caller size words system
-            |> answered
-            |> Result.mapError SyscallRefusal.SetGroups
+        | Syscall.Symlink (target, path) ->
+            Ok (UnixNamespace.symlink caller target system)
+            |> CallProgress.resumeWith (UnixNamespace.trySymlinkWithPath path)
+            |> Result.map SteppedCall.Symlink
+            |> Result.mapError SyscallRefusal.Symlink
+        | Syscall.SymlinkAt (target, dirfd, path) ->
+            Ok (UnixNamespace.symlinkat caller target dirfd system)
+            |> CallProgress.resumeWith (UnixNamespace.trySymlinkWithPath path)
+            |> Result.map SteppedCall.SymlinkAt
+            |> Result.mapError SyscallRefusal.SymlinkAt
+        | Syscall.Link (oldpath, newpath) ->
+            UnixNamespace.tryLink caller oldpath system
+            |> CallProgress.resumeWith (UnixNamespace.tryLinkWithDestination newpath)
+            |> Result.map SteppedCall.Link
+            |> Result.mapError SyscallRefusal.Link
+        | Syscall.LinkAt (olddirfd, oldpath, newdirfd, newpath, flags) ->
+            UnixNamespace.tryLinkat caller olddirfd oldpath newdirfd flags system
+            |> CallProgress.resumeWith (UnixNamespace.tryLinkWithDestination newpath)
+            |> Result.map SteppedCall.LinkAt
+            |> Result.mapError SyscallRefusal.LinkAt
+        | Syscall.Read (fd, buffer, count) ->
+            UnixReadWrite.tryRead caller fd buffer count system
+            |> Result.map SteppedCall.Read
+            |> Result.mapError SyscallRefusal.Read
+        | Syscall.Recv (fd, buffer, count, flags) ->
+            UnixReadWrite.tryRecv caller fd buffer count flags system
+            |> Result.map SteppedCall.Recv
+            |> Result.mapError SyscallRefusal.Recv
+        | Syscall.RecvFrom _ -> reserved "Syscall.RecvFrom"
+        | Syscall.RecvMsg _ -> reserved "Syscall.RecvMsg"
+        | Syscall.PRead (fd, buffer, count, offset) ->
+            UnixReadWrite.tryPread caller fd buffer count offset system
+            |> Result.map SteppedCall.PRead
+            |> Result.mapError SyscallRefusal.PRead
+        | Syscall.Write (fd, buffer, count) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.Write"
+                PausedWrite.copyRange
+                UnixReadWrite.tryWriteWithBytes
+                buffer
+                (fun buffer -> UnixReadWrite.tryWrite caller fd buffer count system)
+            |> Result.map SteppedCall.Write
+            |> Result.mapError SyscallRefusal.Write
+        | Syscall.Send (fd, buffer, count, flags) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.Send"
+                PausedSend.copyRange
+                UnixReadWrite.trySendWithBytes
+                buffer
+                (fun buffer -> UnixReadWrite.trySend caller fd buffer count flags system)
+            |> Result.map SteppedCall.Send
+            |> Result.mapError SyscallRefusal.Send
+        | Syscall.SendTo _ -> reserved "Syscall.SendTo"
+        | Syscall.SendMsg _ -> reserved "Syscall.SendMsg"
+        | Syscall.PWrite (fd, buffer, count, offset) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.PWrite"
+                PausedPWrite.copyRange
+                UnixReadWrite.tryPwriteWithBytes
+                buffer
+                (fun buffer -> UnixReadWrite.tryPwrite caller fd buffer count offset system)
+            |> Result.map SteppedCall.PWrite
+            |> Result.mapError SyscallRefusal.PWrite
+        | Syscall.CopyFileRange (inFd, outFd, length, flags) ->
+            UnixReadWrite.tryCopyFileRange caller inFd outFd length flags system
+            |> Result.map SteppedCall.CopyFileRange
+            |> Result.mapError SyscallRefusal.CopyFileRange
+        | Syscall.Pipe2 (destination, flags) ->
+            UnixPipe.tryPipe2 caller flags destination system
+            |> Result.map SteppedCall.Pipe2
+            |> Result.mapError SyscallRefusal.Pipe2
+        | Syscall.Socket (domain, socketType, protocol) ->
+            UnixSocket.trySocket caller domain socketType protocol system
+            |> Result.map SteppedCall.Socket
+            |> Result.mapError SyscallRefusal.Socket
+        | Syscall.Bind (fd, address, declaredLength) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.Bind"
+                PausedBind.copyRange
+                UnixSocket.tryBindWithAddress
+                address
+                (fun address -> UnixSocket.tryBind caller fd address declaredLength system)
+            |> Result.map SteppedCall.Bind
+            |> Result.mapError SyscallRefusal.Bind
+        | Syscall.Connect (fd, address, declaredLength) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.Connect"
+                PausedConnect.copyRange
+                UnixConnection.tryConnectWithAddress
+                address
+                (fun address -> UnixConnection.tryConnect caller fd address declaredLength system)
+            |> Result.map SteppedCall.Connect
+            |> Result.mapError SyscallRefusal.Connect
+        | Syscall.Listen (fd, backlog) ->
+            UnixSocket.tryListen caller fd backlog system
+            |> Result.map SteppedCall.Listen
+            |> Result.mapError SyscallRefusal.Listen
+        | Syscall.Accept (fd, destination, declaredLength) ->
+            UnixConnection.tryAccept caller fd destination declaredLength system
+            |> Result.map SteppedCall.Accept
+            |> Result.mapError SyscallRefusal.Accept
+        | Syscall.Shutdown (fd, how) ->
+            UnixConnection.tryShutdown caller fd how system
+            |> Result.map SteppedCall.Shutdown
+            |> Result.mapError SyscallRefusal.Shutdown
+        | Syscall.GetSockName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetsockname caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetSockName
+            |> Result.mapError SyscallRefusal.GetSockName
+        | Syscall.GetPeerName (fd, destination, declaredLength) ->
+            UnixSocket.tryGetpeername caller fd destination declaredLength system
+            |> Result.map SteppedCall.GetPeerName
+            |> Result.mapError SyscallRefusal.GetPeerName
+        | Syscall.SetSockOpt (fd, level, optionName, value, optionLength) ->
+            CopiedArgument.copyBytes
+                "UnixSystem.step of Syscall.SetSockOpt"
+                PausedSetSockOpt.copyRange
+                UnixSocket.trySetsockoptWithValue
+                value
+                (fun value -> UnixSocket.trySetsockopt caller fd level optionName value optionLength system)
+            |> Result.map SteppedCall.SetSockOpt
+            |> Result.mapError SyscallRefusal.SetSockOpt
+        | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.GetSockOpt"
+                UnixSocket.tryGetsockoptWithLength
+                length
+                (fun length -> UnixSocket.tryGetsockopt caller fd level optionName value length system)
+            |> Result.map SteppedCall.GetSockOpt
+            |> Result.mapError SyscallRefusal.GetSockOpt
+        | Syscall.Poll (entries, milliseconds) ->
+            UnixPoll.tryPoll caller entries milliseconds system
+            |> Result.map SteppedCall.Poll
+            |> Result.mapError SyscallRefusal.Poll
+        | Syscall.Select _ -> reserved "Syscall.Select"
+        | Syscall.PSelect _ -> reserved "Syscall.PSelect"
+        | Syscall.EpollCreate1 flags ->
+            UnixPoll.tryEpollCreate1 caller flags system
+            |> Result.map SteppedCall.EpollCreate1
+            |> Result.mapError SyscallRefusal.EpollCreate1
+        | Syscall.EpollCtl (epfd, op, fd, event) ->
+            UnixPoll.tryEpollCtl caller epfd op fd event system
+            |> Result.map SteppedCall.EpollCtl
+            |> Result.mapError SyscallRefusal.EpollCtl
+        | Syscall.EpollWait (epfd, buffer, maxEvents, milliseconds) ->
+            UnixPoll.tryEpollWait caller epfd maxEvents buffer milliseconds system
+            |> Result.map SteppedCall.EpollWait
+            |> Result.mapError SyscallRefusal.EpollWait
+        | Syscall.Kqueue ->
+            UnixKqueue.tryKqueue caller system
+            |> Result.map SteppedCall.Kqueue
+            |> Result.mapError SyscallRefusal.Kqueue
+        | Syscall.Kevent (kq, changes, nchanges, eventlist, nevents, timeout) ->
+            UnixKqueue.tryKevent caller kq nchanges changes nevents eventlist timeout system
+            |> Result.map SteppedCall.Kevent
+            |> Result.mapError SyscallRefusal.Kevent
         | Syscall.InotifyInit1 flags ->
-            match UnixInotify.tryInotifyInit1 caller flags system with
-            | Error refusal -> Error (SyscallRefusal.Inotify refusal)
-            | Ok (Error error) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system)
-            | Ok (Ok (fd, system)) -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed (int64 fd)), system)
+            UnixInotify.tryInotifyInit1 caller flags system
+            |> Result.map SteppedCall.InotifyInit1
+            |> Result.mapError SyscallRefusal.InotifyInit1
+        | Syscall.InotifyAddWatch (fd, path, mask) ->
+            UnixInotify.tryInotifyAddWatch caller fd mask system
+            |> CallProgress.resumeWith (UnixInotify.tryInotifyAddWatchWithPath path)
+            |> Result.map SteppedCall.InotifyAddWatch
+            |> Result.mapError SyscallRefusal.InotifyAddWatch
         | Syscall.InotifyRmWatch (fd, wd) ->
             UnixInotify.tryInotifyRmWatch caller fd wd system
-            |> answered
-            |> Result.mapError SyscallRefusal.Inotify
+            |> Result.map SteppedCall.InotifyRmWatch
+            |> Result.mapError SyscallRefusal.InotifyRmWatch
+        | Syscall.Kill (pid, signo) ->
+            UnixSignal.tryKill caller pid signo system
+            |> Result.map SteppedCall.Kill
+            |> Result.mapError SyscallRefusal.Kill
+        | Syscall.PthreadKill (target, signo) ->
+            UnixSignal.tryPthreadKill caller target signo system
+            |> Result.map SteppedCall.PthreadKill
+            |> Result.mapError SyscallRefusal.PthreadKill
+        | Syscall.SigAction (signo, newAction) ->
+            Ok (SteppedCall.SigAction (UnixSignal.sigaction caller signo newAction system))
+        | Syscall.SigActionSyscall (signo, newAction) ->
+            Ok (SteppedCall.SigActionSyscall (UnixSignal.sigactionSyscall caller signo newAction system))
+        | Syscall.PthreadSigMask (how, set) ->
+            Ok (SteppedCall.PthreadSigMask (UnixSignal.pthreadSigmask caller how set system))
+        | Syscall.SigProcMask (how, set) ->
+            UnixSignal.trySigprocmask caller how set system
+            |> Result.map SteppedCall.SigProcMask
+            |> Result.mapError SyscallRefusal.SigProcMask
+        | Syscall.RtSigProcMask (how, set, sigsetSize) ->
+            Ok (SteppedCall.RtSigProcMask (UnixSignal.rtSigprocmask caller how set sigsetSize system))
+        | Syscall.SigPending -> Ok (SteppedCall.SigPending (UnixSignal.sigpending caller system))
+        | Syscall.SigSuspend mask ->
+            UnixSignal.trySigsuspend caller mask system
+            |> Result.map SteppedCall.SigSuspend
+            |> Result.mapError SyscallRefusal.SigSuspend
+        | Syscall.RtSigSuspend (mask, sigsetSize) ->
+            UnixSignal.tryRtSigsuspend caller mask sigsetSize system
+            |> Result.map SteppedCall.RtSigSuspend
+            |> Result.mapError SyscallRefusal.RtSigSuspend
+        | Syscall.Pause ->
+            UnixSignal.tryPause caller system
+            |> Result.map SteppedCall.Pause
+            |> Result.mapError SyscallRefusal.Pause
+        | Syscall.SigReturn frame -> Ok (SteppedCall.SigReturn (UnixSignal.sigreturn caller frame system))
+        | Syscall.SigWait _ -> reserved "Syscall.SigWait"
+        | Syscall.SigWaitInfo _ -> reserved "Syscall.SigWaitInfo"
+        | Syscall.SigTimedWait _ -> reserved "Syscall.SigTimedWait"
+        | Syscall.ClockGetTime clockId ->
+            UnixClock.tryClockGettime caller clockId system
+            |> Result.map SteppedCall.ClockGetTime
+            |> Result.mapError SyscallRefusal.ClockGetTime
+        | Syscall.GetTimeOfDay -> Ok (SteppedCall.GetTimeOfDay (UnixClock.gettimeofday caller system))
+        | Syscall.Nanosleep _ -> reserved "Syscall.Nanosleep"
+        | Syscall.ClockNanosleep _ -> reserved "Syscall.ClockNanosleep"
+        | Syscall.GetRandom (buffer, count, flags) ->
+            UnixEntropy.tryGetRandom caller buffer count flags system
+            |> Result.map SteppedCall.GetRandom
+            |> Result.mapError SyscallRefusal.GetRandom
+        | Syscall.GetEntropy (buffer, length) ->
+            UnixEntropy.tryGetEntropy caller buffer length system
+            |> Result.map SteppedCall.GetEntropy
+            |> Result.mapError SyscallRefusal.GetEntropy
+        | Syscall.GetProcessId -> Ok (SteppedCall.GetProcessId (processId caller system))
+        | Syscall.UMask mask -> Ok (SteppedCall.UMask (umask caller mask system))
+        | Syscall.GetResUid (real, effective, saved) ->
+            UnixCredentials.tryGetresuid caller real effective saved system
+            |> Result.map SteppedCall.GetResUid
+            |> Result.mapError SyscallRefusal.GetResUid
+        | Syscall.GetResGid (real, effective, saved) ->
+            UnixCredentials.tryGetresgid caller real effective saved system
+            |> Result.map SteppedCall.GetResGid
+            |> Result.mapError SyscallRefusal.GetResGid
+        | Syscall.SetResUid (real, effective, saved) ->
+            UnixCredentials.trySetresuid caller real effective saved system
+            |> Result.map SteppedCall.SetResUid
+            |> Result.mapError SyscallRefusal.SetResUid
+        | Syscall.SetResGid (real, effective, saved) ->
+            UnixCredentials.trySetresgid caller real effective saved system
+            |> Result.map SteppedCall.SetResGid
+            |> Result.mapError SyscallRefusal.SetResGid
+        | Syscall.SetGroups (size, words) ->
+            UnixCredentials.trySetgroups caller size words system
+            |> Result.map SteppedCall.SetGroups
+            |> Result.mapError SyscallRefusal.SetGroups
+        | Syscall.Spawn (child, cpu) ->
+            UnixThreadLifecycle.trySpawn caller child cpu system
+            |> Result.map SteppedCall.Spawn
+            |> Result.mapError SyscallRefusal.Spawn
+        | Syscall.ExitThread status ->
+            UnixThreadLifecycle.tryExitThread caller status system
+            |> Result.map SteppedCall.ExitThread
+            |> Result.mapError SyscallRefusal.ExitThread
+        | Syscall.ExitGroup status ->
+            UnixThreadLifecycle.tryExitGroup caller status system
+            |> Result.map SteppedCall.ExitGroup
+            |> Result.mapError SyscallRefusal.ExitGroup
+        | Syscall.GetCpu ->
+            UnixScheduling.tryGetcpu caller system
+            |> Result.map SteppedCall.GetCpu
+            |> Result.mapError SyscallRefusal.GetCpu
 
     /// <summary>
-    /// Answer one syscall, made by `thread`.
-    ///
-    /// The thread is what a blocking answer is recorded against: `FLock` that
-    /// would block parks it, and the returned system carries that park. It must
-    /// be one of the process's threads, and not asleep in another syscall.
-    ///
-    /// Sugar over the per-syscall functions above, for a client that wants one
-    /// surface — to log every syscall, to replay a recorded sequence, or to
-    /// generate them. Where a syscall's own function has a narrower type (the
-    /// answer to `GetEffectiveUserId` cannot be a failure, and only `FLock` can
-    /// block), that type is the one to prefer.
-    ///
-    /// **Not every syscall this module answers is reachable through here.** A
-    /// syscall whose answer carries more than an integer — `read`, whose answer
-    /// carries bytes — has no case in `Syscall`, because `SyscallAnswer` would
-    /// have to grow a shape for it and nothing yet consumes that shape. Adding
-    /// one for its own sake would be inventing an encoding before there is a
-    /// client to be wrong about; the first thing that genuinely logs or replays
-    /// a buffer-carrying syscall gets to choose it. Until then those syscalls
-    /// are reached through their own functions, which lose nothing.
+    /// Make the call `call` names, by `caller`, through that call's own
+    /// function, and answer the `SteppedCall` case of the same name, holding
+    /// what the function answers.
     /// </summary>
-    /// <exception cref="T:System.InvalidOperationException">`thread` is not one of the process's threads, or is asleep in another syscall.</exception>
-    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure.</exception>
+    /// <remarks>
+    /// For a client that wants one surface to log, replay or generate calls
+    /// through. Where a call's own function has a narrower type, or answers
+    /// before the call copies from the caller's memory, that function is the
+    /// one to prefer.
+    ///
+    /// A call that copies from the caller's memory reads what that memory held
+    /// from `call`, where the call's function stops for it, and goes on through
+    /// the function's resumption, so `step` never stops partway. A buffer the
+    /// call reads is copied from where the paused call's `copyRange` says, so
+    /// a `CopiedArgument.Readable` must hold at least the bytes up to the end
+    /// of that range; it may hold more, which are not read.
+    ///
+    /// `caller` must be a thread of one of the system's processes, parked in no
+    /// syscall and owing no return to user mode, whatever the call, as the
+    /// call's own function requires. A call whose own function fails loudly on
+    /// arguments no client following its documentation passes, such as a
+    /// `SigReturn` of a frame that is not the thread's innermost, fails so
+    /// through `step` too.
+    ///
+    /// A call that can end the process answers as its own function does: the
+    /// `ProcessFate` of `Kill`, `PthreadKill` and `ExitThread` is
+    /// `ProcessFate.ProcessEnded` when the call ended it, and `ExitGroup`
+    /// answers how the process ended beside the system without it. A
+    /// `SigSuspend`, `RtSigSuspend` or `Pause` may answer
+    /// `SigsuspendOutcome.Interrupted`, and the thread then owes its return to
+    /// user mode, as after the call made through its own function.
+    ///
+    /// A reserved case (`Syscall.Nanosleep`, `ClockNanosleep`, `Select`,
+    /// `PSelect`, `SigWait`, `SigWaitInfo`, `SigTimedWait`, `RecvFrom`,
+    /// `RecvMsg`, `SendTo` and `SendMsg`) is refused: this library does not
+    /// model those calls yet.
+    /// </remarks>
+    /// <exception cref="T:System.InvalidOperationException">`caller` is not a thread of one of the system's processes, or is asleep in another syscall, or owes a return to user mode. A `CopiedArgument.Readable` buffer ends before the bytes the call copies from it do, or is the default `ImmutableArray`.</exception>
+    /// <exception cref="T:System.PlatformNotSupportedException">The flavour has no `dup3`. This kernel is not Linux-flavoured, and only Linux has `copy_file_range`. This kernel is not Linux-flavoured, and `FICLONE` is a Linux request. This kernel is not Darwin-flavoured, and only Darwin has `clonefile`. This flavour has no such call: Darwin declares neither `setresuid` nor `setresgid`, nor `getresuid` nor `getresgid`. This kernel is of `flavour` (Darwin), which has no inotify: no Darwin kernel has the call, so there is no answer to measure. The simulated platform's libc has no `posix_fadvise` (`SimulatedUnixPlatform.providesPosixFadvise` is `false`), so no program could have made the call and there is no answer to give. This kernel is not Linux-flavoured, and only Linux has epoll. This kernel is not Darwin-flavoured, and only Darwin has kqueue. The simulated kernel has no `getrandom` system call, or no `getentropy` system call. This kernel is not Linux-flavoured, and only Linux has `getcpu`.</exception>
     let step<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
-        (call : Syscall)
+        (call : Syscall<'Thread, 'Handler>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : SyscallOutcome * UnixSystem<'Thread, 'Handler>
+        : SteppedCall<'Thread, 'Handler>
         =
         tryStep caller call system
         |> Refusal.orRaise "UnixSystem.step" SyscallRefusal.kind SyscallRefusal.describe

@@ -2386,7 +2386,7 @@ module UnixConnection =
                             DeclaredLength = declaredLength
                         }
 
-                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+                Ok (AcceptOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
         | _ :: _ -> handOver socketId description.NonBlocking destination declaredLength system
 
     /// `accept`, with a refusal answered as the `Error` rather than raised.
@@ -2539,14 +2539,14 @@ module UnixConnection =
 
                 Ok (
                     AcceptOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                    UnixWait.parkWaiting thread parkedAgain system
+                    Parking.parkWaiting thread parkedAgain system
                 )
         | phase ->
             failwith
                 $"UnixConnection.finishAccept: thread %O{thread}'s accept waits on socket %O{socketId}, which is in %A{phase} rather than listening. Nothing takes a live listener out of listening, so the park was recorded on a socket that was never one (this is a bug in the caller that recorded it)."
 
     /// `tryFinishAccept` once `Entry` has admitted its caller.
-    let private tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishAcceptIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<AcceptOutcome * ProcessView<'Thread, 'Handler>, AcceptRefusal>

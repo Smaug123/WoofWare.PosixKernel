@@ -194,10 +194,10 @@ module TestUmask =
             let previous, expected = UnixSystem.umask (Callers.leader system) mask system
 
             match UnixSystem.tryStep (Callers.thread 0 system) (Syscall.UMask mask) system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed answer), after) ->
-                answer |> shouldEqual (int64 (PermissionBits.toInt previous))
+            | Ok (SteppedCall.UMask (answer, after)) ->
+                answer |> shouldEqual previous
                 after |> shouldEqual expected
-            | other -> failwith $"unexpected: %A{other}"
+            | other -> failwith $"unexpected: %A{Result.map Stepped.view other}"
 
         let gen =
             gen {

@@ -287,3 +287,53 @@ module TestShape =
             same paused paused' |> shouldEqual true
             given |> shouldBeEmpty
         | other, _ -> failwith $"write's shape answered %A{other}"
+
+    /// How the process `unionOfThree`'s third case says ended.
+    let private exited : EndedProcess =
+        {
+            Termination = ProcessTermination.Signaled (Signal.SIGTERM, false)
+            ProcessId = ProcessId.parseOrFail "TestShape" 7
+        }
+
+    /// A union for `Shape.union`, with a case each of whose parts a shape of
+    /// its own puts back: a system beside an answer (`withSystem`), a `Result`
+    /// of a system (`result system`), and what is left of a process that
+    /// ended (`ended`, beside `exited`).
+    let private unionOfThree
+        : Shape<
+              int,
+              string,
+              Choice<int * int, Result<int, int>, int>,
+              Choice<int * string, Result<string, int>, EndedProcess * string>
+           > =
+        Shape.union (fun (shapes : ShapeMap<int, string>) (answer : Choice<int * int, Result<int, int>, int>) ->
+            match answer with
+            | Choice1Of3 pair -> Choice1Of3 (shapes.Map Shape.withSystem pair)
+            | Choice2Of3 result -> Choice2Of3 (shapes.Map (Shape.result Shape.system) result)
+            | Choice3Of3 view -> Choice3Of3 (shapes.Map Shape.ended (exited, view))
+        )
+
+    /// `Shape.union` puts back each case's views as the shape that case hands
+    /// its part says, each once, through `Back` or `Without` as that shape
+    /// does, and leaves the rest as it is.
+    [<Test>]
+    let ``union puts back what each case's shape says`` () : unit =
+        let property (answer : Choice<int * int, Result<int, int>, int>) : unit =
+            let mapped, given = mapMarked unionOfThree answer
+
+            match answer, mapped with
+            | Choice1Of3 (answer, view), Choice1Of3 pair ->
+                (pair, given) |> shouldEqual ((answer, kernel view), [ view ])
+            | Choice2Of3 (Ok view), Choice2Of3 result -> (result, given) |> shouldEqual (Ok (kernel view), [ view ])
+            | Choice2Of3 (Error error), Choice2Of3 result -> (result, given) |> shouldEqual (Error error, [])
+            | Choice3Of3 view, Choice3Of3 (ended, made) ->
+                same exited ended |> shouldEqual true
+                (made, given) |> shouldEqual (without view, [ view ])
+            | answer, mapped -> failwith $"%A{answer} came back as another case: %A{mapped}"
+
+        Check.One (
+            config,
+            Prop.forAll
+                (Arb.fromGen (ArbMap.defaults |> ArbMap.generate<Choice<int * int, Result<int, int>, int>>))
+                property
+        )

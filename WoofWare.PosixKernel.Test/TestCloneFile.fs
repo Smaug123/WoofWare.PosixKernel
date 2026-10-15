@@ -182,7 +182,7 @@ module TestCloneFile =
         (system : UnixSystem<int, string>)
         : Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>
         =
-        UnixNamespace.tryCloneFileEager (Callers.leader system) (argument source) (argument destination) flags system
+        Eager.tryCloneFileAs (Callers.leader system) (argument source) (argument destination) flags system
 
     let private answerText (result : Result<SyscallAnswer * UnixSystem<int, string>, CloneFileRefusal>) : string =
         match result with
@@ -299,7 +299,7 @@ module TestCloneFile =
     let ``bad flags are answered before either pathname is read, and the source before the destination`` () : unit =
         let system = systemOn SimulatedUnixPlatform.macOsArm64 u501 tree
 
-        UnixNamespace.tryCloneFileEager
+        Eager.tryCloneFileAs
             (Callers.leader system)
             PathArgumentBytes.Unreadable
             PathArgumentBytes.Unreadable
@@ -307,7 +307,7 @@ module TestCloneFile =
             system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EINVAL, system))
 
-        UnixNamespace.tryCloneFileEager
+        Eager.tryCloneFileAs
             (Callers.leader system)
             PathArgumentBytes.Unreadable
             PathArgumentBytes.Unreadable
@@ -315,10 +315,10 @@ module TestCloneFile =
             system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, system))
 
-        UnixNamespace.tryCloneFileEager (Callers.leader system) (argument "nx") PathArgumentBytes.Unreadable 0x4 system
+        Eager.tryCloneFileAs (Callers.leader system) (argument "nx") PathArgumentBytes.Unreadable 0x4 system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.ENOENT, system))
 
-        UnixNamespace.tryCloneFileEager (Callers.leader system) (argument "f") PathArgumentBytes.Unreadable 0x4 system
+        Eager.tryCloneFileAs (Callers.leader system) (argument "f") PathArgumentBytes.Unreadable 0x4 system
         |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EFAULT, system))
 
     [<Test>]
@@ -585,6 +585,6 @@ module TestCloneFile =
                     (Syscall.CloneFile (argument "f", argument destination, 0x4))
                     system
             with
-            | Ok (SyscallOutcome.Answered answer, after) ->
+            | Ok (SteppedCall.CloneFile (answer, after)) ->
                 Ok (answer, after) |> shouldEqual (clone "f" destination 0x4 system)
             | other -> failwith $"%A{other}"

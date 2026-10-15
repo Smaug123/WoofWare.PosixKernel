@@ -105,7 +105,7 @@
         <Compile Include="ObjectLifetime.fs" />
         <Compile Include="SyscallInterruption.fs" />
         <Compile Include="WakeCondition.fs" />
-        <Compile Include="UnixWait.fs" />
+        <Compile Include="Parking.fs" />
         <Compile Include="UnixConnection.fs" />
         <Compile Include="UnixPoll.fs" />
         <Compile Include="UnixKqueue.fs" />
@@ -120,9 +120,11 @@
         <Compile Include="UnixNamespace.fs" />
         <Compile Include="UnixCredentials.fs" />
         <Compile Include="ProcessLaunch.fs" />
+        <Compile Include="UnixSignal.fs" />
+        <Compile Include="Syscall.fs" />
         <Compile Include="UnixSystem.fs" />
         <Compile Include="UnixBootImage.fs" />
-        <Compile Include="UnixSignal.fs" />
+        <Compile Include="UnixWait.fs" />
         <EmbeddedResource Include="version.json" />
         <EmbeddedResource Include="SurfaceBaseline.txt" />
     </ItemGroup>

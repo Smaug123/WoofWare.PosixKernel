@@ -1551,10 +1551,14 @@ module TestOwnerChange =
 
         let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
 
-        let answered (outcome : Result<SyscallOutcome * UnixSystem<int, string>, SyscallRefusal<int>>) =
+        let answered
+            (outcome : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+            : SyscallAnswer * UnixSystem<int, string>
+            =
             match outcome with
-            | Ok (SyscallOutcome.Answered answer, after) -> answer, after
-            | other -> failwith $"step: %A{other}"
+            | Ok (SteppedCall.FChOwnAt (answer, after))
+            | Ok (SteppedCall.FChOwn (answer, after)) -> answer, after
+            | other -> failwith $"step: %A{Result.map Stepped.view other}"
 
         let memberGroup = Some (gid 2000u)
 

@@ -1547,7 +1547,7 @@ module UnixReadWrite =
 
                 Ok (
                     ReadOutcome.WouldBlock (WakeCondition.ofPark parked),
-                    UnixWait.parkWaiting thread parked (committed ())
+                    Parking.parkWaiting thread parked (committed ())
                 )
         | TcpReadAnswer.EndOfFile -> answered (ReadAnswer.Completed ImmutableArray.Empty)
         | TcpReadAnswer.Failed error -> answered (ReadAnswer.Failed (TcpError.toUnixError error))
@@ -2086,7 +2086,7 @@ module UnixReadWrite =
                                 Count = count
                             }
 
-                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked asleep)
+                    Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked asleep)
             else
 
             match buffer with
@@ -2126,7 +2126,7 @@ module UnixReadWrite =
                             Count = count
                         }
 
-                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+                Ok (ReadOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
         | ReadTarget.File (inode, offset) ->
 
         match readAnsweredByPosition (positionCheck platform offset count) with
@@ -2385,7 +2385,7 @@ module UnixReadWrite =
 
             Ok (
                 ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain system
+                Parking.parkWaiting thread parkedAgain system
             )
 
     let private finishPipeRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2458,7 +2458,7 @@ module UnixReadWrite =
 
             Ok (
                 ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain system
+                Parking.parkWaiting thread parkedAgain system
             )
 
     let private finishInotifyRead<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2497,7 +2497,7 @@ module UnixReadWrite =
 
             Ok (
                 ReadOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain system
+                Parking.parkWaiting thread parkedAgain system
             )
 
     let private finishReadHolding<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2518,7 +2518,7 @@ module UnixReadWrite =
             system.Threads
 
     /// `tryFinishRead` once `Entry` has admitted its caller.
-    let private tryFinishReadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishReadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<ReadOutcome * ProcessView<'Thread, 'Handler>, ReadRefusal>
@@ -3091,7 +3091,7 @@ module UnixReadWrite =
                     ReadsSeen = reads
                 }
 
-        WriteStep.WouldBlock (WakeCondition.ofPark parked, UnixWait.parkWaiting thread parked system)
+        WriteStep.WouldBlock (WakeCondition.ofPark parked, Parking.parkWaiting thread parked system)
 
     /// Whether the bytes a write has just put into `connectionEnd` of
     /// `connectionId` reset the connection: they reached a peer that had
@@ -3133,7 +3133,7 @@ module UnixReadWrite =
 
         let asleep =
             if not (resetByOwnBytes connectionId connectionEnd system) then
-                UnixWait.parkWaiting thread parked system
+                Parking.parkWaiting thread parked system
             else
 
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -3147,7 +3147,7 @@ module UnixReadWrite =
             // kernel delivers the reset with the bytes, so the call's wake
             // condition already holds as it parks: the reset has arrived, and
             // the client wakes it at once into the reset's answer.
-            | SimulatedUnixFlavour.Darwin -> UnixWait.park thread parked system
+            | SimulatedUnixFlavour.Darwin -> Parking.park thread parked system
 
         WriteStep.WouldBlock (WakeCondition.ofPark parked, asleep)
 
@@ -4668,7 +4668,7 @@ module UnixReadWrite =
         |> Refusal.orRaise "UnixReadWrite.write" WriteRefusal.kind WriteRefusal.describe
 
     /// `tryFinishWrite` once `Entry` has admitted its caller.
-    let private tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishWriteIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<

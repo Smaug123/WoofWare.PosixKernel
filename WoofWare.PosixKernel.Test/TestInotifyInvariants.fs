@@ -339,8 +339,8 @@ module TestInotifyInvariants =
         |> shouldEqual (Error (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin))
 
         match UnixSystem.tryStep (Callers.thread 0 darwin) (Syscall.InotifyInit1 0) darwin with
-        | Error (SyscallRefusal.Inotify (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)) -> ()
-        | other -> failwith $"%A{other}"
+        | Error (SyscallRefusal.InotifyInit1 (InotifyRefusal.Flavour SimulatedUnixFlavour.Darwin)) -> ()
+        | other -> failwith $"%A{Result.map Stepped.view other}"
 
         UnixSystem.initial<int, string> SimulatedUnixPlatform.macOsArm64
         |> UnixBootImage.tryWithInotifyLimits UnixSystem.defaultInotifyLimits
@@ -534,14 +534,13 @@ module TestInotifyInvariants =
     let ``step answers inotify_init1 and inotify_rm_watch as the functions do`` () : unit =
         let viaStep =
             match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x800) linux with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed fd), system) -> int fd, system
-            | other -> failwith $"%A{other}"
+            | Ok (SteppedCall.InotifyInit1 (Ok (fd, system))) -> fd, system
+            | other -> failwith $"%A{Result.map Stepped.view other}"
 
         viaStep |> shouldEqual (init1 0x800 linux)
 
-        match UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux with
-        | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINVAL), system) -> system |> shouldEqual linux
-        | other -> failwith $"%A{other}"
+        UnixSystem.tryStep (Callers.thread 0 linux) (Syscall.InotifyInit1 0x1) linux
+        |> Stepped.resultShouldBe (Ok (SteppedCall.InotifyInit1 (Error UnixError.EINVAL)))
 
         let system, _, _ = instance
 
@@ -549,10 +548,10 @@ module TestInotifyInvariants =
             UnixSystem.tryStep (Callers.thread 0 system) (Syscall.InotifyRmWatch (3, 1)) system,
             UnixInotify.tryInotifyRmWatch (Callers.leader system) 3 1 system
         with
-        | Ok (SyscallOutcome.Answered stepped, afterStep), Ok (answered, after) ->
+        | Ok (SteppedCall.InotifyRmWatch (stepped, afterStep)), Ok (answered, after) ->
             stepped |> shouldEqual answered
             afterStep |> shouldEqual after
-        | other -> failwith $"%A{other}"
+        | stepped, direct -> failwith $"%A{Result.map Stepped.view stepped}, %A{direct}"
 
     /// One call of a generated sequence, on the instance in a slot.
     [<RequireQualifiedAccess>]

@@ -110,7 +110,7 @@ module TestUnixEntropy =
         let mismatches =
             [
                 for flavour, system in [ "Linux", linux () ; "Darwin", darwin () ] do
-                    let parked = Lone.UnixWait.park 0 ParkedSyscall.SigSuspend system
+                    let parked = Lone.Parking.park 0 ParkedSyscall.SigSuspend system
 
                     for flags in [ 0u ; 6u ] do
                         for thread, system, expected in

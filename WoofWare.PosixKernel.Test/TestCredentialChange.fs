@@ -787,7 +787,7 @@ module TestCredentialChange =
 
     [<Test>]
     let ``a sequence of credential calls keeps the system sound, through step as through the primitives`` () : unit =
-        let callGen : Gen<Syscall> =
+        let callGen : Gen<Syscall<int, string>> =
             Gen.oneof
                 [
                     Gen.listOfLength 3 requestGen
@@ -812,33 +812,43 @@ module TestCredentialChange =
                     }
                 ]
 
-        let primitive (call : Syscall) (system : UnixSystem<int, string>) =
+        let primitive
+            (call : Syscall<int, string>)
+            (system : UnixSystem<int, string>)
+            : Result<SteppedCall<int, string>, SyscallRefusal<int>>
+            =
             match call with
             | Syscall.SetResUid (r, e, s) ->
                 UnixCredentials.trySetresuid (Callers.leader system) r e s system
-                |> Result.mapError SyscallRefusal.SetIds
+                |> Result.map SteppedCall.SetResUid
+                |> Result.mapError SyscallRefusal.SetResUid
             | Syscall.SetResGid (r, e, s) ->
                 UnixCredentials.trySetresgid (Callers.leader system) r e s system
-                |> Result.mapError SyscallRefusal.SetIds
+                |> Result.map SteppedCall.SetResGid
+                |> Result.mapError SyscallRefusal.SetResGid
             | Syscall.SetGroups (size, words) ->
                 UnixCredentials.trySetgroups (Callers.leader system) size words system
+                |> Result.map SteppedCall.SetGroups
                 |> Result.mapError SyscallRefusal.SetGroups
             | other -> failwith $"not a credential call: %A{other}"
 
-        let property (credentials : Credentials, calls : Syscall list) : unit =
+        let property (credentials : Credentials, calls : Syscall<int, string> list) : unit =
             let mutable system = systemWith linux CoreDumps.Suppressed credentials
 
             for call in calls do
-                let viaStep = UnixSystem.tryStep (Callers.thread 0 system) call system
                 let direct = primitive call system
 
-                match viaStep, direct with
-                | Ok (SyscallOutcome.Answered stepAnswer, stepped), Ok (answer, after) ->
-                    (stepAnswer, stepped) |> shouldEqual (answer, after)
+                UnixSystem.tryStep (Callers.thread 0 system) call system
+                |> Stepped.resultShouldBe direct
+
+                match direct with
+                | Ok (SteppedCall.SetResUid (_, after))
+                | Ok (SteppedCall.SetResGid (_, after))
+                | Ok (SteppedCall.SetGroups (_, after)) ->
                     UnixSystem.checkInvariants after |> shouldEqual []
                     system <- after
-                | Error stepRefusal, Error refusal -> stepRefusal |> shouldEqual refusal
-                | other -> failwith $"%A{call}: step and the primitive disagree: %A{other}"
+                | Ok other -> failwith $"%A{call}: not a credential call's answer: %A{Stepped.view other}"
+                | Error _ -> ()
 
         Check.One (
             Config.QuickThrowOnFailure.WithMaxTest 500,

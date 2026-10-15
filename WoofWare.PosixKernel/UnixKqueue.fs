@@ -703,7 +703,7 @@ module UnixKqueue =
                         Deadline = deadline
                     }
 
-            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), UnixWait.parkWaiting thread parked system)
+            Ok (KeventOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked system)
 
         match timeout with
         | None -> park None
@@ -873,11 +873,11 @@ module UnixKqueue =
 
             Ok (
                 KeventOutcome.WouldBlock (WakeCondition.ofPark parkedAgain),
-                UnixWait.parkWaiting thread parkedAgain swept
+                Parking.parkWaiting thread parkedAgain swept
             )
 
     /// `tryFinishKevent` once `Entry` has admitted its caller.
-    let private tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let internal tryFinishKeventIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<KeventOutcome * ProcessView<'Thread, 'Handler>, KeventRefusal>

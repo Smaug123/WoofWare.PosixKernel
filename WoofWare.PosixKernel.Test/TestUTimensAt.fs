@@ -1394,7 +1394,7 @@ module TestUTimensAt =
 
         let system =
             match
-                UnixNamespace.trySymlinkatEager
+                Eager.trySymlinkatAs
                     (Callers.leader system)
                     (PathArg.ofText "f")
                     (atFdCwd user)
