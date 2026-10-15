@@ -125,14 +125,14 @@ let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 
 let mkdir (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
     match UnixSystem.step leader (Syscall.MkDirAt (atFdCwd, path "/tmp", 0o755)) system with
-    | SyscallOutcome.Answered (SyscallAnswer.Completed result), system ->
+    | SteppedCall.MkDirAt (SyscallAnswer.Completed result, system) ->
         printfn "mkdir returned %d" result
         system
-    | SyscallOutcome.Answered (SyscallAnswer.Failed error), system ->
+    | SteppedCall.MkDirAt (SyscallAnswer.Failed error, system) ->
         let numbering = SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system)
         printfn "mkdir failed with errno %d" (UnixError.toRawErrnoUnder numbering error)
         system
-    | outcome, _ -> failwith $"unexpected from mkdir: %A{outcome}"
+    | _ -> failwith "step answers a Syscall.MkDirAt as a SteppedCall.MkDirAt"
 
 system |> mkdir |> mkdir |> ignore
 
@@ -319,6 +319,7 @@ From version 1.0, adding a case to any union whose cases are public is a breakin
 F# code compiled against a union dispatches on its case numbers, so code built against an older version can silently run the wrong arm for a new case.
 The model will still grow: a refusal becomes an answer once its behaviour is measured, and each newly measured difference between Linux and Darwin adds a place that throws `UnmodelledException` (see "Answers, and what this library will not answer"), which needs no new case.
 Cases that are certain to appear are already present, and nothing produces them yet: `InodeContent.Socket`, `InodeContent.Fifo`, `DirectoryEntryKind.Socket`, `DirectoryEntryKind.Fifo`, `CharacterDevice.Zero`, `CharacterDevice.Random`, `CharacterDevice.Tty`, `OpenFileTarget.Fifo`, `ParkedSyscall.Sleep`, `ParkedSyscall.FifoOpen`, `ParkedSyscall.Select`, `ParkedSyscall.SignalWait`, `ParkedSyscall.DatagramReceive`, `ParkedSyscall.DatagramSend`, `ParkedSyscall.Connect`, `FinishedCall.Sleep`, `FinishedCall.FifoOpen`, `FinishedCall.Select`, `FinishedCall.SignalWait`, `FinishedCall.DatagramReceive`, `FinishedCall.DatagramSend`, `FinishedCall.Connect`, `SocketPhase.Connecting`, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`.
+So are the cases of the calls not modelled yet that `Syscall` and `SteppedCall` reserve, eleven in each (see "One entry point"), from `Syscall.Nanosleep` and `SteppedCall.Nanosleep` to `Syscall.SendMsg` and `SteppedCall.SendMsg`; and since `Syscall` has a case for every call a thread makes, a call this library comes to model, such as `fork`, is a new case of each.
 Removing a case, changing a case's fields, or changing the shape of any other type is breaking too.
 
 The defects the `checkInvariants` functions report (`UnixSystemDefect` and `VirtualFileSystemDefect`) are open too, and have no patterns at all.
@@ -592,14 +593,22 @@ Nothing else can be done to the system in between, since the paused call holds i
 
 A call whose pathname is copied in after something observable stops there too, and takes that pathname in its resume function: `rename` and `renameat` stop before the destination (`UnixNamespace.renameWithDestination`), `link` and `linkat` before the new path (`UnixNamespace.linkWithDestination`), `symlink` and `symlinkat` before the link's own path (`UnixNamespace.symlinkWithPath`), `access` and `faccessat` before the path (`UnixPathResolution.accessWithPath`), since Linux answers a bad mode or flag word without reading it, and `inotify_add_watch` before the path (`UnixInotify.inotifyAddWatchWithPath`), since Linux answers a bad mask or descriptor without reading it.
 `clonefile` stops twice: before the source (`UnixNamespace.cloneFileWithSource`) and before the destination (`UnixNamespace.cloneFileWithDestination`).
-A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step` where the call has a `Syscall` case, or resumes each paused call as soon as it is answered.
+A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step`, whose `Syscall` case holds what each copy reads (see "One entry point"), or resumes each paused call as soon as it is answered.
 
 #### One entry point
 
-`UnixSystem.step (caller : Caller) (call : Syscall)` reaches some of the syscalls through one function, as cases of the `Syscall` type, for a client that wants to log, replay or generate them; it answers `SyscallOutcome * UnixSystem`.
-Only the calls with a `Syscall` case are reachable through it, from `dup` and `fcntl` to `setgroups`, `inotify_init1` and `inotify_rm_watch`: each answers a `SyscallOutcome`, which is one integer, an errno, or a sleep.
-Whatever the call, `getpid` included, `caller` must be one of the process's threads and not asleep in another call, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
-Many calls are not there, `open`, `socket`, `bind`, `connect`, `kill` and `sigaction` among them, and are reached only through their own functions.
+`UnixSystem.step (caller : Caller) (call : Syscall)` makes any call a thread makes through one function, for a client that wants to log, replay or generate calls, and answers a `SteppedCall`.
+`Syscall` has a case for each function in the tables above that a thread calls as a syscall, named for the call (`Syscall.MkDirAt` for `UnixNamespace.mkdirat`, `Syscall.Open` for `UnixNamespace.openPath`) and holding its arguments in the order the call's C prototype takes them.
+`step` makes the call through that function, and answers the `SteppedCall` case of the same name, which holds exactly what the function answers: `SteppedCall.MkDirAt` holds a `SyscallAnswer` and the system, and `SteppedCall.GetEffectiveUserId` a `UserId` alone, since `geteuid` changes nothing.
+An argument the call copies in from the caller's memory is what that memory held: a pathname is its bytes, and a buffer the call reads, such as `write`'s, is a `CopiedArgument`, which holds the bytes (`CopiedArgument.Readable`) or why there are none, as `UserBuffer`'s cases say.
+`step` hands the function's resumptions what each copy reads, and so never stops at a copy: `SteppedCall.FAccessAt` holds what `UnixPathResolution.accessWithPath` answers.
+A buffer the call writes to stays a `UserBuffer`, since what the call writes is in its answer.
+The finishing functions, the return to user mode, `UnixScheduling.dispatch`, `UnixDescriptor.setNonBlocking` and `UnixDescriptor.isNonBlocking` have no case: no thread makes any of them as a call of its own.
+`Syscall.Nanosleep`, `Syscall.ClockNanosleep`, `Syscall.Select`, `Syscall.PSelect`, `Syscall.SigWait`, `Syscall.SigWaitInfo`, `Syscall.SigTimedWait`, `Syscall.RecvFrom`, `Syscall.RecvMsg`, `Syscall.SendTo` and `Syscall.SendMsg` are reserved for calls this library does not model yet (see "What is not modelled"): the types their arguments and answers are held in have internal representations, nothing makes one, and `step` throws `UnmodelledException` for one.
+Whatever the call, `getpid` included, `caller` must be one of the process's threads, not asleep in another call and owing no return to user mode, and `step` throws `InvalidOperationException` otherwise, as the call's own function does.
+
+In this version `step` makes only `dup`, `dup2`, `dup3`, `fcntl`, `lseek`, `flock`, `ftruncate`, `close`, `ioctl(FICLONE)`, `geteuid`, `getegid`, `fchmod`, `fchmodat`, `fchown`, `fchownat`, `utimensat`, `chdir`, `faccessat`, `mkdirat`, `unlinkat`, `clonefile`, `symlinkat`, `linkat`, `copy_file_range`, `inotify_init1`, `inotify_rm_watch`, `getpid`, `umask`, `setresuid`, `setresgid` and `setgroups`.
+It throws `UnmodelledException` for every other case, naming the change that will make it; meanwhile each of those calls is made through its own function.
 
 ### Checking the tables
 
@@ -1031,8 +1040,8 @@ let second, both = UnixSystem.launch launch booted
 // dup(1), made by thread 0 of the process `pid`.
 let dup (pid : ProcessId) (system : UnixSystem<int, unit>) : int64 * UnixSystem<int, unit> =
     match UnixSystem.step (Caller.make pid 0) (Syscall.Dup 1) system with
-    | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system -> fd, system
-    | outcome, _ -> failwith $"unexpected from dup: %A{outcome}"
+    | SteppedCall.Dup (SyscallAnswer.Completed fd, system) -> fd, system
+    | _ -> failwith "unexpected from dup"
 
 // Each process numbers its own descriptors, so each gets 3.
 let firstFd, afterFirst = dup first both

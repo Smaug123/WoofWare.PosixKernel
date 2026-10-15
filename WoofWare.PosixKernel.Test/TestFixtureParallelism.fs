@@ -3,7 +3,6 @@ namespace WoofWare.PosixKernel.Test
 open System
 open System.Diagnostics
 open System.Reflection
-open System.Reflection.Emit
 open FsUnitTyped
 open NUnit.Framework
 
@@ -36,88 +35,15 @@ module TestFixtureParallelism =
         |> Array.sort
         |> shouldEqual [||]
 
-    /// Every one-byte and two-byte IL opcode, by its value.
-    let private opCodes : Lazy<Map<int, OpCode>> =
-        lazy
-            typeof<OpCodes>.GetFields (BindingFlags.Public ||| BindingFlags.Static)
-            |> Array.map (fun (field : FieldInfo) -> field.GetValue (null : obj) :?> OpCode)
-            |> Array.map (fun code -> int (uint16 code.Value), code)
-            |> Map.ofArray
-
-    let private operandSize (body : byte[]) (at : int) (operand : OperandType) : int =
-        match operand with
-        | OperandType.InlineNone -> 0
-        | OperandType.ShortInlineBrTarget
-        | OperandType.ShortInlineI
-        | OperandType.ShortInlineVar -> 1
-        | OperandType.InlineVar -> 2
-        | OperandType.InlineI8
-        | OperandType.InlineR -> 8
-        | OperandType.InlineSwitch -> 4 + 4 * BitConverter.ToInt32 (body, at)
-        | _ -> 4
-
-    /// The methods `method`'s body calls or constructs through, walking its IL
-    /// one instruction at a time.
-    let private callees (method : MethodBase) : MethodBase list =
-        match method.GetMethodBody () with
-        | null -> []
-        | body ->
-            let il = body.GetILAsByteArray ()
-            let mutable at = 0
-            let found = ResizeArray<MethodBase> ()
-
-            while at < il.Length do
-                let value, width =
-                    if il.[at] = 0xFEuy then
-                        (0xFE00 ||| int il.[at + 1]), 2
-                    else
-                        int il.[at], 1
-
-                let code =
-                    match Map.tryFind value opCodes.Value with
-                    | Some code -> code
-                    | None -> failwith $"%s{method.DeclaringType.FullName}.%s{method.Name}: no opcode 0x%x{value}"
-
-                at <- at + width
-
-                if code.OperandType = OperandType.InlineMethod then
-                    let token = BitConverter.ToInt32 (il, at)
-
-                    match
-                        (try
-                            Some (method.Module.ResolveMethod token)
-                         with :? ArgumentException ->
-                             None)
-                    with
-                    | Some callee -> found.Add callee
-                    | None -> ()
-
-                at <- at + operandSize il at code.OperandType
-
-            List.ofSeq found
-
-    /// The fixture's own methods and those of every type nested in it, where
-    /// F# puts the closures its tests are made of.
-    let rec private methodsWithin (t : Type) : MethodBase list =
-        let flags =
-            BindingFlags.Public
-            ||| BindingFlags.NonPublic
-            ||| BindingFlags.Static
-            ||| BindingFlags.Instance
-            ||| BindingFlags.DeclaredOnly
-
-        [
-            yield! t.GetMethods flags |> Seq.cast<MethodBase>
-            yield! t.GetConstructors flags |> Seq.cast<MethodBase>
-            for nested in t.GetNestedTypes flags do
-                yield! methodsWithin nested
-        ]
-
     let private startsProcesses (fixture : Type) : bool =
-        methodsWithin fixture
+        IlCalls.methodsWithin fixture
         |> List.exists (fun method ->
-            callees method
-            |> List.exists (fun callee -> callee.DeclaringType = typeof<Process> && callee.Name = "Start")
+            IlCalls.callees method
+            |> List.exists (fun callee ->
+                match callee with
+                | Ok callee -> callee.DeclaringType = typeof<Process> && callee.Name = "Start"
+                | Error _ -> false
+            )
         )
 
     /// A child process inherits every descriptor the test host holds without

@@ -638,7 +638,7 @@ module TestPathCopyIn =
     let ``every path-taking Syscall copies its path in`` () : unit =
         // The `step` layer hands the bytes on unchanged: an argument it cannot
         // copy in is that errno, for every case that takes a path.
-        let calls (path : PathArgumentBytes) : Syscall list =
+        let calls (path : PathArgumentBytes) : Syscall<int, string> list =
             [
                 // AT_FDCWD on Linux, as for `FAccessAt` below.
                 Syscall.MkDirAt (-100, path, 0o777)
@@ -656,6 +656,24 @@ module TestPathCopyIn =
             ]
 
         let system = probeSystem linuxPlatform
+
+        // The call failed with `error`, and changed nothing.
+        let failedWith
+            (error : UnixError)
+            (system : UnixSystem<int, string>)
+            (stepped : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+            : unit
+            =
+            match stepped with
+            | Ok (SteppedCall.MkDirAt (answer, after))
+            | Ok (SteppedCall.UnlinkAt (answer, after))
+            | Ok (SteppedCall.ChDir (answer, after))
+            | Ok (SteppedCall.FChModAt (answer, after))
+            | Ok (SteppedCall.FChOwnAt (answer, after))
+            | Ok (SteppedCall.CloneFile (answer, after)) ->
+                (answer, after) |> shouldEqual (SyscallAnswer.Failed error, system)
+            | Ok (SteppedCall.FAccessAt answer) -> answer |> shouldEqual (SyscallAnswer.Failed error)
+            | other -> failwith $"expected %O{error}, got %A{Result.map Stepped.view other}"
 
         for argument, error in
             [
@@ -675,7 +693,7 @@ module TestPathCopyIn =
                             PathArg.ofText (slashed 1024)
 
                     UnixSystem.tryStep (Callers.thread 0 darwin) (Syscall.CloneFile (argument, argument, 0)) darwin
-                    |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), darwin))
+                    |> failedWith error darwin
                 | call ->
                     UnixSystem.tryStep (Callers.thread 0 system) call system
-                    |> shouldEqual (Ok (SyscallOutcome.Answered (SyscallAnswer.Failed error), system))
+                    |> failedWith error system

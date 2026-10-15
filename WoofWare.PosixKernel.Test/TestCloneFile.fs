@@ -585,6 +585,6 @@ module TestCloneFile =
                     (Syscall.CloneFile (argument "f", argument destination, 0x4))
                     system
             with
-            | Ok (SyscallOutcome.Answered answer, after) ->
+            | Ok (SteppedCall.CloneFile (answer, after)) ->
                 Ok (answer, after) |> shouldEqual (clone "f" destination 0x4 system)
             | other -> failwith $"%A{other}"

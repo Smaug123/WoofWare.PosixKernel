@@ -136,17 +136,18 @@ module TestUnixSystemStep =
         | Ok (SyscallOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
         | Error e -> failwith $"expected an answer, got a refusal: %O{e}"
 
-    /// A `step` result with its outcome unwrapped to the answer it carries, so
-    /// that a row which cannot block can be compared against the per-syscall
-    /// function's own narrower type.
+    /// A `step` result unwrapped to the `SyscallAnswer` and the system its case
+    /// holds, so that a row can be compared against the per-syscall function's
+    /// own type.
     let private stepAnswered
-        (result : Result<SyscallOutcome * UnixSystem<int, string>, 'a>)
+        (result : Result<SteppedCall<int, string>, 'a>)
         : Result<SyscallAnswer * UnixSystem<int, string>, 'a>
         =
         match result with
-        | Ok (SyscallOutcome.Answered answer, system) -> Ok (answer, system)
-        | Ok (SyscallOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %O{condition}"
-        | Ok (SyscallOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
+        | Ok stepped ->
+            match Stepped.syscallAnswer stepped with
+            | Some (answer, Some system) -> Ok (answer, system)
+            | _ -> failwith $"expected an answer and a system, got %A{Stepped.view stepped}"
         | Error e -> Error e
 
     // -------------------------------------------------------------------- read
@@ -2427,7 +2428,7 @@ module TestUnixSystemStep =
         viaStep
         |> shouldEqual (
             UnixNamespace.tryMkdirat (Callers.leader system) fd (PathArg.ofText "new") 0o700 system
-            |> Result.mapError SyscallRefusal.MkDir
+            |> Result.mapError SyscallRefusal.MkDirAt
         )
 
         match viaStep with
@@ -2461,7 +2462,7 @@ module TestUnixSystemStep =
         let innerFd, system = opened "/d/inner" system
         let dFd, system = opened "/d" system
 
-        let step (call : Syscall) (system : UnixSystem<int, string>) =
+        let step (call : Syscall<int, string>) (system : UnixSystem<int, string>) =
             UnixSystem.tryStep (Callers.thread leaderThread system) call system
             |> stepAnswered
 
@@ -2665,16 +2666,10 @@ module TestUnixSystemStep =
     let ``step agrees with the primitive it dispatches to`` () : unit =
         // The dispatcher is sugar. If the two ever disagree, the surface a client
         // logs and replays through is not the surface it computes through.
-        match
-            UnixSystem.tryStep (Callers.thread leaderThread linux) Syscall.GetEffectiveUserId linux
-            |> stepAnswered
-        with
-        | Ok (SyscallAnswer.Completed answer, after) ->
-            answer
-            |> shouldEqual (int64 (UserId.toUInt32 (UnixDescriptor.effectiveUserId (Callers.leader linux) linux)))
-
-            after |> shouldEqual linux
-        | other -> failwith $"unexpected: %O{other}"
+        UnixSystem.tryStep (Callers.thread leaderThread linux) Syscall.GetEffectiveUserId linux
+        |> Stepped.resultShouldBe (
+            Ok (SteppedCall.GetEffectiveUserId (UnixDescriptor.effectiveUserId (Callers.leader linux) linux))
+        )
 
     [<Test>]
     let ``getpid reports the configured process ID, through step as through the primitive`` () : unit =
@@ -2695,16 +2690,10 @@ module TestUnixSystemStep =
         |> shouldEqual 3
 
         for system in [ linux ; configured ] do
-            match
-                UnixSystem.tryStep (Callers.thread leaderThread system) Syscall.GetProcessId system
-                |> stepAnswered
-            with
-            | Ok (SyscallAnswer.Completed answer, after) ->
-                answer
-                |> shouldEqual (int64 (ProcessId.toInt32 (UnixSystem.processId (Callers.leader system) system)))
-
-                after |> shouldEqual system
-            | other -> failwith $"unexpected: %O{other}"
+            UnixSystem.tryStep (Callers.thread leaderThread system) Syscall.GetProcessId system
+            |> Stepped.resultShouldBe (
+                Ok (SteppedCall.GetProcessId (UnixSystem.processId (Callers.leader system) system))
+            )
 
     [<Test>]
     let ``withProcessId refuses the forged default process ID`` () : unit =
@@ -2829,7 +2818,7 @@ module TestUnixSystemStep =
         let fd, seeded = withOpenFile linux
 
         UnixSystem.tryStep (Callers.thread leaderThread seeded) (Syscall.LSeek (fd, 0L, 3)) seeded
-        |> shouldEqual (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
+        |> Stepped.resultShouldBe (Error (SyscallRefusal.LSeek (LSeekRefusal.Sparseness (3, SeekExtension.SeekData))))
 
     [<Test>]
     let ``ftruncate validates the length before the descriptor`` () : unit =
@@ -3340,17 +3329,18 @@ module TestUnixSystemStep =
             |> granted
 
         UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both
-        |> shouldEqual (
+        |> Stepped.resultShouldBe (
             UnixDescriptor.tryFlock (Callers.thread holderThread both) first 2 both
+            |> Result.map SteppedCall.FLock
             |> Result.mapError SyscallRefusal.FLock
         )
 
         match UnixSystem.tryStep (Callers.thread holderThread both) (Syscall.FLock (first, 2)) both with
-        | Ok (SyscallOutcome.WouldBlock _, after) ->
+        | Ok (SteppedCall.FLock (SyscallOutcome.WouldBlock _, after)) ->
             FileDescriptorRegistry.tryFind first (Lone.fileDescriptors after)
             |> Option.map (fun description -> description.Flock)
             |> shouldEqual (Some None)
-        | other -> failwith $"expected a park through step, got %A{other}"
+        | other -> failwith $"expected a park through step, got %A{Result.map Stepped.view other}"
 
     [<Test>]
     let ``a failing flock still advances the descriptor table`` () : unit =
@@ -3814,18 +3804,18 @@ module TestUnixSystemStep =
 
             let held =
                 match UnixSystem.tryStep (Callers.thread holderThread system) (Syscall.FLock (first, 2)) system with
-                | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), held) -> held
-                | other -> failwith $"expected the first lock to be granted, got %A{other}"
+                | Ok (SteppedCall.FLock (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), held)) -> held
+                | other -> failwith $"expected the first lock to be granted, got %A{Result.map Stepped.view other}"
 
             let condition, parkedIn =
                 match UnixSystem.tryStep (Callers.thread waiterThread held) (Syscall.FLock (second, 2)) held with
-                | Ok (SyscallOutcome.WouldBlock condition, parkedIn) -> condition, parkedIn
-                | other -> failwith $"expected the second lock to park, got %A{other}"
+                | Ok (SteppedCall.FLock (SyscallOutcome.WouldBlock condition, parkedIn)) -> condition, parkedIn
+                | other -> failwith $"expected the second lock to park, got %A{Result.map Stepped.view other}"
 
             UnixSystem.checkInvariants parkedIn |> shouldEqual []
 
             match UnixSystem.tryStep (Callers.thread thirdThread parkedIn) (Syscall.Close second) parkedIn with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), closed) when linuxFlavour ->
+            | Ok (SteppedCall.Close (SyscallAnswer.Completed 0L, closed)) when linuxFlavour ->
                 UnixSystem.checkInvariants closed |> shouldEqual []
                 holds waiterThread condition closed |> shouldEqual false
             | Error (SyscallRefusal.Close (CloseRefusal.DarwinFlockedDescriptorWithWaiter (description, thread))) when
@@ -3834,17 +3824,20 @@ module TestUnixSystemStep =
                 description |> shouldEqual (descriptionOf second parkedIn)
                 thread |> shouldEqual waiterThread
                 holds waiterThread condition parkedIn |> shouldEqual false
-            | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{other}"
+            | other -> failwith $"linux %b{linuxFlavour}: unexpected close %A{Result.map Stepped.view other}"
 
     /// One call of each shape `step` dispatches: answered at once whatever the
-    /// state, lifted from its own function's answer, and one that can block.
-    let private callsOfEveryShape : Syscall list =
+    /// state, lifted from its own function's answer, one that can block, one
+    /// `step` does not make yet, and one reserved.
+    let private callsOfEveryShape : Syscall<int, string> list =
         [
             Syscall.GetProcessId
             Syscall.UMask 0o022
             Syscall.Close 2
             Syscall.Dup 0
             Syscall.FLock (0, 2)
+            Syscall.FStat 0
+            Syscall.Nanosleep NanosleepArguments.NanosleepArguments
         ]
 
     [<Test>]
@@ -3882,8 +3875,8 @@ module TestUnixSystemStep =
 
             // The thread that is not asleep makes its calls as before.
             match UnixSystem.step (Callers.thread 1 paused) (Syscall.Close 2) paused with
-            | SyscallOutcome.Answered (SyscallAnswer.Completed 0L), _ -> ()
-            | other -> failwith $"expected thread 1's close to complete, got %A{other}"
+            | SteppedCall.Close (SyscallAnswer.Completed 0L, _) -> ()
+            | other -> failwith $"expected thread 1's close to complete, got %A{Stepped.view other}"
 
     /// `operation` by `thread` through `fd`, which must be answered at once: the
     /// answer.

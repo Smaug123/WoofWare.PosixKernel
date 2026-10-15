@@ -994,11 +994,11 @@ module TestLink =
                             0
                             system
                     with
-                    | Ok (answer, after) -> Ok (SyscallOutcome.Answered answer, after)
-                    | Error refusal -> Error (SyscallRefusal.Link refusal)
+                    | Ok answered -> Ok (SteppedCall.LinkAt answered)
+                    | Error refusal -> Error (SyscallRefusal.LinkAt refusal)
 
                 UnixSystem.tryStep
                     (Callers.thread 0 system)
                     (Syscall.LinkAt (atFdCwd, text source, atFdCwd, text dest, 0))
                     system
-                |> shouldEqual direct
+                |> Stepped.resultShouldBe direct

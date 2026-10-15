@@ -62,10 +62,9 @@ module TestGetGroups =
             |> shouldEqual (gid expected)
 
             match UnixSystem.tryStep (Callers.thread 0 system) Syscall.GetEffectiveGroupId system with
-            | Ok (SyscallOutcome.Answered (SyscallAnswer.Completed answer), after) ->
-                answer |> shouldEqual (int64 expected)
-                after |> shouldEqual system
-            | other -> failwith $"unexpected: %A{other}"
+            | Ok (SteppedCall.GetEffectiveGroupId answer) -> answer |> shouldEqual (gid expected)
+            | Ok other -> failwith $"unexpected: %A{Stepped.view other}"
+            | Error refusal -> failwith $"unexpected: %A{refusal}"
 
     // ------------------------------------------------------------------ Linux
 
