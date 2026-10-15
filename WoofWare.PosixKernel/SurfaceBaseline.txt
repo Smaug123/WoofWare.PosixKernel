@@ -836,11 +836,11 @@ WoofWare.PosixKernel.EmulatedMountModule inherit obj
 WoofWare.PosixKernel.EmulatedMountModule.defaultFor [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.EmulatedMount
 WoofWare.PosixKernel.EmulatedMountModule.defaultOf [static method]: WoofWare.PosixKernel.EmulatedFileSystemType -> WoofWare.PosixKernel.EmulatedMount
 WoofWare.PosixKernel.EmulatedMountModule.fileSystemType [static method]: WoofWare.PosixKernel.EmulatedMount -> WoofWare.PosixKernel.EmulatedFileSystemType
-WoofWare.PosixKernel.EndedProcess inherit obj
-WoofWare.PosixKernel.EndedProcess.processId [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessId
-WoofWare.PosixKernel.EndedProcess.termination [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessTermination
-WoofWare.PosixKernel.EndedProcess`2 inherit obj, implements WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> System.IEquatable, System.Collections.IStructuralEquatable
-WoofWare.PosixKernel.EndedProcess`2.Equals [method]: (WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.EndedProcess inherit obj, implements WoofWare.PosixKernel.EndedProcess System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EndedProcess System.IComparable, System.IComparable, System.Collections.IStructuralComparable
+WoofWare.PosixKernel.EndedProcess.Equals [method]: (WoofWare.PosixKernel.EndedProcess, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.EndedProcessModule inherit obj
+WoofWare.PosixKernel.EndedProcessModule.processId [static method]: WoofWare.PosixKernel.EndedProcess -> WoofWare.PosixKernel.ProcessId
+WoofWare.PosixKernel.EndedProcessModule.termination [static method]: WoofWare.PosixKernel.EndedProcess -> WoofWare.PosixKernel.ProcessTermination
 WoofWare.PosixKernel.EntropyDraw inherit System.ValueType, implements WoofWare.PosixKernel.EntropyDraw System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.EntropyDraw System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.EntropyDraw.Equals [method]: (WoofWare.PosixKernel.EntropyDraw, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.EntropyDrawModule inherit obj
@@ -2957,6 +2957,23 @@ WoofWare.PosixKernel.ParkOrdinal.get_Tag [method]: unit -> int
 WoofWare.PosixKernel.ParkOrdinal.Item [property]: [read-only] System.Int64
 WoofWare.PosixKernel.ParkOrdinal.NewParkOrdinal [static method]: System.Int64 -> WoofWare.PosixKernel.ParkOrdinal
 WoofWare.PosixKernel.ParkOrdinal.Tag [property]: [read-only] int
+WoofWare.PosixKernel.ParkState inherit obj, implements WoofWare.PosixKernel.ParkState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ParkState System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.ParkState+Tags inherit obj
+WoofWare.PosixKernel.ParkState+Tags.Asleep [static field]: int = 0
+WoofWare.PosixKernel.ParkState+Tags.Woken [static field]: int = 1
+WoofWare.PosixKernel.ParkState+Woken inherit WoofWare.PosixKernel.ParkState
+WoofWare.PosixKernel.ParkState+Woken.fired [property]: [read-only] WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet
+WoofWare.PosixKernel.ParkState+Woken.get_fired [method]: unit -> WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet
+WoofWare.PosixKernel.ParkState.Asleep [static property]: [read-only] WoofWare.PosixKernel.ParkState
+WoofWare.PosixKernel.ParkState.Equals [method]: (WoofWare.PosixKernel.ParkState, System.Collections.IEqualityComparer) -> bool
+WoofWare.PosixKernel.ParkState.get_Asleep [static method]: unit -> WoofWare.PosixKernel.ParkState
+WoofWare.PosixKernel.ParkState.get_IsAsleep [method]: unit -> bool
+WoofWare.PosixKernel.ParkState.get_IsWoken [method]: unit -> bool
+WoofWare.PosixKernel.ParkState.get_Tag [method]: unit -> int
+WoofWare.PosixKernel.ParkState.IsAsleep [property]: [read-only] bool
+WoofWare.PosixKernel.ParkState.IsWoken [property]: [read-only] bool
+WoofWare.PosixKernel.ParkState.NewWoken [static method]: WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet -> WoofWare.PosixKernel.ParkState
+WoofWare.PosixKernel.ParkState.Tag [property]: [read-only] int
 WoofWare.PosixKernel.PathArgumentBytes inherit obj, implements WoofWare.PosixKernel.PathArgumentBytes System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.PathArgumentBytes System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
 WoofWare.PosixKernel.PathArgumentBytes+Bytes inherit WoofWare.PosixKernel.PathArgumentBytes
 WoofWare.PosixKernel.PathArgumentBytes+Bytes.bytes [property]: [read-only] WoofWare.PosixKernel.UnixByteString
@@ -3282,8 +3299,10 @@ WoofWare.PosixKernel.ProcessFate`3+Continues.get_system [method]: unit -> WoofWa
 WoofWare.PosixKernel.ProcessFate`3+Continues.outcome [property]: [read-only] 'Outcome
 WoofWare.PosixKernel.ProcessFate`3+Continues.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+ProcessEnded inherit WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_Item [method]: unit -> WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.Item [property]: [read-only] WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.ended [property]: [read-only] WoofWare.PosixKernel.EndedProcess
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_ended [method]: unit -> WoofWare.PosixKernel.EndedProcess
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.get_system [method]: unit -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3+ProcessEnded.system [property]: [read-only] WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3+Tags inherit obj
 WoofWare.PosixKernel.ProcessFate`3+Tags.Continues [static field]: int = 0
 WoofWare.PosixKernel.ProcessFate`3+Tags.ProcessEnded [static field]: int = 1
@@ -3294,7 +3313,7 @@ WoofWare.PosixKernel.ProcessFate`3.get_Tag [method]: unit -> int
 WoofWare.PosixKernel.ProcessFate`3.IsContinues [property]: [read-only] bool
 WoofWare.PosixKernel.ProcessFate`3.IsProcessEnded [property]: [read-only] bool
 WoofWare.PosixKernel.ProcessFate`3.NewContinues [static method]: ('Outcome, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
-WoofWare.PosixKernel.ProcessFate`3.NewProcessEnded [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
+WoofWare.PosixKernel.ProcessFate`3.NewProcessEnded [static method]: (WoofWare.PosixKernel.EndedProcess, WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>) -> WoofWare.PosixKernel.ProcessFate<'Outcome, 'Thread, 'Handler>
 WoofWare.PosixKernel.ProcessFate`3.Tag [property]: [read-only] int
 WoofWare.PosixKernel.ProcessId inherit System.ValueType, implements WoofWare.PosixKernel.ProcessId System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ProcessId System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.ProcessId.Equals [method]: (WoofWare.PosixKernel.ProcessId, System.Collections.IEqualityComparer) -> bool
@@ -5056,11 +5075,13 @@ WoofWare.PosixKernel.ThreadIdAllocatorModule inherit obj
 WoofWare.PosixKernel.ThreadIdAllocatorModule.linuxPidMaxCeiling [static field]: int = 4194304
 WoofWare.PosixKernel.ThreadIdAllocatorModule.linuxPidMaxFloor [static field]: int = 301
 WoofWare.PosixKernel.ThreadPark inherit obj, implements WoofWare.PosixKernel.ThreadPark System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ThreadPark System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.ThreadPark..ctor [constructor]: (WoofWare.PosixKernel.ParkedSyscall, WoofWare.PosixKernel.ParkOrdinal)
+WoofWare.PosixKernel.ThreadPark..ctor [constructor]: (WoofWare.PosixKernel.ParkedSyscall, WoofWare.PosixKernel.ParkOrdinal, WoofWare.PosixKernel.ParkState)
 WoofWare.PosixKernel.ThreadPark.Equals [method]: (WoofWare.PosixKernel.ThreadPark, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.ThreadPark.get_Ordinal [method]: unit -> WoofWare.PosixKernel.ParkOrdinal
+WoofWare.PosixKernel.ThreadPark.get_State [method]: unit -> WoofWare.PosixKernel.ParkState
 WoofWare.PosixKernel.ThreadPark.get_Syscall [method]: unit -> WoofWare.PosixKernel.ParkedSyscall
 WoofWare.PosixKernel.ThreadPark.Ordinal [property]: [read-only] WoofWare.PosixKernel.ParkOrdinal
+WoofWare.PosixKernel.ThreadPark.State [property]: [read-only] WoofWare.PosixKernel.ParkState
 WoofWare.PosixKernel.ThreadPark.Syscall [property]: [read-only] WoofWare.PosixKernel.ParkedSyscall
 WoofWare.PosixKernel.TimesArgument inherit obj, implements WoofWare.PosixKernel.TimesArgument System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.TimesArgument System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.TimesArgument+Fields inherit WoofWare.PosixKernel.TimesArgument
@@ -6260,7 +6281,6 @@ WoofWare.PosixKernel.UnixSystem.defaultUserBufferCheck [static method]: WoofWare
 WoofWare.PosixKernel.UnixSystem.defaultUserId [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.UnixSystem.delivered [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.DeliveryLog
 WoofWare.PosixKernel.UnixSystem.descriptorTarget [static method]: WoofWare.PosixKernel.ProcessId -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.OpenFileTarget option
-WoofWare.PosixKernel.UnixSystem.endProcess [static method]: WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler> -> (WoofWare.PosixKernel.ProcessTermination * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixSystem.entropyPool [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.EntropyPool
 WoofWare.PosixKernel.UnixSystem.environment [static method]: WoofWare.PosixKernel.ProcessId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixByteString list
 WoofWare.PosixKernel.UnixSystem.ephemeralPortRange [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (System.UInt16 * System.UInt16)
@@ -6310,7 +6330,7 @@ WoofWare.PosixKernel.UnixSystemDefect.describe [static method]: 'Thread WoofWare
 WoofWare.PosixKernel.UnixSystemDefect`1 inherit obj, implements 'Thread WoofWare.PosixKernel.UnixSystemDefect System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.UnixSystemDefect`1.Equals [method]: ('Thread WoofWare.PosixKernel.UnixSystemDefect, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.UnixThreadLifecycle inherit obj
-WoofWare.PosixKernel.UnixThreadLifecycle.exitGroup [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.EndedProcess<'Thread, 'Handler>
+WoofWare.PosixKernel.UnixThreadLifecycle.exitGroup [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.EndedProcess * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixThreadLifecycle.exitThread [static method]: 'Thread WoofWare.PosixKernel.Caller -> int -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.ProcessFate<unit, 'Thread, 'Handler>
 WoofWare.PosixKernel.UnixThreadLifecycle.spawn [static method]: 'Thread WoofWare.PosixKernel.Caller -> 'Thread -> WoofWare.PosixKernel.CpuId -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (WoofWare.PosixKernel.SpawnAnswer * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnixThreadState inherit obj, implements WoofWare.PosixKernel.UnixThreadState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.UnixThreadState System.IComparable, System.IComparable, System.Collections.IStructuralComparable
@@ -6334,10 +6354,10 @@ WoofWare.PosixKernel.UnixTimestampModule.ofMillisecondsSinceEpoch [static method
 WoofWare.PosixKernel.UnixTimestampModule.ofSeconds [static method]: System.Int64 -> WoofWare.PosixKernel.UnixTimestamp
 WoofWare.PosixKernel.UnixTimestampModule.seconds [static method]: WoofWare.PosixKernel.UnixTimestamp -> System.Int64
 WoofWare.PosixKernel.UnixWait inherit obj
-WoofWare.PosixKernel.UnixWait.deadlines [static method]: 'Thread WoofWare.PosixKernel.Caller Microsoft.FSharp.Collections.FSharpSet -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.Int64 list
+WoofWare.PosixKernel.UnixWait.deadlines [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> System.Int64 list
 WoofWare.PosixKernel.UnixWait.satisfied [static method]: 'Thread WoofWare.PosixKernel.Caller -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet option
-WoofWare.PosixKernel.UnixWait.wakes [static method]: 'Thread WoofWare.PosixKernel.Caller Microsoft.FSharp.Collections.FSharpSet -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> ('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list
-WoofWare.PosixKernel.UnixWait.wakesRemembering [static method]: WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler> -> 'Thread WoofWare.PosixKernel.Caller Microsoft.FSharp.Collections.FSharpSet -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list * WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixWait.wake [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
+WoofWare.PosixKernel.UnixWait.wakeRemembering [static method]: WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> (('Thread WoofWare.PosixKernel.Caller * WoofWare.PosixKernel.WakePrimitive Microsoft.FSharp.Collections.FSharpSet) list * WoofWare.PosixKernel.WakeSweepMemo<'Thread, 'Handler> * WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>)
 WoofWare.PosixKernel.UnlinkAtRules inherit obj
 WoofWare.PosixKernel.UnlinkAtRules.atRemoveDir [static method]: WoofWare.PosixKernel.SimulatedUnixFlavour -> int
 WoofWare.PosixKernel.UnmodelledException inherit System.Exception

@@ -1680,7 +1680,7 @@ module UnixDescriptor =
     /// sleeping call holds the file, and the park holds the description, which
     /// outlives its last descriptor until this call returns and goes then,
     /// taking with it any lock it was granted. `caller` must be parked in an
-    /// `flock`.
+    /// `flock`, and woken (`UnixWait.wake`).
     ///
     /// A grant clears the park record. `WouldBlock`, with the same condition
     /// and the thread re-parked on the same record behind every other park, is
@@ -2405,17 +2405,17 @@ module UnixDescriptor =
                     else
 
                     match
-                        ProcessSignal.generate
+                        ProcessSignal.effect
                             {
                                 Signal = Signal.SIGPIPE
                                 Target = ValueNone
                             }
                             signalled
                     with
-                    | Ok (ViewFate.Continues (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
-                    | Ok (ViewFate.ProcessEnded _) ->
+                    | Ok (SignalEffect.Applied (KillOutcome.ProcessRuns, signalled)) -> Ok signalled
+                    | Ok (SignalEffect.Kills _) ->
                         Error (CloseRefusal.DarwinEndedWriteSignal (thread, EndedWriteSignalRefusal.TerminatesProcess))
-                    | Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _)) ->
+                    | Ok (SignalEffect.Applied (KillOutcome.ProcessStopped signal, _)) ->
                         failwith
                             $"UnixDescriptor.close: generating %O{signal} for a pipe write the close ended stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
                     | Error refusal ->

@@ -659,11 +659,12 @@ module TestUnixSystemStep =
 
     /// Whether `outcome` is a process ended by `SIGPIPE`'s default action.
     let private endedBySigPipe
-        (outcome : Result<WriteStep<'Answer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<'Answer, UnixSystem<int, string>, int>, WriteRefusal>)
         : bool
         =
         match outcome with
-        | Ok (WriteStep.ProcessEnded ended) -> ended.Termination = ProcessTermination.Signaled (Signal.SIGPIPE, false)
+        | Ok (WriteStep.ProcessEnded (ended, _)) ->
+            EndedProcess.termination ended = ProcessTermination.Signaled (Signal.SIGPIPE, false)
         | _ -> false
 
     [<Test>]
@@ -3396,6 +3397,7 @@ module TestUnixSystemStep =
         let released =
             UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         holds waiterThread condition released |> shouldEqual true
 
@@ -3428,6 +3430,7 @@ module TestUnixSystemStep =
         let released =
             UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         // Somebody else takes it in the window between the wake and the resume.
         let taken =
@@ -3461,6 +3464,7 @@ module TestUnixSystemStep =
         let released =
             UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
         |> granted
@@ -3500,6 +3504,7 @@ module TestUnixSystemStep =
         let released =
             UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         // The alias names the same description, so this is a first acquisition on it.
         let aliased =
@@ -3707,6 +3712,7 @@ module TestUnixSystemStep =
         let released =
             UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         // Beaten: the thread is parked on the same record, so it can be woken again later.
         let taken =
@@ -3724,6 +3730,7 @@ module TestUnixSystemStep =
         let freed =
             UnixDescriptor.tryFlock (Callers.thread thirdThread beaten) another 8 beaten
             |> granted
+            |> Lone.waking [ waiterThread ]
 
         let finished =
             UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread freed) freed
@@ -3759,11 +3766,13 @@ module TestUnixSystemStep =
             let released =
                 UnixDescriptor.tryFlock (Callers.thread holderThread parkedIn) first 8 parkedIn
                 |> granted
+                |> Lone.waking [ waiterThread ; thirdThread ]
 
             UnixDescriptor.tryFlock (Callers.thread holderThread released) first 2 released
             |> granted
 
-        // Resumed in the opposite order to the one they parked in, and both beaten.
+        // Woken, and resumed in the opposite order to the one they parked in, and both
+        // beaten.
         let _, beaten =
             UnixDescriptor.tryFlockAcquire (Callers.thread thirdThread retaken) retaken
             |> parked
@@ -3779,7 +3788,7 @@ module TestUnixSystemStep =
         let firedFor (fd : int) : Set<WakePrimitive> =
             Set.singleton (WakePrimitive.FlockGrantable (descriptionOf fd freed, FlockMode.Exclusive))
 
-        Lone.wakes (Set.ofList [ waiterThread ; thirdThread ]) freed
+        Lone.wakes freed
         |> shouldEqual [ thirdThread, firedFor another ; waiterThread, firedFor second ]
 
     [<Test>]
@@ -3943,7 +3952,11 @@ module TestUnixSystemStep =
                             }
                         )
 
-                    match UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread signalled) signalled with
+                    match
+                        UnixDescriptor.tryFlockAcquire
+                            (Callers.thread waiterThread signalled)
+                            (Woken.thread waiterThread signalled)
+                    with
                     | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), ended) ->
                         flockAnswer holderThread first 8 ended |> snd
                     | other -> failwith $"%s{where}: expected EINTR, got %A{other}"
@@ -3951,7 +3964,9 @@ module TestUnixSystemStep =
                     let released = flockAnswer holderThread first 8 closed |> snd
                     holds waiterThread condition released |> shouldEqual true
 
-                    UnixDescriptor.tryFlockAcquire (Callers.thread waiterThread released) released
+                    UnixDescriptor.tryFlockAcquire
+                        (Callers.thread waiterThread released)
+                        (Woken.thread waiterThread released)
                     |> granted
 
             OpenFileTable.descriptions ended.Machine.OpenFiles
@@ -4081,7 +4096,7 @@ module TestUnixSystemStep =
             |> Map.containsKey description
             |> shouldEqual true
 
-            Lone.wakes (Set.singleton 7) closed |> shouldEqual []
+            Lone.wakes closed |> shouldEqual []
             UnixSystem.checkInvariants closed |> shouldEqual []
         | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -4140,7 +4155,7 @@ module TestUnixSystemStep =
 
         match UnixDescriptor.tryClose (Callers.leader parked) alias parked with
         | Ok (SyscallAnswer.Completed 0L, closed) ->
-            Lone.wakes (Set.singleton 7) closed |> shouldEqual []
+            Lone.wakes closed |> shouldEqual []
             UnixSystem.checkInvariants closed |> shouldEqual []
         | other -> failwith $"expected the close to succeed, got %A{other}"
 
@@ -4386,7 +4401,7 @@ module TestUnixSystemStep =
         let ready, system = withPendingEpoll linux
         let parked = parkedInEpollWaitInOrder [ 7 ] ready system
 
-        Lone.wakes (Set.singleton 7) parked
+        Lone.wakes parked
         |> shouldEqual (
             [
                 7, Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))
@@ -4403,12 +4418,15 @@ module TestUnixSystemStep =
         let fired =
             Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))
 
-        Lone.wakes (Set.ofList [ 7 ; 8 ; 9 ]) parked |> shouldEqual [ 8, fired ]
+        let woken, wokenSystem = Lone.wake parked
+        woken |> shouldEqual [ 8, fired ]
 
-        // Waiters the client has already woken, and which have not finished, hold the event:
-        // one of them will take it, so nobody else on the epoll instance wakes.
-        Lone.wakes (Set.ofList [ 7 ; 9 ]) parked |> shouldEqual []
-        Lone.wakes (Set.singleton 8) parked |> shouldEqual []
+        // Waiters already woken, and which have not finished, hold the event: one of them
+        // will take it, so nobody else on the epoll instance wakes.
+        Lone.wakes wokenSystem |> shouldEqual []
+
+        Lone.wakes (parked |> ForgedPark.woken 7 |> ForgedPark.woken 9)
+        |> shouldEqual []
 
     [<Test>]
     let ``a waiter that parks again goes to the front of the epoll instance's queue`` () : unit =
@@ -4417,6 +4435,7 @@ module TestUnixSystemStep =
         let ready, system = withPendingEpoll linux
         let parked = parkedInEpollWaitInOrder [ 9 ; 7 ; 8 ] ready system
 
+        // Woken, and then beaten to the event, which a re-park is.
         let reparked =
             Lone.UnixWait.park
                 9
@@ -4427,9 +4446,9 @@ module TestUnixSystemStep =
                         Buffer = UserBuffer.Mapped
                         Deadline = None
                     })
-                parked
+                (ForgedPark.woken 9 parked)
 
-        Lone.wakes (Set.ofList [ 7 ; 8 ; 9 ]) reparked
+        Lone.wakes reparked
         |> shouldEqual
             [
                 9, Set.singleton (WakePrimitive.EpollEventDeliverable (descriptionOf ready system))

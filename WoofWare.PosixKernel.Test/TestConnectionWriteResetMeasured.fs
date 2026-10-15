@@ -173,7 +173,7 @@ module TestConnectionWriteResetMeasured =
     /// `SIGPIPE`s it raised.
     let private answered
         (exact : int)
-        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
         : string * int * UnixSystem<int, string>
         =
         let shown (answer : WriteAnswer) : string =
@@ -248,11 +248,11 @@ module TestConnectionWriteResetMeasured =
         let asleep, slept, (answer, sigPipe, system) =
             match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
             | Ok (WriteStep.WouldBlock (_, parked)) ->
-                match Lone.wakes (Set.singleton 1) parked with
+                match Lone.wake parked with
                 // Asleep only until the reset its own bytes provoked, which
                 // has arrived.
-                | [ 1, _ ] -> false, true, answered 100 (finish bytes parked)
-                | [] ->
+                | [ 1, _ ], parked -> false, true, answered 100 (finish bytes parked)
+                | [], _ ->
                     // Asleep for room: the probe ends the write 300 ms in by
                     // closing `p`, or by shutting `c` down if `p` is closed.
                     let ended =
@@ -261,10 +261,10 @@ module TestConnectionWriteResetMeasured =
                         else
                             KeventWorld.close server parked
 
-                    match Lone.wakes (Set.singleton 1) ended with
-                    | [ 1, _ ] -> true, true, answered 100 (finish bytes ended)
-                    | other -> failwith $"%O{platform} %s{peer}: the write was not woken by its end: %A{other}"
-                | other -> failwith $"%O{platform} %s{peer}: %A{other}"
+                    match Lone.wake ended with
+                    | [ 1, _ ], ended -> true, true, answered 100 (finish bytes ended)
+                    | other, _ -> failwith $"%O{platform} %s{peer}: the write was not woken by its end: %A{other}"
+                | other, _ -> failwith $"%O{platform} %s{peer}: %A{other}"
             | written -> false, false, answered 100 written
 
         let system = returnToUser 1 system
@@ -374,7 +374,7 @@ module TestConnectionWriteResetMeasured =
                 let outcome =
                     match WriteOutcomes.admitThenWrite 1 client UserBuffer.Mapped bytes system with
                     | Ok (WriteStep.WouldBlock (_, parked)) ->
-                        Lone.wakes (Set.singleton 1) parked |> List.map fst |> shouldEqual [ 1 ]
+                        let parked = Lone.waking [ 1 ] parked
                         finish bytes parked
                     | written -> written
 
@@ -434,7 +434,7 @@ module TestConnectionWriteResetMeasured =
 
         let drained, system = drain 0L system
         let system = KeventWorld.close server system
-        Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+        let system = Lone.waking [ 1 ] system
 
         match finish bytes system with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after)) ->

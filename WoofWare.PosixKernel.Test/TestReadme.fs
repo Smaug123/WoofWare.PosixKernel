@@ -117,7 +117,7 @@ module TestReadme =
 
         // Controls, so that this cannot pass by reading nothing: the README names
         // these, and a name the library lacks is caught.
-        spans |> shouldContain "UnixWait.wakes"
+        spans |> shouldContain "UnixWait.wake"
         nameFaults names lastParts "UnixWait.wakez" |> List.length |> shouldEqual 1
 
         nameFaults names lastParts "UnixMachineState.processorCount"

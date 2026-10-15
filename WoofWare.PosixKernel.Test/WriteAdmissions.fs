@@ -13,7 +13,7 @@ module internal WriteOutcomes =
 
     /// The answer and system of `outcome`, failing if the write raised a signal.
     let returned<'Answer, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (outcome : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>)
+        (outcome : Result<WriteStep<'Answer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>)
         : Result<'Answer * UnixSystem<'Thread, 'Handler>, WriteRefusal>
         =
         outcome
@@ -34,7 +34,7 @@ module internal WriteOutcomes =
         (into : WriteInto)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         Lone.UnixReadWrite.tryApplyWriteThrough fd into bytes system
 
@@ -49,7 +49,7 @@ module internal WriteOutcomes =
         (into : WriteIntoThenSleep)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
         =
         Lone.UnixReadWrite.applyWriteThenSleepThrough thread fd total into bytes system
 
@@ -66,7 +66,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let thread = Caller.thread caller
 
@@ -83,7 +83,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
                 Ok (WriteStep.ReturnsRaising (answer, signal, after))
-            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
             | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
@@ -103,7 +103,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitWrite raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map Proc.unview)
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// A whole `send(2)` by `caller` with the raw flag word `flags`, made a step
     /// at a time as `stepsThenWrite` makes a `write(2)`: the oracle
@@ -115,7 +115,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         let thread = Caller.thread caller
 
@@ -133,7 +133,7 @@ module internal WriteOutcomes =
             | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) -> Ok (WriteStep.Returns (answer, after))
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
                 Ok (WriteStep.ReturnsRaising (answer, signal, after))
-            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
             | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
             | Ok (WriteStep.Returns (WriteAdmission.Transfer (count, into), admitted)) ->
@@ -157,16 +157,16 @@ module internal WriteOutcomes =
             | Ok (WriteStep.ReturnsRaising (WriteAdmission.TransferThenSleep (count, _, _), signal, _)) ->
                 failwith $"admitSend raised %A{signal} and still asked for %d{count} bytes"
 
-        stepped |> Result.map (WriteStep.map Proc.unview)
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// A paused write's or send's answer, in the shape of the internal steps
     /// the tests match on.
     let private stepOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (fate : ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>)
-        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>
+        : WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>
         =
         match fate with
-        | ProcessFate.ProcessEnded ended -> WriteStep.ProcessEnded ended
+        | ProcessFate.ProcessEnded (ended, system) -> WriteStep.ProcessEnded (ended, system)
         | ProcessFate.Continues (WriteOutcome.Returns answer, system) -> WriteStep.Returns (answer, system)
         | ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), system) ->
             WriteStep.ReturnsRaising (answer, signal, system)
@@ -203,7 +203,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let actual =
             UnixReadWrite.tryWrite caller fd buffer (uint64 bytes.Length) system
@@ -222,7 +222,7 @@ module internal WriteOutcomes =
         (buffer : UserBuffer)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         admitThenWriteAs (Callers.thread thread system) fd buffer bytes system
 
@@ -236,7 +236,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         let actual =
             UnixReadWrite.trySend caller fd buffer (uint64 bytes.Length) flags system
@@ -256,7 +256,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         admitThenSendAs (Callers.thread thread system) fd buffer bytes flags system
 
@@ -268,7 +268,7 @@ module internal WriteOutcomes =
         (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let thread = Caller.thread caller
 
@@ -282,11 +282,11 @@ module internal WriteOutcomes =
                 Ok (WriteStep.ReturnsRaising (answer, signal, after))
             | Ok (WriteStep.ReturnsRaising (WriteResumption.Transfer _ as resumption, signal, _)) ->
                 failwith $"admitFinishWrite raised %A{signal} and still asked for %A{resumption}"
-            | Ok (WriteStep.ProcessEnded ended) -> Ok (WriteStep.ProcessEnded ended)
+            | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
             | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
             | Ok (WriteStep.Restarts after) -> Ok (WriteStep.Restarts after)
 
-        stepped |> Result.map (WriteStep.map Proc.unview)
+        stepped |> Result.map (WriteStep.map Proc.unfocus)
 
     /// The woken `write` or `send` of `caller`, finished through the library's
     /// public protocol (`UnixReadWrite.finishWrite`, and if it stops at the
@@ -297,7 +297,7 @@ module internal WriteOutcomes =
         (caller : Caller<'Thread>)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         let actual =
             UnixReadWrite.tryFinishWrite caller system
@@ -318,7 +318,7 @@ module internal WriteOutcomes =
         (thread : 'Thread)
         (bytesAt : int -> int -> ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         finishWriteAs (Callers.thread thread system) bytesAt system
 
@@ -330,7 +330,7 @@ module internal WriteOutcomes =
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         admitThenWriteAs caller fd UserBuffer.Mapped bytes system
 
@@ -340,7 +340,7 @@ module internal WriteOutcomes =
         (fd : int)
         (bytes : ImmutableArray<byte>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, WriteRefusal>
         =
         writeBytesAs (Callers.thread thread system) fd bytes system
 
@@ -352,7 +352,7 @@ module internal WriteOutcomes =
         (bytes : ImmutableArray<byte>)
         (flags : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread, 'Handler>, SendRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<'Thread, 'Handler>, 'Thread>, SendRefusal>
         =
         admitThenSend thread fd UserBuffer.Mapped bytes flags system
 

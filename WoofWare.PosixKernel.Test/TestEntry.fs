@@ -21,10 +21,14 @@ module TestEntry =
     type private ThreadState =
         | Absent
         | Unparked
-        | Parked
+        /// Parked, and asleep.
+        | Asleep
+        /// Parked, and woken.
+        | Woken
 
     /// Each of the systems the table runs over, with a thread in each state:
-    /// the leader 0 running, 1 parked, and 7 no thread at all.
+    /// the leader 0 running, 1 parked and asleep, 2 parked and woken, and 7 no
+    /// thread at all.
     let private systems () : (string * UnixSystem<int, string> * (int * ThreadState) list) list =
         [
             "Linux", SimulatedUnixPlatform.linuxX64
@@ -35,9 +39,19 @@ module TestEntry =
                 UnixSystem.initial platform
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
                 |> Threads.spawn 1
+                |> Threads.spawn 2
                 |> Lone.UnixWait.park 1 ParkedSyscall.SigSuspend
+                |> Lone.UnixWait.park 2 ParkedSyscall.SigSuspend
+                |> ForgedPark.woken 2
 
-            flavour, system, [ 0, ThreadState.Unparked ; 1, ThreadState.Parked ; 7, ThreadState.Absent ]
+            flavour,
+            system,
+            [
+                0, ThreadState.Unparked
+                1, ThreadState.Asleep
+                2, ThreadState.Woken
+                7, ThreadState.Absent
+            ]
         )
 
     let private requirements : CallerRequirement list =
@@ -53,14 +67,18 @@ module TestEntry =
     let private refusal (requirement : CallerRequirement) (state : ThreadState) : string option =
         match requirement, state with
         | _, ThreadState.Absent -> Some "is not one of the process's threads"
-        | CallerRequirement.Running, ThreadState.Parked -> Some "and is making another call"
-        | CallerRequirement.Returning, ThreadState.Parked -> Some "so it is not returning to user mode"
+        | CallerRequirement.Running, ThreadState.Asleep
+        | CallerRequirement.Running, ThreadState.Woken -> Some "and is making another call"
+        | CallerRequirement.Returning, ThreadState.Asleep
+        | CallerRequirement.Returning, ThreadState.Woken -> Some "so it is not returning to user mode"
         | CallerRequirement.Woken, ThreadState.Unparked -> Some "is not parked, so there is no call to finish"
+        | CallerRequirement.Woken, ThreadState.Asleep -> Some "and nothing has woken it"
         | CallerRequirement.Running, ThreadState.Unparked
         | CallerRequirement.Returning, ThreadState.Unparked
-        | CallerRequirement.Woken, ThreadState.Parked
+        | CallerRequirement.Woken, ThreadState.Woken
         | CallerRequirement.Exists, ThreadState.Unparked
-        | CallerRequirement.Exists, ThreadState.Parked -> None
+        | CallerRequirement.Exists, ThreadState.Asleep
+        | CallerRequirement.Exists, ThreadState.Woken -> None
 
     let private operation : string = "TestEntry.call"
 
@@ -95,9 +113,27 @@ module TestEntry =
         | Some view -> left = ProcessView.unfocus view
         | None -> false
 
-    /// The process `view` is the view of, ended.
-    let private ended (view : ProcessView<int, string>) : EndedProcess<int, string> =
-        UnixThreadLifecycle.endProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) view
+    /// The process `view` is the view of, ended: how, and the view of it with
+    /// no thread or descriptor left.
+    let private ended (view : ProcessView<int, string>) : EndedProcess * ProcessView<int, string> =
+        match UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (Signal.SIGKILL, false)) view with
+        | Ok ended -> ended
+        | Error refusal -> failwith $"ending the process: %s{ProcessEndRefusal.describe refusal}"
+
+    /// Whether `left` is the kernel `answered`, the view a body answered as
+    /// its process ended, leaves without that process.
+    let private leftWithout
+        (answered : (EndedProcess * ProcessView<int, string>) option ref)
+        (ended : EndedProcess)
+        (left : UnixSystem<int, string>)
+        : bool
+        =
+        match answered.Value with
+        | Some (answeredEnded, dead) ->
+            same answeredEnded ended
+            && left = ProcessView.unfocusWithout dead
+            && not (Set.contains (EndedProcess.processId ended) (UnixSystem.processIds left))
+        | None -> false
 
     let private ways : Way list =
         [
@@ -263,7 +299,7 @@ module TestEntry =
                                 system
                         with
                         | ProcessFate.Continues ((_ : obj), _) -> false
-                        | ProcessFate.ProcessEnded ended -> same answered.Value.Value ended
+                        | ProcessFate.ProcessEnded (ended, left) -> leftWithout answered ended left
             }
             {
                 Name = "ended"
@@ -282,7 +318,7 @@ module TestEntry =
                                 answered.Value.Value
                             )
                             system
-                        |> same answered.Value.Value
+                        |> fun (ended, left) -> leftWithout answered ended left
             }
             {
                 Name = "progress withSystem, Answered"
@@ -466,7 +502,7 @@ module TestEntry =
 
                     "result fate, ProcessEnded",
                     (match Entry.resume (Shape.result Shape.fate) (Ok (ViewFate.ProcessEnded ended)) with
-                     | Ok (ProcessFate.ProcessEnded answered) -> same ended answered
+                     | Ok (ProcessFate.ProcessEnded (answered, left)) -> leftWithout (ref (Some ended)) answered left
                      | Ok (ProcessFate.Continues ((_ : obj), _))
                      | Error (_ : obj) -> false)
                 ]

@@ -101,60 +101,90 @@ module internal Machines =
         =
         focus pid system |> Option.map (UnixSystem.step (Caller.make pid thread) call)
 
-    /// How the process `ended` ended, and the system it ended in without it,
-    /// its descriptors closed; or the refusal to end it. `ended` holds the rest
-    /// of that system, so `system` is not read.
-    let tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        (_ : UnixSystem<'Thread, 'Handler>)
-        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
-        =
-        UnixSystem.tryEndProcess ended
-
-    /// How the process `ended`, which ran alone, ended, and the system without
-    /// it, which holds no process; or the refusal to end it.
-    let tryEndLoneProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
-        =
-        UnixSystem.tryEndProcess ended
-        |> Result.map (fun (termination, after) ->
-            UnixSystem.processIds after |> shouldEqual Set.empty
-            termination, after
-        )
-
-    /// Each thread `asleep` names, by process, as the `Caller` that names it.
-    let private callers<'Thread when 'Thread : comparison>
-        (asleep : Map<ProcessId, Set<'Thread>>)
-        : Set<Caller<'Thread>>
-        =
-        asleep
-        |> Seq.collect (fun (KeyValue (pid, threads)) -> threads |> Seq.map (Caller.make pid))
-        |> Set.ofSeq
-
-    /// Which of the threads in `asleep`, by process, `system` wakes, and what
-    /// woke each.
-    let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Map<ProcessId, Set<'Thread>>)
+    /// Which sleeping threads `system` wakes, by process, and what woke each;
+    /// and the system with them woken (`UnixWait.wake`).
+    let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
-        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list
+        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
         =
-        UnixWait.wakes (callers asleep) system
-        |> List.map (fun (caller, fired) -> (Caller.processId caller, Caller.thread caller), fired)
-
-    /// `wakes`, answered from `memo` when it can tell that `system` wakes
-    /// none of `asleep`, and the memo for the next call.
-    let wakesRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (memo : WakeSweepMemo<'Thread, 'Handler>)
-        (asleep : Map<ProcessId, Set<'Thread>>)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list * WakeSweepMemo<'Thread, 'Handler>
-        =
-        let woken, memo = UnixWait.wakesRemembering memo (callers asleep) system
+        let woken, system = UnixWait.wake system
 
         woken
         |> List.map (fun (caller, fired) -> (Caller.processId caller, Caller.thread caller), fired),
-        memo
+        system
+
+    /// The sleeping threads `wake` would wake, by process, and what would wake
+    /// each: its answer, for a test that asks only who wakes.
+    let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list
+        =
+        fst (wake system)
+
+    /// `system` after `wake`, which must wake exactly the threads `expected`
+    /// names, by process, in that order.
+    let waking<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (expected : (ProcessId * 'Thread) list)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let woken, system = wake system
+        woken |> List.map fst |> shouldEqual expected
+        system
+
+    /// `wake`, answered from `memo` when it can tell that `system` wakes
+    /// no thread, the memo for the next call, and the system with the threads
+    /// woken (`UnixWait.wakeRemembering`).
+    let wakeRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (memo : WakeSweepMemo<'Thread, 'Handler>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : ((ProcessId * 'Thread) * Set<WakePrimitive>) list *
+          WakeSweepMemo<'Thread, 'Handler> *
+          UnixSystem<'Thread, 'Handler>
+        =
+        let woken, memo, system = UnixWait.wakeRemembering memo system
+
+        woken
+        |> List.map (fun (caller, fired) -> (Caller.processId caller, Caller.thread caller), fired),
+        memo,
+        system
+
+    /// Which threads of each process are asleep in a call (`ParkState.Asleep`),
+    /// and which have been woken and are yet to finish theirs.
+    let parkStates<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : Set<ProcessId * 'Thread> * Set<ProcessId * 'Thread>
+        =
+        let parked =
+            UnixSystem.processIds system
+            |> Seq.collect (fun pid ->
+                UnixSystem.threads pid system
+                |> Map.toSeq
+                |> Seq.choose (fun (thread, state) ->
+                    UnixThreadState.park state |> Option.map (fun park -> (pid, thread), park.State)
+                )
+            )
+            |> List.ofSeq
+
+        let asleep =
+            parked
+            |> List.choose (fun (key, state) ->
+                match state with
+                | ParkState.Asleep -> Some key
+                | ParkState.Woken _ -> None
+            )
+            |> Set.ofList
+
+        let woken =
+            parked
+            |> List.choose (fun (key, state) ->
+                match state with
+                | ParkState.Woken _ -> Some key
+                | ParkState.Asleep -> None
+            )
+            |> Set.ofList
+
+        asleep, woken
 
     /// Every rule `system` breaks, across all its processes.
     let checkInvariants<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

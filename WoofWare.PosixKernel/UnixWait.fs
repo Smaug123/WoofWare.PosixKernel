@@ -13,19 +13,20 @@ type internal ExclusiveWaitQueue =
     | PipeWriters of PipeId
 
 /// What a sweep of a machine's sleeping threads that woke none of them read:
-/// everything a wake condition is asked of but the clock, and the earliest
-/// deadline any of those threads waits for.
+/// everything a wake condition is asked of but the clock, among it which
+/// threads sleep, and the earliest deadline any of those threads waits for.
 type internal RememberedSweep<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     {
         Machine : UnixMachineState
+        /// Every process's state and threads, whose parks say which threads
+        /// sleep.
         Processes : Map<int32, ProcessSlot<'Thread, 'Handler>>
-        Asleep : Set<Caller<'Thread>>
         /// The earliest `WakePrimitive.DeadlinePassed` among the wake
-        /// conditions of the threads in `Asleep`, if any has one.
+        /// conditions of the threads asleep in `Processes`, if any has one.
         EarliestDeadline : int64 voption
     }
 
-/// What `UnixWait.wakesRemembering` remembers between calls, so that it
+/// What `UnixWait.wakeRemembering` remembers between calls, so that it
 /// can tell, without asking any wake condition, that a system wakes no thread:
 /// the last sweep it made, if that sweep woke none.
 ///
@@ -37,7 +38,7 @@ type WakeSweepMemo<'Thread, 'Handler when 'Thread : comparison and 'Handler : eq
         {
             Remembered : RememberedSweep<'Thread, 'Handler> voption
 #if DEBUG
-            /// How many answers `UnixWait.wakesRemembering` has given from `Remembered`
+            /// How many answers `UnixWait.wakeRemembering` has given from `Remembered`
             /// since it was swept, which decides the ones it checks against a sweep
             /// (`WakeSweepMemo.crossChecks`).
             HitsSinceSweep : int
@@ -78,12 +79,10 @@ module WakeSweepMemo =
 
     /// Whether `machine` and `processes` are the machine state and every
     /// process's state and threads that `remembered` read, the same values
-    /// rather than equal ones, and `asleep` is the threads `remembered` was
-    /// asked about: whether everything a wake condition reads but the clock is
-    /// as `remembered` found it.
+    /// rather than equal ones: whether everything a wake condition reads but
+    /// the clock, and which threads sleep, are as `remembered` found them.
     let internal readsSame<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (remembered : RememberedSweep<'Thread, 'Handler>)
-        (asleep : Set<Caller<'Thread>>)
         (machine : UnixMachineState)
         (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
         : bool
@@ -105,12 +104,10 @@ module WakeSweepMemo =
         LanguagePrimitives.PhysicalEquality remembered.Machine machine
         && (LanguagePrimitives.PhysicalEquality remembered.Processes processes
             || sameSlots ())
-        && (LanguagePrimitives.PhysicalEquality remembered.Asleep asleep
-            || remembered.Asleep = asleep)
 
     /// Whether a sweep of a system would wake no thread because `remembered`
     /// woke none: whether it `readsSame` as `remembered`, and the clock has not
-    /// reached the earliest deadline any thread in `asleep` waits for.
+    /// reached the earliest deadline any sleeping thread waits for.
     ///
     /// The clock is the one input a wake condition reads that changes between
     /// syscalls, and only `WakePrimitive.DeadlinePassed` reads it; so with
@@ -119,7 +116,6 @@ module WakeSweepMemo =
     /// is the same.
     let internal covers<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (remembered : RememberedSweep<'Thread, 'Handler>)
-        (asleep : Set<Caller<'Thread>>)
         (machine : UnixMachineState)
         (scheduling : UnixSchedulingState)
         (processes : Map<int32, ProcessSlot<'Thread, 'Handler>>)
@@ -128,12 +124,12 @@ module WakeSweepMemo =
         (match remembered.EarliestDeadline with
          | ValueNone -> true
          | ValueSome deadline -> scheduling.NanosecondsSinceBoot < deadline)
-        && readsSame remembered asleep machine processes
+        && readsSame remembered machine processes
 
 /// Parking a thread in a syscall, and deciding which parked threads a system wakes.
 ///
 /// Wakes are pulled rather than pushed: nothing that makes a condition true
-/// wakes anyone. A client asks `wakes` of each state it reaches instead, so no
+/// wakes anyone. A client asks `wake` of each state it reaches instead, so no
 /// producer can forget to wake a waiter.
 [<RequireQualifiedAccess>]
 module UnixWait =
@@ -209,15 +205,16 @@ module UnixWait =
         |> List.choose (exclusiveQueueOf machine)
         |> List.distinct
 
-    /// Record that `thread` has parked in `parked`, placing it after every park
-    /// made before it, and taking the holds the call keeps on the open file
-    /// descriptions it names (`ParkedSyscall.descriptions`). A thread that sleeps
-    /// is no longer running, so it leaves its processor idle
+    /// Record that `thread` has parked in `parked`, asleep, placing it after
+    /// every park made before it, and taking the holds the call keeps on the
+    /// open file descriptions it names (`ParkedSyscall.descriptions`). A thread
+    /// that sleeps is no longer running, so it leaves its processor idle
     /// (`UnixSchedulingState.Occupants`).
     ///
     /// Refuses to replace a park of one syscall with a park of another, and
-    /// otherwise accepts a re-park of the same syscall, which moves the thread to
-    /// the back of park order and lets go of the holds the earlier park took.
+    /// otherwise accepts a re-park of the same syscall by a woken thread, which
+    /// puts it asleep again, moves it to the back of park order and lets go of
+    /// the holds the earlier park took.
     let internal park<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (parked : ParkedSyscall)
@@ -231,6 +228,7 @@ module UnixWait =
             {
                 Syscall = parked
                 Ordinal = system.Machine.NextParkOrdinal
+                State = ParkState.Asleep
             }
 
         { system with
@@ -291,13 +289,13 @@ module UnixWait =
     /// The primitives of the wake condition of the call `caller` is parked in
     /// (`WakeCondition.ofPark`) which hold of `system`, or `None` if `caller` is
     /// not parked in a call, including when its process has no thread by that
-    /// name.
+    /// name. Asked of a thread asleep or woken alike, and changes nothing.
     ///
     /// An empty set means the call would get no further now. A non-empty one
-    /// is what lets `wakes` name the thread, and is not enough on its own: a
+    /// is what lets `wake` wake the thread, and is not enough on its own: a
     /// queue whose waiters a kernel wakes one at a time wakes only one of
-    /// them, so a client that holds several threads asleep asks `wakes`. This
-    /// asks about one thread alone, which is cheaper.
+    /// them, which only `wake` chooses. This asks about one thread alone,
+    /// which is cheaper.
     ///
     /// The condition is read from the park, which holds every open file
     /// description it names until the call returns, so it is never asked
@@ -309,70 +307,45 @@ module UnixWait =
         =
         Entry.query "UnixWait.satisfied" (Caller.processId caller) (satisfiedIn (Caller.thread caller)) system
 
-    /// The threads of `asleep` that `system` wakes now, in the order they parked,
-    /// each with the primitives of its wake condition which hold.
-    ///
-    /// `asleep` is the client's: the threads it is holding asleep in a syscall,
-    /// in every process. Every one must be parked. A thread the client has woken
-    /// keeps its park until its call finishes, so the parks alone cannot say who
-    /// is asleep.
-    ///
-    /// A waiter whose `flock` has become grantable, whose polled descriptor is
-    /// ready, whose deadline has passed, or to which a signal with a handler is
-    /// deliverable wakes, whoever else is waiting for the same thing. Waiters on an epoll instance, and waiters in `accept`
-    /// on a listener, queue exclusively: something to take wakes one of them,
-    /// the one that parked *last* on an epoll instance and the one that
-    /// parked *first* on a listener. Under Linux, so do the waiters in `read`
-    /// for a pipe's bytes and those in `write` for its room, the one that
-    /// parked first waking; under Darwin every one of them wakes. Waiters in
-    /// `read` or `write` on a connected socket all wake, under either
-    /// flavour. Exclusive
-    /// queues wake none while any thread parked on the same queue has been woken
-    /// and has not yet finished its call (that is, is parked but not in
-    /// `asleep`), since that thread will take it. The end of a pipe closing
-    /// wakes every waiter on the other end, under either flavour; and an event
-    /// to report, or a close that drains a kqueue, wakes every waiter in
-    /// `kevent` on it.
-    ///
-    /// Each thread's condition is asked of its own process, so a condition
-    /// another process's call has made true (a connection queued on a
-    /// listener, a peer's FIN, a lock let go of) wakes it here; and where a
-    /// kernel wakes one waiter of a queue at a time, the one is chosen across
-    /// every process, by the order of the machine's parks.
-    ///
-    /// A woken thread is owed no success: several waiters for one lock all wake,
-    /// and all but one find it taken again and re-park.
-    ///
-    /// Fails loudly if `asleep` names a thread of a process `system` does not
-    /// hold, or a thread parked in no call.
-    let wakes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<Caller<'Thread>>)
+    /// Every park on the machine, each with its thread's caller and the slot of
+    /// its process, in process ID order and, within a process, in the order of
+    /// its threads' names.
+    let private parks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (Caller<'Thread> * ProcessSlot<'Thread, 'Handler> * ThreadPark) list
+        =
+        system.Processes
+        |> Seq.collect (fun (KeyValue (key, slot)) ->
+            let pid = ProcessId.parseOrFail operation key
+
+            slot.Threads
+            |> Seq.choose (fun (KeyValue (thread, state)) ->
+                state.Parked |> Option.map (fun park -> Caller.make pid thread, slot, park)
+            )
+        )
+        |> List.ofSeq
+
+    /// The sleeping threads `system` wakes now, in the order they parked, each
+    /// with the primitives of its wake condition which hold: what `wake`
+    /// answers, before it records the wakes.
+    let private wakesAmong<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
         : (Caller<'Thread> * Set<WakePrimitive>) list
         =
         let machine = system.Machine
+        let parks = parks "UnixWait.wake" system
 
         let satisfied =
-            asleep
-            |> Set.toList
-            |> List.choose (fun caller ->
-                let pid = Caller.processId caller
-                let thread = Caller.thread caller
+            parks
+            |> List.choose (fun (caller, slot, park) ->
+                match park.State with
+                | ParkState.Woken _ -> None
+                | ParkState.Asleep ->
+                    let thread = Caller.thread caller
 
-                let slot =
-                    match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
-                    | Some slot -> slot
-                    | None ->
-                        failwith
-                            $"UnixWait.wakes: the system holds no process %O{pid}, but the client holds its thread %O{thread} asleep (this is a bug in the client)."
-
-                match UnixThreadTable.parkOf thread slot.Threads with
-                | None ->
-                    failwith
-                        $"UnixWait.wakes: thread %O{thread} of process %O{pid} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
-                | Some park ->
                     let fired =
-                        ProcessView.ofSlot pid slot system
+                        ProcessView.ofSlot (Caller.processId caller) slot system
                         |> WakeCondition.satisfied thread (WakeCondition.ofPark park.Syscall)
 
                     if Set.isEmpty fired then
@@ -446,20 +419,13 @@ module UnixWait =
         // A thread woken and not yet finished stands, on each queue its own
         // call waits on exclusively, for whatever woke it.
         let finishing : Set<ExclusiveWaitQueue> =
-            system.Processes
-            |> Seq.collect (fun (KeyValue (key, slot)) ->
-                let pid = ProcessId.parseOrFail "UnixWait.wakes" key
-
-                slot.Threads
-                |> Map.toSeq
-                |> Seq.filter (fun (thread, _) -> not (Set.contains (Caller.make pid thread) asleep))
+            parks
+            |> List.collect (fun (_, _, park) ->
+                match park.State with
+                | ParkState.Woken _ -> exclusiveQueuesOfPark machine park.Syscall
+                | ParkState.Asleep -> []
             )
-            |> Seq.collect (fun (_, state) ->
-                match state.Parked with
-                | Some park -> exclusiveQueuesOfPark machine park.Syscall
-                | None -> []
-            )
-            |> Set.ofSeq
+            |> Set.ofList
 
         let chosen : Map<ExclusiveWaitQueue, Caller<'Thread>> =
             satisfied
@@ -500,94 +466,138 @@ module UnixWait =
         )
         |> List.map (fun (_, caller, fired) -> caller, fired)
 
-    /// Every deadline the parks of `asleep` are waiting for, in nanoseconds since
-    /// boot, with a repeat for each park that waits for it.
+    /// The sleeping threads `system` wakes now, in the order they parked, each
+    /// with the primitives of its wake condition which hold; and the system
+    /// with each of them woken (`ParkState.Woken`), or `system` itself if
+    /// none wakes.
+    ///
+    /// A woken thread stays parked until the finishing function of the call it
+    /// is parked in finishes it, and only a woken thread's call may be
+    /// finished. Until then it is not asked again: it is the client's to run,
+    /// when it chooses.
+    ///
+    /// A waiter whose `flock` has become grantable, whose polled descriptor is
+    /// ready, whose deadline has passed, or to which a signal with a handler is
+    /// deliverable wakes, whoever else is waiting for the same thing. Waiters on an epoll instance, and waiters in `accept`
+    /// on a listener, queue exclusively: something to take wakes one of them,
+    /// the one that parked *last* on an epoll instance and the one that
+    /// parked *first* on a listener. Under Linux, so do the waiters in `read`
+    /// for a pipe's bytes and those in `write` for its room, the one that
+    /// parked first waking; under Darwin every one of them wakes. Waiters in
+    /// `read` or `write` on a connected socket all wake, under either
+    /// flavour. Exclusive
+    /// queues wake none while any thread parked on the same queue has been woken
+    /// and has not yet finished its call, since that thread will take it. The
+    /// end of a pipe closing
+    /// wakes every waiter on the other end, under either flavour; and an event
+    /// to report, or a close that drains a kqueue, wakes every waiter in
+    /// `kevent` on it.
+    ///
+    /// Each thread's condition is asked of its own process, so a condition
+    /// another process's call has made true (a connection queued on a
+    /// listener, a peer's FIN, a lock let go of) wakes it here; and where a
+    /// kernel wakes one waiter of a queue at a time, the one is chosen across
+    /// every process, by the order of the machine's parks.
+    ///
+    /// A woken thread is owed no success: several waiters for one lock all wake,
+    /// and all but one find it taken again and re-park, asleep.
+    let wake<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : (Caller<'Thread> * Set<WakePrimitive>) list * UnixSystem<'Thread, 'Handler>
+        =
+        match wakesAmong system with
+        | [] -> [], system
+        | woken ->
+            let processes =
+                (system.Processes, woken)
+                ||> List.fold (fun processes (caller, fired) ->
+                    let key = ProcessId.toInt32 (Caller.processId caller)
+                    let slot = Map.find key processes
+
+                    Map.add
+                        key
+                        { slot with
+                            Threads = UnixThreadTable.markWoken (Caller.thread caller) fired slot.Threads
+                        }
+                        processes
+                )
+
+            woken,
+            { system with
+                Processes = processes
+            }
+
+    /// Every deadline the sleeping threads' calls are waiting for, in
+    /// nanoseconds since boot, with a repeat for each park that waits for it. A
+    /// woken thread's call is not counted: the thread is already the client's
+    /// to run.
     ///
     /// What a client with nothing runnable reads to learn how far it may advance
-    /// the clock before one of these calls times out. `asleep` means what it
-    /// means to `wakes`, and this fails loudly where `wakes` does.
+    /// the clock before one of these calls times out.
     let deadlines<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (asleep : Set<Caller<'Thread>>)
         (system : UnixSystem<'Thread, 'Handler>)
         : int64 list
         =
-        asleep
-        |> Set.toList
-        |> List.collect (fun caller ->
-            let pid = Caller.processId caller
-            let thread = Caller.thread caller
-
-            let slot =
-                match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
-                | Some slot -> slot
-                | None ->
-                    failwith
-                        $"UnixWait.deadlines: the system holds no process %O{pid}, but the client holds its thread %O{thread} asleep (this is a bug in the client)."
-
-            match UnixThreadTable.parkOf thread slot.Threads with
-            | None ->
-                failwith
-                    $"UnixWait.deadlines: thread %O{thread} of process %O{pid} is asleep in a syscall but records no park, so nothing says what it waits for. A park is recorded by `UnixWait.park` when the thread goes to sleep (this is a bug in the client)."
-            | Some park -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
+        parks "UnixWait.deadlines" system
+        |> List.collect (fun (_, _, park) ->
+            match park.State with
+            | ParkState.Asleep -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
+            | ParkState.Woken _ -> []
         )
 
-    /// `wakes`, which a client asks of every state it reaches, made cheap for
+    /// `wake`, which a client asks of every state it reaches, made cheap for
     /// the states in which nothing it reads has changed: the threads it wakes,
-    /// and the memo to pass the next call.
+    /// the memo to pass the next call, and the system with those threads woken.
     ///
-    /// Answers that no thread wakes, without asking any wake condition, when
-    /// `memo` remembers a sweep that woke none, and nothing that sweep read has
-    /// changed since but the clock, which has not reached the earliest
-    /// deadline any thread in `asleep` waits for. Nothing a syscall can change
-    /// counts as unchanged unless it is the same value, so a client that makes
-    /// a syscall that changes the system is swept afresh; a client that only
-    /// moves the clock (`UnixSystem.advanceClock`), makes a call that changes
-    /// nothing, or reports which thread runs where (`UnixScheduling.dispatch`,
-    /// to a processor the thread is already on) is not. Otherwise sweeps as
-    /// `wakes` does, and remembers the sweep if it woke nobody.
+    /// Answers that no thread wakes, and `system` itself, without asking any
+    /// wake condition, when `memo` remembers a sweep that woke none, and
+    /// nothing that sweep read has changed since but the clock, which has not
+    /// reached the earliest deadline any sleeping thread waits for. Nothing a
+    /// syscall can change counts as unchanged unless it is the same value, so
+    /// a client that makes a syscall that changes the system is swept afresh;
+    /// a client that only moves the clock (`UnixSystem.advanceClock`), makes a
+    /// call that changes nothing, or reports which thread runs where
+    /// (`UnixScheduling.dispatch`, to a processor the thread is already on) is
+    /// not. Otherwise sweeps as `wake` does, and remembers the sweep if it woke
+    /// nobody.
     ///
-    /// The answer is always `wakes`'s, and `memo` decides only how much work it
-    /// takes. Fails loudly where `wakes` does.
+    /// The answer is always `wake`'s, and `memo` decides only how much work it
+    /// takes.
     ///
     /// A Debug build checks some of the answers the memo gives against a sweep,
     /// failing loudly if they differ, and answers a new memo after each of them,
     /// which counts them.
-    let wakesRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let wakeRemembering<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (memo : WakeSweepMemo<'Thread, 'Handler>)
-        (asleep : Set<Caller<'Thread>>)
         (system : UnixSystem<'Thread, 'Handler>)
-        : (Caller<'Thread> * Set<WakePrimitive>) list * WakeSweepMemo<'Thread, 'Handler>
+        : (Caller<'Thread> * Set<WakePrimitive>) list * WakeSweepMemo<'Thread, 'Handler> * UnixSystem<'Thread, 'Handler>
         =
         match memo.Remembered with
-        | ValueSome remembered when
-            WakeSweepMemo.covers remembered asleep system.Machine system.Scheduling system.Processes
-            ->
+        | ValueSome remembered when WakeSweepMemo.covers remembered system.Machine system.Scheduling system.Processes ->
 #if DEBUG
             if WakeSweepMemo.crossChecks memo.HitsSinceSweep then
-                match wakes asleep system with
-                | [] -> ()
-                | woken ->
+                match wake system with
+                | [], _ -> ()
+                | woken, _ ->
                     failwith
-                        $"UnixWait.wakesRemembering: the memo says the system wakes no thread, but a sweep wakes %A{woken}, at answer %d{memo.HitsSinceSweep} since the memo's sweep (this is a bug in this library)."
+                        $"UnixWait.wakeRemembering: the memo says the system wakes no thread, but a sweep wakes %A{woken}, at answer %d{memo.HitsSinceSweep} since the memo's sweep (this is a bug in this library)."
 
             [],
             { memo with
                 HitsSinceSweep = memo.HitsSinceSweep + 1
-            }
+            },
+            system
 #else
-            [], memo
+            [], memo, system
 #endif
         | ValueSome _
         | ValueNone ->
 
-        match wakes asleep system with
-        | _ :: _ as woken -> woken, WakeSweepMemo.empty
-        | [] ->
-            // `wakes` has failed loudly already for a thread asleep in no park.
-            let deadlines = deadlines asleep system
-
+        match wake system with
+        | (_ :: _ as woken), woken' -> woken, WakeSweepMemo.empty, woken'
+        | [], _ ->
             let earliest =
-                match deadlines with
+                match deadlines system with
                 | [] -> ValueNone
                 | deadlines -> ValueSome (List.min deadlines)
 
@@ -598,10 +608,10 @@ module UnixWait =
                         {
                             Machine = system.Machine
                             Processes = system.Processes
-                            Asleep = asleep
                             EarliestDeadline = earliest
                         }
 #if DEBUG
                 HitsSinceSweep = 0
 #endif
-            }
+            },
+            system

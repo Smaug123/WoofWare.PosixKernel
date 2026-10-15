@@ -103,7 +103,7 @@ module TestDatagramPark =
                 // The park holds the description it names, once.
                 OpenFileTable.holdCount socket awake.Machine.OpenFiles |> shouldEqual (Some 0)
                 OpenFileTable.holdCount socket asleep.Machine.OpenFiles |> shouldEqual (Some 1)
-                Lone.deadlines (Set.singleton thread) asleep |> shouldEqual []
+                Lone.deadlines asleep |> shouldEqual []
 
                 UnixWait.satisfied (Callers.thread thread asleep) asleep
                 |> shouldEqual (Some Set.empty)

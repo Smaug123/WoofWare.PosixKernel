@@ -1,6 +1,8 @@
 namespace WoofWare.PosixKernel.Test
 
 open System.Collections.Immutable
+open FsCheck
+open FsCheck.FSharp
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -13,63 +15,213 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestCrossProcess =
 
-    // ------------------------------------------------------- one view's checks
+    // ------------------------------------------------- each description's counts
 
+    /// One step of `countsKernel`'s walk, made in the process at index `proc`
+    /// (modulo how many there are): a `dup` of its descriptor at index `fd`,
+    /// or a `read` by its thread `thread` of its descriptor at index `fd`
+    /// among those naming its own pipe's read end, which sleeps.
+    [<RequireQualifiedAccess>]
+    type private CountStep =
+        | Dup of proc : int * fd : int
+        | Read of proc : int * thread : int * fd : int
+
+    let private countThreads : int = 3
+
+    let private countStepGen : Gen<CountStep> =
+        let small = Gen.choose (0, 63)
+
+        Gen.oneof
+            [
+                Gen.map2 (fun p fd -> CountStep.Dup (p, fd)) small small
+                Gen.map3 (fun p t fd -> CountStep.Read (p, t, fd)) small small small
+            ]
+
+    /// A kernel of `count` processes, each of which has made a pipe of its
+    /// own, after `steps`; and the description each thread a step's `read`
+    /// put to sleep waits on, by the test's own reckoning.
+    let private countsKernel
+        (platform : SimulatedUnixPlatform)
+        (count : int)
+        (steps : CountStep list)
+        : ProcessId list * UnixSystem<int, string> * Map<Caller<int>, OpenFileDescriptionId>
+        =
+        let pids, system = Machines.withThreads platform count countThreads
+
+        // Each process's pipe's read end, which no one writes to, so a read of
+        // it sleeps; standing input is at its end, so a read of it would not.
+        let readEnds, system =
+            ((Map.empty, system), pids)
+            ||> List.fold (fun (readEnds, system) pid ->
+                match UnixPipe.tryPipe2 (Caller.make pid 0) 0 UserBuffer.Mapped system with
+                | Ok (Pipe2Answer.Created (readFd, _), system) ->
+                    let id =
+                        FileDescriptorRegistry.tryFindId readFd (UnixSystem.fileDescriptors pid system)
+                        |> Option.get
+
+                    Map.add pid id readEnds, system
+                | other -> failwith $"pipe2 in %O{pid}: %A{other}"
+            )
+
+        let pidAt (index : int) : ProcessId = pids.[index % pids.Length]
+
+        let fds (pid : ProcessId) (system : UnixSystem<int, string>) : (int * OpenFileDescriptionId) list =
+            FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid system) |> Map.toList
+
+        ((system, Map.empty), steps)
+        ||> List.fold (fun (system, asleep) step ->
+            match step with
+            | CountStep.Dup (proc, fd) ->
+                let pid = pidAt proc
+
+                let awake =
+                    Proc.threads pid system
+                    |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+
+                match awake with
+                | None -> system, asleep
+                | Some thread ->
+                    let fds = fds pid system
+                    let fd, _ = fds.[fd % fds.Length]
+
+                    match UnixDescriptor.tryDup (Caller.make pid thread) fd system with
+                    | Ok (SyscallAnswer.Completed _, system) -> system, asleep
+                    | other -> failwith $"dup of %d{fd} in %O{pid}: %A{other}"
+            | CountStep.Read (proc, thread, fd) ->
+                let caller = Caller.make (pidAt proc) (thread % countThreads)
+
+                if Map.containsKey caller asleep then
+                    system, asleep
+                else
+                    let readEnd = readEnds.[Caller.processId caller]
+
+                    let candidates =
+                        fds (Caller.processId caller) system |> List.filter (snd >> (=) readEnd)
+
+                    let fd, id = candidates.[fd % candidates.Length]
+
+                    match UnixReadWrite.tryRead caller fd UserBuffer.Mapped 4UL system with
+                    | Ok (ReadOutcome.WouldBlock _, system) -> system, Map.add caller id asleep
+                    | other -> failwith $"read of the empty pipe at %d{fd} by %O{caller}: %A{other}"
+        )
+        |> fun (system, asleep) -> pids, system, asleep
+
+    /// Which count a test pushed from the truth, and whether above it.
+    [<RequireQualifiedAccess>]
+    type private Corrupted =
+        | Descriptors of above : bool
+        | Holds of above : bool
+
+    /// The open file table keeps, for each description, a count of the
+    /// descriptors naming it in every process's table and of the holds the
+    /// calls asleep in every process have on it, and the kernel's
+    /// `checkInvariants` holds each to every table and every park: one count
+    /// pushed either way from the truth, in a description of any process, is
+    /// reported, and nothing else is.
     [<Test>]
-    let ``one process's descriptor table checks only what one table can tell, on a machine holding others`` () : unit =
-        for platform in Machines.platforms do
-            let pids, machine = Machines.ofCount platform 2
-            let a, b = pids.[0], pids.[1]
+    let ``checkInvariants reports exactly a description whose count disagrees, in one process or among several``
+        ()
+        : unit
+        =
+        // Which corruptions were checked in a description of a process other
+        // than the first, on a machine of several.
+        let reached : Map<Corrupted, int> ref = ref Map.empty
 
-            // The other process holds descriptors of its own, which this table
-            // does not name; and on Darwin a kqueue registering a socket
-            // through a descriptor number this table has not opened.
-            let machine =
-                match SimulatedUnixPlatform.flavour platform with
-                | SimulatedUnixFlavour.Linux ->
-                    machine |> Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd)
-                | SimulatedUnixFlavour.Darwin ->
-                    machine
-                    |> Machines.doIn
-                        b
-                        (fun view ->
-                            let socket, view = KeventWorld.streamIn b true view
-                            let kq, view = KeventWorld.kqueueIn b view
-                            KeventWorld.registerIn b kq socket -1s 0x1us 0UL view
-                        )
+        let property (platform : SimulatedUnixPlatform) (count : int) (steps : CountStep list) : unit =
+            let pids, system, asleep = countsKernel platform count steps
+            Machines.assertClean system
 
-            Machines.assertClean machine
+            let named =
+                pids
+                |> List.collect (fun pid ->
+                    FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid system)
+                    |> Map.toList
+                    |> List.map (fun (_, id) -> id, pid)
+                )
 
-            let registry = UnixSystem.fileDescriptors a (Machines.viewOf a machine)
-            FileDescriptorRegistry.checkInvariants registry |> shouldEqual []
+            let held =
+                asleep
+                |> Map.toList
+                |> List.map (fun (caller, id) -> id, Caller.processId caller)
 
-            // A description this table alone names more often than its count
-            // records is caught from the one view...
-            let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
+            let openFiles =
+                FileDescriptorRegistry.openFiles (UnixSystem.fileDescriptors pids.[0] system)
 
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 0 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual [ FileDescriptorRegistryDefect.DescriptorCountMismatch (stdout, 0, 1) ]
+            // The machine's open file table, which every process's registry
+            // reads, rewritten through the first process's.
+            let rewritten (f : FileDescriptorRegistry -> FileDescriptorRegistry) : UnixSystem<int, string> =
+                Proc.withFileDescriptors pids.[0] (f (Proc.fileDescriptors pids.[0] system)) system
 
-            // ...while one counted more often than this table names it may be
-            // named in another process's table, so only the machine can tell.
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual []
+            let sorted (defects : UnixSystemDefect<int> list) : UnixSystemDefect<int> list =
+                List.sortBy (sprintf "%A") defects
 
-    [<Test>]
-    let ``a descriptor table on a machine holding its process alone checks every count exactly`` () : unit =
-        for platform in Machines.platforms do
-            let pids, machine = Machines.ofCount platform 1
+            for id in OpenFileTable.descriptions openFiles |> Map.keys do
+                let naming = named |> List.filter (fst >> (=) id) |> List.length
+                let holding = held |> List.filter (fst >> (=) id) |> List.length
 
-            let registry =
-                UnixSystem.fileDescriptors pids.[0] (Machines.viewOf pids.[0] machine)
+                OpenFileTable.descriptorCount id openFiles |> shouldEqual (Some naming)
+                OpenFileTable.holdCount id openFiles |> shouldEqual (Some holding)
 
-            let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
+                let elsewhere =
+                    count > 1
+                    && (named @ held)
+                       |> List.exists (fun (other, pid) -> other = id && pid <> pids.[0])
 
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual [ FileDescriptorRegistryDefect.DescriptorCountMismatch (stdout, 2, 1) ]
+                let reach (corrupted : Corrupted) : unit =
+                    if elsewhere then
+                        reached.Value <- Map.change corrupted (Option.defaultValue 0 >> (+) 1 >> Some) reached.Value
+
+                for wrong in [ 0 .. naming + 2 ] |> List.filter ((<>) naming) do
+                    let corrupted =
+                        rewritten (FileDescriptorRegistry.Unchecked.setDescriptorCount id wrong)
+
+                    let expected =
+                        [
+                            yield
+                                UnixSystemDefect.OpenFiles (
+                                    FileDescriptorRegistryDefect.DescriptorCountMismatch (id, wrong, naming)
+                                )
+                            // A description no descriptor names and no call
+                            // holds is a leak besides.
+                            if wrong = 0 && holding = 0 then
+                                yield UnixSystemDefect.UnreferencedDescription id
+                        ]
+
+                    sorted (UnixSystem.checkInvariants corrupted) |> shouldEqual (sorted expected)
+                    reach (Corrupted.Descriptors (wrong > naming))
+
+                for wrong in [ 0 .. holding + 2 ] |> List.filter ((<>) holding) do
+                    let corrupted =
+                        let rec toward (openFiles : OpenFileTable) : OpenFileTable =
+                            match OpenFileTable.holdCount id openFiles with
+                            | Some n when n < wrong -> toward (OpenFileTable.hold id openFiles)
+                            | Some n when n > wrong -> toward (OpenFileTable.releaseHold id openFiles)
+                            | _ -> openFiles
+
+                        rewritten (FileDescriptorRegistry.mapOpenFiles toward)
+
+                    UnixSystem.checkInvariants corrupted
+                    |> shouldEqual [ UnixSystemDefect.HoldCountMismatch (id, wrong, holding) ]
+
+                    reach (Corrupted.Holds (wrong > holding))
+
+        Check.One (
+            Config.QuickThrowOnFailure.WithMaxTest 100,
+            Prop.forAll
+                (Arb.fromGen (Gen.zip3 (Gen.elements Machines.platforms) (Gen.choose (1, 3)) (Gen.listOf countStepGen)))
+                (fun (platform, count, steps) -> property platform count steps)
+        )
+
+        for corrupted in
+            [
+                Corrupted.Descriptors false
+                Corrupted.Descriptors true
+                Corrupted.Holds false
+                Corrupted.Holds true
+            ] do
+            Map.tryFind corrupted reached.Value
+            |> Option.defaultValue 0
+            |> shouldBeGreaterThan 10
 
     // ------------------------------------------------------- Darwin kqueues
 
@@ -228,6 +380,8 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
+                let view = Woken.caller (Caller.make pid thread) view
+
                 match UnixPoll.tryFinishPoll (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishPoll: %A{refusal}"
@@ -245,13 +399,13 @@ module TestCrossProcess =
         let machine = sleepInPoll b 1 [ entry listener pollIn ] machine
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let client, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         client |> shouldEqual listener
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        Machines.wakes machine
         |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
@@ -276,7 +430,7 @@ module TestCrossProcess =
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
-        Machines.wakes (Map.ofList [ b, Set.singleton 1 ]) machine
+        Machines.wakes machine
         |> shouldEqual [ (b, 1), Set.singleton WakePrimitive.KqueuePollReportable ]
 
         let outcome, machine = finishPoll b 1 machine
@@ -303,19 +457,6 @@ module TestCrossProcess =
         |> shouldEqual (PollOutcome.Answered ([ pollIn ], 1))
 
     // ------------------------------------------------------ the machine's wakes
-
-    let private woken
-        (asleep : (ProcessId * int) list)
-        (machine : UnixSystem<int, string>)
-        : ((ProcessId * int) * Set<WakePrimitive>) list
-        =
-        let asleep =
-            asleep
-            |> List.groupBy fst
-            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-            |> Map.ofList
-
-        Machines.wakes asleep machine
 
     /// `thread` of `pid` accepts on the blocking listener `listener`, which holds
     /// nothing, and sleeps.
@@ -344,6 +485,8 @@ module TestCrossProcess =
         Machines.inProcess
             pid
             (fun view ->
+                let view = Woken.caller (Caller.make pid thread) view
+
                 match UnixConnection.tryFinishAccept (Caller.make pid thread) view with
                 | Ok finished -> finished
                 | Error refusal -> failwith $"finishAccept: %A{refusal}"
@@ -361,14 +504,16 @@ module TestCrossProcess =
 
             let machine = sleepInAccept b 1 listener machine
             Machines.assertClean machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
             Machines.assertClean machine
 
             let listenerId = KeventWorld.idOfIn b listener (Machines.viewOf b machine)
 
-            woken [ b, 1 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.AcceptQueueNonEmpty listenerId) ]
 
             match finishAccept b 1 machine with
@@ -418,14 +563,16 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         let epollId = KeventWorld.idOfIn b epoll (Machines.viewOf b machine)
 
-        woken [ b, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.EpollEventDeliverable epollId) ]
 
         let outcome, machine =
@@ -490,12 +637,12 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let machine = Machines.doIn a (KeventWorld.closeIn a client) machine
         Machines.assertClean machine
 
-        woken [ b, 1 ] machine |> List.map fst |> shouldEqual [ b, 1 ]
+        let machine = Machines.waking [ b, 1 ] machine
 
         let outcome, machine =
             Machines.inProcess
@@ -537,14 +684,16 @@ module TestCrossProcess =
                 )
                 machine
 
-        woken [ b, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8080us) machine
         Machines.assertClean machine
 
         let kqueueId = KeventWorld.idOfIn b kq (Machines.viewOf b machine)
 
-        woken [ b, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (b, 1), Set.singleton (WakePrimitive.KqueueEventDeliverable kqueueId) ]
 
         let outcome, machine =
@@ -612,14 +761,16 @@ module TestCrossProcess =
             | other -> failwith $"the second flock: expected to sleep, got %A{other}"
 
             Machines.assertClean machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let outcome, machine = Machines.inProcess a (flock a 1 held lockUn) machine
             outcome |> shouldEqual (SyscallOutcome.Answered (SyscallAnswer.Completed 0L))
 
             let waitingId = KeventWorld.idOfIn b waiting (Machines.viewOf b machine)
 
-            woken [ b, 1 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> shouldEqual
                 [
                     (b, 1), Set.singleton (WakePrimitive.FlockGrantable (waitingId, FlockMode.Exclusive))
@@ -658,8 +809,7 @@ module TestCrossProcess =
                 |> sleepInAccept a 1 listenerA
                 |> sleepInAccept b 2 listenerB
 
-            let asleep = [ a, 1 ; b, 1 ; b, 2 ]
-            woken asleep machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             // One connection to each, made by the other process's third thread.
             let _, machine = Machines.inProcess a (KeventWorld.clientIn a 8081us) machine
@@ -668,41 +818,148 @@ module TestCrossProcess =
 
             // Park order, not process order; and of b's two accepters on one
             // listener holding one connection, the one that parked first.
-            woken asleep machine |> List.map fst |> shouldEqual [ b, 1 ; a, 1 ]
+            let machine = Machines.waking [ b, 1 ; a, 1 ] machine
 
             // A woken accepter that has not yet finished stands for the
             // connection, so its queue wakes nobody else meanwhile.
-            woken [ a, 1 ; b, 2 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
-
-    [<Test>]
-    let ``the machine's wakes refuse a process it does not hold`` () : unit =
-        let _, machine = Machines.ofCount SimulatedUnixPlatform.linuxX64 1
-        let ghost = ProcessId.parseOrFail "test" 77
-
-        let error = Assert.Throws<exn> (fun () -> woken [ ghost, 1 ] machine |> ignore)
-
-        error.Message |> shouldContainText "77"
+            Machines.wakes machine |> shouldEqual []
 
     // ------------------------------------------------------- a process's end
 
-    /// `pid`'s thread 0 calls `exit_group(status)`, and the machine ends the
-    /// process.
+    /// `pid`'s thread 0 calls `exit_group(status)`, which ends the process.
     let private exitIn
         (pid : ProcessId)
         (status : int32)
         (machine : UnixSystem<int, string>)
         : Result<ProcessTermination * UnixSystem<int, string>, ProcessEndRefusal>
         =
-        let ended =
-            UnixThreadLifecycle.exitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
-
-        Machines.tryEndProcess ended machine
+        UnixThreadLifecycle.tryExitGroup (Caller.make pid 0) status (Machines.viewOf pid machine)
+        |> Result.map (fun (ended, machine) -> EndedProcess.termination ended, machine)
 
     let private exitedOk (pid : ProcessId) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
         match exitIn pid 0 machine with
         | Ok (ProcessTermination.Exited _, machine) -> machine
-        | Ok (other, _) -> failwith $"endProcess: the process ended by %O{other}, not by its exit"
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+        | Ok (other, _) -> failwith $"exit_group: the process ended by %O{other}, not by its exit"
+        | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
+
+    /// A call that ends a process, made by its thread 0.
+    [<RequireQualifiedAccess>]
+    type private Ending =
+        /// `exit_group(0)`.
+        | ExitGroup
+        /// `kill(2)` of SIGKILL, to the process itself.
+        | Kill
+        /// `raise(3)` of SIGTERM.
+        | Raise
+        /// SIGTERM blocked, raised and unblocked, each call followed by the
+        /// return to user mode, the last of which ends the process.
+        | ReturnToUser
+        /// Every other thread exits, and then thread 0, the leader and the
+        /// last.
+        | LastThread
+        /// A write of one byte into a new pipe whose read end is closed, which
+        /// raises SIGPIPE at its default.
+        | BrokenPipe
+
+    /// Every `Ending` a process on `platform` can take: Darwin refuses the
+    /// last thread's exit.
+    let private endingsOn (platform : SimulatedUnixPlatform) : Ending list =
+        [
+            Ending.ExitGroup
+            Ending.Kill
+            Ending.Raise
+            Ending.ReturnToUser
+            if SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux then
+                Ending.LastThread
+            Ending.BrokenPipe
+        ]
+
+    /// The process `pid`, all of whose threads run, ended by `ending`: the
+    /// system the call that ended it answered.
+    let private endedBy
+        (ending : Ending)
+        (pid : ProcessId)
+        (machine : UnixSystem<int, string>)
+        : UnixSystem<int, string>
+        =
+        let caller = Caller.make pid 0
+        let numbering = SimulatedUnixPlatform.signalNumbering (UnixSystem.platform machine)
+        let sigterm = Signal.toRawSignoUnder numbering Signal.SIGTERM
+
+        let ended (call : string) (fate : ProcessFate<'Outcome, int, string>) : UnixSystem<int, string> =
+            match fate with
+            | ProcessFate.ProcessEnded (_, machine) -> machine
+            | ProcessFate.Continues (outcome, _) ->
+                failwith $"%A{ending}: %s{call} left the process running, answering %A{outcome}"
+
+        let returned (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match UnixSignal.onReturnToUser caller machine with
+            | ProcessFate.Continues (ReturnToUserOutcome.Resumes, machine) -> machine
+            | other -> failwith $"%A{ending}: the return to user mode answered %A{other}"
+
+        let mask (how : SignalMaskChange) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
+            let how =
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform machine), how with
+                | SimulatedUnixFlavour.Linux, SignalMaskChange.Block -> 0
+                | SimulatedUnixFlavour.Linux, _ -> 1
+                | SimulatedUnixFlavour.Darwin, SignalMaskChange.Block -> 1
+                | SimulatedUnixFlavour.Darwin, _ -> 2
+
+            let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
+
+            match UnixSignal.pthreadSigmask caller how (Some set) machine with
+            | Ok (_, machine) -> machine
+            | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
+
+        match ending with
+        | Ending.ExitGroup -> UnixThreadLifecycle.exitGroup caller 0 machine |> snd
+        | Ending.Kill ->
+            match UnixSignal.kill caller (ProcessId.toInt32 pid) 9 machine with
+            | Ok fate -> ended "kill" fate
+            | Error errno -> failwith $"kill: %O{errno}"
+        | Ending.Raise ->
+            match UnixSignal.pthreadKill caller 0 sigterm machine with
+            | Ok fate -> ended "pthread_kill" fate
+            | Error errno -> failwith $"pthread_kill: %O{errno}"
+        | Ending.ReturnToUser ->
+            let machine = machine |> mask SignalMaskChange.Block |> returned
+
+            let machine =
+                match UnixSignal.pthreadKill caller 0 sigterm machine with
+                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, machine)) -> returned machine
+                | other -> failwith $"pthread_kill of a blocked SIGTERM: %A{other}"
+
+            machine
+            |> mask SignalMaskChange.Unblock
+            |> UnixSignal.onReturnToUser caller
+            |> ended "onReturnToUser"
+        | Ending.LastThread ->
+            let others =
+                UnixSystem.threads pid machine |> Map.keys |> Seq.filter ((<>) 0) |> List.ofSeq
+
+            let machine =
+                (machine, others)
+                ||> List.fold (fun machine thread ->
+                    match UnixThreadLifecycle.exitThread (Caller.make pid thread) 0 machine with
+                    | ProcessFate.Continues ((), machine) -> machine
+                    | other -> failwith $"thread %d{thread}'s exit: %A{other}"
+                )
+
+            UnixThreadLifecycle.exitThread caller 0 machine
+            |> ended "the last thread's exit"
+        | Ending.BrokenPipe ->
+            match UnixPipe.pipe2 caller 0 UserBuffer.Mapped machine with
+            | Pipe2Answer.Created (readFd, writeFd), machine ->
+                let machine =
+                    match UnixDescriptor.close caller readFd machine with
+                    | SyscallAnswer.Completed 0L, machine -> machine
+                    | other, _ -> failwith $"close: %A{other}"
+
+                match UnixReadWrite.write caller writeFd UserBuffer.Mapped 1UL machine with
+                | CallProgress.Answered fate -> ended "write" fate
+                | CallProgress.NeedsCopyIn paused ->
+                    UnixReadWrite.writeWithBytes (ImmutableArray.Create 0uy) paused |> ended "write"
+            | other -> failwith $"pipe2: %A{other}"
 
     /// A `dup2` of `oldFd` onto `newFd`, and the close of `oldFd`, by the
     /// leader of the process `pid`.
@@ -740,14 +997,18 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let pids, machine = Machines.ofCount platform 1
             let view = Machines.viewOf pids.[0] machine
-            let ended = UnixThreadLifecycle.exitGroup (Callers.thread 0 view) 3 view
 
-            match Machines.tryEndLoneProcess ended with
-            | Ok (termination, after) ->
-                termination |> shouldEqual (EndedProcess.termination ended)
-                Machines.processIds after |> shouldBeEmpty
+            match UnixThreadLifecycle.tryExitGroup (Callers.thread 0 view) 3 view with
+            | Ok (ended, after) ->
+                EndedProcess.termination ended
+                |> shouldEqual (
+                    ProcessTermination.Exited (ExitStatus.ofExitArgument (SimulatedUnixPlatform.flavour platform) 3)
+                )
+
+                EndedProcess.processId ended |> shouldEqual pids.[0]
+                EndedMachine.assertNoneLeft after
                 Machines.assertClean after
-            | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
     let private deliveries (machine : UnixSystem<int, string>) : (ExternalEndpoint * byte list) list =
@@ -806,7 +1067,9 @@ module TestCrossProcess =
         // holds three connections, made in the order 1, 2, 3, at the
         // descriptors `layout` gives each, and the other watches their peers in
         // one wait, registered in yet another order. Section D's first
-        // connection is at a second descriptor as well, a dup.
+        // connection is at a second descriptor as well, a dup. The probe's
+        // process exits; every other call that ends a process closes its
+        // descriptors as the exit does.
         let sections =
             [
                 [ 12 ; 10 ; 11 ], None, [ 1UL ; 3UL ; 2UL ], [ 1UL ; 3UL ; 2UL ]
@@ -814,7 +1077,7 @@ module TestCrossProcess =
             ]
 
         for platform in Machines.platforms do
-            for layout, alias, linux, darwin in sections do
+            for ending, (layout, alias, linux, darwin) in List.allPairs (endingsOn platform) sections do
                 let pids, machine = Machines.ofCount platform 2
                 let a, b = pids.[0], pids.[1]
 
@@ -922,7 +1185,7 @@ module TestCrossProcess =
 
                 report machine |> fst |> shouldEqual []
 
-                let machine = exitedOk a machine
+                let machine = endedBy ending a machine
                 Machines.assertClean machine
 
                 let expected =
@@ -930,7 +1193,8 @@ module TestCrossProcess =
                     | SimulatedUnixFlavour.Linux -> linux
                     | SimulatedUnixFlavour.Darwin -> darwin
 
-                report machine |> fst |> shouldEqual expected
+                (ending, layout, report machine |> fst)
+                |> shouldEqual (ending, layout, expected)
 
     [<Test>]
     let ``a process's end closes its pipes, kqueues and epoll instances, and lets its locks go`` () : unit =
@@ -1019,7 +1283,7 @@ module TestCrossProcess =
             |> Set.ofSeq
             |> shouldEqual survivors
 
-            woken [ b, 1 ] machine |> List.map fst |> shouldEqual [ b, 1 ]
+            Machines.waking [ b, 1 ] machine |> ignore<UnixSystem<int, string>>
 
     /// A listener's release resets each client still in its queue
     /// (`tcp-shutdown.c` section Q, docs/plans/2026-10-08-tcp-shutdown-linger),
@@ -1127,7 +1391,7 @@ module TestCrossProcess =
             let _, machine = drain machine
             let machine = sleepInPoll b 2 [ entry watched pollIn ] machine
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let machine = exitedOk a machine
             Machines.assertClean machine
@@ -1139,7 +1403,9 @@ module TestCrossProcess =
                 | WakePrimitive.KqueuePollReportable -> "a poll"
                 | other -> failwith $"unexpected wake %A{other}"
 
-            woken [ b, 1 ; b, 2 ] machine
+            let woken, machine = Machines.wake machine
+
+            woken
             |> List.map (fun (thread, fired) -> thread, fired |> Set.map kind)
             |> shouldEqual [ (b, 1), Set.singleton "a read" ; (b, 2), Set.singleton "a poll" ]
 
@@ -1212,7 +1478,7 @@ module TestCrossProcess =
         for platform in Machines.platforms do
             let flavour = SimulatedUnixPlatform.flavour platform
 
-            let replayed (listenerFirst : bool) : string =
+            let replayed (ending : Ending) (listenerFirst : bool) : string =
                 let pids, machine = Machines.ofCount platform 2
                 let child, parent = pids.[0], pids.[1]
 
@@ -1311,7 +1577,7 @@ module TestCrossProcess =
                         machine
 
                 let _, machine = events machine
-                let machine = exitedOk child machine
+                let machine = endedBy ending child machine
                 Machines.assertClean machine
                 let reported, _ = events machine
 
@@ -1327,12 +1593,16 @@ module TestCrossProcess =
             let measured = listenerExitOrder flavour
             measured |> List.length |> shouldEqual 10
 
-            [
-                for _ in 1..5 do
-                    replayed true
-                    replayed false
-            ]
-            |> shouldEqual measured
+            // The probe's process exits; every other call that ends a process
+            // closes its descriptors as the exit does.
+            for ending in endingsOn platform do
+                (ending,
+                 [
+                     for _ in 1..5 do
+                         replayed ending true
+                         replayed ending false
+                 ])
+                |> shouldEqual (ending, measured)
 
     [<Test>]
     let ``a process's end closes its listener and its own queued client, in either order`` () : unit =
@@ -1437,7 +1707,7 @@ module TestCrossProcess =
                 OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
                 machine.Machine.Sockets |> shouldEqual Map.empty
                 machine.Machine.Connections |> shouldEqual Map.empty
-            | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+            | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Nothing yet passes a descriptor from one process to another, so no queue
     /// a kernel wakes one waiter of is shared by two processes. `fork` would
@@ -1494,12 +1764,14 @@ module TestCrossProcess =
         let _, machine = Machines.inProcess b (KeventWorld.clientIn b 8080us) machine
         Machines.checkInvariants machine |> shouldEqual []
 
-        woken [ a, 1 ; b, 1 ] machine |> List.map fst |> shouldEqual [ a, 1 ]
+        let woken = Machines.waking [ a, 1 ] machine
 
         // Either woken and not yet finished stands for the connection, in
         // whichever process, so the other does not wake.
-        woken [ b, 1 ] machine |> shouldEqual []
-        woken [ a, 1 ] machine |> shouldEqual []
+        Machines.wakes woken |> shouldEqual []
+
+        Machines.wakes (ForgedPark.wokenCaller (Caller.make b 1) machine)
+        |> shouldEqual []
 
     [<Test>]
     let ``a file one process has open outlives its unlink by another, until it is closed`` () : unit =
@@ -1617,16 +1889,12 @@ module TestCrossProcess =
 
         Machines.assertClean machine
 
-        let ended =
-            match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
-            | Ok (WriteStep.ProcessEnded ended) -> ended
-            | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
-
-        match Machines.tryEndProcess ended machine with
-        | Ok (_, machine) ->
+        match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
+        | Ok (WriteStep.ProcessEnded (_, dead)) ->
+            let machine = ProcessView.unfocusWithout dead
             Machines.assertClean machine
             machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
-        | Error refusal -> failwith $"endProcess: %s{ProcessEndRefusal.describe refusal}"
+        | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
     [<Test>]
     let ``a process's end lets a listener only its sleeping accept held go after its own client`` () : unit =
@@ -1729,14 +1997,16 @@ module TestCrossProcess =
                 machine
 
         Machines.assertClean machine
-        woken [ a, 1 ] machine |> shouldEqual []
+        Machines.wakes machine |> shouldEqual []
 
         let machine = Machines.doIn b (create b "/d/x") machine
         Machines.assertClean machine
 
         let instance = KeventWorld.idOfIn a fd (Machines.viewOf a machine)
 
-        woken [ a, 1 ] machine
+        let woken, machine = Machines.wake machine
+
+        woken
         |> shouldEqual [ (a, 1), Set.singleton (WakePrimitive.InotifyRecordQueued instance) ]
 
         let records, machine =

@@ -612,10 +612,23 @@ module TestSyscallInterruption =
 
             // A sleeper wakes exactly when its finishing call has something to
             // say other than "sleep again".
-            let woken = Lone.wakes (Set.singleton thread) system |> List.map fst
+            let woken, wokenSystem = Lone.wake system
+            let woken = woken |> List.map fst
             woken |> shouldEqual (if expected = Ending.Reparked then [] else [ thread ])
 
-            let ending, after = finish thread sleep system
+            let ending, after =
+                if woken.IsEmpty then
+                    // Nothing woke the sleeper, so its call is not finished: it
+                    // sleeps on.
+                    Assert.Throws<System.InvalidOperationException> (fun () ->
+                        finish thread sleep system |> ignore<Ending * UnixSystem<int, string>>
+                    )
+                    |> ignore<System.InvalidOperationException>
+
+                    Ending.Reparked, system
+                else
+                    finish thread sleep wokenSystem
+
             ending |> shouldEqual expected
 
             seen <- Set.add $"%A{ending}" seen
@@ -911,6 +924,7 @@ module TestSyscallInterruption =
                 {
                     Syscall = parked
                     Ordinal = ParkOrdinal 0L
+                    State = ParkState.Asleep
                 }
                 threads
 
@@ -957,8 +971,8 @@ module TestSyscallInterruption =
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
                 | other -> failwith $"unexpected kill: %A{other}"
 
-            Lone.wakes (Set.singleton 0) system
-            |> shouldEqual [ 0, Set.singleton WakePrimitive.SignalDeliverable ]
+            let woken, system = Lone.wake system
+            woken |> shouldEqual [ 0, Set.singleton WakePrimitive.SignalDeliverable ]
 
             fst (finish 0 Sleep.Accept system) |> shouldEqual expected
 
@@ -997,7 +1011,7 @@ module TestSyscallInterruption =
                     }
                 )
 
-        Lone.wakes (Set.singleton 1) system |> List.map fst |> shouldEqual [ 1 ]
+        let system = Lone.waking [ 1 ] system
 
         fst (finish 1 Sleep.Accept system)
         |> shouldEqual (Ending.Refused (SyscallInterruptionRefusal.DefaultAction Signal.SIGCONT))

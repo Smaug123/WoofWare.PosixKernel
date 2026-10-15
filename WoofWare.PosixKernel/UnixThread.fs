@@ -784,8 +784,24 @@ type ParkOrdinal =
         match this with
         | ParkOrdinal.ParkOrdinal i -> $"<park #%i{i}>"
 
-/// One thread's park: the syscall it is blocked in, and where the park stands in
-/// the order parks were made in.
+/// Whether a thread parked in a syscall still sleeps, or has been woken and has
+/// yet to finish its call.
+[<RequireQualifiedAccess>]
+type ParkState =
+    /// The thread sleeps. `UnixWait.wake` asks its call's wake condition, and
+    /// wakes it once the condition holds.
+    | Asleep
+    /// `UnixWait.wake` has woken the thread, for `fired`, the primitives of its
+    /// call's wake condition that held then, and the call's finishing function
+    /// has not yet run. Never empty.
+    ///
+    /// On each queue its call waits on whose waiters a kernel wakes one at a
+    /// time, the thread stands for whatever woke it, so no other waiter there
+    /// wakes until the thread has finished its call or slept again.
+    | Woken of fired : Set<WakePrimitive>
+
+/// One thread's park: the syscall it is blocked in, where the park stands in the
+/// order parks were made in, and whether the thread has been woken.
 type ThreadPark =
     {
         /// The syscall the thread is blocked in, with the state it was entered with.
@@ -796,6 +812,13 @@ type ThreadPark =
         /// again) mints a fresh one, as a real kernel queues such a waiter
         /// afresh.
         Ordinal : ParkOrdinal
+        /// Whether the thread still sleeps, or has been woken and has yet to
+        /// finish its call.
+        ///
+        /// A park starts `ParkState.Asleep`, `UnixWait.wake` makes it
+        /// `ParkState.Woken`, and only a woken thread's call is finished. A
+        /// re-park is asleep again: the waiter waits for a new wake.
+        State : ParkState
     }
 
 /// What the emulated kernel knows about one thread — one scheduling entity, what
@@ -1022,6 +1045,30 @@ module UnixThreadTable =
                 $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock` finishes one here (this is a bug in the client)."
         | Some park -> park.Syscall
 
+    /// Fails with `InvalidOperationException` unless `name` is a thread parked
+    /// in a syscall that `UnixWait.wake` has woken, as the thread whose call a
+    /// finishing function finishes must be: `operation` names the finishing
+    /// function the client called.
+    let internal requireWoken<'Thread when 'Thread : comparison>
+        (operation : string)
+        (name : 'Thread)
+        (threads : Map<'Thread, UnixThreadState>)
+        : unit
+        =
+        match (requireThread operation name threads).Parked with
+        | None ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is not parked, so there is no call to finish. Only a thread whose call answered `WouldBlock`, and which `UnixWait.wake` has since woken, finishes one here (this is a bug in the client)."
+        | Some {
+                   Syscall = parked
+                   State = ParkState.Asleep
+               } ->
+            invalidOp
+                $"%s{operation}: thread %O{name} is asleep in %A{parked}, and nothing has woken it. `UnixWait.wake` wakes a thread once its call can get further, and only a woken thread's call is finished (this is a bug in the client)."
+        | Some {
+                   State = ParkState.Woken _
+               } -> ()
+
     /// What `choose` answers for the syscall `name` is parked in, failing with
     /// `InvalidOperationException` as `requireParked` does, or if `choose`
     /// answers `None` for that syscall: `operation` names the finishing function
@@ -1055,6 +1102,14 @@ module UnixThreadTable =
     /// re-parking call may lawfully revise its own re-entry state — a timeout
     /// with less of itself left to run is the obvious future instance — and that
     /// is the syscall's business rather than this table's.
+    ///
+    /// Refuses too a write that moves a park's state other than as a wake and a
+    /// re-park move it. A park onto an absent record is asleep. A write that
+    /// keeps the park's ordinal rewrites the park in place, as a Darwin close
+    /// rewrites the call it ends, and keeps its state. A write with a fresh
+    /// ordinal is a re-park, which only a woken thread's finishing call makes,
+    /// and puts the thread asleep again. `markWoken` is the one way a park
+    /// becomes woken.
     ///
     /// The table alone: it moves no hold on an open file description. Internal
     /// so that `UnixWait.park`, which mints the ordinal, and `UnixParkState`,
@@ -1099,12 +1154,69 @@ module UnixThreadTable =
             failwith
                 $"UnixThreadTable.withPark: thread %O{name} is parked in %A{existing.Parked} and something is parking it in %A{park} without clearing the first. A thread blocks in one syscall at a time, so the earlier park's completion failed to clear its record."
 
+        match existing.Parked, park.State with
+        | None, ParkState.Asleep -> ()
+        | None, ParkState.Woken _ ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} is parking in %A{park}, woken already. A park starts asleep, and only `UnixWait.wake` wakes it (this is a bug in this library)."
+        | Some before, _ when before.Ordinal = park.Ordinal ->
+            if before.State <> park.State then
+                failwith
+                    $"UnixThreadTable.withPark: thread %O{name}'s park %A{before} is being rewritten in place as %A{park}, which changes its state. A rewrite keeps the park's state, and only `UnixWait.wake` wakes a park (this is a bug in this library)."
+        | Some {
+                   State = ParkState.Woken _
+               },
+          ParkState.Asleep -> ()
+        | Some before, _ ->
+            failwith
+                $"UnixThreadTable.withPark: thread %O{name} is parked in %A{before} and is being parked again as %A{park}. A re-park is a woken thread's going back to sleep, so it is made only of a woken park, and is asleep (this is a bug in this library)."
+
         Map.add
             name
             { existing with
                 Parked = Some park
             }
             threads
+
+    /// Record that `UnixWait.wake` has woken `name`, asleep in a syscall, for
+    /// `fired`, the primitives of its call's wake condition that hold: its park
+    /// keeps its syscall and its place in park order, and becomes
+    /// `ParkState.Woken`.
+    ///
+    /// Fails loudly unless `name` is parked and asleep, and if `fired` is
+    /// empty: a thread is woken for something.
+    let internal markWoken<'Thread when 'Thread : comparison>
+        (name : 'Thread)
+        (fired : Set<WakePrimitive>)
+        (threads : Map<'Thread, UnixThreadState>)
+        : Map<'Thread, UnixThreadState>
+        =
+        let existing = get name threads
+
+        if Set.isEmpty fired then
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is being woken for nothing. A thread wakes once a primitive of its wake condition holds (this is a bug in this library)."
+
+        match existing.Parked with
+        | Some ({
+                    State = ParkState.Asleep
+                } as park) ->
+            Map.add
+                name
+                { existing with
+                    Parked =
+                        Some
+                            { park with
+                                State = ParkState.Woken fired
+                            }
+                }
+                threads
+        | Some park ->
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is in %A{park}, woken already, and is being woken again for %A{fired} (this is a bug in this library)."
+        | None ->
+            failwith
+                $"UnixThreadTable.markWoken: thread %O{name} is parked in no syscall, and is being woken for %A{fired} (this is a bug in this library)."
 
     /// Record that `name` is no longer parked: its syscall has finished.
     ///

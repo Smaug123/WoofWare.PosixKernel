@@ -88,16 +88,16 @@ module TestKqueue =
         | Ok (KeventOutcome.WouldBlock condition, parked) -> condition, parked
         | other -> failwith $"expected thread %d{thread} to park, got %A{other}"
 
+    /// `thread`, woken (`Woken.thread`), finishes its `kevent`.
     let private finishes (thread : int) (system : UnixSystem<int, string>) : KeventOutcome * UnixSystem<int, string> =
+        let system = Woken.thread thread system
+
         match UnixKqueue.tryFinishKevent (Callers.thread thread system) system with
         | Ok (outcome, finished) ->
             UnixThreadTable.parkedFor thread (Lone.threads finished) |> shouldEqual None
             outcome, finished
         | Error refusal ->
             failwith $"expected thread %d{thread}'s wait to finish, got %s{KeventRefusal.describe refusal}"
-
-    let private woken (asleep : int list) (system : UnixSystem<int, string>) : (int * Set<WakePrimitive>) list =
-        Lone.wakes (Set.ofList asleep) system
 
     /// `system` with a caught SIGUSR1 pending for `thread`.
     let private signalled (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -682,26 +682,23 @@ module TestKqueue =
                 )
             )
 
-            Lone.deadlines (Set.singleton 1) parked |> shouldEqual [ deadline ]
+            Lone.deadlines parked |> shouldEqual [ deadline ]
 
-            // One nanosecond short: nothing wakes it, and a finish attempted anyway parks again
-            // on the same deadline, behind every other park.
+            // One nanosecond short: nothing wakes it, so there is no call to finish, and it
+            // sleeps on to the same deadline.
             let short = after (deadline - 1L - now) parked
-            woken [ 1 ] short |> shouldEqual []
+            Lone.wakes short |> shouldEqual []
 
-            let ordinalBefore = (UnixThreadTable.parkOf 1 (Lone.threads parked)).Value.Ordinal
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixKqueue.tryFinishKevent (Callers.thread 1 short) short |> ignore
+            )
+            |> ignore<System.InvalidOperationException>
 
-            match UnixKqueue.tryFinishKevent (Callers.thread 1 short) short with
-            | Ok (KeventOutcome.WouldBlock _, reparked) ->
-                Lone.deadlines (Set.singleton 1) reparked |> shouldEqual [ deadline ]
-
-                (UnixThreadTable.parkOf 1 (Lone.threads reparked)).Value.Ordinal
-                |> shouldBeGreaterThan ordinalBefore
-            | other -> failwith $"expected a re-park, got %A{other}"
+            Lone.deadlines short |> shouldEqual [ deadline ]
 
             let expired = after (deadline - now) parked
 
-            woken [ 1 ] expired
+            Lone.wakes expired
             |> shouldEqual [ 1, Set.singleton (WakePrimitive.DeadlinePassed deadline) ]
 
             finishes 1 expired |> fst |> shouldEqual (KeventOutcome.Answered [])
@@ -746,8 +743,8 @@ module TestKqueue =
                 }
         | other -> failwith $"expected a kevent park, got %A{other}"
 
-        Lone.deadlines (Set.singleton 1) parked |> shouldEqual []
-        woken [ 1 ] (after 1_000_000_000_000_000L parked) |> shouldEqual []
+        Lone.deadlines parked |> shouldEqual []
+        Lone.wakes (after 1_000_000_000_000_000L parked) |> shouldEqual []
 
     [<Test>]
     let ``a deadline past the clock's range is refused`` () : unit =
@@ -797,7 +794,7 @@ module TestKqueue =
 
             UnixSystem.checkInvariants closed |> shouldEqual []
 
-            woken [ 1 ] closed
+            Lone.wakes closed
             |> shouldEqual [ 1, Set.singleton (WakePrimitive.KqueueDrained kqueue) ]
 
             // The kqueue goes as the call holding it returns.
@@ -854,7 +851,7 @@ module TestKqueue =
             | other -> failwith $"expected the surviving kqueue, got %A{other}"
 
             if drains then
-                woken threads closed
+                Lone.wakes closed
                 |> shouldEqual (
                     threads
                     |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
@@ -879,7 +876,7 @@ module TestKqueue =
                     waits 9 surviving timeout (Threads.ensure 9 finished)
                     |> shouldEqual (Ok (KeventOutcome.Failed UnixError.EBADF, Threads.ensure 9 finished))
             else
-                woken threads closed |> shouldEqual []
+                Lone.wakes closed |> shouldEqual []
 
         let gen =
             Gen.zip
@@ -928,7 +925,7 @@ module TestKqueue =
                 )
             )
 
-            woken threads closed
+            Lone.wakes closed
             |> shouldEqual (
                 threads
                 |> List.map (fun thread -> thread, Set.singleton (WakePrimitive.KqueueDrained kqueue))
@@ -968,19 +965,19 @@ module TestKqueue =
 
         let both = close k parked |> after 5L
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 both) both
+        UnixKqueue.tryFinishKevent (Callers.thread 1 both) (Woken.thread 1 both)
         |> shouldEqual (Error (KeventRefusal.DrainBesideDeadline kqueue))
 
         let signalledDrained = signalled 1 (close k parked)
 
-        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledDrained) signalledDrained with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledDrained) (Woken.thread 1 signalledDrained) with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the drain to be refused, got %A{other}"
 
         let signalledExpired = signalled 1 (after 5L parked)
 
-        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledExpired) signalledExpired with
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 signalledExpired) (Woken.thread 1 signalledExpired) with
         | Error (KeventRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) ->
             ()
         | other -> failwith $"expected the signal beside the deadline to be refused, got %A{other}"
@@ -999,7 +996,7 @@ module TestKqueue =
             let _, parked = parks 1 fd timeout system
             let interrupted = signalled 1 parked
 
-            woken [ 1 ] interrupted
+            Lone.wakes interrupted
             |> shouldEqual [ 1, Set.singleton WakePrimitive.SignalDeliverable ]
 
             finishes 1 interrupted

@@ -23,6 +23,7 @@
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
     <Compile Include="Callers.fs" />
+    <Compile Include="Woken.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />
@@ -52,6 +53,7 @@
     <Compile Include="EndedMachine.fs" />
     <Compile Include="ForgedPark.fs" />
     <Compile Include="Machines.fs" />
+    <Compile Include="ReferenceWake.fs" />
     <Compile Include="ForgedConnection.fs" />
     <Compile Include="FcntlWorld.fs" />
     <Compile Include="PendingSignal.fs" />

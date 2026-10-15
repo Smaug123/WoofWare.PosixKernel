@@ -603,7 +603,9 @@ module TestDarwinPoll =
     let private wakes (condition : WakeCondition) (system : UnixSystem<int, string>) : bool =
         not (Set.isEmpty (Lone.WakeCondition.satisfied poller condition system))
 
+    /// The poller's poll, woken (`Woken.thread`), finished.
     let private finish (system : UnixSystem<int, string>) : Result<PollOutcome * UnixSystem<int, string>, PollRefusal> =
+        let system = Woken.thread poller system
         UnixPoll.tryFinishPoll (Callers.thread poller system) system
 
     let private finishAnswer (system : UnixSystem<int, string>) : int16 list * int =
@@ -817,14 +819,14 @@ module TestDarwinPoll =
         let early = advanceTo (now + 6_999_999L) parked
         wakes condition early |> shouldEqual false
 
-        // Woken with nothing to report and no deadline passed, the poll sleeps
-        // again.
-        match finish early with
-        | Ok (PollOutcome.WouldBlock _, again) ->
-            UnixThreadTable.parkedFor poller (Lone.threads again)
-            |> Option.isSome
-            |> shouldEqual true
-        | other -> failwith $"expected a re-park, got %A{other}"
+        // With nothing to report and no deadline passed, nothing wakes the poll,
+        // so there is no call to finish.
+        Lone.wakes early |> shouldEqual []
+
+        Assert.Throws<System.InvalidOperationException> (fun () ->
+            UnixPoll.tryFinishPoll (Callers.thread poller early) early |> ignore
+        )
+        |> ignore<System.InvalidOperationException>
 
         // Something to report and an expired deadline at once: Darwin answers
         // whichever reached the sleeper first.

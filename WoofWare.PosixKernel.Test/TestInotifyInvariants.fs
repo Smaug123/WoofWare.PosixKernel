@@ -653,8 +653,11 @@ module TestInotifyInvariants =
                 | defects -> failwith $"after %A{op}: %A{defects}"
 
             let finishReader () =
-                match UnixWait.satisfied (Callers.thread 1 system) system with
-                | Some woken when not (Set.isEmpty woken) ->
+                let woken, after = Lone.wake system
+                system <- after
+
+                match woken |> List.tryFind (fun (thread, _) -> thread = 1) with
+                | Some _ ->
                     match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
                     | Ok (ReadOutcome.Answered (ReadAnswer.Failed UnixError.EINTR), after) ->
                         cover Label.ReaderInterrupted

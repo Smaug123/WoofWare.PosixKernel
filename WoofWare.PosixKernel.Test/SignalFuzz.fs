@@ -275,7 +275,9 @@ module SignalFuzz =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)) ->
                 system <- after
                 runFrames frames
-            | Ok (ProcessFate.ProcessEnded ended) ->
+            | Ok (ProcessFate.ProcessEnded (ended, after)) ->
+                EndedMachine.assertNoneLeft after
+
                 match EndedProcess.termination ended with
                 | ProcessTermination.Signaled (killedBy, _) -> raise (Died (signo killedBy))
                 | other -> failwith $"a return to user mode ended the process with %O{other}"
@@ -335,8 +337,10 @@ module SignalFuzz =
                     events.Add
                         $"f%d{UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno}"
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> system <- after
-                | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
-                    match ended.Termination with
+                | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+                    EndedMachine.assertNoneLeft after
+
+                    match EndedProcess.termination ended with
                     | ProcessTermination.Signaled (killedBy, _) -> raise (Died (signo killedBy))
                     | other -> failwith $"kill ended the process with %O{other}"
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _))) ->
@@ -348,8 +352,10 @@ module SignalFuzz =
                     events.Add
                         $"f%d{UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno}"
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> system <- after
-                | Ok (Ok (ProcessFate.ProcessEnded ended)) ->
-                    match ended.Termination with
+                | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+                    EndedMachine.assertNoneLeft after
+
+                    match EndedProcess.termination ended with
                     | ProcessTermination.Signaled (killedBy, _) -> raise (Died (signo killedBy))
                     | other -> failwith $"raise ended the process with %O{other}"
                 | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _))) ->

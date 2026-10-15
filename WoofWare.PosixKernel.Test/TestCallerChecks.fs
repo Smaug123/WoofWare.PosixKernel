@@ -23,7 +23,7 @@ module TestCallerChecks =
         /// A call: a thread parked in no syscall.
         | Running
         /// A finishing function: a thread parked in the call it finishes, which
-        /// `world` parks `thread` in.
+        /// `world` parks `thread` in, and woken.
         | Finishing of thread : int
         /// The return to user mode: a thread parked in no syscall.
         | Returning
@@ -564,7 +564,7 @@ module TestCallerChecks =
                 "UnixThreadLifecycle.exitGroup"
                 (fun caller system ->
                     UnixThreadLifecycle.exitGroup caller 0 system
-                    |> ignore<EndedProcess<int, string>>
+                    |> ignore<EndedProcess * UnixSystem<int, string>>
                 )
             anyThread
                 "UnixScheduling.dispatch"
@@ -643,6 +643,7 @@ module TestCallerChecks =
         | Absent
         | Parked
         | Unparked
+        | Asleep
         | NotReturning
 
     let private reason (refused : Refused) : string =
@@ -651,6 +652,7 @@ module TestCallerChecks =
         | Refused.Absent -> "is not one of the process's threads"
         | Refused.Parked -> "and is making another call"
         | Refused.Unparked -> "is not parked, so there is no call to finish"
+        | Refused.Asleep -> "and nothing has woken it"
         | Refused.NotReturning -> "so it is not returning to user mode"
 
     /// A machine of `platform` holding two processes, each with threads 0 to 8,
@@ -811,10 +813,20 @@ module TestCallerChecks =
                     let own, other, view = world platform
                     let ghost = ProcessId.parseOrFail "TestCallerChecks" 77
 
+                    // Each sleeper of `own` woken, as `UnixWait.wake` would leave it
+                    // had what it waits for come and gone.
+                    let wokenView =
+                        (view, UnixSystem.threads own view)
+                        ||> Map.fold (fun view thread state ->
+                            match UnixThreadState.parkedIn state with
+                            | Some _ -> ForgedPark.wokenCaller (Caller.make own thread) view
+                            | None -> view
+                        )
+
                     let flavour = SimulatedUnixPlatform.flavour platform
 
                     for call in calls |> List.filter (fun call -> List.contains flavour call.On) do
-                        let cases : (Caller<int> * Refused option) list =
+                        let asleepCases : (Caller<int> * Refused option) list =
                             match call.Admits with
                             | Admits.Running ->
                                 [
@@ -826,7 +838,7 @@ module TestCallerChecks =
                                 ]
                             | Admits.Finishing sleeper ->
                                 [
-                                    Caller.make own sleeper, None
+                                    Caller.make own sleeper, Some Refused.Asleep
                                     Caller.make other sleeper, Some Refused.Unparked
                                     Caller.make ghost sleeper, Some Refused.NoProcess
                                     Caller.make own absent, Some Refused.Absent
@@ -857,8 +869,22 @@ module TestCallerChecks =
                                     Caller.make ghost 0, Some Refused.NoProcess
                                 ]
 
-                        for caller, expected in cases do
-                            let case = $"%O{platform}, %s{call.Name} by %O{caller}"
+                        // With every sleeper woken, a finishing function admits its own.
+                        let wokenCases : (Caller<int> * Refused option) list =
+                            match call.Admits with
+                            | Admits.Finishing sleeper -> [ Caller.make own sleeper, None ]
+                            | Admits.Running
+                            | Admits.Returning
+                            | Admits.AnyThread
+                            | Admits.Process -> []
+
+                        let cases =
+                            (asleepCases |> List.map (fun (caller, expected) -> caller, expected, view, ""))
+                            @ (wokenCases
+                               |> List.map (fun (caller, expected) -> caller, expected, wokenView, ", woken"))
+
+                        for caller, expected, view, woken in cases do
+                            let case = $"%O{platform}, %s{call.Name} by %O{caller}%s{woken}"
 
                             let thrown =
                                 try

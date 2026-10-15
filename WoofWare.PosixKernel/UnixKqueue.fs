@@ -134,7 +134,7 @@ type KeventOutcome =
     | Answered of events : Kevent list
     /// `kevent` did not return. The calling thread is parked, and sleeps until
     /// `UnixWait.satisfied` of the thread is non-empty and
-    /// `UnixWait.wakes` wakes it; then `UnixKqueue.finishKevent` finishes the
+    /// `UnixWait.wake` wakes it; then `UnixKqueue.finishKevent` finishes the
     /// call.
     | WouldBlock of WakeCondition
 
@@ -919,7 +919,7 @@ module UnixKqueue =
     /// Reporting events copies them out to the eventlist the call was made
     /// with; see `kevent` for the eventlists that refuses.
     ///
-    /// `caller` must be parked in a `kevent`.
+    /// `caller` must be parked in a `kevent`, and woken (`UnixWait.wake`).
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">This kernel is not Darwin-flavoured, and only Darwin has kqueue.</exception>
     let finishKevent<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

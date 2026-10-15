@@ -118,7 +118,8 @@ module TestSigcontGeneration =
     let rec private returns (thread : int) : Step =
         fun r ->
             match UnixSignal.tryOnReturnToUser (Callers.thread thread r.System) r.System with
-            | Error refusal -> Error (Stop.Receiver refusal)
+            | Error (ReturnToUserRefusal.Receiver refusal) -> Error (Stop.Receiver refusal)
+            | Error other -> Error (Stop.Other $"onReturnToUser: %A{other}")
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> Ok (withSystem system r)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, system)) ->
                 returns thread (withSystem system r)
@@ -350,9 +351,11 @@ module TestSigcontGeneration =
             | None -> Ok r
             | Some _ ->
 
-            match Lone.wakes (Set.singleton row.Sleeper) r.System with
-            | [] -> Ok r
-            | _ ->
+            match Lone.wake r.System with
+            | [], _ -> Ok r
+            | _, woken ->
+
+            let r = withSystem woken r
 
             if row.InSigsuspend then
                 match UnixSignal.tryFinishSigsuspend (Callers.thread row.Sleeper r.System) r.System with

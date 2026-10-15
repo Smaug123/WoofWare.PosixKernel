@@ -331,7 +331,7 @@ type UnixSystemDefect<'Thread> =
     /// would have no measured order.
     | DuplicateEventRegistrationOrdinal of registeredAt : int64
     /// A thread is parked on an open file description the table does not hold,
-    /// so its wait can never be satisfied, and asking `UnixWait.wakes` about
+    /// so its wait can never be satisfied, and asking `UnixWait.wake` about
     /// it crashes. A park holds what it names until the call returns, so
     /// this is a park recorded without the description, or one destroyed
     /// without the park being consulted.
@@ -362,7 +362,7 @@ type UnixSystemDefect<'Thread> =
         description : OpenFileDescriptionId *
         target : OpenFileTarget
     /// A thread is parked in a `kevent` on a description that is not a kqueue,
-    /// which no wait could have produced and on which `UnixWait.wakes`
+    /// which no wait could have produced and on which `UnixWait.wake`
     /// crashes.
     | ParkedKeventOnNonKqueue of
         thread : Caller<'Thread> *
@@ -470,7 +470,7 @@ type UnixSystemDefect<'Thread> =
     | PollQueueIdNotFresh of next : PollQueueId * existing : PollQueueId
     /// A thread is parked in an `accept` on a description that is not a listening
     /// socket, which no accept could have produced and on which
-    /// `UnixWait.wakes` crashes.
+    /// `UnixWait.wake` crashes.
     | ParkedAcceptOnNonListener of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in an `accept` on a listener a close has drained
     /// (`ListenState.Drained`): the close that drains a listener ends every
@@ -496,7 +496,7 @@ type UnixSystemDefect<'Thread> =
     | ListenerDrainedUnderLinux of socket : SocketId
     /// A thread is asleep in a pipe `read` or `write` through a description that
     /// names something other than the pipe end the call needs, which no such
-    /// call could have produced and on which `UnixWait.wakes` crashes.
+    /// call could have produced and on which `UnixWait.wake` crashes.
     | ParkedPipeTransferOnWrongTarget of
         thread : Caller<'Thread> *
         description : OpenFileDescriptionId *
@@ -510,7 +510,7 @@ type UnixSystemDefect<'Thread> =
     /// socket through a description that names something other than an end
     /// of a connection,
     /// which no such call could have produced and on which
-    /// `UnixWait.wakes` crashes.
+    /// `UnixWait.wake` crashes.
     | ParkedConnectionTransferOnNonConnection of thread : Caller<'Thread> * description : OpenFileDescriptionId
     /// A thread is asleep in a connection transfer whose progress no call could
     /// have made: a read of nothing but a Linux `recv`, or a write of `count`
@@ -868,30 +868,6 @@ module internal ProcessCreationRefusal =
         | ProcessCreationRefusal.NoFreeProcessId -> RefusalKind.Unmodelled
         | ProcessCreationRefusal.DarwinPidMaxReached _ -> RefusalKind.Unmodelled
         | ProcessCreationRefusal.DarwinThreadIdCounterExhausted -> RefusalKind.Unmodelled
-
-/// Why `UnixSystem.endProcess` will not end a process: what closing
-/// its descriptors would do has not been measured.
-[<RequireQualifiedAccess>]
-type internal ProcessEndRefusal =
-    /// Closing the process's descriptors releases an open file description
-    /// this library will not release (`DescriptionReleaseRefusal`): so far,
-    /// the last reference to a connected socket whose `SO_LINGER` would make
-    /// its close reset the connection or wait.
-    | Release of DescriptionReleaseRefusal
-
-[<RequireQualifiedAccess>]
-module internal ProcessEndRefusal =
-    /// What this library knows about why it will not end the process, for a
-    /// client composing a diagnostic that names its own knob.
-    let describe (refusal : ProcessEndRefusal) : string =
-        match refusal with
-        | ProcessEndRefusal.Release refusal ->
-            $"the process's end closes its descriptors, and %s{DescriptionReleaseRefusal.describe refusal}"
-
-    /// Which exception a public entry point raises this refusal as.
-    let kind (refusal : ProcessEndRefusal) : RefusalKind =
-        match refusal with
-        | ProcessEndRefusal.Release inner -> DescriptionReleaseRefusal.kind inner
 
 [<RequireQualifiedAccess>]
 module UnixSystem =
@@ -1507,22 +1483,13 @@ module UnixSystem =
     /// threads, each processor's occupant against the threads, and the machine's
     /// filesystem type, buffer check and symbolic links against its platform.
     ///
-    /// When `complete`, `processes` is every process on the machine, each with
-    /// its threads, and every clause is checked. Otherwise `processes` is some of
-    /// them, and only the clauses those can check truthfully are: every clause
-    /// that counts or collects across every process (the holds on
-    /// descriptions, the live thread and process IDs, the current directory
-    /// holds) is skipped.
+    /// `processes` is every process on the machine, each with its threads.
     let internal machineDefects<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (complete : bool)
         (processes : (UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>) list)
         (scheduling : UnixSchedulingState)
         (machine : UnixMachineState)
         : UnixSystemDefect<'Thread> list
         =
-        let onlyIfComplete (defects : unit -> UnixSystemDefect<'Thread> list) : UnixSystemDefect<'Thread> list =
-            if complete then defects () else []
-
         let allThreads : (Caller<'Thread> * UnixThreadState) list =
             processes
             |> List.collect (fun (proc, threads) ->
@@ -2117,58 +2084,52 @@ module UnixSystem =
         // one for each time a park names it. A park naming a description the
         // table does not hold is `ParkedOnAbsentDescription`'s.
         let holdCounts =
-            onlyIfComplete
-            <| fun () ->
-
-                let implied =
-                    allThreads
-                    |> List.collect (fun (_, state) ->
-                        match state.Parked with
-                        | None -> []
-                        | Some park -> ParkedSyscall.descriptions park.Syscall
-                    )
-                    |> List.countBy id
-                    |> Map.ofList
-
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
-                |> List.choose (fun (id, _) ->
-                    let recorded = OpenFileTable.holdCount id machine.OpenFiles |> Option.defaultValue 0
-                    let parks = Map.tryFind id implied |> Option.defaultValue 0
-
-                    if recorded = parks then
-                        None
-                    else
-                        Some (UnixSystemDefect.HoldCountMismatch (id, recorded, parks))
+            let implied =
+                allThreads
+                |> List.collect (fun (_, state) ->
+                    match state.Parked with
+                    | None -> []
+                    | Some park -> ParkedSyscall.descriptions park.Syscall
                 )
+                |> List.countBy id
+                |> Map.ofList
+
+            OpenFileTable.descriptions machine.OpenFiles
+            |> Map.toList
+            |> List.choose (fun (id, _) ->
+                let recorded = OpenFileTable.holdCount id machine.OpenFiles |> Option.defaultValue 0
+                let parks = Map.tryFind id implied |> Option.defaultValue 0
+
+                if recorded = parks then
+                    None
+                else
+                    Some (UnixSystemDefect.HoldCountMismatch (id, recorded, parks))
+            )
 
         // Each sleeping Darwin poll's kqueue against the parks of every
         // process's threads: exactly one names it. A park naming one the machine
         // does not hold is `ParkedOnAbsentPollQueue`'s.
         let pollQueueParks =
-            onlyIfComplete
-            <| fun () ->
-
-                let parks =
-                    allThreads
-                    |> List.choose (fun (_, state) ->
-                        match state.Parked with
-                        | Some {
-                                   Syscall = ParkedSyscall.KqueuePoll poll
-                               } -> Some poll.Queue
-                        | Some _
-                        | None -> None
-                    )
-                    |> List.countBy id
-                    |> Map.ofList
-
-                machine.PollQueues
-                |> Map.toList
-                |> List.choose (fun (queue, _) ->
-                    match Map.tryFind queue parks |> Option.defaultValue 0 with
-                    | 1 -> None
-                    | count -> Some (UnixSystemDefect.PollQueueNotHeldOnce (queue, count))
+            let parks =
+                allThreads
+                |> List.choose (fun (_, state) ->
+                    match state.Parked with
+                    | Some {
+                               Syscall = ParkedSyscall.KqueuePoll poll
+                           } -> Some poll.Queue
+                    | Some _
+                    | None -> None
                 )
+                |> List.countBy id
+                |> Map.ofList
+
+            machine.PollQueues
+            |> Map.toList
+            |> List.choose (fun (queue, _) ->
+                match Map.tryFind queue parks |> Option.defaultValue 0 with
+                | 1 -> None
+                | count -> Some (UnixSystemDefect.PollQueueNotHeldOnce (queue, count))
+            )
 
         let pollQueueFreshness =
             machine.PollQueues
@@ -2416,29 +2377,24 @@ module UnixSystem =
                 )
 
             let live =
-                onlyIfComplete
-                <| fun () ->
+                let held = allThreads |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
+                let recorded = ThreadIdAllocator.live allocator
 
-                    let held = allThreads |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
-                    let recorded = ThreadIdAllocator.live allocator
-
-                    if held = recorded then
-                        []
-                    else
-                        [
-                            UnixSystemDefect.LiveThreadIdsMismatch (
-                                Set.difference recorded held,
-                                Set.difference held recorded
-                            )
-                        ]
+                if held = recorded then
+                    []
+                else
+                    [
+                        UnixSystemDefect.LiveThreadIdsMismatch (
+                            Set.difference recorded held,
+                            Set.difference held recorded
+                        )
+                    ]
 
             allocatorFlavour @ duplicates @ unmintable @ live
 
         // Each processor's occupant against the machine and the threads: the
         // processor is the machine's, the occupant is a live thread, and that
-        // thread's processor is the one it occupies. Short of every process, an
-        // occupant of no process given is checked against the thread IDs the
-        // machine records as live, which every process's threads contribute to.
+        // thread's processor is the one it occupies.
         let occupants =
             let byThreadId =
                 allThreads
@@ -2463,14 +2419,7 @@ module UnixSystem =
                             []
                         else
                             [ UnixSystemDefect.OccupantOnAnotherCpu (thread, cpu, state.Cpu) ]
-                    | None ->
-                        if
-                            complete
-                            || not (Set.contains occupant (ThreadIdAllocator.live machine.ThreadIds))
-                        then
-                            [ UnixSystemDefect.OccupantWithoutThread (cpu, occupant) ]
-                        else
-                            []
+                    | None -> [ UnixSystemDefect.OccupantWithoutThread (cpu, occupant) ]
 
                 beyond @ thread
             )
@@ -2495,46 +2444,40 @@ module UnixSystem =
                     [ UnixSystemDefect.ProcessIdCounterNotOfFlavour (flavour, table.Counter) ]
 
             let live =
-                onlyIfComplete
-                <| fun () ->
+                let held = processes |> List.map (fun (proc, _) -> proc.ProcessId) |> Set.ofList
 
-                    let held = processes |> List.map (fun (proc, _) -> proc.ProcessId) |> Set.ofList
+                let recorded = ProcessIdTable.live table
 
-                    let recorded = ProcessIdTable.live table
-
-                    if held = recorded then
-                        []
-                    else
-                        [
-                            UnixSystemDefect.LiveProcessIdsMismatch (
-                                Set.difference recorded held,
-                                Set.difference held recorded
-                            )
-                        ]
+                if held = recorded then
+                    []
+                else
+                    [
+                        UnixSystemDefect.LiveProcessIdsMismatch (
+                            Set.difference recorded held,
+                            Set.difference held recorded
+                        )
+                    ]
 
             counter @ live
 
         // The current directory holds against the processes standing in them.
         let currentDirectories =
-            onlyIfComplete
-            <| fun () ->
+            let standing =
+                processes
+                |> List.countBy (fun (proc, _) -> proc.CurrentDirectoryInode)
+                |> Map.ofList
 
-                let standing =
-                    processes
-                    |> List.countBy (fun (proc, _) -> proc.CurrentDirectoryInode)
-                    |> Map.ofList
+            Set.union (Map.keys standing |> Set.ofSeq) (Map.keys machine.CurrentDirectories |> Set.ofSeq)
+            |> Set.toList
+            |> List.choose (fun inode ->
+                let recorded = Map.tryFind inode machine.CurrentDirectories |> Option.defaultValue 0
+                let standing = Map.tryFind inode standing |> Option.defaultValue 0
 
-                Set.union (Map.keys standing |> Set.ofSeq) (Map.keys machine.CurrentDirectories |> Set.ofSeq)
-                |> Set.toList
-                |> List.choose (fun inode ->
-                    let recorded = Map.tryFind inode machine.CurrentDirectories |> Option.defaultValue 0
-                    let standing = Map.tryFind inode standing |> Option.defaultValue 0
-
-                    if recorded = standing then
-                        None
-                    else
-                        Some (UnixSystemDefect.CurrentDirectoryHoldMismatch (inode, recorded, standing))
-                )
+                if recorded = standing then
+                    None
+                else
+                    Some (UnixSystemDefect.CurrentDirectoryHoldMismatch (inode, recorded, standing))
+            )
 
         // Every kqueue belongs to a live process, whose table its registrations
         // are read in.
@@ -3409,7 +3352,6 @@ module UnixSystem =
 
         let machine =
             machineDefects
-                true
                 (slots |> List.map (fun (_, slot) -> slot.Process, slot.Threads))
                 system.Scheduling
                 system.Machine
@@ -3421,10 +3363,7 @@ module UnixSystem =
         let tables =
             slots
             |> List.collect (fun (pid, slot) ->
-                FileDescriptorRegistry.ofTables
-                    (DescriptorCensus.OneProcessOf slot.Process.ProcessId)
-                    slot.Process.FileDescriptors
-                    system.Machine.OpenFiles
+                FileDescriptorRegistry.ofTables slot.Process.FileDescriptors system.Machine.OpenFiles
                 |> FileDescriptorRegistry.checkDescriptorTableInvariants slot.Process.ProcessId
                 |> List.map (fun defect -> UnixSystemDefect.DescriptorTable (pid, defect))
             )
@@ -3889,184 +3828,3 @@ module UnixSystem =
         =
         tryLaunch launch system
         |> Refusal.orRaise "UnixSystem.launch" ProcessCreationRefusal.kind ProcessCreationRefusal.describe
-
-    /// `endProcess`, with a refusal answered as the `Error` rather than raised.
-    let internal tryEndProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : Result<ProcessTermination * UnixSystem<'Thread, 'Handler>, ProcessEndRefusal>
-        =
-        let view = ended.EndedIn
-        let processId = view.Process.ProcessId
-
-        // The process with no thread left, in the kernel the call that ended it
-        // ran in. Releasing a description reads and writes the machine alone,
-        // and dropping a descriptor the process's table.
-        let dead : ProcessView<'Thread, 'Handler> =
-            { view with
-                Machine = ended.Machine
-                Scheduling = ended.Scheduling
-                Process = ended.FinalProcess
-                Threads = Map.empty
-            }
-
-        // First what nothing references any more: what the process's calls in
-        // flight held, whose holds went with its threads, and what the call that
-        // ended the process let go of as it returned. These go as the calls
-        // return when their threads die, before the process's files are closed;
-        // the order between the two has not been measured. On a machine no
-        // process's end has left so, no description is unreferenced.
-        let unreferenced =
-            OpenFileTable.descriptions dead.Machine.OpenFiles
-            |> Map.keys
-            |> Seq.filter (fun id ->
-                OpenFileTable.descriptorCount id dead.Machine.OpenFiles = Some 0
-                && OpenFileTable.holdCount id dead.Machine.OpenFiles = Some 0
-            )
-            |> Seq.toList
-
-        let released =
-            ((Ok dead : Result<ProcessView<'Thread, 'Handler>, DescriptionReleaseRefusal>), unreferenced)
-            ||> List.fold (fun state id ->
-                match state with
-                | Error refusal -> Error refusal
-                | Ok dead ->
-                    match OpenFileTable.destroyIfUnreferenced id dead.Machine.OpenFiles with
-                    | _, None ->
-                        failwith
-                            $"UnixSystem.endProcess: open file description %O{id} was unreferenced a moment ago, and destroying it destroyed nothing (this is a bug in this library)."
-                    | openFiles, Some destroyed ->
-                        UnixSystemState.mapOpenFiles (fun _ -> openFiles) dead
-                        |> ObjectLifetime.releaseDestroyed destroyed
-            )
-
-        // Then every descriptor. Measured on Linux 6.18.5 and Darwin 27.0.0
-        // (`exit-close-order.c`, sections O and D): Linux drops them lowest
-        // first and releases each description the drop let go of only after
-        // every drop, the last let go of first, as its deferred final `fput`s
-        // run; Darwin drops them highest first, releasing each as it goes.
-        let drop
-            (fd : int)
-            (dead : ProcessView<'Thread, 'Handler>)
-            : ProcessView<'Thread, 'Handler> * DestroyedDescription option
-            =
-            match FileDescriptorRegistry.dropDescriptor processId fd (UnixSystemState.fileDescriptors dead) with
-            | Error FileDescriptorCloseError.BadFd ->
-                failwith
-                    $"UnixSystem.endProcess: process %O{processId}'s table held descriptor %d{fd} a moment ago, and closing it answered EBADF (this is a bug in this library)."
-            | Ok (registry, destroyed) -> UnixSystemState.withFileDescriptors registry dead, destroyed
-
-        let closed =
-            match released with
-            | Error refusal -> Error refusal
-            | Ok dead ->
-                let ascending =
-                    FileDescriptorRegistry.fds (UnixSystemState.fileDescriptors dead)
-                    |> Map.keys
-                    |> Seq.sort
-                    |> Seq.toList
-
-                match SimulatedUnixPlatform.flavour dead.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux ->
-                    // A description the drops let go of is still a reference
-                    // until its deferred `fput` releases it, as Linux's file
-                    // is: so each is held while the drops run, and destroyed
-                    // only as its turn comes. Measured
-                    // (`inotify-self-probe.c` section X): of two files held
-                    // through descriptors let go of in turn, the one whose
-                    // name an unreleased file still holds goes later.
-                    // Each description held, by the last of this process's
-                    // descriptors naming it.
-                    let dead, held =
-                        ((dead, Map.empty), ascending)
-                        ||> List.fold (fun (dead, held) fd ->
-                            let id =
-                                match FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors dead) with
-                                | Some id -> id
-                                | None ->
-                                    failwith
-                                        $"UnixSystem.endProcess: process %O{processId}'s table held descriptor %d{fd} a moment ago, and it names no description now (this is a bug in this library)."
-
-                            let dead =
-                                if Map.containsKey id held then
-                                    dead
-                                else
-                                    UnixSystemState.mapOpenFiles (OpenFileTable.hold id) dead
-
-                            match drop fd dead with
-                            | dead, None -> dead, Map.add id fd held
-                            | _, Some destroyed ->
-                                failwith
-                                    $"UnixSystem.endProcess: closing descriptor %d{fd} destroyed %A{destroyed.Description.Target}, which this call holds (this is a bug in this library)."
-                        )
-
-                    // The last let go of first.
-                    let released = held |> Map.toList |> List.sortByDescending snd |> List.map fst
-
-                    (Ok dead, released)
-                    ||> List.fold (fun state id ->
-                        match state with
-                        | Error refusal -> Error refusal
-                        | Ok dead ->
-
-                        let dead = UnixSystemState.mapOpenFiles (OpenFileTable.releaseHold id) dead
-
-                        match OpenFileTable.destroyIfUnreferenced id dead.Machine.OpenFiles with
-                        | _, None -> Ok dead
-                        | openFiles, Some destroyed ->
-                            UnixSystemState.mapOpenFiles (fun _ -> openFiles) dead
-                            |> ObjectLifetime.releaseDestroyed destroyed
-                    )
-                | SimulatedUnixFlavour.Darwin ->
-                    (Ok dead, List.rev ascending)
-                    ||> List.fold (fun state fd ->
-                        match state with
-                        | Error refusal -> Error refusal
-                        | Ok dead ->
-
-                        match drop fd dead with
-                        | dead, None -> Ok dead
-                        | dead, Some destroyed -> ObjectLifetime.releaseDestroyed destroyed dead
-                    )
-
-        match closed with
-        | Error refusal -> Error (ProcessEndRefusal.Release refusal)
-        | Ok dead ->
-            Ok (
-                ended.Termination,
-                {
-                    Machine = dead.Machine
-                    Scheduling = dead.Scheduling
-                    Processes = dead.Others
-                }
-            )
-
-    /// End the process `ended` says ended, in the kernel as the call that ended
-    /// it left it (`UnixThreadLifecycle.exitGroup`, the last thread's exit, or
-    /// a signal whose default ends the process): how it ended, and the system
-    /// without it.
-    ///
-    /// What a real kernel does at exit, where another process can see it.
-    /// The process's threads are gone already, and with
-    /// them the holds their calls in flight had; any description only those
-    /// calls held, or that the call which ended the process let go of as it
-    /// returned, is released now. Then every descriptor of the process is
-    /// closed, in the order each flavour measurably closes them
-    /// (`exit-close-order.c`, Linux 6.18.5 and Darwin 27.0.0, which a peer
-    /// watching several connections sees as the order of their FINs): Linux
-    /// drops the descriptors lowest first and then releases what that let go
-    /// of, the last first; Darwin drops them highest first, releasing each as
-    /// it goes. Each release does everything a `close(2)` of the last
-    /// descriptor onto the description does: a connected peer gets its FIN,
-    /// a lock is let go of, a pipe end closes, an epoll instance or a kqueue
-    /// goes, a listener goes and resets each client still in its accept
-    /// queue, whichever process holds it, and every registration made through
-    /// the descriptor goes with it. The process ID, thread IDs and current
-    /// directory are let go of with the threads.
-    ///
-    /// Refuses where a close would be refused.
-    let endProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : ProcessTermination * UnixSystem<'Thread, 'Handler>
-        =
-        tryEndProcess ended
-        |> Refusal.orRaise "UnixSystem.endProcess" ProcessEndRefusal.kind ProcessEndRefusal.describe

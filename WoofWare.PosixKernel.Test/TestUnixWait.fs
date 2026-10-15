@@ -121,7 +121,14 @@ module TestUnixWait =
 
     let private apply (op : Op) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match op with
-        | Op.Park thread -> Lone.UnixWait.park thread (parkOfThread thread) system
+        | Op.Park thread ->
+            // A re-park is a woken thread's.
+            let system =
+                match UnixThreadTable.parkOf thread (Lone.threads system) with
+                | Some _ -> ForgedPark.woken thread system
+                | None -> system
+
+            Lone.UnixWait.park thread (parkOfThread thread) system
         | Op.Unpark thread -> Lone.UnixParkState.unpark thread system
         | Op.AdvanceClock nanoseconds ->
             { system with
@@ -178,6 +185,7 @@ module TestUnixWait =
                     | None -> failwith "expected the park to be recorded"
                     | Some park ->
                         park.Syscall |> shouldEqual (parkOfThread thread)
+                        park.State |> shouldEqual ParkState.Asleep
 
                         match lastMinted with
                         | Some last -> park.Ordinal |> shouldBeGreaterThan last
@@ -207,48 +215,140 @@ module TestUnixWait =
             |> Lone.UnixWait.park 4 (parkOfThread 4)
             |> Lone.UnixWait.park 3 (parkOfThread 3)
 
-        let asleep = Set.ofList [ 3 ; 4 ]
-
         let fired =
             Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
 
-        Lone.wakes asleep parked |> shouldEqual []
+        Lone.wakes parked |> shouldEqual []
 
-        Lone.wakes asleep (releaseLock parked) |> shouldEqual [ 4, fired ; 3, fired ]
+        Lone.wakes (releaseLock parked) |> shouldEqual [ 4, fired ; 3, fired ]
 
-        // A re-park moves the waiter behind every park already made.
-        let reparked = parked |> Lone.UnixWait.park 4 (parkOfThread 4)
+        // A re-park, a woken waiter's, moves the waiter behind every park already made.
+        let reparked = parked |> ForgedPark.woken 4 |> Lone.UnixWait.park 4 (parkOfThread 4)
 
-        Lone.wakes asleep (releaseLock reparked) |> shouldEqual [ 3, fired ; 4, fired ]
+        Lone.wakes (releaseLock reparked) |> shouldEqual [ 3, fired ; 4, fired ]
 
     [<Test>]
-    let ``only the threads the client holds asleep are woken`` () : unit =
-        // A woken thread keeps its park until its call finishes, so the park alone would wake
-        // it a second time.
-        let released =
+    let ``a woken thread keeps its park, records what woke it, and is not woken again`` () : unit =
+        let fired =
+            Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
+
+        let parked =
             system
             |> Lone.UnixWait.park 3 (parkOfThread 3)
             |> Lone.UnixWait.park 4 (parkOfThread 4)
-            |> releaseLock
 
-        Lone.wakes (Set.singleton 4) released
-        |> shouldEqual (
-            [
-                4, Set.singleton (WakePrimitive.FlockGrantable (blocked, FlockMode.Exclusive))
-            ]
-        )
+        let released = releaseLock parked
+        let woken, after = Lone.wake released
+        woken |> shouldEqual [ 3, fired ; 4, fired ]
+
+        for thread in [ 3 ; 4 ] do
+            let before = UnixThreadTable.parkOf thread (Lone.threads released) |> Option.get
+            before.State |> shouldEqual ParkState.Asleep
+
+            UnixThreadTable.parkOf thread (Lone.threads after)
+            |> shouldEqual (
+                Some
+                    { before with
+                        State = ParkState.Woken fired
+                    }
+            )
+
+        // Nothing else moved.
+        after
+        |> Lone.mapThreads (fun _ -> Lone.threads released)
+        |> shouldEqual released
+
+        Lone.wake after |> fst |> shouldEqual []
+        UnixWait.satisfied (Callers.thread 3 after) after |> shouldEqual (Some fired)
 
     [<Test>]
-    let ``a thread held asleep with no park is a client bug`` () : unit =
-        let exn =
-            Assert.Throws<exn> (fun () -> Lone.wakes (Set.singleton 1) system |> ignore)
+    let ``a sweep that wakes nobody answers the system it was given`` () : unit =
+        let parked =
+            system
+            |> Lone.UnixWait.park 3 (parkOfThread 3)
+            |> Lone.UnixWait.park 1 (parkOfThread 1)
 
-        exn.Message |> shouldContainText "records no park"
+        let woken, after = UnixWait.wake parked
+        woken |> shouldEqual []
+        obj.ReferenceEquals (after, parked) |> shouldEqual true
 
-        let exn =
-            Assert.Throws<exn> (fun () -> Lone.deadlines (Set.singleton 1) system |> ignore)
+    /// Under Linux, a pipe's readers queue exclusively. Two readers sleep on an
+    /// empty pipe, and the client names neither of them to the kernel: the
+    /// kernel's own parks say who sleeps and who has been woken.
+    [<Test>]
+    let ``a woken waiter holds its exclusive queue until it finishes, whatever the client remembers`` () : unit =
+        let system =
+            UnixSystem.initial<int, string> SimulatedUnixPlatform.linuxX64
+            |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+            |> Threads.ensure 1
+            |> Threads.ensure 2
 
-        exn.Message |> shouldContainText "records no park"
+        let readFd, writeFd, system =
+            match UnixPipe.tryPipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
+            | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> readFd, writeFd, system
+            | other -> failwith $"pipe2 did not make a pipe: %A{other}"
+
+        let reads (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match UnixReadWrite.tryRead (Callers.thread thread system) readFd UserBuffer.Mapped 1UL system with
+            | Ok (ReadOutcome.WouldBlock _, system) -> system
+            | other -> failwith $"expected thread %d{thread}'s read to sleep, got %A{other}"
+
+        let writesOne (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+            match
+                WriteOutcomes.admitThenWrite
+                    0
+                    writeFd
+                    UserBuffer.Mapped
+                    (System.Collections.Immutable.ImmutableArray.Create 7uy)
+                    system
+            with
+            | Ok (WriteStep.Returns (WriteAnswer.Completed 1L, system)) -> system
+            | other -> failwith $"expected the write to complete, got %A{other}"
+
+        let system = system |> reads 1 |> reads 2 |> writesOne
+
+        // The byte wakes the reader that parked first.
+        let system = Lone.waking [ 1 ] system
+
+        // Woken and not yet finished, thread 1 stands for the byte: a second sweep, and one
+        // after another byte, wake nobody else.
+        Lone.wakes system |> shouldEqual []
+        let system = writesOne system
+        Lone.wakes system |> shouldEqual []
+
+        // Thread 1 takes a byte, and then thread 2 wakes for the other.
+        let system =
+            match UnixReadWrite.tryFinishRead (Callers.thread 1 system) system with
+            | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), system) when bytes.Length = 1 -> system
+            | other -> failwith $"expected thread 1's read to take a byte, got %A{other}"
+
+        Lone.waking [ 2 ] system |> ignore<UnixSystem<int, string>>
+
+    [<Test>]
+    let ``deadlines are those of the sleeping threads, not of the woken`` () : unit =
+        let waitUntil (deadline : int64) : ParkedSyscall =
+            ParkedSyscall.EpollWait
+                {
+                    Epoll = blocked
+                    MaxEvents = 1
+                    Buffer = UserBuffer.Mapped
+                    Deadline = Some deadline
+                }
+
+        let parked =
+            system
+            |> Lone.UnixWait.park 1 (waitUntil 5L)
+            |> Lone.UnixWait.park 2 (waitUntil 9L)
+
+        Lone.deadlines parked |> shouldEqual [ 5L ; 9L ]
+
+        let woken =
+            { parked with
+                Scheduling = UnixSchedulingState.advanceClock 5L parked.Scheduling
+            }
+            |> Lone.waking [ 1 ]
+
+        Lone.deadlines woken |> shouldEqual [ 9L ]
 
     [<Test>]
     let ``a quiet epoll instance wakes none of its waiters, however many there are`` () : unit =
@@ -258,7 +358,7 @@ module TestUnixWait =
             |> Lone.UnixWait.park 1 (parkOfThread 1)
             |> Lone.UnixWait.park 2 (parkOfThread 2)
 
-        Lone.wakes (Set.ofList [ 1 ; 2 ]) parked |> shouldEqual []
+        Lone.wakes parked |> shouldEqual []
 
     [<Test>]
     let ``clearing a park lets another syscall park`` () : unit =
@@ -281,6 +381,58 @@ module TestUnixWait =
             Assert.Throws<exn> (fun () -> Lone.UnixWait.park 1 (parkOfThread 3) parked |> ignore)
 
         exn.Message |> shouldContainText "without clearing the first"
+
+    [<Test>]
+    let ``a park's state moves only by a wake and a woken thread's re-park`` () : unit =
+        let parked = system |> Lone.UnixWait.park 1 (parkOfThread 1)
+        let park = UnixThreadTable.parkOf 1 (Lone.threads parked) |> Option.get
+        park.State |> shouldEqual ParkState.Asleep
+
+        let woken =
+            { park with
+                State = ParkState.Woken (Set.singleton WakePrimitive.SignalDeliverable)
+            }
+
+        // A re-park of a thread nothing has woken.
+        let exn =
+            Assert.Throws<exn> (fun () -> Lone.UnixWait.park 1 (parkOfThread 1) parked |> ignore)
+
+        exn.Message |> shouldContainText "made only of a woken park"
+
+        // A park that starts woken.
+        let exn =
+            Assert.Throws<exn> (fun () -> UnixThreadTable.withPark 2 woken (Lone.threads system) |> ignore)
+
+        exn.Message |> shouldContainText "woken already"
+
+        // A rewrite in place that changes the state.
+        let exn =
+            Assert.Throws<exn> (fun () -> UnixThreadTable.withPark 1 woken (Lone.threads parked) |> ignore)
+
+        exn.Message |> shouldContainText "changes its state"
+
+        // A woken thread's re-park, asleep again; and a rewrite in place that keeps the
+        // state.
+        let wokenSystem = ForgedPark.woken 1 parked
+        let reparked = Lone.UnixWait.park 1 (parkOfThread 1) wokenSystem
+
+        (UnixThreadTable.parkOf 1 (Lone.threads reparked) |> Option.get).State
+        |> shouldEqual ParkState.Asleep
+
+        let wokenPark = UnixThreadTable.parkOf 1 (Lone.threads wokenSystem) |> Option.get
+
+        UnixThreadTable.withPark 1 wokenPark (Lone.threads wokenSystem)
+        |> UnixThreadTable.parkOf 1
+        |> shouldEqual (Some wokenPark)
+
+        // A park is woken once.
+        let exn =
+            Assert.Throws<exn> (fun () ->
+                UnixThreadTable.markWoken 1 (Set.singleton WakePrimitive.SignalDeliverable) (Lone.threads wokenSystem)
+                |> ignore
+            )
+
+        exn.Message |> shouldContainText "woken already"
 
     /// Every park the library makes goes through `UnixWait.parkWaiting`, which
     /// a Debug build holds to the call's having nothing to wake it yet, a

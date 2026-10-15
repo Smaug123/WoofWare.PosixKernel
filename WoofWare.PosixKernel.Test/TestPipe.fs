@@ -360,14 +360,14 @@ module TestPipe =
 
                     let mutable transferred = None
 
-                    let actual : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal> =
+                    let actual : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal> =
                         match Lone.UnixReadWrite.tryAdmitWrite (Lone.leader system) fd buffer (uint64 count) system with
                         | Error refusal -> Error refusal
                         | Ok (WriteStep.Returns (WriteAdmission.Answered answer, after)) ->
                             Ok (WriteStep.Returns (answer, after))
                         | Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered answer, signal, after)) ->
                             Ok (WriteStep.ReturnsRaising (answer, signal, after))
-                        | Ok (WriteStep.ProcessEnded endedProcess) -> Ok (WriteStep.ProcessEnded endedProcess)
+                        | Ok (WriteStep.ProcessEnded (ended, after)) -> Ok (WriteStep.ProcessEnded (ended, after))
                         | Ok (WriteStep.WouldBlock (condition, after)) -> Ok (WriteStep.WouldBlock (condition, after))
                         | Ok (WriteStep.Restarts _) as other ->
                             failwith $"%s{where ()}: a write that never slept restarted: %A{other}"
@@ -413,11 +413,11 @@ module TestPipe =
                         let raised = sigPipeFrom flavour (Lone.leader system)
 
                         match sigPipe, actual with
-                        | SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
-                            endedProcess.Termination
+                        | SignalDisposition.Default, Ok (WriteStep.ProcessEnded (endedProcess, after)) ->
+                            EndedProcess.termination endedProcess
                             |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
 
-                            EndedMachine.assertThreadsGone system endedProcess
+                            EndedMachine.assertAsExit (Callers.leader system) system after
                             ended <- true
                         | SignalDisposition.Ignore,
                           Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed UnixError.EPIPE, signal, after)) ->
@@ -1046,9 +1046,11 @@ module TestPipe =
                                     // Nothing raised, nothing changed.
                                     answer |> shouldEqual (WriteAnswer.Completed 0L)
                                     after |> shouldEqual system
-                                | true, SignalDisposition.Default, Ok (WriteStep.ProcessEnded endedProcess) ->
-                                    endedProcess.Termination
+                                | true, SignalDisposition.Default, Ok (WriteStep.ProcessEnded (endedProcess, after)) ->
+                                    EndedProcess.termination endedProcess
                                     |> shouldEqual (ProcessTermination.Signaled (Signal.SIGPIPE, false))
+
+                                    EndedMachine.assertAsExit (Callers.leader system) system after
                                 | true, SignalDisposition.Ignore, Ok (WriteStep.ReturnsRaising (answer, signal, after)) ->
                                     (answer, signal) |> shouldEqual (WriteAnswer.Failed UnixError.EPIPE, raised)
                                     // No timestamp moves, even on Darwin.

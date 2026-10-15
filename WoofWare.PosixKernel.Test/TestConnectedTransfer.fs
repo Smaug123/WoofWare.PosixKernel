@@ -95,7 +95,7 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         WriteOutcomes.admitThenWriteAs
             (Caller.make pid (Proc.leader pid system))
@@ -109,7 +109,7 @@ module TestConnectedTransfer =
         (fd : int)
         (count : int)
         (system : UnixSystem<int, string>)
-        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>
+        : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>
         =
         sendIn (Lone.pid system) fd count system
 
@@ -263,10 +263,7 @@ module TestConnectedTransfer =
 
     [<Test>]
     let ``a blocking transfer that would sleep sleeps, and one that need not is answered`` () : unit =
-        let sleeps
-            (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int, string>, WriteRefusal>)
-            : unit
-            =
+        let sleeps (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) : unit =
             match outcome with
             | Ok (WriteStep.WouldBlock _) -> ()
             | other -> failwith $"expected the write to sleep, got %A{other}"
@@ -875,6 +872,128 @@ module TestConnectedTransfer =
                 | GetSockOptAnswer.Reported (OptionValue.Int 0), _ -> ()
                 | other -> failwith $"%s{row}: SO_ERROR(p) answered %A{other}"
             | _, other -> failwith $"%s{row}: expected %A{expected}, got %A{other}"
+
+    /// A process's end closes its descriptors, so where section G's close of
+    /// `c` would wait, and the end releases `c` while its peer is still open,
+    /// every call that would end the process refuses, as the close does,
+    /// naming the same socket: `exit_group`, which the public
+    /// function raises as `UnmodelledException`, the last thread's exit, a
+    /// `kill` or `raise` whose signal kills, a return to user mode that takes
+    /// such a signal, and a write whose SIGPIPE does.
+    [<Test>]
+    let ``every call that would end a process refuses where its end would close a socket that lingers`` () : unit =
+        let rows =
+            [
+                SimulatedUnixPlatform.linuxX64, false
+                SimulatedUnixPlatform.linuxX64, true
+                SimulatedUnixPlatform.macOsArm64, true
+            ]
+
+        for platform, blocking in rows do
+            let row = $"%A{SimulatedUnixPlatform.flavour platform} blocking %b{blocking}"
+            let c, _, _, system = lingerRowSetUp platform "unsent" true blocking
+            let caller = Callers.leader system
+
+            // `c` at the highest descriptor, so that each flavour's end releases
+            // it first, while its peer is still open.
+            let c, system =
+                match UnixDescriptor.dup2 caller c 20 system with
+                | SyscallAnswer.Completed 20L, system ->
+                    match UnixDescriptor.close caller c system with
+                    | SyscallAnswer.Completed 0L, system -> 20, system
+                    | other -> failwith $"%s{row}: close: %A{other}"
+                | other -> failwith $"%s{row}: dup2: %A{other}"
+
+            let socket = socketOf c system
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
+            let signo (signal : Signal) : int = Signal.toRawSignoUnder numbering signal
+
+            let lingers (call : string) (refusal : ProcessEndRefusal) : unit =
+                match refusal with
+                | ProcessEndRefusal.Release (DescriptionReleaseRefusal.LingeringClose (refused, _, unsent)) ->
+                    (call, refused) |> shouldEqual (call, socket)
+                    unsent |> shouldBeGreaterThan 0
+                | other -> failwith $"%s{row}: %s{call} was refused with %A{other}"
+
+            match UnixThreadLifecycle.tryExitGroup caller 0 system with
+            | Error refusal -> lingers "exit_group" refusal
+            | Ok _ -> failwith $"%s{row}: exit_group ended the process"
+
+            let thrown =
+                Assert.Throws<UnmodelledException> (fun () -> UnixThreadLifecycle.exitGroup caller 0 system |> ignore)
+
+            thrown.Message |> shouldContainText "SO_LINGER"
+
+            match UnixSignal.tryKill caller (ProcessId.toInt32 (Lone.pid system)) (signo Signal.SIGKILL) system with
+            | Error (KillRefusal.ProcessEnd refusal) -> lingers "kill" refusal
+            | other -> failwith $"%s{row}: kill answered %A{other}"
+
+            match UnixSignal.tryPthreadKill caller 0 (signo Signal.SIGTERM) system with
+            | Error (ThreadKillRefusal.ProcessEnd refusal) -> lingers "raise" refusal
+            | other -> failwith $"%s{row}: raise answered %A{other}"
+
+            // SIGTERM pending behind the mask, and then unblocked.
+            let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
+
+            let how (block : bool) : int =
+                match SimulatedUnixPlatform.flavour platform, block with
+                | SimulatedUnixFlavour.Linux, true -> 0
+                | SimulatedUnixFlavour.Linux, false -> 1
+                | SimulatedUnixFlavour.Darwin, true -> 1
+                | SimulatedUnixFlavour.Darwin, false -> 2
+
+            let mask (block : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                match UnixSignal.pthreadSigmask caller (how block) (Some sigterm) system with
+                | Ok (_, system) -> system
+                | Error errno -> failwith $"%s{row}: pthread_sigmask: %O{errno}"
+
+            let unblocked =
+                match UnixSignal.pthreadKill caller 0 (signo Signal.SIGTERM) (mask true system) with
+                | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> mask false system
+                | other -> failwith $"%s{row}: raising a blocked SIGTERM answered %A{other}"
+
+            match UnixSignal.tryOnReturnToUser caller unblocked with
+            | Error (ReturnToUserRefusal.ProcessEnd refusal) -> lingers "the return to user mode" refusal
+            | other -> failwith $"%s{row}: the return to user mode answered %A{other}"
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Darwin -> ()
+            | SimulatedUnixFlavour.Linux ->
+                let alone =
+                    ([ 1..4 ], system)
+                    ||> List.foldBack (fun thread system ->
+                        match UnixThreadLifecycle.exitThread (Callers.thread thread system) 0 system with
+                        | ProcessFate.Continues ((), system) -> system
+                        | other -> failwith $"%s{row}: thread %d{thread}'s exit answered %A{other}"
+                    )
+
+                match UnixThreadLifecycle.tryExitThread caller 0 alone with
+                | Error (ThreadExitRefusal.ProcessEnd refusal) -> lingers "the last thread's exit" refusal
+                | other -> failwith $"%s{row}: the last thread's exit answered %A{other}"
+
+            // A write into a pipe with no reader, with SIGPIPE at its default.
+            let writeFd, broken =
+                let system =
+                    match
+                        UnixSignal.sigaction caller (signo Signal.SIGPIPE) (Some SignalDisposition.Default) system
+                    with
+                    | Ok (_, system) -> system
+                    | Error errno -> failwith $"%s{row}: sigaction: %O{errno}"
+
+                match UnixPipe.pipe2 caller 0 UserBuffer.Mapped system with
+                | Pipe2Answer.Created (readFd, writeFd), system ->
+                    match UnixDescriptor.close caller readFd system with
+                    | SyscallAnswer.Completed 0L, system -> writeFd, system
+                    | other -> failwith $"%s{row}: close: %A{other}"
+                | other -> failwith $"%s{row}: pipe2: %A{other}"
+
+            match UnixReadWrite.tryWrite caller writeFd UserBuffer.Mapped 1UL broken with
+            | Error (WriteRefusal.ProcessEnd (_, refusal)) -> lingers "write" refusal
+            | Ok (CallProgress.NeedsCopyIn paused) ->
+                match UnixReadWrite.tryWriteWithBytes (ImmutableArray.Create 0uy) paused with
+                | Error (WriteRefusal.ProcessEnd (_, refusal)) -> lingers "write" refusal
+                | other -> failwith $"%s{row}: the write answered %A{other}"
+            | other -> failwith $"%s{row}: the write answered %A{other}"
 
     /// A close under `SO_LINGER` {1, 0} never waits, so bytes still in the
     /// send buffer do not make it a `LingeringClose`. Darwin keeps them
@@ -1745,15 +1864,6 @@ module TestConnectedTransfer =
 
         client, accepted, machine
 
-    let private woken (asleep : (ProcessId * int) list) (machine : UnixSystem<int, string>) : (ProcessId * int) list =
-        let asleep =
-            asleep
-            |> List.groupBy fst
-            |> List.map (fun (pid, threads) -> pid, threads |> List.map snd |> Set.ofList)
-            |> Map.ofList
-
-        Machines.wakes asleep machine |> List.map fst
-
     /// `thread` of `pid` waits with no timeout on the flavour's event queue,
     /// watching `fd` for `what` ('r' or 'w'), edge-triggered, and sleeps.
     let private sleepOn
@@ -1846,11 +1956,15 @@ module TestConnectedTransfer =
                     machine
 
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             let machine = Machines.doIn a (sentAllIn a client 100) machine
             Machines.assertClean machine
-            woken [ b, 1 ; b, 2 ] machine |> List.sort |> shouldEqual [ b, 1 ; b, 2 ]
+
+            Machines.wakes machine
+            |> List.map fst
+            |> List.sort
+            |> shouldEqual [ b, 1 ; b, 2 ]
 
     [<Test>]
     let ``a read in one process wakes another asleep for send space on its end`` () : unit =
@@ -1862,7 +1976,7 @@ module TestConnectedTransfer =
             // `b` fills its end, then sleeps for room.
             let machine = Machines.doIn b (fun view -> fillIn b accepted view |> snd) machine
             let machine = sleepOn b 1 accepted 'w' machine
-            woken [ b, 1 ] machine |> shouldEqual []
+            Machines.wakes machine |> shouldEqual []
 
             // `a` drains until `b`'s end has room by its flavour's rule.
             let rec drain (reads : int) (machine : UnixSystem<int, string>) =
@@ -1874,9 +1988,9 @@ module TestConnectedTransfer =
 
                     Machines.assertClean machine
 
-                    match woken [ b, 1 ] machine with
+                    match Machines.wakes machine with
                     | [] -> drain (reads - 1) machine
-                    | woke -> woke
+                    | woke -> woke |> List.map fst
 
             drain 2000 machine |> shouldEqual [ b, 1 ]
 
@@ -1898,15 +2012,8 @@ module TestConnectedTransfer =
                     else
                         Machines.doIn a (fun view -> receivedCountIn a client 4096 view |> snd) machine
 
-                let ended =
-                    Machines.inProcess
-                        a
-                        (fun view -> UnixThreadLifecycle.exitGroup (Caller.make a 0) 0 view, view)
-                        machine
-                    |> fst
-
                 let machine =
-                    match Machines.tryEndProcess ended machine with
+                    match UnixThreadLifecycle.tryExitGroup (Caller.make a 0) 0 machine with
                     | Ok (_, machine) -> machine
                     | Error refusal -> failwith $"%A{refusal}"
 

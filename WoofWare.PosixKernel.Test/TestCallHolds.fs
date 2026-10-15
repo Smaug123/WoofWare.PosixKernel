@@ -405,6 +405,13 @@ module TestCallHolds =
                             let released =
                                 existing |> Option.map ParkedSyscall.descriptions |> Option.defaultValue []
 
+                            // A re-park is a woken thread's.
+                            let system =
+                                if existing.IsSome then
+                                    ForgedPark.woken thread system
+                                else
+                                    system
+
                             park thread parked system
                             |> Lone.ObjectLifetime.releaseUnreferencedUnrefusable "test" released,
                             { model with
@@ -545,19 +552,14 @@ module TestCallHolds =
                     else
 
                     // Every thread goes, with the holds its call had and its thread
-                    // ID; descriptors are not closed, so what they name stays.
-                    let ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
+                    // ID, and then every descriptor, so nothing the process held is
+                    // left.
+                    let _, ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
 
                     if not model.Holds.IsEmpty then
                         cover Reached.EndedWithHolds
 
-                    ThreadIdAllocator.live ended.Machine.ThreadIds |> shouldEqual Set.empty
-
-                    for id in OpenFileTable.descriptions ended.Machine.OpenFiles |> Map.keys do
-                        OpenFileTable.holdCount id ended.Machine.OpenFiles |> shouldEqual (Some 0)
-
-                        OpenFileTable.descriptorCount id ended.Machine.OpenFiles
-                        |> shouldEqual (OpenFileTable.descriptorCount id system.Machine.OpenFiles)
+                    EndedMachine.assertNoneLeft ended
 
                     // The run goes on from the state before, as if the call had
                     // not been made.

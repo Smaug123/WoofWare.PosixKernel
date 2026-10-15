@@ -26,8 +26,7 @@ type internal ProcessSlot<'Thread, 'Handler when 'Thread : comparison and 'Handl
 ///
 /// Opaque: a client reads it through the queries in the `UnixSystem` module
 /// and changes it only through syscalls, `UnixSystem.launch`,
-/// `UnixSystem.endProcess`, `UnixSystem.advanceClock` and
-/// `UnixSystem.writePidMaxSysctl`.
+/// `UnixSystem.advanceClock` and `UnixSystem.writePidMaxSysctl`.
 type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     internal
         {
@@ -52,9 +51,10 @@ type UnixSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equal
 ///
 /// `Entry` focuses the caller's process to make one (`ProcessView.ofSlot`) and
 /// puts each view in the body's answer back into the kernel
-/// (`ProcessView.unfocus`). A view holds the rest of the kernel, so a value
-/// that holds a view, such as a call paused at a copy, holds everything its
-/// resumption needs to answer a whole kernel.
+/// (`ProcessView.unfocus`), or, for a process that ended, makes the kernel
+/// without it (`ProcessView.unfocusWithout`). A view holds the rest of the
+/// kernel, so a value that holds a view, such as a call paused at a copy,
+/// holds everything its resumption needs to answer a whole kernel.
 type internal ProcessView<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     {
         Machine : UnixMachineState
@@ -126,6 +126,26 @@ module internal ProcessView =
                     view.Others
         }
 
+    /// The kernel `view` is a view of, as the view has it, without the view's
+    /// process, which has ended: its machine and scheduling, and every other
+    /// process.
+    ///
+    /// Fails loudly if the process still has a thread: only a process's end
+    /// takes the process out of the kernel, and that ends every thread first.
+    let unfocusWithout<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (view : ProcessView<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        if not view.Threads.IsEmpty then
+            failwith
+                $"ProcessView.unfocusWithout: process %O{view.ProcessId} still has the threads %A{Map.keys view.Threads |> List.ofSeq}, so it has not ended (this is a bug in this library)."
+
+        {
+            Machine = view.Machine
+            Scheduling = view.Scheduling
+            Processes = view.Others
+        }
+
     /// Whether every part of `view` is the very value `focused` holds: the
     /// same objects, not merely equal ones, but for the leader, which is the
     /// client's value and is compared for equality.
@@ -158,27 +178,13 @@ module internal ProcessView =
 /// with the machine's open file descriptions it names.
 [<RequireQualifiedAccess>]
 module internal UnixSystemState =
-    /// Whether the process's descriptor table is every descriptor on the
-    /// machine: whether no other process is on it.
-    let census<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (system : ProcessView<'Thread, 'Handler>)
-        : DescriptorCensus
-        =
-        let others =
-            Set.remove system.Process.ProcessId (ProcessIdTable.live system.Machine.ProcessIds)
-
-        if Set.isEmpty others then
-            DescriptorCensus.Complete
-        else
-            DescriptorCensus.OneProcessOf system.Process.ProcessId
-
     /// The process's descriptor table, read against the machine's open file
     /// descriptions.
     let fileDescriptors<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : ProcessView<'Thread, 'Handler>)
         : FileDescriptorRegistry
         =
-        FileDescriptorRegistry.ofTables (census system) system.Process.FileDescriptors system.Machine.OpenFiles
+        FileDescriptorRegistry.ofTables system.Process.FileDescriptors system.Machine.OpenFiles
 
     /// `system` with `registry`'s descriptor table as the process's, and its open
     /// file descriptions as the machine's.
@@ -358,60 +364,29 @@ type SyscallAnswer =
     /// descriptor table before it can discover the conflict that fails it.
     | Failed of error : UnixError
 
-/// A process that has ended, and how. Only a syscall that ends the process makes
-/// one. `EndedProcess.termination` and `EndedProcess.processId` read it, and
-/// `UnixSystem.endProcess` ends the process in the kernel it ran in, closing its
-/// descriptors and removing it.
-///
-/// Not a `UnixSystem`: nothing can make a syscall in it, no function that
-/// answers one accepts it, and only `UnixSystem.endProcess` hands back a
-/// kernel from it.
-type EndedProcess<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+/// A process that has ended, and how. Only a syscall that ends the process
+/// makes one, and answers it beside the system without the process
+/// (`ProcessFate.ProcessEnded`, `UnixThreadLifecycle.exitGroup`).
+/// `EndedProcess.termination` and `EndedProcess.processId` read it.
+type EndedProcess =
     internal
         {
             /// How the process ended, which is what its parent's `wait` reads.
             Termination : ProcessTermination
-            /// The machine the process ran on, as the process's end left it: its
-            /// threads' thread IDs are no longer live, the holds its threads' calls
-            /// in flight had on open file descriptions are let go of, so is the
-            /// hold its current directory had on its inode, and its process ID is
-            /// no live process's (no `wait` is modelled, so nothing keeps it).
-            ///
-            /// Its descriptors are not closed, so every description they name is
-            /// still counted as named, and a description no descriptor named,
-            /// which only a call held, is still in the table.
-            /// `UnixSystem.endProcess` closes them, as a real kernel does at exit,
-            /// where another process can see it.
-            Machine : UnixMachineState
-            /// The machine's scheduling state as the process's end left it: no
-            /// processor runs one of its threads.
-            Scheduling : UnixSchedulingState
-            /// The process's own state as it stood when it ended. It holds nothing for
-            /// any thread: no signal mask, and no signal pending on one thread alone.
-            FinalProcess : UnixProcessState<'Thread, 'Handler>
-            /// The view the call that ended the process ran in, as the call found
-            /// it: its threads, and every other process on the machine, from which
-            /// `UnixSystem.endProcess` makes the kernel without this process.
-            EndedIn : ProcessView<'Thread, 'Handler>
+            /// The ID the process had.
+            ProcessId : ProcessId
         }
 
 [<RequireQualifiedAccess>]
 module EndedProcess =
 
     /// How the process ended, which is what its parent's `wait` reads.
-    let termination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : ProcessTermination
-        =
-        ended.Termination
+    let termination (ended : EndedProcess) : ProcessTermination = ended.Termination
 
-    /// The ID of the process that ended. The machine no longer counts it as
-    /// any live process's.
-    let processId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (ended : EndedProcess<'Thread, 'Handler>)
-        : ProcessId
-        =
-        ended.FinalProcess.ProcessId
+    /// The ID of the process that ended. No process on the machine has it now:
+    /// no `wait` is modelled, so nothing keeps the process for a parent to
+    /// reap.
+    let processId (ended : EndedProcess) : ProcessId = ended.ProcessId
 
 /// What a syscall that can end the whole process did to it: the call's own
 /// outcome and the system it left the process in, or the process ended.
@@ -424,18 +399,35 @@ module EndedProcess =
 type ProcessFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The process carries on, as `system`.
     | Continues of outcome : 'Outcome * system : UnixSystem<'Thread, 'Handler>
-    /// The process has ended, and never returns from the call.
-    | ProcessEnded of EndedProcess<'Thread, 'Handler>
+    /// The process has ended, and never returns from the call: how it ended,
+    /// and `system`, the system without it, which holds every other process as
+    /// the call left it. The process's descriptors are closed, as
+    /// `UnixThreadLifecycle.exitGroup` closes them.
+    | ProcessEnded of ended : EndedProcess * system : UnixSystem<'Thread, 'Handler>
 
 /// What a call's body that can end the whole process did to it, before `Entry`
-/// puts its view back: a `ProcessFate` whose process carries on as a
-/// `ProcessView`. `Shape.fate` makes the `ProcessFate` of it.
+/// makes a kernel of its view: a `ProcessFate` whose systems are `'View`s.
+/// `Shape.fate` makes the `ProcessFate` of it.
 [<RequireQualifiedAccess>]
-type internal ViewFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
+type internal ViewFate<'Outcome, 'View> =
     /// The process carries on, as `view`.
-    | Continues of outcome : 'Outcome * view : ProcessView<'Thread, 'Handler>
-    /// The process has ended, and never returns from the call.
-    | ProcessEnded of EndedProcess<'Thread, 'Handler>
+    | Continues of outcome : 'Outcome * view : 'View
+    /// The process has ended, and never returns from the call: how it ended,
+    /// and the view of it with no thread or descriptor left, which `Shape.fate`
+    /// takes out of the kernel.
+    | ProcessEnded of ended : EndedProcess * view : 'View
+
+/// How `Shape.map` makes a kernel of each view in a call's answer: one whose
+/// process carries on goes `Back` into the kernel, and one whose process has
+/// ended leaves the kernel `Without` it.
+[<Struct>]
+type internal Unfocus<'View, 'Kernel> =
+    {
+        /// The kernel with the view's process as the view has it.
+        Back : 'View -> 'Kernel
+        /// The kernel without the view's process, which has ended.
+        Without : 'View -> 'Kernel
+    }
 
 /// Where the systems sit in a call's answer, built from the `Shape` module's
 /// functions, which nest as the answer's type does: `kill`'s
@@ -443,43 +435,48 @@ type internal ViewFate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and
 /// `Shape.result (Shape.result Shape.fate)`.
 ///
 /// `'InView` is the answer as a call's body gives it, each system in it a
-/// `'View`, and `'InKernel` is that answer with each of those systems put back
-/// as a `'Kernel`, which `Shape.map` does. `Entry` takes shapes whose `'View`
+/// `'View`, and `'InKernel` is that answer with a `'Kernel` made of each of
+/// those systems, which `Shape.map` does. `Entry` takes shapes whose `'View`
 /// is `ProcessView`, the view of the caller's process a call's body runs
 /// over, and whose `'Kernel` is `UnixSystem`, the kernel the call hands back.
 [<Struct>]
 type internal Shape<'View, 'Kernel, 'InView, 'InKernel> =
     // `'View` and `'Kernel` are separate parameters, and the primitives that
     // can be are generic in them, so that one has no way to make a `'Kernel`
-    // but to put a `'View` back: the compiler rejects one that leaves a view
-    // where it was, or puts one back twice.
-    private | Shape of map : (('View -> 'Kernel) -> 'InView -> 'InKernel)
+    // but of a `'View`, through the `Unfocus` it is given: the compiler
+    // rejects one that leaves a view where it was, or that answers a process's
+    // end without the view it ended in.
+    private | Shape of map : (Unfocus<'View, 'Kernel> -> 'InView -> 'InKernel)
 
 [<RequireQualifiedAccess>]
 module internal Shape =
 
-    /// `answer` with `put` applied once to each system in it, where `shape`
-    /// says they sit, and nothing else in it changed.
+    /// `answer` with a kernel made of each system in it, where `shape` says
+    /// they sit, and nothing else in it changed: `unfocus.Back` of each view
+    /// whose process carries on, and `unfocus.Without` of each whose process
+    /// has ended, once each.
     let map<'View, 'Kernel, 'InView, 'InKernel>
-        (put : 'View -> 'Kernel)
+        (unfocus : Unfocus<'View, 'Kernel>)
         (shape : Shape<'View, 'Kernel, 'InView, 'InKernel>)
         (answer : 'InView)
         : 'InKernel
         =
         match shape with
-        | Shape map -> map put answer
+        | Shape map -> map unfocus answer
 
     /// An answer holding no system, however it nests.
     let answer<'View, 'Kernel, 'Answer> : Shape<'View, 'Kernel, 'Answer, 'Answer> =
-        Shape (fun (_ : 'View -> 'Kernel) (answer : 'Answer) -> answer)
+        Shape (fun (_ : Unfocus<'View, 'Kernel>) (answer : 'Answer) -> answer)
 
     /// A system alone.
     let system<'View, 'Kernel> : Shape<'View, 'Kernel, 'View, 'Kernel> =
-        Shape (fun (put : 'View -> 'Kernel) (view : 'View) -> put view)
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) (view : 'View) -> unfocus.Back view)
 
     /// An answer holding no system, and the system the call left.
     let withSystem<'View, 'Kernel, 'Answer> : Shape<'View, 'Kernel, 'Answer * 'View, 'Answer * 'Kernel> =
-        Shape (fun (put : 'View -> 'Kernel) ((answer : 'Answer), (view : 'View)) -> answer, put view)
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) ((answer : 'Answer), (view : 'View)) ->
+            answer, unfocus.Back view
+        )
 
     /// A `Result` whose `Ok` is shaped as `ok` says. Its `Error` holds no
     /// system.
@@ -487,9 +484,9 @@ module internal Shape =
         (ok : Shape<'View, 'Kernel, 'InView, 'InKernel>)
         : Shape<'View, 'Kernel, Result<'InView, 'Error>, Result<'InKernel, 'Error>>
         =
-        Shape (fun (put : 'View -> 'Kernel) (result : Result<'InView, 'Error>) ->
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) (result : Result<'InView, 'Error>) ->
             match result with
-            | Ok answer -> Ok (map put ok answer)
+            | Ok answer -> Ok (map unfocus ok answer)
             | Error error -> Error error
         )
 
@@ -501,37 +498,33 @@ module internal Shape =
         (answered : Shape<'View, 'Kernel, 'InView, 'InKernel>)
         : Shape<'View, 'Kernel, CallProgress<'Paused, 'InView>, CallProgress<'Paused, 'InKernel>>
         =
-        Shape (fun (put : 'View -> 'Kernel) (progress : CallProgress<'Paused, 'InView>) ->
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) (progress : CallProgress<'Paused, 'InView>) ->
             match progress with
-            | CallProgress.Answered answer -> CallProgress.Answered (map put answered answer)
+            | CallProgress.Answered answer -> CallProgress.Answered (map unfocus answered answer)
             | CallProgress.NeedsCopyIn paused -> CallProgress.NeedsCopyIn paused
         )
 
-    /// A process that ended. Nothing in it is a system a call can be made in,
-    /// so it is left as it is: `UnixSystem.endProcess` makes a kernel of it.
-    let ended<'View, 'Kernel, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        : Shape<'View, 'Kernel, EndedProcess<'Thread, 'Handler>, EndedProcess<'Thread, 'Handler>> =
-        answer
+    /// A process that ended, and the view it ended in, of which the kernel
+    /// without it is made.
+    let ended<'View, 'Kernel> : Shape<'View, 'Kernel, EndedProcess * 'View, EndedProcess * 'Kernel> =
+        Shape (fun (unfocus : Unfocus<'View, 'Kernel>) ((ended : EndedProcess), (view : 'View)) ->
+            ended, unfocus.Without view
+        )
 
     /// A body's `ViewFate` as the call's `ProcessFate`: the view the process
     /// carries on as put back, or the process ended, shaped as `ended` says.
-    let fate<'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    let fate<'View, 'Outcome, 'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         : Shape<
-              ProcessView<'Thread, 'Handler>,
+              'View,
               UnixSystem<'Thread, 'Handler>,
-              ViewFate<'Outcome, 'Thread, 'Handler>,
+              ViewFate<'Outcome, 'View>,
               ProcessFate<'Outcome, 'Thread, 'Handler>
            > =
-        let putBack
-            (put : ProcessView<'Thread, 'Handler> -> UnixSystem<'Thread, 'Handler>)
-            (fate : ViewFate<'Outcome, 'Thread, 'Handler>)
-            : ProcessFate<'Outcome, 'Thread, 'Handler>
-            =
+        Shape (fun (unfocus : Unfocus<'View, UnixSystem<'Thread, 'Handler>>) (fate : ViewFate<'Outcome, 'View>) ->
             match fate with
-            | ViewFate.Continues (outcome, view) -> ProcessFate.Continues (outcome, put view)
-            | ViewFate.ProcessEnded ended' -> ProcessFate.ProcessEnded (map put ended ended')
-
-        Shape putBack
+            | ViewFate.Continues (outcome, view) -> ProcessFate.Continues (outcome, unfocus.Back view)
+            | ViewFate.ProcessEnded (ended', view) -> ProcessFate.ProcessEnded (map unfocus ended (ended', view))
+        )
 
 /// What the thread making a call must be doing as it makes it, which `Entry`
 /// checks before the call runs.
@@ -540,8 +533,8 @@ type internal CallerRequirement =
     /// Running its own code, so parked in no syscall: what a call requires of
     /// the thread making it.
     | Running
-    /// Parked in a syscall: what a finishing function requires of the thread
-    /// whose call it finishes.
+    /// Parked in a syscall, and woken by `UnixWait.wake`: what a finishing
+    /// function requires of the thread whose call it finishes.
     | Woken
     /// Parked in no syscall: what `UnixSignal.onReturnToUser` requires of the
     /// thread returning to user mode.
@@ -580,9 +573,7 @@ module internal Entry =
 
         match requirement with
         | CallerRequirement.Running -> UnixThreadTable.requireIssuer operation thread slot.Threads
-        | CallerRequirement.Woken ->
-            UnixThreadTable.requireParked operation thread slot.Threads
-            |> ignore<ParkedSyscall>
+        | CallerRequirement.Woken -> UnixThreadTable.requireWoken operation thread slot.Threads
         | CallerRequirement.Returning -> UnixThreadTable.requireReturning operation thread slot.Threads
         | CallerRequirement.Exists ->
             UnixThreadTable.requireThread operation thread slot.Threads
@@ -609,8 +600,9 @@ module internal Entry =
     /// otherwise answers what `body` answers for the view of the caller's
     /// process. `shape` says where the views sit in that answer, and each is
     /// put back into the kernel as the body left it; the kernel itself, if the
-    /// body changed nothing (`ProcessView.unfocusFrom`). `operation` names the
-    /// function the client called.
+    /// body changed nothing (`ProcessView.unfocusFrom`); or, for a process that
+    /// ended, the kernel without it (`ProcessView.unfocusWithout`).
+    /// `operation` names the function the client called.
     let call<'Thread, 'Handler, 'InView, 'InKernel when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (requirement : CallerRequirement)
@@ -622,12 +614,20 @@ module internal Entry =
         =
         let slot = admitted operation requirement caller system
         let focused = ProcessView.ofSlot (Caller.processId caller) slot system
-        Shape.map (ProcessView.unfocusFrom system focused) shape (body focused)
+
+        let unfocus =
+            {
+                Back = ProcessView.unfocusFrom system focused
+                Without = ProcessView.unfocusWithout
+            }
+
+        Shape.map unfocus shape (body focused)
 
     /// A call resumed after it paused to copy from the caller's memory:
     /// `answer`, which the resumption gave from the view the paused value
     /// held. `shape` says where the views sit in it, and each is put back into
-    /// the kernel as the resumption left it.
+    /// the kernel as the resumption left it, or, for a process that ended,
+    /// leaves the kernel without it.
     ///
     /// The caller is not checked again. It was checked as the call began, and
     /// the paused value holds the view, with the rest of the kernel, so nothing
@@ -637,7 +637,13 @@ module internal Entry =
         (answer : 'InView)
         : 'InKernel
         =
-        Shape.map ProcessView.unfocus shape answer
+        let unfocus =
+            {
+                Back = ProcessView.unfocus
+                Without = ProcessView.unfocusWithout
+            }
+
+        Shape.map unfocus shape answer
 
     /// A question about the process `pid` that no thread of it asks, such as
     /// which threads it has: fails with `InvalidOperationException` unless

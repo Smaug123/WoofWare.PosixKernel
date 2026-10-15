@@ -222,6 +222,8 @@ module TestEpollWait =
         | other -> failwith $"expected a park, got %A{other}"
 
     let private finishes (system : UnixSystem<int, string>) : (uint64 * uint32) list * UnixSystem<int, string> =
+        let system = Woken.thread thread system
+
         match UnixPoll.tryFinishEpollWait (Callers.thread thread system) system with
         | Ok (EpollWaitOutcome.Answered events, finished) -> events, finished
         | other -> failwith $"expected the wait to finish, got %A{other}"
@@ -232,7 +234,7 @@ module TestEpollWait =
         | other -> failwith $"expected the wait to park again, got %A{other}"
 
     let private woken (system : UnixSystem<int, string>) : Set<WakePrimitive> option =
-        match Lone.wakes (Set.singleton thread) system with
+        match Lone.wakes system with
         | [] -> None
         | [ woken, fired ] when woken = thread -> Some fired
         | other -> failwith $"unexpected wake %A{other}"
@@ -414,14 +416,19 @@ module TestEpollWait =
                 )
             )
 
-            Lone.deadlines (Set.singleton thread) parked |> shouldEqual [ deadline ]
+            Lone.deadlines parked |> shouldEqual [ deadline ]
 
-            // One nanosecond short: nothing wakes it, and a finish attempted anyway sleeps
-            // again on the same deadline.
+            // One nanosecond short: nothing wakes it, so there is no call to finish, and
+            // it sleeps on to the same deadline.
             let short = after (deadline - 1L - now) parked
             woken short |> shouldEqual None
-            let reparked = reparks short
-            Lone.deadlines (Set.singleton thread) reparked |> shouldEqual [ deadline ]
+
+            Assert.Throws<System.InvalidOperationException> (fun () ->
+                UnixPoll.tryFinishEpollWait (Callers.thread thread short) short |> ignore
+            )
+            |> ignore<System.InvalidOperationException>
+
+            Lone.deadlines short |> shouldEqual [ deadline ]
 
             // At the deadline: woken by it, and finished with no events.
             let expired = after (deadline - now) parked
@@ -449,7 +456,7 @@ module TestEpollWait =
                 Interruptible.condition (WakeCondition.Primitive (WakePrimitive.EpollEventDeliverable queueId))
             )
 
-            Lone.deadlines (Set.singleton thread) parked |> shouldEqual []
+            Lone.deadlines parked |> shouldEqual []
 
             match UnixThreadTable.parkedFor thread (Lone.threads parked) with
             | Some (ParkedSyscall.EpollWait wait) ->
@@ -524,13 +531,12 @@ module TestEpollWait =
         |> shouldEqual (Some (Set.singleton (WakePrimitive.EpollEventDeliverable queueId)))
 
         // Someone else takes the connection before the woken waiter runs.
-        let stale = unready ready
+        let stale = unready (Woken.thread thread ready)
         let reparked = reparks stale
 
         pendingEntries reparked |> shouldEqual 0
 
-        Lone.deadlines (Set.singleton thread) reparked
-        |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
+        Lone.deadlines reparked |> shouldEqual [ 5L * nanosecondsPerMillisecond ]
 
         let ordinalAfter =
             (UnixThreadTable.parkOf thread (Lone.threads reparked)).Value.Ordinal
@@ -612,13 +618,13 @@ module TestEpollWait =
             | Some (ParkedSyscall.EpollWait wait) -> wait.Buffer |> shouldEqual buffer
             | other -> failwith $"expected an epoll_wait, got %A{other}"
 
-            let signalled = signal parked
+            let signalled = signal parked |> Woken.thread thread
 
             UnixPoll.tryFinishEpollWait (Callers.thread thread signalled) signalled
             |> shouldEqual (Error refusal)
 
             // Timing out copies nothing, so it answers.
-            let expired = after (5L * nanosecondsPerMillisecond) parked
+            let expired = after (5L * nanosecondsPerMillisecond) parked |> Woken.thread thread
 
             match UnixPoll.tryFinishEpollWait (Callers.thread thread expired) expired with
             | Ok (EpollWaitOutcome.Answered [], finished) ->
@@ -707,6 +713,12 @@ module TestEpollWait =
             let system =
                 (system, parks)
                 ||> List.fold (fun system park ->
+                    // A re-park is a woken thread's.
+                    let system =
+                        match UnixThreadTable.parkOf park.Waiter (Lone.threads system) with
+                        | Some _ -> ForgedPark.woken park.Waiter system
+                        | None -> system
+
                     Lone.UnixWait.park
                         park.Waiter
                         (ParkedSyscall.EpollWait
@@ -737,6 +749,16 @@ module TestEpollWait =
                 |> List.map (fun (name, _, _) -> name)
                 |> List.filter (fun name -> asleepMask.[name - 1])
                 |> Set.ofList
+
+            // The rest have been woken, and have yet to finish.
+            let system =
+                (system, parkedThreads)
+                ||> List.fold (fun system (name, _, _) ->
+                    if Set.contains name asleep then
+                        system
+                    else
+                        ForgedPark.woken name system
+                )
 
             let isPending (queueId : OpenFileDescriptionId) : bool =
                 pending.[List.findIndex ((=) queueId) epolls]
@@ -776,6 +798,6 @@ module TestEpollWait =
                         None
                 )
 
-            Lone.wakes asleep system |> shouldEqual expected
+            Lone.wakes system |> shouldEqual expected
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 1000, Prop.forAll (Arb.fromGen gen) property)

@@ -41,5 +41,36 @@ module ForgedPark =
                 {
                     Syscall = parked
                     Ordinal = system.Machine.NextParkOrdinal
+                    State = ParkState.Asleep
                 }
         )
+
+    /// `system` with the thread `caller` names, which is asleep in a call,
+    /// woken as though `UnixWait.wake` had woken it for the first primitive of
+    /// its call's wake condition: for a test of a woken thread that it does not
+    /// reach by waking it, such as one whose wake something has since taken
+    /// away, or a forged park.
+    let wokenCaller<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let pid = Caller.processId caller
+        let thread = Caller.thread caller
+
+        match UnixThreadTable.parkOf thread (Proc.threads pid system) with
+        | None -> failwith $"ForgedPark.wokenCaller: %O{caller} is not parked"
+        | Some park ->
+            let first =
+                WakeCondition.ofPark park.Syscall |> WakeCondition.primitives |> List.head
+
+            system
+            |> Proc.mapThreads pid (UnixThreadTable.markWoken thread (Set.singleton first))
+
+    /// `wokenCaller` of the thread `thread` of the only process.
+    let woken<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        wokenCaller (Callers.thread thread system) system
