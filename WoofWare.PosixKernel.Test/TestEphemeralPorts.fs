@@ -143,7 +143,7 @@ module TestEphemeralPorts =
         | Ok (AcceptOutcome.Failed error, _) -> failwith $"accept failed with %A{error}"
         | Ok (AcceptOutcome.DroppedConnection error, _) -> failwith $"accept dropped the connection with %A{error}"
         | Ok (AcceptOutcome.WouldBlock _, _) -> failwith "accept parked"
-        | Ok (AcceptOutcome.Restarts, _) -> failwith "accept restarted"
+        | Ok (AcceptOutcome.Interrupted, _) -> failwith "accept was interrupted"
         | Error refusal -> failwith $"accept refused: %A{refusal}"
 
     let private closeFd (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =

@@ -24,6 +24,8 @@
     <Compile Include="Lone.fs" />
     <Compile Include="Callers.fs" />
     <Compile Include="Woken.fs" />
+    <Compile Include="Interruptions.fs" />
+    <Compile Include="AnswersBeforeInterrupted.fs" />
     <Compile Include="Launched.fs" />
     <Compile Include="ForgedName.fs" />
     <Compile Include="WriteAdmissions.fs" />
@@ -264,6 +266,7 @@
     <Compile Include="TestInotifyRefusals.fs" />
     <Compile Include="TestKqueue.fs" />
     <Compile Include="KeventWorld.fs" />
+    <Compile Include="TestDispositionBeforeReturn.fs" />
     <Compile Include="TestKeventMeasured.fs" />
     <Compile Include="TestKeventRegistration.fs" />
     <Compile Include="TestKqueueOwner.fs" />
@@ -320,6 +323,9 @@
          docs/probes/non-leader-unblock. `TestSignalReceiver` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\non-leader-unblock\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.non-leader-unblock.darwin.txt" />
+    <!-- docs/probes/disposition-before-return. `TestDispositionBeforeReturn` replays every held row. -->
+    <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>

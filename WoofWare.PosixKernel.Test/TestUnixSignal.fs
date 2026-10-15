@@ -337,7 +337,7 @@ module TestUnixSignal =
                         let pending = pendingBehindMask flavour coreDumps signal
 
                         match UnixSignal.trySigsuspend (Callers.thread 0 pending) SignalMask.empty pending with
-                        | Ok (SigsuspendOutcome.Failed UnixError.EINTR, system) -> system
+                        | Ok (SigsuspendOutcome.Interrupted, system) -> system
                         | other -> failwith $"sigsuspend under %O{flavour}: %O{other}"
 
                     let expected = ProcessTermination.Signaled (signal, coreDumped)
@@ -471,6 +471,13 @@ module TestUnixSignal =
         /// The return pushed handler frames.
         | RanHandlers
 
+    /// The thread that sends `ReturnCase.Sends`: none of the case's, and
+    /// blocking every signal, so that it takes none of them. A send leaves its
+    /// sender owing a return to user mode when the sender would take what it
+    /// sent, so a thread of the case would have to take each before its next
+    /// send.
+    let private sender : int = 9
+
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
         let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
             let mask =
@@ -485,8 +492,9 @@ module TestUnixSignal =
         let booted =
             systemLaunchedWith (ProcessLaunch.withCoreDumps case.CoreDumps) case.Flavour
             |> fun system ->
-                (system, [ 1 .. case.Threads - 1 ])
+                (system, [ 1 .. case.Threads - 1 ] @ [ sender ])
                 ||> List.fold (fun system thread -> Threads.spawn thread system)
+            |> setMask sender (Set.ofList returnPool)
 
         let configured =
             (booted, case.Dispositions)
@@ -519,10 +527,10 @@ module TestUnixSignal =
                 let answer =
                     match send.Target with
                     | None ->
-                        UnixSignal.tryKill (Callers.leader system) self signo system
+                        UnixSignal.tryKill (Callers.thread sender system) self signo system
                         |> Result.mapError (fun refusal -> $"%O{refusal}")
                     | Some thread ->
-                        UnixSignal.tryPthreadKill (Callers.leader system) thread signo system
+                        UnixSignal.tryPthreadKill (Callers.thread sender system) thread signo system
                         |> Result.mapError (fun refusal -> $"%O{refusal}")
 
                 match answer with
@@ -558,6 +566,8 @@ module TestUnixSignal =
                     case.Returning
                     (Lone.proc system).Signals
 
+            // The system with `signals`, the returning thread owing nothing
+            // more, as the return leaves it.
             let withSignals (signals : SignalState<int, string>) : UnixSystem<int, string> =
                 system
                 |> Lone.mapProc (fun proc ->
@@ -565,12 +575,13 @@ module TestUnixSignal =
                         Signals = signals
                     }
                 )
+                |> Lone.mapThreads (UnixThreadTable.settle case.Returning)
 
             match UnixSignal.tryOnReturnToUser (Callers.thread case.Returning system) system, decided with
             | Error refusal, Error expected -> refusal |> shouldEqual (ReturnToUserRefusal.Receiver expected)
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)), Ok (None, signals) ->
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, after)), Ok (None, signals) ->
                 after |> shouldEqual (withSignals signals)
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, after)),
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after)),
               Ok (Some (SignalDelivery.RunHandlers expected), signals) ->
                 cover ReturnLabel.RanHandlers
                 frames |> shouldEqual expected
@@ -582,7 +593,13 @@ module TestUnixSignal =
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after)),
               Ok (Some (SignalDelivery.DefaultContinue expected), signals) ->
                 signal |> shouldEqual expected
-                after |> shouldEqual (withSignals signals)
+
+                // The return is not over: the thread owes the rest of it.
+                after
+                |> shouldEqual (
+                    withSignals signals
+                    |> Lone.mapThreads (UnixThreadTable.owe case.Returning OwedReturn.SignalDue)
+                )
             | Ok (ProcessFate.ProcessEnded (death, after)),
               Ok (Some (SignalDelivery.DefaultTerminate (signal, coreDumped)), _) ->
                 cover ReturnLabel.Ended

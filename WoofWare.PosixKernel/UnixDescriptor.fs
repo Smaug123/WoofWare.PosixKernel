@@ -1630,9 +1630,8 @@ module UnixDescriptor =
         | Some FlockError.WouldBlock ->
             match SyscallInterruption.ofPark thread advanced with
             | Error refusal -> Error (FLockRefusal.Interruption refusal)
-            | Ok (Some SyscallInterruption.Eintr) ->
-                Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), finished ())
-            | Ok (Some SyscallInterruption.Restart) -> Ok (SyscallOutcome.Restarts, finished ())
+            | Ok (Some interruption) ->
+                Ok (SyscallOutcome.Interrupted, OwedReturns.interrupt thread interruption (finished ()))
             | Ok None ->
                 // Beaten: the waiter sleeps again on the same record, re-queued behind
                 // every park already made, as a real kernel re-queues it.
@@ -1688,11 +1687,12 @@ module UnixDescriptor =
     /// an edge one: a release wakes every waiter and they race, so all but one
     /// of them find it gone.
     ///
-    /// When the lock cannot be granted and a signal with a handler is pending
-    /// for the thread, the signal ends the call: `Restarts` if every handler that
-    /// runs was installed with `SA_RESTART`, and `Answered (Failed EINTR)` if
-    /// none was. Either clears the park, and a conversion's old lock stays
-    /// dropped, as it is while the call sleeps.
+    /// When the lock cannot be granted and the thread would take a signal as
+    /// it returned to user mode, the signal interrupts the call
+    /// (`SyscallOutcome.Interrupted`): the park is cleared, a conversion's old
+    /// lock stays dropped, as it is while the call sleeps, and the thread's
+    /// return to user mode (`UnixSignal.onReturnToUser`) says whether the call
+    /// fails with `EINTR` or restarts.
     ///
     /// Most of what `flock` screens is not re-screened, because a screen over
     /// facts that cannot change is spent: the operation bits were validated

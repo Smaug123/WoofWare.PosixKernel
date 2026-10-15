@@ -80,6 +80,7 @@ module TestPoll =
             Ok (reported, count)
         | Ok (PollOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %A{condition}"
         | Ok (PollOutcome.Failed error, _) -> failwith $"expected an answer, got %A{error}"
+        | Ok (PollOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
 
     let private pollOrFail
         (entries : PollEntry list)

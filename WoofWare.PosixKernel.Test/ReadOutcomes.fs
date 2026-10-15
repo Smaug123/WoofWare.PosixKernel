@@ -22,7 +22,7 @@ module internal ReadOutcomes =
             match outcome with
             | ReadOutcome.Answered answer -> answer, after
             | ReadOutcome.WouldBlock _
-            | ReadOutcome.Restarts -> failwith $"expected a read that returns, got %A{outcome}"
+            | ReadOutcome.Interrupted -> failwith $"expected a read that returns, got %A{outcome}"
         )
 
     /// `readIn` the only process on the machine.

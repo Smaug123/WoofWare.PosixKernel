@@ -894,7 +894,7 @@ module TestCrossProcess =
 
         let returned (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
             match UnixSignal.onReturnToUser caller machine with
-            | ProcessFate.Continues (ReturnToUserOutcome.Resumes, machine) -> machine
+            | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, machine) -> machine
             | other -> failwith $"%A{ending}: the return to user mode answered %A{other}"
 
         let mask (how : SignalMaskChange) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =

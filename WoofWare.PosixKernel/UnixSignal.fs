@@ -88,6 +88,28 @@ type internal ReturnToUserRefusal =
     /// The thread takes a signal whose default action ends the process, and
     /// the process's end is refused.
     | ProcessEnd of ProcessEndRefusal
+    /// A signal interrupted the thread's call, which `SA_RESTART` restarts,
+    /// and of the handlers the thread runs as it returns, those for
+    /// `restarting` were installed with `SA_RESTART` and those for `failing`
+    /// without.
+    | MixedRestartFlags of restarting : Signal list * failing : Signal list
+    /// A signal interrupted the thread's call, and the first signal the thread
+    /// takes as it returns is `signal`, at its default, which stops or
+    /// continues the process.
+    | DefaultAction of signal : Signal
+    /// `signal` interrupted the thread's Linux `poll`, which had a timeout,
+    /// and no handler runs as the thread returns. Linux restarts such a call
+    /// with what is left of its timeout, which the call as first made does
+    /// not.
+    | RestartWithRemainingTime of signal : Signal
+    /// `signal` interrupted the thread's call, no handler runs as the thread
+    /// returns, and what the call then does is unmeasured.
+    | UnmeasuredWithoutHandler of signal : Signal
+    /// Under `flavour`, `signal` interrupted the thread's call, and how the
+    /// call ends from the signals as the thread returns differs from how it
+    /// ended from the signals as the call was interrupted: another thread
+    /// changed a disposition or a mask in between.
+    | ChangedSinceInterruption of signal : Signal * flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal ReturnToUserRefusal =
@@ -98,12 +120,27 @@ module internal ReturnToUserRefusal =
         | ReturnToUserRefusal.Receiver refusal -> SignalReceiverRefusal.describe refusal
         | ReturnToUserRefusal.ProcessEnd refusal ->
             $"the thread takes a signal that ends the process; %s{ProcessEndRefusal.describe refusal}"
+        | ReturnToUserRefusal.MixedRestartFlags (restarting, failing) ->
+            $"a signal interrupted the thread's call, which SA_RESTART restarts, and the thread runs handlers for %A{restarting}, installed with SA_RESTART, and for %A{failing}, installed without it, as it returns. Which of them decides whether the call restarts is unmeasured."
+        | ReturnToUserRefusal.DefaultAction signal ->
+            $"a signal interrupted the thread's call, and the first signal it takes as it returns is %O{signal}, at a default that stops or continues the process. What that does to the call is unmeasured."
+        | ReturnToUserRefusal.RestartWithRemainingTime signal ->
+            $"%O{signal} interrupted the thread's poll, which had a timeout, and no handler runs as the thread returns. Linux restarts such a poll with what is left of its timeout (restart_syscall), which a client making the call again with its own arguments cannot do."
+        | ReturnToUserRefusal.UnmeasuredWithoutHandler signal ->
+            $"%O{signal} interrupted the thread's call, and no handler runs as the thread returns: by then the signal has been discarded or is blocked. What the call does then is unmeasured."
+        | ReturnToUserRefusal.ChangedSinceInterruption (signal, flavour) ->
+            $"%O{signal} interrupted the thread's call, and since then another thread has changed what the thread takes as it returns, so that the handlers it runs now would end the call otherwise than those it would have run then. Under the %O{flavour} flavour, which of the two the kernel goes by is unmeasured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReturnToUserRefusal) : RefusalKind =
         match refusal with
         | ReturnToUserRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
         | ReturnToUserRefusal.ProcessEnd inner -> ProcessEndRefusal.kind inner
+        | ReturnToUserRefusal.MixedRestartFlags _ -> RefusalKind.Unmodelled
+        | ReturnToUserRefusal.DefaultAction _ -> RefusalKind.Unmodelled
+        | ReturnToUserRefusal.RestartWithRemainingTime _ -> RefusalKind.Unmodelled
+        | ReturnToUserRefusal.UnmeasuredWithoutHandler _ -> RefusalKind.Unmodelled
+        | ReturnToUserRefusal.ChangedSinceInterruption _ -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `sigprocmask(2)`: something it does not
 /// model, rather than an error a kernel would report.
@@ -139,17 +176,29 @@ module internal SigprocmaskRefusal =
 
 /// What a thread's return to user mode did, as `UnixSignal.onReturnToUser`
 /// answers it, if it did not end the process (see `ProcessFate`): run the
-/// handlers of the caught signals it took, or apply a signal's kernel default.
+/// handlers of the caught signals it took, or apply a signal's kernel default;
+/// and, if a signal interrupted the call the thread is returning from, how that
+/// call ends.
 [<RequireQualifiedAccess>]
 type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     /// The thread took nothing the client acts on, and runs its own code next.
-    | Resumes
+    ///
+    /// `interrupted` is `Some` if a signal interrupted the call the thread is
+    /// returning from (an `Interrupted` answer): the call fails with `EINTR`,
+    /// or restarts, the client making it again before the thread runs any
+    /// other code of its own.
+    | Resumes of interrupted : InterruptedCall option
     /// A frame for every caught signal the thread takes now, pushed all at once,
     /// innermost first: the head's handler runs first, and
     /// each handler's `UnixSignal.sigreturn` is followed by another
     /// `UnixSignal.onReturnToUser`, which may push more frames before the next
     /// one down runs. Never empty.
-    | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list
+    ///
+    /// `interrupted` is `Some` if a signal interrupted the call the thread is
+    /// returning from (an `Interrupted` answer): once every handler has
+    /// returned, the call fails with `EINTR`, or restarts, the client making it
+    /// again before the thread runs any other code of its own.
+    | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list * interrupted : InterruptedCall option
     /// No handler claims the signal and its kernel default is to suspend the
     /// whole process. The library holds no stopped state, so the client acts
     /// on it.
@@ -182,25 +231,24 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
 /// What became of a `sigsuspend(2)` or `pause(2)` this kernel could answer.
 [<RequireQualifiedAccess>]
 type SigsuspendOutcome =
-    /// The call failed with this errno.
-    ///
-    /// `EINTR` is how every call that began ends: a signal the thread takes under
-    /// the temporary mask has ended it, and the thread returns to user mode
-    /// (`UnixSignal.onReturnToUser`) before the call's -1 is seen. That return
-    /// runs the handlers, the first of whose frames saves the mask from before
-    /// the call, or applies a default that terminates the process, which then
-    /// never sees the -1 at all. Until that return the thread's mask is still the
-    /// temporary one, with the mask to restore beside it
-    /// (`SignalState.maskToRestore`).
-    ///
-    /// Linux's `rt_sigsuspend` answers `EINVAL` for a set size other than 8,
-    /// having changed nothing.
+    /// The call failed with this errno: Linux's `rt_sigsuspend` answers
+    /// `EINVAL` for a set size other than 8, having changed nothing.
     | Failed of error : UnixError
     /// The call did not return. The calling thread is parked, with the temporary
     /// mask in force, and sleeps until `UnixWait.wake` wakes it for this
     /// condition; then `UnixSignal.finishSigsuspend` finishes the
     /// call.
     | WouldBlock of WakeCondition
+    /// A signal the thread takes under the temporary mask has ended the call,
+    /// which is how every call that began ends. The thread owes a return to
+    /// user mode (`UnixSignal.onReturnToUser`), which it makes before any
+    /// other call. That return says whether the call fails with `EINTR`, as
+    /// it does once a handler has run, the first of whose frames saves the
+    /// mask from before the call, or restarts; or it applies a default that
+    /// terminates the process, which then never sees the call return. Until
+    /// that return the thread's mask is still the temporary one, with the mask
+    /// to restore beside it (`SignalState.maskToRestore`).
+    | Interrupted
 
 [<RequireQualifiedAccess>]
 module UnixSignal =
@@ -335,6 +383,47 @@ module UnixSignal =
         | SignalNumbering.Linux, Signal.RealTime 1 -> true
         | _, _ -> false
 
+    /// How the call `interruption` describes ends, under `flavour`, as its
+    /// thread returns to user mode running the handlers of `frames`, innermost
+    /// first, or none.
+    let private endOfInterrupted<'Thread, 'Handler>
+        (flavour : SimulatedUnixFlavour)
+        (interruption : Interruption)
+        (frames : HandlerFrame<'Thread, 'Handler> list)
+        : Result<InterruptedCall, ReturnToUserRefusal>
+        =
+        // Measured on Linux 6.18.5 and Darwin 27.0.0
+        // (`docs/probes/disposition-before-return`, the held rows): with the
+        // disposition changed after the signal woke the sleeper and before it
+        // ran, the handler it then ran decided the call by its own SA_RESTART,
+        // and with none run the call ended as `withoutHandler` says. By
+        // Linux's source the call's own code only notes that a signal is
+        // pending, and the disposition is read as the thread returns, so the
+        // same holds of a change made between the call's answer and its
+        // return. By XNU's, Darwin's `_sleep` reads SA_RESTART as the woken
+        // thread runs, before the return delivers the signal, and the probe
+        // cannot tell those apart; so under Darwin a return that would end the
+        // call otherwise than the return made as it was interrupted is refused.
+        let atReturn =
+            match frames with
+            | [] ->
+                match interruption.Unhandled with
+                | UnhandledInterruption.Ends ending -> Ok ending
+                | UnhandledInterruption.RestartsWithRemainingTime ->
+                    Error (ReturnToUserRefusal.RestartWithRemainingTime interruption.Signal)
+                | UnhandledInterruption.Unmeasured ->
+                    Error (ReturnToUserRefusal.UnmeasuredWithoutHandler interruption.Signal)
+            | _ :: _ ->
+                SyscallInterruption.byHandlers interruption.Rule frames
+                |> Result.mapError ReturnToUserRefusal.MixedRestartFlags
+
+        match flavour, atReturn with
+        | SimulatedUnixFlavour.Linux, _
+        | SimulatedUnixFlavour.Darwin, Error _ -> atReturn
+        | SimulatedUnixFlavour.Darwin, Ok ending when interruption.AtInterruption = Some ending -> atReturn
+        | SimulatedUnixFlavour.Darwin, Ok _ ->
+            Error (ReturnToUserRefusal.ChangedSinceInterruption (interruption.Signal, SimulatedUnixFlavour.Darwin))
+
     /// `tryOnReturnToUser` once `Entry` has admitted its caller.
     let private tryOnReturnToUserIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
@@ -353,17 +442,40 @@ module UnixSignal =
         | Error refusal -> Error (ReturnToUserRefusal.Receiver refusal)
         | Ok (delivery, signals) ->
 
-        let after = UnixSystemState.withSignals signals system
+        let after = UnixSystemState.withSignals signals system |> OwedReturns.settle thread
 
-        match delivery with
-        | None -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes, after))
-        | Some (SignalDelivery.RunHandlers frames) ->
-            Ok (ViewFate.Continues (ReturnToUserOutcome.RunHandlers frames, after))
-        | Some (SignalDelivery.DefaultStop signal) ->
+        let interrupted =
+            match UnixThreadTable.owedBy thread system.Threads with
+            | Some (OwedReturn.Interrupted interruption) -> Some interruption
+            | Some OwedReturn.SignalDue
+            | None -> None
+
+        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+
+        match delivery, interrupted with
+        | None, None -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes None, after))
+        | None, Some interruption ->
+            endOfInterrupted<'Thread, 'Handler> flavour interruption []
+            |> Result.map (fun ending -> ViewFate.Continues (ReturnToUserOutcome.Resumes (Some ending), after))
+        | Some (SignalDelivery.RunHandlers frames), None ->
+            Ok (ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after))
+        | Some (SignalDelivery.RunHandlers frames), Some interruption ->
+            endOfInterrupted flavour interruption frames
+            |> Result.map (fun ending ->
+                ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, Some ending), after)
+            )
+        | Some (SignalDelivery.DefaultStop signal), Some _
+        | Some (SignalDelivery.DefaultContinue signal), Some _ -> Error (ReturnToUserRefusal.DefaultAction signal)
+        | Some (SignalDelivery.DefaultStop signal), None ->
             Ok (ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after))
-        | Some (SignalDelivery.DefaultContinue signal) ->
-            Ok (ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, after))
-        | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)) ->
+        | Some (SignalDelivery.DefaultContinue signal), None ->
+            Ok (
+                ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, OwedReturns.returnGoesOn thread after)
+            )
+        // Measured (`docs/probes/disposition-before-return`, the held `dfl`
+        // rows): a signal whose default terminates ends the process however
+        // the call was interrupted.
+        | Some (SignalDelivery.DefaultTerminate (signal, coreDumped)), _ ->
             match UnixThreadLifecycle.tryEndProcess (ProcessTermination.Signaled (signal, coreDumped)) after with
             | Ok (ended, dead) -> Ok (ViewFate.ProcessEnded (ended, dead))
             | Error refusal -> Error (ReturnToUserRefusal.ProcessEnd refusal)
@@ -388,7 +500,13 @@ module UnixSignal =
     /// leader blocks and it does not, where the signal's default terminates or
     /// stops the process. A client asks this before
     /// the thread next runs its own code: after every system call it makes,
-    /// `sigreturn` included.
+    /// `sigreturn` included. It may ask at any other time the thread is not
+    /// asleep in a syscall, as a preempted thread returns to user mode.
+    ///
+    /// A thread must return before it makes another call when a signal
+    /// interrupted its last call (an `Interrupted` answer), and when its last
+    /// call left it a signal to take here; every call the thread makes until
+    /// then throws `InvalidOperationException`.
     ///
     /// Returns the possibly-updated system in every case, because an answer can
     /// change the state without producing an action (see the Ignore rule
@@ -461,8 +579,24 @@ module UnixSignal =
     ///
     /// A thread asleep in a syscall is not in user mode, and returns to it only
     /// once the syscall has answered. A signal ends that sleep through the
-    /// syscall's finishing call instead (see `SyscallInterruption`), after which
-    /// the thread returns to user mode here.
+    /// syscall's finishing call, which answers `Interrupted`, after which the
+    /// thread returns to user mode here, and this return says how the call
+    /// ends (`ReturnToUserOutcome.Resumes` and `ReturnToUserOutcome.RunHandlers`
+    /// carry it), from the signals as they are now rather than as they were
+    /// when the call was interrupted. When handlers run, their `SA_RESTART`
+    /// decides, as `SyscallInterruption.ruleOf` says; when none does, because
+    /// another thread has since ignored the signal or reset it to a default
+    /// that discards it, the call restarts, but for Linux's `epoll_wait` and
+    /// Darwin's `poll` and `kevent`, which fail with `EINTR`. A default that
+    /// terminates the process ends it, as at any return.
+    ///
+    /// Refuses, for an interrupted call: a default that stops or continues the
+    /// process; handlers that disagree about `SA_RESTART`, for a call it
+    /// restarts; no handler for a Linux `poll` with a timeout, which Linux
+    /// restarts with what is left of it, or for a call with a timeout under
+    /// `epoll_wait` or `kevent`, or a Darwin `poll`, which is unmeasured; and,
+    /// under Darwin, an end other than the one a return made as the call was
+    /// interrupted would have given.
     ///
     /// Fails loudly if `caller` names no thread, or is asleep in a syscall, each of
     /// which is a bug in the client.
@@ -1015,8 +1149,18 @@ module UnixSignal =
         // 50 ms), as a `poll` with something to report answers at once.
         match SyscallInterruption.suspension thread system signals with
         | Error refusal -> Error refusal
-        | Ok (SyscallInterruption.Suspension.Ends signals) ->
-            Ok (SigsuspendOutcome.Failed UnixError.EINTR, UnixSystemState.withSignals signals system)
+        | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
+            let interruption =
+                SyscallInterruption.interruptionOf
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    ParkedSyscall.SigSuspend
+                    delivery
+
+            Ok (
+                SigsuspendOutcome.Interrupted,
+                UnixSystemState.withSignals signals system
+                |> OwedReturns.interrupt thread interruption
+            )
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
                 SigsuspendOutcome.WouldBlock (WakeCondition.ofPark ParkedSyscall.SigSuspend),
@@ -1057,15 +1201,16 @@ module UnixSignal =
     /// call as it does out of `pthreadSigmask`. Only the caller's mask changes, on
     /// both flavours.
     ///
-    /// The call ends, failing with `EINTR`, once the thread would run a handler as
-    /// it returned to user mode, whatever `SA_RESTART` says: at once if a
-    /// signal `mask` lets through is already pending, and otherwise from the
-    /// sleep it parks in (`WouldBlock`, finished by `finishSigsuspend`). The
-    /// return to user mode runs every handler due before the call's -1 is seen;
-    /// the outermost frame saves the mask from before the call, so that its
-    /// `sigreturn` restores it (see `onReturnToUser`). A signal at its default
-    /// that terminates the process ends the call the same way, and the return
-    /// to user mode then terminates the process.
+    /// A signal ends the call (`SigsuspendOutcome.Interrupted`) once the thread
+    /// would run a handler as it returned to user mode: at once if a signal
+    /// `mask` lets through is already pending, and otherwise from the sleep it
+    /// parks in (`WouldBlock`, finished by `finishSigsuspend`). The return to
+    /// user mode then runs every handler due, and the call fails with `EINTR`
+    /// whatever `SA_RESTART` says; the outermost frame saves the mask from
+    /// before the call, so that its `sigreturn` restores it (see
+    /// `onReturnToUser`). A signal at its default that terminates the process
+    /// ends the call the same way, and the return to user mode then terminates
+    /// the process.
     ///
     /// An ignored signal ends nothing, and nor does a SIGCONT at its default.
     /// One sent during the call that `mask` lets through is discarded as it is
@@ -1204,10 +1349,17 @@ module UnixSignal =
 
         match SyscallInterruption.suspension thread system system.Process.Signals with
         | Error refusal -> Error refusal
-        | Ok (SyscallInterruption.Suspension.Ends signals) ->
+        | Ok (SyscallInterruption.Suspension.Ends (delivery, signals)) ->
+            let interruption =
+                SyscallInterruption.interruptionOf
+                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    ParkedSyscall.SigSuspend
+                    delivery
+
             Ok (
-                SigsuspendOutcome.Failed UnixError.EINTR,
+                SigsuspendOutcome.Interrupted,
                 UnixSystemState.withSignals signals (UnixParkState.unpark thread system)
+                |> OwedReturns.interrupt thread interruption
             )
         | Ok (SyscallInterruption.Suspension.Sleeps signals) ->
             Ok (
@@ -1230,7 +1382,7 @@ module UnixSignal =
             system
 
     /// Finish the `sigsuspend(2)` or `pause(2)` `caller` is parked in, once
-    /// `UnixWait.wake` has woken it: `Failed EINTR` if a signal it takes under
+    /// `UnixWait.wake` has woken it: `Interrupted` if a signal it takes under
     /// the temporary mask ends the call, as `sigsuspend` describes; and
     /// otherwise it parks again, as the call it was woken from, since what
     /// woke it has gone. Under Linux a SIGCONT at its default that woke it is

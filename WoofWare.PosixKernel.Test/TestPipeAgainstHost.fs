@@ -435,8 +435,8 @@ module TestPipeAgainstHost =
                                 |> shouldEqual (Error UnixError.EAGAIN)
 
                                 substituted <- true
-                            | Ok (ReadOutcome.Restarts, _) ->
-                                failwith $"%s{where ()}: a read that never slept restarted"
+                            | Ok (ReadOutcome.Interrupted, _) ->
+                                failwith $"%s{where ()}: a read that never slept was interrupted"
                             | Error refusal -> failwith $"%s{where ()}: model refused %A{refusal}"
                             | Ok (ReadOutcome.Answered answer, after) ->
                                 let host =

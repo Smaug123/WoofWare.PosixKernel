@@ -181,7 +181,9 @@ module TestNonBlockingAsleepMeasured =
     type private Step =
         | Answered of Answer
         | Sleeps
-        | Restarts
+        /// A signal interrupted the call: the thread's return to user mode
+        /// says how it ends.
+        | Interrupted
 
     let private ofWrite
         (where : string)
@@ -199,7 +201,7 @@ module TestNonBlockingAsleepMeasured =
         | ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), system) ->
             Step.Answered (Error error), system
         | ProcessFate.Continues (WriteOutcome.WouldBlock _, system) -> Step.Sleeps, system
-        | ProcessFate.Continues (WriteOutcome.Restarts, system) -> Step.Restarts, system
+        | ProcessFate.Continues (WriteOutcome.Interrupted, system) -> Step.Interrupted, system
         | other -> failwith $"%s{where}: the write came to %A{other}"
 
     let private ofRead (where : string) (outcome : ReadOutcome, system : UnixSystem<int, string>) =
@@ -207,7 +209,7 @@ module TestNonBlockingAsleepMeasured =
         | ReadOutcome.Answered (ReadAnswer.Completed bytes) -> Step.Answered (Ok (int64 bytes.Length)), system
         | ReadOutcome.Answered (ReadAnswer.Failed error) -> Step.Answered (Error error), system
         | ReadOutcome.WouldBlock _ -> Step.Sleeps, system
-        | ReadOutcome.Restarts -> Step.Restarts, system
+        | ReadOutcome.Interrupted -> Step.Interrupted, system
         | other -> failwith $"%s{where}: the read came to %A{other}"
 
     /// `thread` writes `count` bytes through `fd`.
@@ -261,8 +263,8 @@ module TestNonBlockingAsleepMeasured =
     /// returns. How many ran.
     let rec private returnToUser (where : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
-        | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> 0, system
-        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system) ->
+        | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> 0, system
+        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system) ->
             let system =
                 (system, frames)
                 ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
@@ -270,6 +272,24 @@ module TestNonBlockingAsleepMeasured =
             let more, system = returnToUser where system
             List.length frames + more, system
         | other -> failwith $"%s{where}: returning to user mode came to %A{other}"
+
+    /// The sleeper, whose call a signal interrupted, returns to user mode: how
+    /// the call ends, and how many handlers ran, every one returning.
+    let private returnFromInterrupted
+        (where : string)
+        (system : UnixSystem<int, string>)
+        : InterruptedCall * int * UnixSystem<int, string>
+        =
+        match UnixSignal.onReturnToUser (Callers.thread sleeper system) system with
+        | ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some call), system) -> call, 0, system
+        | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, Some call), system) ->
+            let system =
+                (system, frames)
+                ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread sleeper system) frame.Id system)
+
+            let more, system = returnToUser where system
+            call, List.length frames + more, system
+        | other -> failwith $"%s{where}: returning from the interrupted call came to %A{other}"
 
     /// Non-blocking writes of `chunk` bytes through `fd` by the leader until
     /// EAGAIN.
@@ -409,8 +429,13 @@ module TestNonBlockingAsleepMeasured =
             | Step.Answered answer, system ->
                 let handled, system = returnToUser where system
                 Ending.Returned answer, handled, system
-            | Step.Restarts, system ->
-                let handled, system = returnToUser where system
+            | Step.Sleeps, _ -> failwith $"%s{where}: the signalled call slept on without a restart"
+            | Step.Interrupted, system ->
+
+            match returnFromInterrupted where system with
+            | InterruptedCall.FailsWithEintr, handled, system ->
+                Ending.Returned (Error UnixError.EINTR), handled, system
+            | InterruptedCall.Restarts, handled, system ->
 
                 match issue where row.Transfer sleeper callFd count system with
                 | Step.Answered answer, system ->
@@ -426,8 +451,7 @@ module TestNonBlockingAsleepMeasured =
                         let more, system = returnToUser where system
                         Ending.SleptOn answer, handled + more, system
                     | other, _ -> failwith $"%s{where}: the unstuck call came to %A{other}"
-                | Step.Restarts, _ -> failwith $"%s{where}: the restarted call restarted again"
-            | Step.Sleeps, _ -> failwith $"%s{where}: the signalled call slept on without a restart"
+                | Step.Interrupted, _ -> failwith $"%s{where}: the restarted call was interrupted again"
 
         if ending <> row.Ending || handled <> row.Handled then
             failwith $"%s{where}: came to %A{ending} with %d{handled} handlers run"

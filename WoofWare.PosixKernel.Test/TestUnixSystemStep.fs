@@ -133,7 +133,7 @@ module TestUnixSystemStep =
         match result with
         | Ok (SyscallOutcome.Answered answer, _) -> answer
         | Ok (SyscallOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %O{condition}"
-        | Ok (SyscallOutcome.Restarts, _) -> failwith "expected an answer, got a restart"
+        | Ok (SyscallOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
         | Error e -> failwith $"expected an answer, got a refusal: %O{e}"
 
     /// A `step` result with its outcome unwrapped to the answer it carries, so
@@ -146,7 +146,7 @@ module TestUnixSystemStep =
         match result with
         | Ok (SyscallOutcome.Answered answer, system) -> Ok (answer, system)
         | Ok (SyscallOutcome.WouldBlock condition, _) -> failwith $"expected an answer, got a park on %O{condition}"
-        | Ok (SyscallOutcome.Restarts, _) -> failwith "expected an answer, got a restart"
+        | Ok (SyscallOutcome.Interrupted, _) -> failwith "expected an answer, got an interruption"
         | Error e -> Error e
 
     // -------------------------------------------------------------------- read
@@ -3957,8 +3957,10 @@ module TestUnixSystemStep =
                             (Callers.thread waiterThread signalled)
                             (Woken.thread waiterThread signalled)
                     with
-                    | Ok (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.EINTR), ended) ->
-                        flockAnswer holderThread first 8 ended |> snd
+                    | Ok (SyscallOutcome.Interrupted, ended) ->
+                        match Interruptions.handled (Callers.thread waiterThread ended) ended with
+                        | Ok (InterruptedCall.FailsWithEintr, ended) -> flockAnswer holderThread first 8 ended |> snd
+                        | other -> failwith $"%s{where}: expected the return to fail the call with EINTR, got %A{other}"
                     | other -> failwith $"%s{where}: expected EINTR, got %A{other}"
                 else
                     let released = flockAnswer holderThread first 8 closed |> snd

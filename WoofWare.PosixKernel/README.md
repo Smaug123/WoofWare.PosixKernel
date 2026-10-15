@@ -215,8 +215,8 @@ Every syscall takes the caller as its first argument, and so do the return to us
 A function that resumes a call paused to copy from the caller's memory takes the paused call rather than a caller, since the caller was checked as the call began (see "Calls that copy in from the caller's memory"): `UnixPathResolution.accessWithPath`, `UnixNamespace.renameWithDestination`, `UnixNamespace.linkWithDestination`, `UnixNamespace.symlinkWithPath`, `UnixNamespace.cloneFileWithSource`, `UnixNamespace.cloneFileWithDestination`, `UnixInotify.inotifyAddWatchWithPath`, `UnixSocket.bindWithAddress`, `UnixSocket.setsockoptWithValue`, `UnixSocket.getsockoptWithLength`, `UnixConnection.connectWithAddress`, `UnixReadWrite.writeWithBytes`, `UnixReadWrite.sendWithBytes` and `UnixReadWrite.pwriteWithBytes`.
 
 Each of those calls checks its caller before it does anything else.
-The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall; the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish, and woken (see "Sleeping and waking").
-`UnixSignal.onReturnToUser` requires a thread parked in no syscall, as a call does, and `UnixScheduling.dispatch` takes any thread of the process, parked or not.
+The caller's process must be one of the system's, and its thread one of that process's threads, parked in no syscall and owing no return to user mode (see "The return to user mode"); the finishing functions `UnixDescriptor.flockAcquire`, `UnixConnection.finishAccept`, `UnixPoll.finishPoll`, `UnixPoll.finishEpollWait`, `UnixKqueue.finishKevent`, `UnixReadWrite.finishRead`, `UnixReadWrite.finishWrite` and `UnixSignal.finishSigsuspend` require the thread to be parked instead, in the call they finish, and woken (see "Sleeping and waking").
+`UnixSignal.onReturnToUser` requires a thread parked in no syscall, whether or not it owes a return, and `UnixScheduling.dispatch` takes any thread of the process, parked or not.
 A call made by any other caller is one no real kernel could receive, so it is a bug in the client, and throws `InvalidOperationException`.
 
 `UnixSignal.pthreadKill`'s second argument, `target`, is the thread the signal is sent to, which need not be the caller.
@@ -309,7 +309,7 @@ A few public types whose names end in "Refusal" or "Fault" are values a client h
 The setters of the machine's boot configuration and of a process's launch refuse the same way.
 A value this library has not measured or does not model throws `UnmodelledException`; one no machine of the flavour could have throws `ArgumentException` or `ArgumentOutOfRangeException`, naming the parameter.
 
-A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
+A call that a real kernel would not let happen at all is a bug in the client, and throws: a thread making a syscall while it is asleep in another, or before it has returned to user mode from a call that left it owing that return, the finish of a call nothing has woken, a name that is no thread, a caller in a process the system does not hold, or `UnixScheduling.getcpu` of a thread that is not running.
 A value no `parse` could have produced, such as one built with `Unchecked.defaultof`, is a bug in the client too, and throws.
 
 ### Unions that gain cases
@@ -333,7 +333,7 @@ A path is the argument's bytes (`PathArgumentBytes`), which the kernel copies in
 A buffer is a `UserBuffer` (see "User memory"), which says whether the address the caller passed is mapped; the bytes it holds cross the API separately.
 
 A `SyscallAnswer` is the `int64` a call returns (`SyscallAnswer.Completed`), or the errno it fails with (`SyscallAnswer.Failed`).
-A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread asleep (`SyscallOutcome.WouldBlock`), or the call restarting (`SyscallOutcome.Restarts`).
+A `SyscallOutcome` is a `SyscallAnswer` (`SyscallOutcome.Answered`), the thread asleep (`SyscallOutcome.WouldBlock`), or the call interrupted by a signal (`SyscallOutcome.Interrupted`), whose end the thread's return to user mode says (see "The return to user mode").
 
 #### Descriptors
 
@@ -618,7 +618,7 @@ A call that moves bytes takes them or returns them, and the client copies them t
 
 **Reading.** `UnixReadWrite.read` answers a `ReadOutcome`.
 `ReadOutcome.Answered` holds a `ReadAnswer`: the bytes read (`ReadAnswer.Completed`), for the client to copy into the caller's buffer, and whose length the call returns; or, for `/dev/urandom`, a draw from the entropy pool (`ReadAnswer.Drawn`), whose bytes the client takes with `EntropyDraw.bytes` and whose length is `EntropyDraw.count`; or an errno (`ReadAnswer.Failed`).
-`ReadOutcome.WouldBlock` is a read that sleeps, and `ReadOutcome.Restarts` one a signal handler interrupted, which the client issues again once the handlers have run.
+`ReadOutcome.WouldBlock` is a read that sleeps, and `ReadOutcome.Interrupted` one a signal interrupted, which fails with `EINTR` or restarts as the thread's return to user mode says.
 
 **Writing.** A write stops where the kernel copies from the caller's buffer, as every call that copies in does (see "Calls that copy in from the caller's memory").
 
@@ -630,7 +630,7 @@ Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.P
 * `WriteOutcome.Returns answer`: the call answers.
 * `WriteOutcome.ReturnsRaising (answer, signal)`: the call answers, and raised `signal`, which is now pending (or was discarded). The one signal a write raises is `SIGPIPE`, with `EPIPE`, for a write into a pipe with no reader, into a Linux stream socket with no peer, or to a connection that was reset.
 * `WriteOutcome.WouldBlock condition`: the call sleeps, as above.
-* `WriteOutcome.Restarts`: a signal handler interrupted the sleep before anything was written, and the client issues the `write` again once the handlers have run. Only `finishWrite` answers this.
+* `WriteOutcome.Interrupted`: a signal interrupted the sleep before anything was written, and the call fails with `EINTR` or restarts as the thread's return to user mode says. Only `finishWrite` answers this.
 
 `send` is the same with `UnixReadWrite.send` and `UnixReadWrite.sendWithBytes`, and is woken with `finishWrite` as a write is; `pwrite` with `UnixReadWrite.pwrite` and `UnixReadWrite.pwriteWithBytes`, never sleeps or raises a signal, and answers `WriteAnswer * UnixSystem`.
 
@@ -658,7 +658,7 @@ Advancing the clock, a call that changes nothing, and dispatching a thread to th
 A sweep that wakes nobody answers a new system, equal to the one it was given, which remembers the sweep: so the client keeps the system `wake` answers, as it keeps every other.
 What a system remembers is no part of its value, and two systems that differ only in that are equal.
 
-A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, asleep, for a new wake, or say the call restarts because a signal handler interrupted it:
+A woken thread finishes its call through its family's finishing function, which may answer, park the thread again, asleep, for a new wake, or say a signal interrupted the call (`Interrupted`), whose end the thread's return to user mode says (see "The return to user mode"):
 
 | The thread is parked in (`ParkedSyscall`) | Finish it with |
 | --- | --- |
@@ -702,7 +702,7 @@ let booted : UnixSystem<int, unit> =
 // its signals. This client installs no handler, so it expects none to run.
 let resume (caller : Caller<int>) (system : UnixSystem<int, unit>) : UnixSystem<int, unit> =
     match UnixSignal.onReturnToUser caller system with
-    | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> system
+    | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
 // The process's two threads, as callers: thread 0, its leader, and thread 1,
@@ -793,10 +793,22 @@ Under Linux, `kill` of such a signal that the leader blocks while another thread
 A signal is taken as a thread returns to user mode, so after each call a thread makes, and before it runs any of its own code, the client asks `UnixSignal.onReturnToUser caller`, the caller naming the thread.
 It answers a `ProcessFate<ReturnToUserOutcome>`: the process ended (`ProcessFate.ProcessEnded (ended, system)`), because a signal whose default action terminates the process killed it (see below), or it carries on (`ProcessFate.Continues (outcome, system)`) with one of these outcomes:
 
-* `ReturnToUserOutcome.Resumes`: the thread took nothing the client acts on, and runs its own code next.
-* `ReturnToUserOutcome.RunHandlers frames`: the frames the kernel pushed, innermost first, each with the signal, the disposition and the mask to restore. The client runs each handler, and when one returns it calls `UnixSignal.sigreturn` with that frame's `HandlerFrame.Id` and asks `onReturnToUser` again.
+* `ReturnToUserOutcome.Resumes interrupted`: the thread took nothing the client acts on, and runs its own code next.
+* `ReturnToUserOutcome.RunHandlers (frames, interrupted)`: the frames the kernel pushed, innermost first, each with the signal, the disposition and the mask to restore. The client runs each handler, and when one returns it calls `UnixSignal.sigreturn` with that frame's `HandlerFrame.Id` and asks `onReturnToUser` again.
 * `ReturnToUserOutcome.ProcessStopped signal`: a signal whose default action stops the process stopped it (see below).
 * `ReturnToUserOutcome.ContinueDiscarded signal`: the kernel discarded a `SIGCONT` at its default, pending while the thread blocked it, as the thread took it, and the client asks `onReturnToUser` again, since the return goes on, under a `sigsuspend`'s temporary mask if the thread is returning from one.
+
+`interrupted` is `Some` only for the return from a call that answered `Interrupted`: from its finishing function, or, for a `sigsuspend` or `pause`, as it was made with a signal already pending.
+Such a call ends here, as a real kernel ends it as the thread returns, from the signals as they are now, which another thread may have changed since the call was interrupted.
+`Some InterruptedCall.FailsWithEintr` is the call returning -1 with `EINTR`, once every handler pushed has returned.
+`Some InterruptedCall.Restarts` is the call restarting: once every handler pushed has returned, the client makes the same call again, with the arguments it was first made with, as a real kernel rewinds the thread to make it again.
+The handlers that run decide by their `SA_RESTART`, as `SyscallInterruption.ruleOf` says of the call.
+When none runs, because another thread has since ignored the signal or reset it to a default that discards it, the call restarts, except Linux's `epoll_wait` and Darwin's `poll` and `kevent`, which fail with `EINTR`; a default that terminates the process ends it, as at any return.
+The return is refused for an interrupted call where the first signal it takes stops or continues the process, where the handlers it runs disagree about `SA_RESTART` for a call that restarts under it, where no handler runs for a Linux `poll` with a timeout (which Linux restarts with what is left of its timeout) or for an `epoll_wait`, `kevent` or Darwin `poll` with one, and, under Darwin, where the end it gives differs from the end the return would have given as the call was interrupted, since Darwin may decide as the woken thread runs.
+
+A thread owes its return to user mode after a call that answered `Interrupted`, and after any call that answered with the system and left it a signal it takes here; until it has returned, any other call it makes throws `InvalidOperationException`.
+So the client's loop is: make the call, or finish it once it is woken; return to user mode, running the handlers that return pushes; and on `InterruptedCall.Restarts` make the call again.
+`onReturnToUser` may be asked at any other time the thread is in no syscall too, as at a preemption point, and answers `Resumes None` for a thread that takes nothing.
 
 A signal whose default terminates the process ends it where the library applies the default: at generation, when some thread can take it (from `kill`, `pthreadKill`, or a write that raises `SIGPIPE`), and otherwise when a thread that blocked it can take it, as the thread returns to user mode (from `onReturnToUser`): after a mask call or a `sigreturn` that unblocks it, or from a `sigsuspend` whose temporary mask lets it through.
 For a signal sent to the process while every thread blocked it, that thread may be any of the process's threads under Linux, whose threads all take from the process's pending set; a signal whose default stops the process is taken the same way.
@@ -828,7 +840,7 @@ let returnToUser (system : UnixSystem<int, unit>) : ProcessFate<ReturnToUserOutc
 
 let resumed (fate : ProcessFate<ReturnToUserOutcome<int, unit>, int, unit>) : UnixSystem<int, unit> =
     match fate with
-    | ProcessFate.Continues (ReturnToUserOutcome.Resumes, system) -> system
+    | ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system) -> system
     | other -> failwith $"unexpected at the return to user mode: %A{other}"
 
 // pthread_sigmask(how, {SIGTERM}, NULL), with `how` under Linux's numbering:
@@ -865,6 +877,101 @@ match pending |> mask 1 |> returnToUser with
 // Prints:
 // Signaled (SIGTERM, false)
 // shell status 143
+```
+
+This client's second thread sleeps in a `read` of an empty pipe, a signal whose handler was installed with `SA_RESTART` interrupts it, and the thread's return to user mode runs the handler and restarts the read, which the client makes again:
+
+```fsharp
+open WoofWare.PosixKernel
+
+let platform = SimulatedUnixPlatform.linuxX64
+let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+let booted : UnixSystem<int, string> =
+    let launch =
+        ProcessLaunch.create platform UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+    UnixSystem.initial platform |> UnixBootImage.boot launch
+
+let pid = Seq.exactlyOne (UnixSystem.processIds booted)
+let first = Caller.make pid 0
+let second = Caller.make pid 1
+let usr1 = Signal.toRawSignoUnder numbering Signal.SIGUSR1
+
+// A thread's return to user mode: each handler it pushes, innermost first, runs and
+// returns at once, and its sigreturn is a return to user mode of its own. The first
+// return says how an interrupted call ends.
+let rec returnToUser (caller : Caller<int>) (system : UnixSystem<int, string>) : InterruptedCall option * UnixSystem<int, string> =
+    match UnixSignal.onReturnToUser caller system with
+    | ProcessFate.Continues (ReturnToUserOutcome.Resumes interrupted, system) -> interrupted, system
+    | ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, interrupted), system) ->
+        let system =
+            (system, frames)
+            ||> List.fold (fun system frame ->
+                printfn "handler %s runs for %A" frame.Action.Handler frame.Entry.Signal
+                UnixSignal.sigreturn caller frame.Id system |> returnToUser caller |> snd
+            )
+
+        interrupted, system
+    | other -> failwith $"unexpected at the return to user mode: %A{other}"
+
+// Thread 0 installs a handler for SIGUSR1 under SA_RESTART, makes a pipe, and starts
+// thread 1, returning to user mode after each call.
+let handled =
+    let action = SignalDisposition.Catch { SignalCatch.ofHandler "on-usr1" with Restart = true }
+
+    match UnixSignal.sigaction first usr1 (Some action) booted with
+    | Ok (_, system) -> snd (returnToUser first system)
+    | Error errno -> failwith $"sigaction failed: %O{errno}"
+
+let readFd, piped =
+    match UnixPipe.pipe2 first 0 UserBuffer.Mapped handled with
+    | Pipe2Answer.Created (readFd, _), system -> readFd, snd (returnToUser first system)
+    | answer, _ -> failwith $"unexpected from pipe2: %A{answer}"
+
+let spawned =
+    match UnixThreadLifecycle.spawn first 1 (CpuId 0) piped with
+    | SpawnAnswer.Spawned _, system -> snd (returnToUser first system)
+    | answer, _ -> failwith $"unexpected from spawn: %A{answer}"
+
+// Thread 1 reads the empty pipe, and sleeps; thread 0 sends it SIGUSR1.
+let read (system : UnixSystem<int, string>) = UnixReadWrite.read second readFd UserBuffer.Mapped 64UL system
+
+let signalled =
+    match read spawned with
+    | ReadOutcome.WouldBlock _, asleep ->
+        match UnixSignal.pthreadKill first 1 usr1 asleep with
+        | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) -> snd (returnToUser first system)
+        | other -> failwith $"unexpected from pthread_kill: %A{other}"
+    | outcome, _ -> failwith $"expected the read to sleep: %A{outcome}"
+
+// The signal wakes thread 1, and its read, finished, was interrupted. Its return to
+// user mode runs the handler and says how the read ends.
+let restarted =
+    match UnixWait.wake signalled with
+    | [ woken, _ ], woken' when woken = second ->
+        match UnixReadWrite.finishRead second woken' with
+        | ReadOutcome.Interrupted, system ->
+            printfn "the read was interrupted"
+
+            match returnToUser second system with
+            | Some InterruptedCall.Restarts, system ->
+                printfn "the read restarts"
+                system
+            | ending, _ -> failwith $"expected the read to restart: %A{ending}"
+        | outcome, _ -> failwith $"unexpected read: %A{outcome}"
+    | wakes, _ -> failwith $"expected thread 1 to wake: %A{wakes}"
+
+// The client makes the read again, as the restart says, and it sleeps again.
+match read restarted with
+| ReadOutcome.WouldBlock _, _ -> printfn "thread 1 sleeps in its read again"
+| outcome, _ -> failwith $"unexpected from the read made again: %A{outcome}"
+
+// Prints:
+// the read was interrupted
+// handler on-usr1 runs for SIGUSR1
+// the read restarts
+// thread 1 sleeps in its read again
 ```
 
 ## Threads, and the end of the process

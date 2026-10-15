@@ -187,7 +187,7 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
         | AcceptOutcome.Accepted (acceptedFd, copiedOut, reportedLength), system ->
 
         CopyOut.endpoint copiedOut |> shouldEqual (loopback 40000us)
@@ -255,7 +255,7 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
         | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
 
         let acceptedId =
@@ -278,7 +278,7 @@ module TestAccept =
                     | AcceptOutcome.DroppedConnection error, _ ->
                         failwith $"expected an accept, but the connection was dropped with %O{error}"
                     | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-                    | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+                    | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
                     | AcceptOutcome.Accepted (_, copiedOut, _), system ->
                         peers @ [ CopyOut.endpoint copiedOut ], system
                 )
@@ -303,7 +303,7 @@ module TestAccept =
             | AcceptOutcome.DroppedConnection error, _ ->
                 failwith $"expected an accept, but the connection was dropped with %O{error}"
             | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-            | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+            | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
             | AcceptOutcome.Accepted (_, _, reportedLength), _ -> reportedLength |> shouldEqual 16
 
     /// A call that writes nothing never looks at the destination, so every
@@ -325,7 +325,7 @@ module TestAccept =
             | AcceptOutcome.DroppedConnection error, _ ->
                 failwith $"expected an accept, but the connection was dropped with %O{error}"
             | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-            | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+            | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
             | AcceptOutcome.Accepted (_, _, reportedLength), system ->
 
             reportedLength |> shouldEqual 16
@@ -611,7 +611,7 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
         | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual inherits
@@ -629,7 +629,7 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
         | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual false
@@ -660,7 +660,7 @@ module TestAccept =
         | AcceptOutcome.DroppedConnection error, _ ->
             failwith $"expected an accept, but the connection was dropped with %O{error}"
         | AcceptOutcome.WouldBlock _, _ -> failwith "expected an accept, but the call parked"
-        | AcceptOutcome.Restarts, _ -> failwith "expected an accept, but the call restarted"
+        | AcceptOutcome.Interrupted, _ -> failwith "expected an accept, but the call was interrupted"
         | AcceptOutcome.Accepted (acceptedFd, _, _), system ->
 
         (acceptedDescription acceptedFd system).NonBlocking |> shouldEqual inherits

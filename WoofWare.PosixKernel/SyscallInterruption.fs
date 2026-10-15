@@ -1,27 +1,5 @@
 namespace WoofWare.PosixKernel
 
-/// What a syscall a thread is asleep in does when a signal with a handler is to
-/// be delivered to that thread before the syscall has anything else to answer.
-[<RequireQualifiedAccess>]
-type SignalRestartRule =
-    /// The syscall fails with `EINTR`, whatever flags the handler was
-    /// installed with.
-    | FailsWithEintr
-    /// The syscall is restarted if the handler was installed with
-    /// `SA_RESTART`, and fails with `EINTR` otherwise.
-    | RestartsUnderSaRestart
-
-/// How a signal with a handler ends the syscall a thread is asleep in.
-[<RequireQualifiedAccess>]
-type internal SyscallInterruption =
-    /// The syscall fails with `EINTR`. The handlers run as the thread returns
-    /// from it.
-    | Eintr
-    /// The syscall does not return. The handlers run, and once they have all
-    /// returned the thread issues the syscall again, with the arguments it first
-    /// made it with.
-    | Restart
-
 /// Why this library will not say how a signal ends the syscall a thread is asleep
 /// in.
 [<RequireQualifiedAccess>]
@@ -33,10 +11,6 @@ type internal SyscallInterruptionRefusal =
     /// its default disposition, which terminates, stops or continues the
     /// process, rather than caught.
     | DefaultAction of signal : Signal
-    /// The syscall is one that `SA_RESTART` restarts, and of the handlers the
-    /// thread would run, those for `restarting` were installed with it and those
-    /// for `failing` without.
-    | MixedRestartFlags of restarting : Signal list * failing : Signal list
     /// The syscall has its own answer to give and a signal with a handler is
     /// deliverable to the thread too, under a flavour whose kernel answers
     /// whichever of the two reached the sleeping thread first, which this
@@ -53,8 +27,6 @@ module internal SyscallInterruptionRefusal =
             $"a signal is pending for a thread asleep in a syscall, and this kernel will not say what the thread takes as it returns to user mode: %s{SignalReceiverRefusal.describe refusal}"
         | SyscallInterruptionRefusal.DefaultAction signal ->
             $"the first signal a thread asleep in a syscall would take is %O{signal}, at a default disposition that terminates, stops or continues the process, and what that does to the syscall is unmeasured."
-        | SyscallInterruptionRefusal.MixedRestartFlags (restarting, failing) ->
-            $"a thread asleep in a syscall that SA_RESTART restarts would run handlers for %A{restarting}, installed with SA_RESTART, and for %A{failing}, installed without it. Which of them decides whether the syscall restarts is unmeasured."
         | SyscallInterruptionRefusal.SignalBesideCompletion flavour ->
             $"a thread asleep in a syscall has both the syscall's own answer and a signal with a handler waiting for it. Under the %O{flavour} flavour the kernel answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
 
@@ -63,7 +35,6 @@ module internal SyscallInterruptionRefusal =
         match refusal with
         | SyscallInterruptionRefusal.Receiver inner -> SignalReceiverRefusal.kind inner
         | SyscallInterruptionRefusal.DefaultAction _ -> RefusalKind.Unmodelled
-        | SyscallInterruptionRefusal.MixedRestartFlags _ -> RefusalKind.Unmodelled
         | SyscallInterruptionRefusal.SignalBesideCompletion _ -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `sigsuspend(2)` or `pause(2)`, or the
@@ -112,6 +83,7 @@ module internal SigsuspendRefusal =
         | SigsuspendRefusal.DarwinPendingContinue -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
+[<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module SyscallInterruption =
 
     /// How the syscall `parked` records ends under `flavour` when a signal with
@@ -205,10 +177,11 @@ module SyscallInterruption =
     /// What a thread in `sigsuspend` does now, its temporary mask in force.
     [<RequireQualifiedAccess>]
     type internal Suspension<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
-        /// The call ends: the thread's return to user mode runs a handler, or
-        /// applies a default that terminates the process. The signals are as
-        /// the call leaves them, for that return to take from.
-        | Ends of SignalState<'Thread, 'Handler>
+        /// The call ends: the thread's return to user mode would make
+        /// `delivery`, running a handler or applying a default that terminates
+        /// the process. The signals are as the call leaves them, for that
+        /// return to take from.
+        | Ends of delivery : SignalDelivery<'Thread, 'Handler> * signals : SignalState<'Thread, 'Handler>
         /// The call sleeps on, with these signals.
         | Sleeps of SignalState<'Thread, 'Handler>
 
@@ -244,8 +217,8 @@ module SyscallInterruption =
             // call was made or sent during it, SA_RESTART or not; and a TERM at
             // its default killed the process, sent during the call or pending
             // before it and unblocked by the temporary mask.
-            | Ok (Some (SignalDelivery.RunHandlers _), _)
-            | Ok (Some (SignalDelivery.DefaultTerminate _), _) -> Ok (Suspension.Ends signals)
+            | Ok (Some (SignalDelivery.RunHandlers _ as delivery), _)
+            | Ok (Some (SignalDelivery.DefaultTerminate _ as delivery), _) -> Ok (Suspension.Ends (delivery, signals))
             // Measured: stopped and continued with no handler run, the call slept
             // on, on both flavours.
             | Ok (Some (SignalDelivery.DefaultStop signal), _) -> Error (SigsuspendRefusal.DefaultStop signal)
@@ -361,18 +334,31 @@ module SyscallInterruption =
 
         count > pageSize && wakes thread system
 
-    /// Whether a signal with a handler ends the sleep of `thread` now, whatever
-    /// the handlers' flags: for a syscall that, interrupted, returns what it
-    /// has done so far rather than failing or restarting, as a write that has
-    /// put bytes into a pipe does. `Error` where this library will not say what
-    /// the thread takes as it returns to user mode, or where it is a signal's
-    /// default action.
+    /// Whether a signal ends the sleep of `thread` now, whatever the handlers'
+    /// flags: whether the thread would take one as it returned to user mode,
+    /// running its handler or applying its default. For a syscall that,
+    /// interrupted, returns what it has done so far rather than failing or
+    /// restarting, as a write that has put bytes into a pipe does. `Error`
+    /// where this library will not say what the thread takes as it returns.
     let internal interrupts<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (thread : 'Thread)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<bool, SyscallInterruptionRefusal>
         =
-        framesOnReturn thread system |> Result.map (List.isEmpty >> not)
+        // A default that terminates the process ends the sleep as a handler
+        // does (`docs/probes/disposition-before-return`, the `dfl` rows): the
+        // call answers, and the return then ends the process.
+        match
+            SignalState.takeOnReturn
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                (system.Threads |> Map.keys |> Set.ofSeq)
+                thread
+                system.Process.Signals
+        with
+        | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
+        | Ok (delivery, _) -> Ok delivery.IsSome
 
     /// Whether the syscall `thread` is asleep in may give its own answer, now that
     /// it has one: a finishing call asks this before it answers, and refuses
@@ -399,33 +385,68 @@ module SyscallInterruption =
             | Ok (_ :: _) -> Error (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)
             | Error refusal -> Error refusal
 
-    /// How a signal ends the syscall `thread` is asleep in, if one does now:
-    /// `None` when returning to user mode now would run no handler.
-    ///
-    /// A finishing call asks this only once it has found that the syscall has
-    /// nothing else to answer: a wait whose own condition holds answers that,
-    /// and the handlers run as it returns.
-    ///
-    /// Fails loudly if `thread` is not asleep in a syscall.
-    let internal ofPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<SyscallInterruption option, SyscallInterruptionRefusal>
+    /// How the syscall `parked` records ends under `flavour` if a signal
+    /// interrupted it and, by the time its thread returns to user mode, no
+    /// handler runs: the signal has been discarded, or the thread blocks it.
+    let internal withoutHandler (flavour : SimulatedUnixFlavour) (parked : ParkedSyscall) : UnhandledInterruption =
+        // Measured on Linux 6.18.5 and Darwin 27.0.0
+        // (`docs/probes/disposition-before-return`, the held `ign` rows): the
+        // sleeping thread signalled with a caught signal that another thread
+        // then ignored before the sleeper ran. No handler ran; Linux's
+        // epoll_wait and Darwin's poll and kevent answered EINTR, and every
+        // other call went on sleeping, which is what restarting it does. Each
+        // call was measured without a timeout: a Linux `poll` with one restarts
+        // with what is left of it (`restart_syscall`), which the call as first
+        // made does not, and the others' timeouts are unmeasured.
+        let measuredWithoutTimeout (deadline : int64 option) (outcome : InterruptedCall) : UnhandledInterruption =
+            match deadline with
+            | None -> UnhandledInterruption.Ends outcome
+            | Some _ -> UnhandledInterruption.Unmeasured
+
+        match flavour, parked with
+        | _, ParkedSyscall.SigSuspend
+        | _, ParkedSyscall.Flock _
+        | _, ParkedSyscall.Accept _
+        | _, ParkedSyscall.PipeRead _
+        | _, ParkedSyscall.PipeWrite _
+        | _, ParkedSyscall.ConnectionRead _
+        | _, ParkedSyscall.ConnectionWrite _ -> UnhandledInterruption.Ends InterruptedCall.Restarts
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.InotifyRead _ -> UnhandledInterruption.Ends InterruptedCall.Restarts
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.Poll poll ->
+            match poll.Deadline with
+            | None -> UnhandledInterruption.Ends InterruptedCall.Restarts
+            | Some _ -> UnhandledInterruption.RestartsWithRemainingTime
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.EpollWait wait ->
+            measuredWithoutTimeout wait.Deadline InterruptedCall.FailsWithEintr
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.KqueuePoll poll ->
+            measuredWithoutTimeout poll.Deadline InterruptedCall.FailsWithEintr
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.Kevent wait ->
+            measuredWithoutTimeout wait.Deadline InterruptedCall.FailsWithEintr
+        // A park the flavour never makes, and the reserved parks.
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.InotifyRead _
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.Poll _
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.EpollWait _
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.KqueuePoll _
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.Kevent _
+        | _, ParkedSyscall.Sleep _
+        | _, ParkedSyscall.FifoOpen _
+        | _, ParkedSyscall.Select _
+        | _, ParkedSyscall.SignalWait _
+        | _, ParkedSyscall.DatagramReceive _
+        | _, ParkedSyscall.DatagramSend _
+        | _, ParkedSyscall.Connect _ -> UnhandledInterruption.Unmeasured
+
+    /// How the handlers of `frames`, innermost first, end a syscall whose rule
+    /// is `rule`: `Error` of the signals whose handlers were installed with
+    /// `SA_RESTART` and of those whose were not, where they disagree about a
+    /// syscall that `SA_RESTART` restarts.
+    let internal byHandlers<'Thread, 'Handler>
+        (rule : SignalRestartRule)
+        (frames : HandlerFrame<'Thread, 'Handler> list)
+        : Result<InterruptedCall, Signal list * Signal list>
         =
-        let parked =
-            match UnixThreadTable.parkedFor thread system.Threads with
-            | Some parked -> parked
-            | None ->
-                failwith
-                    $"SyscallInterruption.ofPark: thread %O{thread} is not asleep in a syscall, so no signal can interrupt one (this is a bug in the caller)."
-
-        match framesOnReturn thread system with
-        | Error refusal -> Error refusal
-        | Ok [] -> Ok None
-        | Ok frames ->
-
-        match ruleOf (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) parked with
-        | SignalRestartRule.FailsWithEintr -> Ok (Some SyscallInterruption.Eintr)
+        match rule with
+        | SignalRestartRule.FailsWithEintr -> Ok InterruptedCall.FailsWithEintr
         | SignalRestartRule.RestartsUnderSaRestart ->
             // Every frame is pushed before any handler runs, and a kernel decides
             // the syscall's fate as it pushes the first. While the handlers agree
@@ -435,12 +456,76 @@ module SyscallInterruption =
                 frames |> List.partition (fun frame -> frame.Action.Restart)
 
             match restarting, failing with
-            | _, [] -> Ok (Some SyscallInterruption.Restart)
-            | [], _ -> Ok (Some SyscallInterruption.Eintr)
+            | _, [] -> Ok InterruptedCall.Restarts
+            | [], _ -> Ok InterruptedCall.FailsWithEintr
             | _, _ ->
                 Error (
-                    SyscallInterruptionRefusal.MixedRestartFlags (
-                        restarting |> List.map (fun frame -> frame.Entry.Signal),
-                        failing |> List.map (fun frame -> frame.Entry.Signal)
-                    )
+                    restarting |> List.map (fun frame -> frame.Entry.Signal),
+                    failing |> List.map (fun frame -> frame.Entry.Signal)
                 )
+
+    /// The interruption of the syscall `parked` records under `flavour`, by a
+    /// signal the thread's return to user mode would take as `delivery`.
+    let internal interruptionOf<'Thread, 'Handler>
+        (flavour : SimulatedUnixFlavour)
+        (parked : ParkedSyscall)
+        (delivery : SignalDelivery<'Thread, 'Handler>)
+        : Interruption
+        =
+        let rule = ruleOf flavour parked
+
+        let signal, atInterruption =
+            match delivery with
+            | SignalDelivery.RunHandlers frames ->
+                // Innermost first: the first signal taken is the outermost frame's.
+                (List.last frames).Entry.Signal, Result.toOption (byHandlers rule frames)
+            | SignalDelivery.DefaultTerminate (signal, _)
+            | SignalDelivery.DefaultStop signal
+            | SignalDelivery.DefaultContinue signal -> signal, None
+
+        {
+            Signal = signal
+            Rule = rule
+            Unhandled = withoutHandler flavour parked
+            AtInterruption = atInterruption
+        }
+
+    /// How a signal interrupts the syscall `thread` is asleep in, if one does
+    /// now: `None` when returning to user mode now would take no signal. The
+    /// thread's return to user mode decides how the syscall then ends, from
+    /// the signals as they are at that return.
+    ///
+    /// A finishing call asks this only once it has found that the syscall has
+    /// nothing else to answer: a wait whose own condition holds answers that,
+    /// and the handlers run as it returns.
+    ///
+    /// Fails loudly if `thread` is not asleep in a syscall.
+    let internal ofPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<Interruption option, SyscallInterruptionRefusal>
+        =
+        let parked =
+            match UnixThreadTable.parkedFor thread system.Threads with
+            | Some parked -> parked
+            | None ->
+                failwith
+                    $"SyscallInterruption.ofPark: thread %O{thread} is not asleep in a syscall, so no signal can interrupt one (this is a bug in the caller)."
+
+        let threads = system.Threads |> Map.keys |> Set.ofSeq
+
+        // Only asked: the walk's own state is dropped. The thread returns to
+        // user mode for real once its syscall has answered.
+        match
+            SignalState.takeOnReturn
+                (UnixSystemState.signalNumbering system)
+                system.Process.CoreDumps
+                system.Leader
+                threads
+                thread
+                system.Process.Signals
+        with
+        | Error refusal -> Error (SyscallInterruptionRefusal.Receiver refusal)
+        | Ok (None, _) -> Ok None
+        | Ok (Some delivery, _) ->
+            Ok (Some (interruptionOf (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform) parked delivery))

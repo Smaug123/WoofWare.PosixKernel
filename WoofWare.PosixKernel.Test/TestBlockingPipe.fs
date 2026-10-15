@@ -525,24 +525,40 @@ module TestBlockingPipe =
 
     // --- the library, driven as a client drives it ---
 
-    let private fromRead (outcome : Result<ReadOutcome * UnixSystem<int, string>, ReadRefusal>) =
+    /// How the call `thread` made ends, once it answered `Interrupted` in
+    /// `after`: as the thread's return to user mode says, the handlers having
+    /// run.
+    let private libraryInterrupted
+        (thread : int)
+        (after : UnixSystem<int, string>)
+        : Seen * UnixSystem<int, string> option
+        =
+        match Interruptions.handled (Callers.thread thread after) after with
+        | Ok (InterruptedCall.FailsWithEintr, after) -> Seen.Failed UnixError.EINTR, Some after
+        | Ok (InterruptedCall.Restarts, after) -> Seen.Restarts, Some after
+        | Error _ -> Seen.Refused, None
+
+    let private fromRead (thread : int) (outcome : Result<ReadOutcome * UnixSystem<int, string>, ReadRefusal>) =
         match outcome with
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) -> Seen.ReadBytes (List.ofSeq bytes), Some after
         | Ok (ReadOutcome.Answered (ReadAnswer.Failed error), after) -> Seen.Failed error, Some after
         | Ok (ReadOutcome.Answered (ReadAnswer.Drawn _), _) -> failwith "a read of a pipe drew from the entropy pool"
         | Ok (ReadOutcome.WouldBlock _, after) -> Seen.Sleeps, Some after
-        | Ok (ReadOutcome.Restarts, after) -> Seen.Restarts, Some after
+        | Ok (ReadOutcome.Interrupted, after) -> libraryInterrupted thread after
         | Error (ReadRefusal.Interruption _) -> Seen.Refused, None
         | Error refusal -> failwith $"read refused: %A{refusal}"
 
-    let private fromWrite (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>) =
+    let private fromWrite
+        (thread : int)
+        (outcome : Result<WriteStep<WriteAnswer, UnixSystem<int, string>, int>, WriteRefusal>)
+        =
         match outcome with
         | Ok (WriteStep.Returns (WriteAnswer.Completed n, after))
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, _, after)) -> Seen.Wrote n, Some after
         | Ok (WriteStep.Returns (WriteAnswer.Failed error, after))
         | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed error, _, after)) -> Seen.Failed error, Some after
         | Ok (WriteStep.WouldBlock (_, after)) -> Seen.Sleeps, Some after
-        | Ok (WriteStep.Restarts after) -> Seen.Restarts, Some after
+        | Ok (WriteStep.Interrupted after) -> libraryInterrupted thread after
         | Ok (WriteStep.ProcessEnded _ as outcome) -> failwith $"a write ended the process: %A{outcome}"
         | Error (WriteRefusal.Interruption _) -> Seen.Refused, None
         | Error refusal -> failwith $"write refused: %A{refusal}"
@@ -574,8 +590,8 @@ module TestBlockingPipe =
     /// `thread` returns to user mode: every handler it takes runs and returns.
     let rec private returnToUser (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
-        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, system)) ->
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
+        | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), system)) ->
             (system, frames)
             ||> List.fold (fun system frame -> UnixSignal.sigreturn (Callers.thread thread system) frame.Id system)
             |> returnToUser thread
@@ -969,7 +985,9 @@ module TestBlockingPipe =
                             UserBuffer.Unmapped 8UL
 
                     let seen, actual =
-                        fromRead (UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system)
+                        fromRead
+                            thread
+                            (UnixReadWrite.tryRead (Callers.thread thread system) fd buffer (uint64 count) system)
 
                     compare where expected seen
                     cover (label flavourName "read" seen)
@@ -978,7 +996,7 @@ module TestBlockingPipe =
                 | BlockingPipeOp.Write (thread, fd, count, mapped) ->
                     let bytes = payload reference.Writes count
                     let expected, after = referenceWrite thread fd count mapped reference
-                    let seen, actual = fromWrite (libraryWrite thread fd bytes mapped system)
+                    let seen, actual = fromWrite thread (libraryWrite thread fd bytes mapped system)
                     compare where expected seen
 
                     match seen, after.Parks |> Map.tryFind thread with
@@ -1155,10 +1173,10 @@ module TestBlockingPipe =
                     let seen, actual =
                         match call with
                         | Call.Reading _ ->
-                            fromRead (
-                                UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system)
-                            )
-                        | Call.Writing (_, payload, _, _) -> fromWrite (libraryFinishWrite thread payload system)
+                            fromRead
+                                thread
+                                (UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system))
+                        | Call.Writing (_, payload, _, _) -> fromWrite thread (libraryFinishWrite thread payload system)
 
                     compare where expected seen
 
@@ -1446,8 +1464,12 @@ module TestBlockingPipe =
     let private finished (payloadOfWrite : byte list option) (system : UnixSystem<int, string>) : Seen =
         match payloadOfWrite with
         | None ->
-            fst (fromRead (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) (Woken.thread sleeper system)))
-        | Some payload -> fst (fromWrite (libraryFinishWrite sleeper payload system))
+            fst (
+                fromRead
+                    sleeper
+                    (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) (Woken.thread sleeper system))
+            )
+        | Some payload -> fst (fromWrite sleeper (libraryFinishWrite sleeper payload system))
 
     /// What the sleeper sleeps in, in the table test.
     [<RequireQualifiedAccess>]
@@ -2305,7 +2327,7 @@ module TestBlockingPipe =
                     | Ok (WriteStep.WouldBlock _) -> failwith $"%s{name}: slept again"
                     | Ok (WriteStep.Returns (_, after))
                     | Ok (WriteStep.ReturnsRaising (_, _, after))
-                    | Ok (WriteStep.Restarts after) -> after
+                    | Ok (WriteStep.Interrupted after) -> after
                     | other -> failwith $"%s{name}: %A{other}"
 
             let access, modification, change = times fd after
@@ -2369,8 +2391,13 @@ module TestBlockingPipe =
 
             let system = pipeHolding platform true 65536 |> writerAsleep 1 |> bothSignals
 
-            match Lone.UnixReadWrite.tryAdmitFinishWrite sleeper system with
-            | Error (WriteRefusal.Interruption (SyscallInterruptionRefusal.MixedRestartFlags _)) -> ()
+            // The call is interrupted, and the return to user mode is where
+            // the handlers' flags would decide it.
+            match libraryFinishWrite sleeper (payload 7 1) system with
+            | Ok (WriteStep.Interrupted after) ->
+                match Interruptions.settle (Callers.thread sleeper after) after with
+                | Settled.Refused (ReturnToUserRefusal.MixedRestartFlags _) -> ()
+                | other -> failwith $"%O{platform}: %A{other}"
             | other -> failwith $"%O{platform}: %A{other}"
 
         // Linux: room as well, which the write fills before it returns.
@@ -2430,11 +2457,11 @@ module TestBlockingPipe =
 
                 let finish (thread : int) (system : UnixSystem<int, string>) =
                     if writing then
-                        fromWrite (libraryFinishWrite thread (payload thread 4096) system)
+                        fromWrite thread (libraryFinishWrite thread (payload thread 4096) system)
                     else
-                        fromRead (
-                            UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system)
-                        )
+                        fromRead
+                            thread
+                            (UnixReadWrite.tryFinishRead (Callers.thread thread system) (Woken.thread thread system))
 
                 let first, after = finish sleeper system
 
@@ -2459,7 +2486,9 @@ module TestBlockingPipe =
 
         let system = leaderReads 1 system
 
-        fst (fromRead (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) (Woken.thread sleeper system)))
+        fst (
+            fromRead sleeper (UnixReadWrite.tryFinishRead (Callers.thread sleeper system) (Woken.thread sleeper system))
+        )
         |> shouldEqual Seen.Sleeps
 
         let system =
@@ -2469,7 +2498,7 @@ module TestBlockingPipe =
 
         let system = leaderReads 4096 system |> Lone.waking [ sleeper ] |> leaderWrites 4096
 
-        fst (fromWrite (libraryFinishWrite sleeper (payload 7 4096) system))
+        fst (fromWrite sleeper (libraryFinishWrite sleeper (payload 7 4096) system))
         |> shouldEqual Seen.Sleeps
 
     [<Test>]

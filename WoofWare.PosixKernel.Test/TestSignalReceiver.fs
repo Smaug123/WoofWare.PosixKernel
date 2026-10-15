@@ -76,8 +76,10 @@ module TestSignalReceiver =
         [ 0..3 ]
         |> List.map (fun thread ->
             match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> None
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers frames, _)) -> Some frames
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, _)) -> None
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), _)) -> Some frames
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some _), _) as other)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers (_, Some _), _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other)
             | Ok (ProcessFate.ProcessEnded _ as other) -> failwith $"thread %d{thread} took %A{other}"
@@ -346,9 +348,9 @@ module TestSignalReceiver =
                         |> shouldEqual (ProcessTermination.Signaled (Signal.SIGUSR1, false))
 
                         EndedMachine.assertAsExit (Callers.thread 2 after) after ended'
-                    | SimulatedUnixFlavour.Linux, _, Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, resumed)) when
-                        thread <> 2
-                        ->
+                    | SimulatedUnixFlavour.Linux,
+                      _,
+                      Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, resumed)) when thread <> 2 ->
                         SignalState.pending (Lone.proc resumed).Signals
                         |> shouldEqual (SignalState.pending (Lone.proc after).Signals)
                     | SimulatedUnixFlavour.Darwin, _, Error refusal ->
@@ -461,7 +463,7 @@ module TestSignalReceiver =
 
         let resumes (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, system)) -> system
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
             | other -> failwith $"%s{row.Line}: thread %d{thread} did not resume: %A{other}"
 
         let mask (thread : int) (change : SignalMaskChange) (system : UnixSystem<int, string>) =
@@ -503,11 +505,12 @@ module TestSignalReceiver =
 
         let returned (thread : int) (system : UnixSystem<int, string>) : Result<UnblockEnd, string> =
             match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, _)) -> Ok UnblockEnd.RanOn
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers [ frame ], _)) when
-                frame.Entry.Signal = row.Signal
-                ->
-                Ok (UnblockEnd.Handled thread)
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, _)) -> Ok UnblockEnd.RanOn
+            // A sigsuspend the signal interrupted fails with EINTR as the
+            // handler runs.
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], None), _))
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers ([ frame ], Some InterruptedCall.FailsWithEintr),
+                                         _)) when frame.Entry.Signal = row.Signal -> Ok (UnblockEnd.Handled thread)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped signal, _)) ->
                 Ok (UnblockEnd.Stopped signal)
             | Ok (ProcessFate.ProcessEnded (ended, _)) ->
@@ -526,7 +529,7 @@ module TestSignalReceiver =
         | "second" -> returned 1 (mask 1 SignalMaskChange.Unblock sent)
         | "second-ss" ->
             match UnixSignal.trySigsuspend (Callers.thread 1 sent) SignalMask.empty sent with
-            | Ok (SigsuspendOutcome.Failed UnixError.EINTR, interrupted) -> returned 1 interrupted
+            | Ok (SigsuspendOutcome.Interrupted, interrupted) -> returned 1 interrupted
             | Ok (SigsuspendOutcome.WouldBlock _, asleep) -> returned 0 asleep
             | Ok other -> failwith $"%s{row.Line}: sigsuspend answered %A{other}"
             | Error refusal -> Error (SigsuspendRefusal.describe refusal)

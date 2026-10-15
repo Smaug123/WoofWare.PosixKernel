@@ -839,7 +839,7 @@ module TestMultiProcessFuzz =
         | Error _ -> Made.Refused
         | Ok (WriteStep.Returns (_, view))
         | Ok (WriteStep.ReturnsRaising (_, _, view))
-        | Ok (WriteStep.Restarts view) -> Made.Answered view
+        | Ok (WriteStep.Interrupted view) -> Made.Answered view
         | Ok (WriteStep.WouldBlock (_, view)) -> Made.Sleeps view
         | Ok (WriteStep.ProcessEnded (ended, after)) -> Made.Ended (ended, after)
 
@@ -870,7 +870,7 @@ module TestMultiProcessFuzz =
         | Ok (WriteStep.Returns (answer, _)) -> $"returns %A{answer}"
         | Ok (WriteStep.ReturnsRaising (answer, signal, _)) -> $"returns %A{answer} raising %A{signal}"
         | Ok (WriteStep.WouldBlock (condition, _)) -> $"sleeps %A{condition}"
-        | Ok (WriteStep.Restarts _) -> "restarts"
+        | Ok (WriteStep.Interrupted _) -> "restarts"
         | Ok (WriteStep.ProcessEnded (ended, _)) -> $"ends %A{EndedProcess.termination ended}"
 
     /// `result`, having written to `log` what it answered, without the system.
@@ -914,6 +914,19 @@ module TestMultiProcessFuzz =
         =
         match result with
         | Ok fate -> log $"  %s{fateText fate}"
+        | Error refusal -> log $"  refused %A{refusal}"
+
+        result
+
+    /// `loggedFate`, for a return to user mode, printed as the transcripts the
+    /// reference records print it (`AnswersBeforeInterrupted`).
+    let private loggedReturn<'r>
+        (log : string -> unit)
+        (result : Result<ProcessFate<ReturnToUserOutcome<int, string>, int, string>, 'r>)
+        : Result<ProcessFate<ReturnToUserOutcome<int, string>, int, string>, 'r>
+        =
+        match result with
+        | Ok fate -> log $"  %s{fateText (AnswersBeforeInterrupted.ofReturnFate fate)}"
         | Error refusal -> log $"  refused %A{refusal}"
 
         result
@@ -1065,8 +1078,8 @@ module TestMultiProcessFuzz =
                 |> List.map (fun entry -> entry.Signal)
                 |> Set.ofList
 
-            match UnixSignal.tryOnReturnToUser (Caller.make pid thread) after |> loggedFate log with
-            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes, after)) ->
+            match UnixSignal.tryOnReturnToUser (Caller.make pid thread) after |> loggedReturn log with
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, after)) ->
                 due |> shouldEqual Set.empty
                 Made.Answered after
             | Ok (ProcessFate.ProcessEnded (ended, kernel)) ->
@@ -1076,6 +1089,7 @@ module TestMultiProcessFuzz =
                     Made.Ended (ended, kernel)
                 | termination ->
                     failwith $"thread %d{thread}'s return ended the process with %O{termination}, with %O{due} due"
+            | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes (Some _), _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.RunHandlers _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ProcessStopped _, _) as other)
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.ContinueDiscarded _, _) as other) ->
@@ -2848,7 +2862,7 @@ module TestMultiProcessFuzz =
                     fate
                     (fun outcome kernel ->
                         match outcome with
-                        | ReturnToUserOutcome.Resumes -> None
+                        | ReturnToUserOutcome.Resumes None -> None
                         | other -> Some (Ended.Carried ($"onReturnToUser: %A{other}", kernel))
                     )
                     onwards

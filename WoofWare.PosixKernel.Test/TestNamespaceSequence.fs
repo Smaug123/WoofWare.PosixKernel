@@ -721,7 +721,7 @@ module TestNamespaceSequence =
             match outcome with
             | SyscallOutcome.Answered answer -> opened answer after
             | SyscallOutcome.WouldBlock _
-            | SyscallOutcome.Restarts ->
+            | SyscallOutcome.Interrupted ->
                 failwith $"%A{op} did not return, though the filesystem holds nothing an open can sleep on"
 
         match op with

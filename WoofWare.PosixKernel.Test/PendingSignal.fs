@@ -44,7 +44,10 @@ module PendingSignal =
         | PendingSignal.DefaultForTransferrer -> false
 
     /// `system` with thread 1 beside `transferrer`, which must not be 1, and
-    /// `pending` made so through `sigaction` and `pthread_kill`.
+    /// `pending` made so through the leader's `sigaction` and thread 1's
+    /// `pthread_kill`: thread 1 sends, so that a signal the transferrer would
+    /// take is pending as it makes its next call, as it is on a real kernel
+    /// only when another thread sent it.
     let make
         (transferrer : int)
         (pending : PendingSignal)
@@ -62,7 +65,7 @@ module PendingSignal =
             | Error error -> failwith $"sigaction: %O{error}"
 
         let send (target : int) (signo : int) (system : UnixSystem<int, string>) =
-            match UnixSignal.tryPthreadKill (Callers.leader system) target signo system with
+            match UnixSignal.tryPthreadKill (Callers.thread 1 system) target signo system with
             | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
             | other -> failwith $"pthread_kill %d{target} %d{signo}: %A{other}"
 

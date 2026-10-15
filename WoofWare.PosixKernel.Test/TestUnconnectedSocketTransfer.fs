@@ -525,14 +525,19 @@ module TestUnconnectedSocketTransfer =
                 | None, _ -> true
                 | Some written, admitted ->
                     match written, admitted with
+                    // The whole write leaves the writer owing a return to
+                    // user mode where the admission alone, below `Entry`,
+                    // does not.
                     | Ok (WriteStep.Returns (answer, after)),
                       Ok (WriteStep.Returns (WriteAdmission.Answered admittedAnswer, admittedAfter)) ->
-                        answer = admittedAnswer && after = admittedAfter
+                        answer = admittedAnswer && after = Lone.afterCallBy 1 admittedAfter
                     | Ok (WriteStep.ReturnsRaising (answer, signal, after)),
                       Ok (WriteStep.ReturnsRaising (WriteAdmission.Answered admittedAnswer,
                                                     admittedSignal,
                                                     admittedAfter)) ->
-                        answer = admittedAnswer && signal = admittedSignal && after = admittedAfter
+                        answer = admittedAnswer
+                        && signal = admittedSignal
+                        && after = Lone.afterCallBy 1 admittedAfter
                     | Error refusal, Error admittedRefusal -> refusal = admittedRefusal
                     | _ -> false
 

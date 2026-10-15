@@ -568,8 +568,9 @@ module SocketFuzz =
             | Ok (PollOutcome.WouldBlock condition, _) ->
                 failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 parked on %A{condition}."
             | Ok (PollOutcome.Failed error, _) ->
-                failwith
-                    $"FUZZ-DRIVER BUG: a poll at timeout 0 failed with %A{error}, which only a finishing call answers."
+                failwith $"FUZZ-DRIVER BUG: a poll at timeout 0 failed with %A{error}."
+            | Ok (PollOutcome.Interrupted, _) ->
+                failwith "FUZZ-DRIVER BUG: a poll at timeout 0 was interrupted, which only a finishing call answers."
             | Ok (PollOutcome.Answered ([ reported ], _), _) -> $"<%s{pollMaskString reported}>", state
             | Ok (PollOutcome.Answered (reported, _), _) ->
                 failwith $"FUZZ-DRIVER BUG: one poll entry was answered with %d{List.length reported} reports."
