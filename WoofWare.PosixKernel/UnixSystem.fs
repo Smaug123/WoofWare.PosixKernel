@@ -1507,22 +1507,13 @@ module UnixSystem =
     /// threads, each processor's occupant against the threads, and the machine's
     /// filesystem type, buffer check and symbolic links against its platform.
     ///
-    /// When `complete`, `processes` is every process on the machine, each with
-    /// its threads, and every clause is checked. Otherwise `processes` is some of
-    /// them, and only the clauses those can check truthfully are: every clause
-    /// that counts or collects across every process (the holds on
-    /// descriptions, the live thread and process IDs, the current directory
-    /// holds) is skipped.
+    /// `processes` is every process on the machine, each with its threads.
     let internal machineDefects<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (complete : bool)
         (processes : (UnixProcessState<'Thread, 'Handler> * Map<'Thread, UnixThreadState>) list)
         (scheduling : UnixSchedulingState)
         (machine : UnixMachineState)
         : UnixSystemDefect<'Thread> list
         =
-        let onlyIfComplete (defects : unit -> UnixSystemDefect<'Thread> list) : UnixSystemDefect<'Thread> list =
-            if complete then defects () else []
-
         let allThreads : (Caller<'Thread> * UnixThreadState) list =
             processes
             |> List.collect (fun (proc, threads) ->
@@ -2117,58 +2108,52 @@ module UnixSystem =
         // one for each time a park names it. A park naming a description the
         // table does not hold is `ParkedOnAbsentDescription`'s.
         let holdCounts =
-            onlyIfComplete
-            <| fun () ->
-
-                let implied =
-                    allThreads
-                    |> List.collect (fun (_, state) ->
-                        match state.Parked with
-                        | None -> []
-                        | Some park -> ParkedSyscall.descriptions park.Syscall
-                    )
-                    |> List.countBy id
-                    |> Map.ofList
-
-                OpenFileTable.descriptions machine.OpenFiles
-                |> Map.toList
-                |> List.choose (fun (id, _) ->
-                    let recorded = OpenFileTable.holdCount id machine.OpenFiles |> Option.defaultValue 0
-                    let parks = Map.tryFind id implied |> Option.defaultValue 0
-
-                    if recorded = parks then
-                        None
-                    else
-                        Some (UnixSystemDefect.HoldCountMismatch (id, recorded, parks))
+            let implied =
+                allThreads
+                |> List.collect (fun (_, state) ->
+                    match state.Parked with
+                    | None -> []
+                    | Some park -> ParkedSyscall.descriptions park.Syscall
                 )
+                |> List.countBy id
+                |> Map.ofList
+
+            OpenFileTable.descriptions machine.OpenFiles
+            |> Map.toList
+            |> List.choose (fun (id, _) ->
+                let recorded = OpenFileTable.holdCount id machine.OpenFiles |> Option.defaultValue 0
+                let parks = Map.tryFind id implied |> Option.defaultValue 0
+
+                if recorded = parks then
+                    None
+                else
+                    Some (UnixSystemDefect.HoldCountMismatch (id, recorded, parks))
+            )
 
         // Each sleeping Darwin poll's kqueue against the parks of every
         // process's threads: exactly one names it. A park naming one the machine
         // does not hold is `ParkedOnAbsentPollQueue`'s.
         let pollQueueParks =
-            onlyIfComplete
-            <| fun () ->
-
-                let parks =
-                    allThreads
-                    |> List.choose (fun (_, state) ->
-                        match state.Parked with
-                        | Some {
-                                   Syscall = ParkedSyscall.KqueuePoll poll
-                               } -> Some poll.Queue
-                        | Some _
-                        | None -> None
-                    )
-                    |> List.countBy id
-                    |> Map.ofList
-
-                machine.PollQueues
-                |> Map.toList
-                |> List.choose (fun (queue, _) ->
-                    match Map.tryFind queue parks |> Option.defaultValue 0 with
-                    | 1 -> None
-                    | count -> Some (UnixSystemDefect.PollQueueNotHeldOnce (queue, count))
+            let parks =
+                allThreads
+                |> List.choose (fun (_, state) ->
+                    match state.Parked with
+                    | Some {
+                               Syscall = ParkedSyscall.KqueuePoll poll
+                           } -> Some poll.Queue
+                    | Some _
+                    | None -> None
                 )
+                |> List.countBy id
+                |> Map.ofList
+
+            machine.PollQueues
+            |> Map.toList
+            |> List.choose (fun (queue, _) ->
+                match Map.tryFind queue parks |> Option.defaultValue 0 with
+                | 1 -> None
+                | count -> Some (UnixSystemDefect.PollQueueNotHeldOnce (queue, count))
+            )
 
         let pollQueueFreshness =
             machine.PollQueues
@@ -2416,29 +2401,24 @@ module UnixSystem =
                 )
 
             let live =
-                onlyIfComplete
-                <| fun () ->
+                let held = allThreads |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
+                let recorded = ThreadIdAllocator.live allocator
 
-                    let held = allThreads |> List.map (fun (_, state) -> state.OsThreadId) |> Set.ofList
-                    let recorded = ThreadIdAllocator.live allocator
-
-                    if held = recorded then
-                        []
-                    else
-                        [
-                            UnixSystemDefect.LiveThreadIdsMismatch (
-                                Set.difference recorded held,
-                                Set.difference held recorded
-                            )
-                        ]
+                if held = recorded then
+                    []
+                else
+                    [
+                        UnixSystemDefect.LiveThreadIdsMismatch (
+                            Set.difference recorded held,
+                            Set.difference held recorded
+                        )
+                    ]
 
             allocatorFlavour @ duplicates @ unmintable @ live
 
         // Each processor's occupant against the machine and the threads: the
         // processor is the machine's, the occupant is a live thread, and that
-        // thread's processor is the one it occupies. Short of every process, an
-        // occupant of no process given is checked against the thread IDs the
-        // machine records as live, which every process's threads contribute to.
+        // thread's processor is the one it occupies.
         let occupants =
             let byThreadId =
                 allThreads
@@ -2463,14 +2443,7 @@ module UnixSystem =
                             []
                         else
                             [ UnixSystemDefect.OccupantOnAnotherCpu (thread, cpu, state.Cpu) ]
-                    | None ->
-                        if
-                            complete
-                            || not (Set.contains occupant (ThreadIdAllocator.live machine.ThreadIds))
-                        then
-                            [ UnixSystemDefect.OccupantWithoutThread (cpu, occupant) ]
-                        else
-                            []
+                    | None -> [ UnixSystemDefect.OccupantWithoutThread (cpu, occupant) ]
 
                 beyond @ thread
             )
@@ -2495,46 +2468,40 @@ module UnixSystem =
                     [ UnixSystemDefect.ProcessIdCounterNotOfFlavour (flavour, table.Counter) ]
 
             let live =
-                onlyIfComplete
-                <| fun () ->
+                let held = processes |> List.map (fun (proc, _) -> proc.ProcessId) |> Set.ofList
 
-                    let held = processes |> List.map (fun (proc, _) -> proc.ProcessId) |> Set.ofList
+                let recorded = ProcessIdTable.live table
 
-                    let recorded = ProcessIdTable.live table
-
-                    if held = recorded then
-                        []
-                    else
-                        [
-                            UnixSystemDefect.LiveProcessIdsMismatch (
-                                Set.difference recorded held,
-                                Set.difference held recorded
-                            )
-                        ]
+                if held = recorded then
+                    []
+                else
+                    [
+                        UnixSystemDefect.LiveProcessIdsMismatch (
+                            Set.difference recorded held,
+                            Set.difference held recorded
+                        )
+                    ]
 
             counter @ live
 
         // The current directory holds against the processes standing in them.
         let currentDirectories =
-            onlyIfComplete
-            <| fun () ->
+            let standing =
+                processes
+                |> List.countBy (fun (proc, _) -> proc.CurrentDirectoryInode)
+                |> Map.ofList
 
-                let standing =
-                    processes
-                    |> List.countBy (fun (proc, _) -> proc.CurrentDirectoryInode)
-                    |> Map.ofList
+            Set.union (Map.keys standing |> Set.ofSeq) (Map.keys machine.CurrentDirectories |> Set.ofSeq)
+            |> Set.toList
+            |> List.choose (fun inode ->
+                let recorded = Map.tryFind inode machine.CurrentDirectories |> Option.defaultValue 0
+                let standing = Map.tryFind inode standing |> Option.defaultValue 0
 
-                Set.union (Map.keys standing |> Set.ofSeq) (Map.keys machine.CurrentDirectories |> Set.ofSeq)
-                |> Set.toList
-                |> List.choose (fun inode ->
-                    let recorded = Map.tryFind inode machine.CurrentDirectories |> Option.defaultValue 0
-                    let standing = Map.tryFind inode standing |> Option.defaultValue 0
-
-                    if recorded = standing then
-                        None
-                    else
-                        Some (UnixSystemDefect.CurrentDirectoryHoldMismatch (inode, recorded, standing))
-                )
+                if recorded = standing then
+                    None
+                else
+                    Some (UnixSystemDefect.CurrentDirectoryHoldMismatch (inode, recorded, standing))
+            )
 
         // Every kqueue belongs to a live process, whose table its registrations
         // are read in.
@@ -3409,7 +3376,6 @@ module UnixSystem =
 
         let machine =
             machineDefects
-                true
                 (slots |> List.map (fun (_, slot) -> slot.Process, slot.Threads))
                 system.Scheduling
                 system.Machine
@@ -3421,10 +3387,7 @@ module UnixSystem =
         let tables =
             slots
             |> List.collect (fun (pid, slot) ->
-                FileDescriptorRegistry.ofTables
-                    (DescriptorCensus.OneProcessOf slot.Process.ProcessId)
-                    slot.Process.FileDescriptors
-                    system.Machine.OpenFiles
+                FileDescriptorRegistry.ofTables slot.Process.FileDescriptors system.Machine.OpenFiles
                 |> FileDescriptorRegistry.checkDescriptorTableInvariants slot.Process.ProcessId
                 |> List.map (fun defect -> UnixSystemDefect.DescriptorTable (pid, defect))
             )

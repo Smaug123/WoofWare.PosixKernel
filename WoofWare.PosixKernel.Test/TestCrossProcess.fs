@@ -1,6 +1,8 @@
 namespace WoofWare.PosixKernel.Test
 
 open System.Collections.Immutable
+open FsCheck
+open FsCheck.FSharp
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
@@ -13,63 +15,213 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestCrossProcess =
 
-    // ------------------------------------------------------- one view's checks
+    // ------------------------------------------------- each description's counts
 
+    /// One step of `countsKernel`'s walk, made in the process at index `proc`
+    /// (modulo how many there are): a `dup` of its descriptor at index `fd`,
+    /// or a `read` by its thread `thread` of its descriptor at index `fd`
+    /// among those naming its own pipe's read end, which sleeps.
+    [<RequireQualifiedAccess>]
+    type private CountStep =
+        | Dup of proc : int * fd : int
+        | Read of proc : int * thread : int * fd : int
+
+    let private countThreads : int = 3
+
+    let private countStepGen : Gen<CountStep> =
+        let small = Gen.choose (0, 63)
+
+        Gen.oneof
+            [
+                Gen.map2 (fun p fd -> CountStep.Dup (p, fd)) small small
+                Gen.map3 (fun p t fd -> CountStep.Read (p, t, fd)) small small small
+            ]
+
+    /// A kernel of `count` processes, each of which has made a pipe of its
+    /// own, after `steps`; and the description each thread a step's `read`
+    /// put to sleep waits on, by the test's own reckoning.
+    let private countsKernel
+        (platform : SimulatedUnixPlatform)
+        (count : int)
+        (steps : CountStep list)
+        : ProcessId list * UnixSystem<int, string> * Map<Caller<int>, OpenFileDescriptionId>
+        =
+        let pids, system = Machines.withThreads platform count countThreads
+
+        // Each process's pipe's read end, which no one writes to, so a read of
+        // it sleeps; standing input is at its end, so a read of it would not.
+        let readEnds, system =
+            ((Map.empty, system), pids)
+            ||> List.fold (fun (readEnds, system) pid ->
+                match UnixPipe.tryPipe2 (Caller.make pid 0) 0 UserBuffer.Mapped system with
+                | Ok (Pipe2Answer.Created (readFd, _), system) ->
+                    let id =
+                        FileDescriptorRegistry.tryFindId readFd (UnixSystem.fileDescriptors pid system)
+                        |> Option.get
+
+                    Map.add pid id readEnds, system
+                | other -> failwith $"pipe2 in %O{pid}: %A{other}"
+            )
+
+        let pidAt (index : int) : ProcessId = pids.[index % pids.Length]
+
+        let fds (pid : ProcessId) (system : UnixSystem<int, string>) : (int * OpenFileDescriptionId) list =
+            FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid system) |> Map.toList
+
+        ((system, Map.empty), steps)
+        ||> List.fold (fun (system, asleep) step ->
+            match step with
+            | CountStep.Dup (proc, fd) ->
+                let pid = pidAt proc
+
+                let awake =
+                    Proc.threads pid system
+                    |> Map.tryFindKey (fun _ state -> (UnixThreadState.parkedIn state).IsNone)
+
+                match awake with
+                | None -> system, asleep
+                | Some thread ->
+                    let fds = fds pid system
+                    let fd, _ = fds.[fd % fds.Length]
+
+                    match UnixDescriptor.tryDup (Caller.make pid thread) fd system with
+                    | Ok (SyscallAnswer.Completed _, system) -> system, asleep
+                    | other -> failwith $"dup of %d{fd} in %O{pid}: %A{other}"
+            | CountStep.Read (proc, thread, fd) ->
+                let caller = Caller.make (pidAt proc) (thread % countThreads)
+
+                if Map.containsKey caller asleep then
+                    system, asleep
+                else
+                    let readEnd = readEnds.[Caller.processId caller]
+
+                    let candidates =
+                        fds (Caller.processId caller) system |> List.filter (snd >> (=) readEnd)
+
+                    let fd, id = candidates.[fd % candidates.Length]
+
+                    match UnixReadWrite.tryRead caller fd UserBuffer.Mapped 4UL system with
+                    | Ok (ReadOutcome.WouldBlock _, system) -> system, Map.add caller id asleep
+                    | other -> failwith $"read of the empty pipe at %d{fd} by %O{caller}: %A{other}"
+        )
+        |> fun (system, asleep) -> pids, system, asleep
+
+    /// Which count a test pushed from the truth, and whether above it.
+    [<RequireQualifiedAccess>]
+    type private Corrupted =
+        | Descriptors of above : bool
+        | Holds of above : bool
+
+    /// The open file table keeps, for each description, a count of the
+    /// descriptors naming it in every process's table and of the holds the
+    /// calls asleep in every process have on it, and the kernel's
+    /// `checkInvariants` holds each to every table and every park: one count
+    /// pushed either way from the truth, in a description of any process, is
+    /// reported, and nothing else is.
     [<Test>]
-    let ``one process's descriptor table checks only what one table can tell, on a machine holding others`` () : unit =
-        for platform in Machines.platforms do
-            let pids, machine = Machines.ofCount platform 2
-            let a, b = pids.[0], pids.[1]
+    let ``checkInvariants reports exactly a description whose count disagrees, in one process or among several``
+        ()
+        : unit
+        =
+        // Which corruptions were checked in a description of a process other
+        // than the first, on a machine of several.
+        let reached : Map<Corrupted, int> ref = ref Map.empty
 
-            // The other process holds descriptors of its own, which this table
-            // does not name; and on Darwin a kqueue registering a socket
-            // through a descriptor number this table has not opened.
-            let machine =
-                match SimulatedUnixPlatform.flavour platform with
-                | SimulatedUnixFlavour.Linux ->
-                    machine |> Machines.doIn b (fun view -> KeventWorld.streamIn b true view |> snd)
-                | SimulatedUnixFlavour.Darwin ->
-                    machine
-                    |> Machines.doIn
-                        b
-                        (fun view ->
-                            let socket, view = KeventWorld.streamIn b true view
-                            let kq, view = KeventWorld.kqueueIn b view
-                            KeventWorld.registerIn b kq socket -1s 0x1us 0UL view
-                        )
+        let property (platform : SimulatedUnixPlatform) (count : int) (steps : CountStep list) : unit =
+            let pids, system, asleep = countsKernel platform count steps
+            Machines.assertClean system
 
-            Machines.assertClean machine
+            let named =
+                pids
+                |> List.collect (fun pid ->
+                    FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid system)
+                    |> Map.toList
+                    |> List.map (fun (_, id) -> id, pid)
+                )
 
-            let registry = UnixSystem.fileDescriptors a (Machines.viewOf a machine)
-            FileDescriptorRegistry.checkInvariants registry |> shouldEqual []
+            let held =
+                asleep
+                |> Map.toList
+                |> List.map (fun (caller, id) -> id, Caller.processId caller)
 
-            // A description this table alone names more often than its count
-            // records is caught from the one view...
-            let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
+            let openFiles =
+                FileDescriptorRegistry.openFiles (UnixSystem.fileDescriptors pids.[0] system)
 
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 0 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual [ FileDescriptorRegistryDefect.DescriptorCountMismatch (stdout, 0, 1) ]
+            // The machine's open file table, which every process's registry
+            // reads, rewritten through the first process's.
+            let rewritten (f : FileDescriptorRegistry -> FileDescriptorRegistry) : UnixSystem<int, string> =
+                Proc.withFileDescriptors pids.[0] (f (Proc.fileDescriptors pids.[0] system)) system
 
-            // ...while one counted more often than this table names it may be
-            // named in another process's table, so only the machine can tell.
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual []
+            let sorted (defects : UnixSystemDefect<int> list) : UnixSystemDefect<int> list =
+                List.sortBy (sprintf "%A") defects
 
-    [<Test>]
-    let ``a descriptor table on a machine holding its process alone checks every count exactly`` () : unit =
-        for platform in Machines.platforms do
-            let pids, machine = Machines.ofCount platform 1
+            for id in OpenFileTable.descriptions openFiles |> Map.keys do
+                let naming = named |> List.filter (fst >> (=) id) |> List.length
+                let holding = held |> List.filter (fst >> (=) id) |> List.length
 
-            let registry =
-                UnixSystem.fileDescriptors pids.[0] (Machines.viewOf pids.[0] machine)
+                OpenFileTable.descriptorCount id openFiles |> shouldEqual (Some naming)
+                OpenFileTable.holdCount id openFiles |> shouldEqual (Some holding)
 
-            let stdout = FileDescriptorRegistry.tryFindId 1 registry |> Option.get
+                let elsewhere =
+                    count > 1
+                    && (named @ held)
+                       |> List.exists (fun (other, pid) -> other = id && pid <> pids.[0])
 
-            FileDescriptorRegistry.Unchecked.setDescriptorCount stdout 2 registry
-            |> FileDescriptorRegistry.checkInvariants
-            |> shouldEqual [ FileDescriptorRegistryDefect.DescriptorCountMismatch (stdout, 2, 1) ]
+                let reach (corrupted : Corrupted) : unit =
+                    if elsewhere then
+                        reached.Value <- Map.change corrupted (Option.defaultValue 0 >> (+) 1 >> Some) reached.Value
+
+                for wrong in [ 0 .. naming + 2 ] |> List.filter ((<>) naming) do
+                    let corrupted =
+                        rewritten (FileDescriptorRegistry.Unchecked.setDescriptorCount id wrong)
+
+                    let expected =
+                        [
+                            yield
+                                UnixSystemDefect.OpenFiles (
+                                    FileDescriptorRegistryDefect.DescriptorCountMismatch (id, wrong, naming)
+                                )
+                            // A description no descriptor names and no call
+                            // holds is a leak besides.
+                            if wrong = 0 && holding = 0 then
+                                yield UnixSystemDefect.UnreferencedDescription id
+                        ]
+
+                    sorted (UnixSystem.checkInvariants corrupted) |> shouldEqual (sorted expected)
+                    reach (Corrupted.Descriptors (wrong > naming))
+
+                for wrong in [ 0 .. holding + 2 ] |> List.filter ((<>) holding) do
+                    let corrupted =
+                        let rec toward (openFiles : OpenFileTable) : OpenFileTable =
+                            match OpenFileTable.holdCount id openFiles with
+                            | Some n when n < wrong -> toward (OpenFileTable.hold id openFiles)
+                            | Some n when n > wrong -> toward (OpenFileTable.releaseHold id openFiles)
+                            | _ -> openFiles
+
+                        rewritten (FileDescriptorRegistry.mapOpenFiles toward)
+
+                    UnixSystem.checkInvariants corrupted
+                    |> shouldEqual [ UnixSystemDefect.HoldCountMismatch (id, wrong, holding) ]
+
+                    reach (Corrupted.Holds (wrong > holding))
+
+        Check.One (
+            Config.QuickThrowOnFailure.WithMaxTest 100,
+            Prop.forAll
+                (Arb.fromGen (Gen.zip3 (Gen.elements Machines.platforms) (Gen.choose (1, 3)) (Gen.listOf countStepGen)))
+                (fun (platform, count, steps) -> property platform count steps)
+        )
+
+        for corrupted in
+            [
+                Corrupted.Descriptors false
+                Corrupted.Descriptors true
+                Corrupted.Holds false
+                Corrupted.Holds true
+            ] do
+            Map.tryFind corrupted reached.Value
+            |> Option.defaultValue 0
+            |> shouldBeGreaterThan 10
 
     // ------------------------------------------------------- Darwin kqueues
 
