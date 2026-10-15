@@ -1,0 +1,41 @@
+# Darwin 27.0.0 arm64, uid 501, flavour darwin
+# EINVAL=22 EFAULT=14 EINTR=4 ETIMEDOUT=60
+args req=NULL ret=-1 errno=22 el=1us rem=- end=exit0
+args req=unmapped end=signal11
+args nsec=1e9 ret=-1 errno=22 el=1us rem=- end=exit0
+args nsec=1e9-1 ret=0 errno=0 el=1001481us rem=- end=exit0
+args nsec=-1 (USR1 later) ret=-1 errno=22 el=0us rem=- end=exit0
+args sec=1,nsec=-1 (USR1 later) ret=-1 errno=22 el=0us rem=- end=exit0
+args nsec=LONG_MIN (USR1 later) ret=-1 errno=22 el=0us rem=- end=exit0
+args sec=-1 ret=-1 errno=22 el=0us rem=- end=exit0
+args sec=-1,nsec=1e9 ret=-1 errno=22 el=0us rem=- end=exit0
+args sec=-1,unmapped-rem ret=-1 errno=22 el=0us end=exit0
+args 1ms rem-written? ret=0 errno=0 el=1133us rem=- end=exit0
+args 1ms rem=unmapped ret=0 errno=0 el=1136us end=exit0
+args sec=2^31 (USR1 later) ret=-1 errno=4 el=105038us rem=2147483647.894963500 end=exit0
+args sec=2^32+10 (USR1 later) ret=-1 errno=4 el=101173us rem=9.898828750 end=exit0
+args sec=2^33+10 (USR1 later) ret=-1 errno=4 el=105041us rem=9.894960708 end=exit0
+args sec=2^32-1e9 (USR1 later) ret=-1 errno=4 el=105040us rem=3294967295.894961500 end=exit0
+args sec=2^32,nsec=2e8 (USR1 later) ret=-1 errno=4 el=2005050us rem=0.000000000 end=exit0
+args sec=2^32+1 (USR1 later) ret=-1 errno=4 el=3002089us rem=0.000000000 end=exit0
+args sec=18446744073 (USR1 later) ret=-1 errno=4 el=2001868us rem=1266874886.998133958 end=exit0
+args sec=18446744074 (USR1 later) ret=-1 errno=4 el=2005968us rem=1266874887.994034458 end=exit0
+args sec=36893488148 (USR1 later) ret=-1 errno=4 el=2005047us rem=2533749777.994955584 end=exit0
+args sec=9223372035 (USR1 later) ret=-1 errno=4 el=102333us rem=633437442.897668417 end=exit0
+args sec=9223372037 (USR1 later) ret=-1 errno=4 el=101016us rem=633437444.898985875 end=exit0
+args sec=INT64_MAX,nsec=1e9-1 (USR1 later) ret=-1 errno=4 el=100242us rem=0.000000000 end=exit0
+zero nanosleep{0,0} x1000 fails=0 voluntary=0 involuntary=0 total=119us end=exit0
+zero nanosleep{0,1} x1000 fails=0 voluntary=0 involuntary=1001 total=5947us end=exit0
+zero sched_yield x1000 fails=0 voluntary=0 involuntary=1 total=131us end=exit0
+zero getppid x1000 fails=0 voluntary=0 involuntary=0 total=101us end=exit0
+eintr trials ret/errno/rem/excess: -1/4/1.894958208/2208 -1/4/1.899410208/1208 -1/4/1.894249542/1542 -1/4/1.896120500/1500 -1/4/1.896342917/2917 -1/4/1.897437959/1959 -1/4/1.897752292/1292 -1/4/1.894964167/1167 -1/4/1.898204125/1125 -1/4/1.894963917/917 excess-range=[917,2917]ns end=exit0
+eintr SA_RESTART ret=-1 errno=4 el=103575us rem=1.896427208 excess=2208ns end=exit0
+eintr rem=NULL ret=-1 errno=4 el=101152us end=exit0
+eintr rem=NULL SA_RESTART ret=-1 errno=4 el=105041us end=exit0
+eintr rem=unmapped end=signal11
+eintr rem=req ret=-1 errno=4 el=105042us rem=1.894959709 excess=1709ns end=exit0
+ignored USR2(SIG_IGN)@100 URG(default)@200 USR1(blocked)@300 in 400ms ret=0 errno=0 el=401012us rem=- USR1-pending-after=1 end=exit0
+stopcont 2s stop@100ms for 500ms cont-handler=0 stopped=1 ret=0 errno=0 el=2001ms rem=- end=exit0
+stopcont 2s stop@100ms for 500ms cont-handler=1 stopped=1 ret=-1 errno=4 el=610ms rem=1.389997875 end=exit0
+stopcont 300ms stop@100ms for 500ms cont-handler=0 stopped=1 ret=0 errno=0 el=606ms rem=- end=exit0
+stopcont 300ms stop@100ms for 500ms cont-handler=1 stopped=1 ret=0 errno=0 el=607ms rem=- end=exit0
