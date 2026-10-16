@@ -237,46 +237,34 @@ module TestUnixEntropy =
         | other -> failwith $"expected the whole request, got %O{other}"
 
     [<Test>]
-    let ``getrandom of more than a page is refused while the caller has a signal pending`` () : unit =
+    let ``getrandom by a caller a signal is deliverable to is made only once the caller has taken it`` () : unit =
         // `getrandom(2)` is `get_random_bytes_user` over a buffer `import_ubuf`
         // has clamped to one call's worth and screened (drivers/char/random.c,
         // 6.18): the same loop a /dev/urandom read runs, which stops at the
         // first page boundary with bytes still wanted once a signal is
-        // pending. It counts bytes moved, so the clamped count decides, and a
-        // fault at the copy comes first.
+        // pending. A thread takes a signal deliverable to it before it makes
+        // another call, so none is pending as the call is made: every byte of
+        // the clamped count moves, and a fault at the copy fails it.
         let property (count : uint64) (buffer : UserBuffer) (pending : PendingSignal) =
-            let system = PendingSignal.make 0 pending (linux ())
+            let made = PendingSignal.make 0 pending (linux ())
+
+            let call (system : UnixSystem<int, string>) =
+                UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer count GetRandomFlags.Insecure system
+
+            if PendingSignal.transferrerHasSignal pending then
+                Assert.Throws<InvalidOperationException> (fun () -> call made |> ignore)
+                |> ignore<InvalidOperationException>
+
+            let system = PendingSignal.returned 0 pending made
 
             let moved =
                 min count (UnixEntropy.getRandomMaxTransfer SimulatedUnixPlatform.linuxX64)
 
-            let refused =
-                moved > 4096UL
-                && PendingSignal.transferrerHasSignal pending
-                && buffer = UserBuffer.Mapped
-
-            match UnixEntropy.tryGetRandom (Callers.thread 0 system) buffer count GetRandomFlags.Insecure system with
-            | Error (GetRandomRefusal.SignalAtPageBoundary refusedCount) ->
-                refused |> shouldEqual true
-                refusedCount |> shouldEqual (int moved)
-            | Ok (GetRandomAnswer.Completed draw, _) ->
-                refused |> shouldEqual false
-                EntropyDraw.count draw |> shouldEqual (int moved)
+            match call system with
+            | Ok (GetRandomAnswer.Completed draw, _) -> EntropyDraw.count draw |> shouldEqual (int moved)
             | Ok (GetRandomAnswer.Failed error, after) ->
-                refused |> shouldEqual false
                 error |> shouldEqual UnixError.EFAULT
-
-                // It changes nothing, but that a caller holding a signal it
-                // takes as it returns to user mode owes that return.
-                UnixThreadTable.owedBy 0 (Lone.threads after)
-                |> shouldEqual (
-                    if PendingSignal.transferrerHasSignal pending then
-                        Some OwedReturn.SignalDue
-                    else
-                        None
-                )
-
-                after |> Lone.mapThreads (UnixThreadTable.settle 0) |> shouldEqual system
+                after |> shouldEqual system
             | Error refusal -> failwith $"%A{refusal}"
 
         let countGen =

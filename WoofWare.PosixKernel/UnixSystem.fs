@@ -875,6 +875,12 @@ type UnixSystemDefect<'Thread> =
     | SlotUnderAnotherProcessId of key : ProcessId * recorded : ProcessId
     /// More than one process records the process ID `processId`.
     | DuplicateProcessId of processId : ProcessId
+    /// A thread in no syscall has `signal` pending, unblocked by its mask, in
+    /// a set it takes signals from as it returns to user mode, and owes no
+    /// return to user mode, so it could make another call before taking the
+    /// signal. A real thread takes a signal deliverable to it before it runs
+    /// more of its own code.
+    | SignalDeliverableWithoutOwedReturn of thread : Caller<'Thread> * signal : Signal
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -3690,7 +3696,26 @@ module UnixSystem =
                     | ValueNone -> None
                 )
 
-            frames @ masks @ toRestore @ targets
+            // A thread owes its return to user mode from the moment a signal
+            // is deliverable to it, so one in no syscall that owes nothing has
+            // none. Not the other way round: a thread whose signal another
+            // thread has since discarded still owes its return, which then
+            // takes nothing.
+            let undue =
+                system.Threads
+                |> Map.toList
+                |> List.choose (fun (thread, state) ->
+                    match state.Parked, state.Owes with
+                    | None, None ->
+                        match OwedReturns.deliverable thread system with
+                        | ValueSome signal ->
+                            Some (UnixSystemDefect.SignalDeliverableWithoutOwedReturn (caller thread, signal))
+                        | ValueNone -> None
+                    | Some _, _
+                    | None, Some _ -> None
+                )
+
+            frames @ masks @ toRestore @ targets @ undue
 
         let supplementaryGroups =
             let count = List.length system.Process.Credentials.SupplementaryGroups

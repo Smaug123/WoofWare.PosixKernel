@@ -88,17 +88,6 @@ module internal Lone =
         =
         Proc.mapThreads (only "mapThreads" system) f system
 
-    /// `system`, which a call by `thread` left as a step of the call made
-    /// below `Entry` leaves it, as `Entry` leaves it: `thread` owing a return
-    /// to user mode if the call left it a signal to take
-    /// (`OwedReturns.markIfDue`).
-    let afterCallBy<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
-        (system : UnixSystem<'Thread, 'Handler>)
-        : UnixSystem<'Thread, 'Handler>
-        =
-        unview (OwedReturns.markIfDue thread (view system))
-
     /// The only process's leader: the thread it started with.
     let leader<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
@@ -636,7 +625,6 @@ module internal Lone =
             |> unviewedStep
 
         let tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-            (thread : 'Thread)
             (fd : int)
             (buffer : UserBuffer)
             (count : uint64)
@@ -644,7 +632,7 @@ module internal Lone =
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<PWriteAdmission, PWriteRefusal>
             =
-            WoofWare.PosixKernel.UnixReadWrite.tryAdmitPWrite thread fd buffer count offset (view system)
+            WoofWare.PosixKernel.UnixReadWrite.tryAdmitPWrite fd buffer count offset (view system)
 
         let tryApplyPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (fd : int)

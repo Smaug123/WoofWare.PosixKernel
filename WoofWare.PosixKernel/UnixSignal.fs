@@ -115,6 +115,10 @@ type internal ReturnToUserRefusal =
     /// the signal that woke the call had gone by the time the call was
     /// finished.
     | ChangedSinceInterruption of signal : Signal option * flavour : SimulatedUnixFlavour
+    /// The thread returns from a `sigsuspend` or `pause` running no handler,
+    /// and the mask the call replaced, which the return restores, lets
+    /// through `signal`, pending while the call's temporary mask blocked it.
+    | RestoredMaskLetsThrough of signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal ReturnToUserRefusal =
@@ -142,6 +146,8 @@ module internal ReturnToUserRefusal =
             $"%s{interrupter signal} interrupted the thread's call, and no handler runs as the thread returns: by then the signal has been discarded or is blocked. What the call does then is unmeasured."
         | ReturnToUserRefusal.ChangedSinceInterruption (signal, flavour) ->
             $"%s{interrupter signal} interrupted the thread's call, and since then another thread has changed what the thread takes as it returns, so that the handlers it runs now would end the call otherwise than those it would have run then. Under the %O{flavour} flavour, which of the two the kernel goes by is unmeasured."
+        | ReturnToUserRefusal.RestoredMaskLetsThrough signal ->
+            $"the thread returns from sigsuspend or pause running no handler, and the mask the call replaced, which the return restores, lets through %O{signal}, which the call's temporary mask kept pending. Whether the kernel delivers it in the same return is unmeasured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReturnToUserRefusal) : RefusalKind =
@@ -153,6 +159,7 @@ module internal ReturnToUserRefusal =
         | ReturnToUserRefusal.RestartWithRemainingTime _ -> RefusalKind.Unmodelled
         | ReturnToUserRefusal.UnmeasuredWithoutHandler _ -> RefusalKind.Unmodelled
         | ReturnToUserRefusal.ChangedSinceInterruption _ -> RefusalKind.Unmodelled
+        | ReturnToUserRefusal.RestoredMaskLetsThrough _ -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `sigprocmask(2)`: something it does not
 /// model, rather than an error a kernel would report.
@@ -213,7 +220,9 @@ type ReturnToUserOutcome<'Thread, 'Handler when 'Thread : comparison and 'Handle
     | RunHandlers of frames : HandlerFrame<'Thread, 'Handler> list * interrupted : InterruptedCall option
     /// No handler claims the signal and its kernel default is to suspend the
     /// whole process. The library holds no stopped state, so the client acts
-    /// on it.
+    /// on it. Where another signal is still deliverable to the thread, its
+    /// return is not over: a client that carries on asks
+    /// `UnixSignal.onReturnToUser` again before the thread runs its own code.
     | ProcessStopped of signal : Signal
     /// No handler claims the signal, its kernel default is to resume a stopped
     /// process, and the thread does not block it: the kernel discarded it as it
@@ -349,7 +358,9 @@ module UnixSignal =
     ///   * otherwise it is pending, including when every thread that could
     ///     receive it blocks it, and a thread takes it as it returns to user mode
     ///     (`onReturnToUser`) once it can. A standard signal already pending in
-    ///     the same pending set is not added again; a real-time one is.
+    ///     the same pending set is not added again; a real-time one is. The
+    ///     thread it is deliverable to, if any, owes that return at once, and
+    ///     makes no other call before it.
     ///
     /// Before any of that, under Darwin's numbering an ignored signal other
     /// than SIGCONT is discarded, whatever any mask says; under Linux's, an
@@ -464,22 +475,50 @@ module UnixSignal =
 
         let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
+        // The thread owes the rest of its return where a signal is still
+        // deliverable to it, which only a walk that stopped at a default
+        // leaves. A leader's frames add to its mask, so may come to block a
+        // signal pending on the process that another thread does not, which
+        // that thread then takes, under Linux.
+        let owing (view : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
+            let view = OwedReturns.markIfDue thread view
+
+            if thread = view.Leader then
+                (view, Map.keys view.Threads)
+                ||> Seq.fold (fun view other -> OwedReturns.markIfDue other view)
+            else
+                view
+
+        // A walk that pushed no frame took every signal it could reach, so
+        // only the mask a `sigsuspend` replaced, restored as the return runs
+        // no handler, can let another through.
+        let resumes
+            (ending : InterruptedCall option)
+            : Result<
+                  ViewFate<ReturnToUserOutcome<'Thread, 'Handler>, ProcessView<'Thread, 'Handler>>,
+                  ReturnToUserRefusal
+               >
+            =
+            match OwedReturns.deliverable thread after with
+            | ValueSome signal -> Error (ReturnToUserRefusal.RestoredMaskLetsThrough signal)
+            | ValueNone -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes ending, owing after))
+
         match delivery, interrupted with
-        | None, None -> Ok (ViewFate.Continues (ReturnToUserOutcome.Resumes None, after))
+        | None, None -> resumes None
         | None, Some interruption ->
             endOfInterrupted<'Thread, 'Handler> flavour interruption []
-            |> Result.map (fun ending -> ViewFate.Continues (ReturnToUserOutcome.Resumes (Some ending), after))
+            |> Result.bind (fun ending -> resumes (Some ending))
         | Some (SignalDelivery.RunHandlers frames), None ->
-            Ok (ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), after))
+            Ok (ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, None), owing after))
         | Some (SignalDelivery.RunHandlers frames), Some interruption ->
             endOfInterrupted flavour interruption frames
             |> Result.map (fun ending ->
-                ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, Some ending), after)
+                ViewFate.Continues (ReturnToUserOutcome.RunHandlers (frames, Some ending), owing after)
             )
         | Some (SignalDelivery.DefaultStop signal), Some _
         | Some (SignalDelivery.DefaultContinue signal), Some _ -> Error (ReturnToUserRefusal.DefaultAction signal)
         | Some (SignalDelivery.DefaultStop signal), None ->
-            Ok (ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, after))
+            Ok (ViewFate.Continues (ReturnToUserOutcome.ProcessStopped signal, owing after))
         | Some (SignalDelivery.DefaultContinue signal), None ->
             Ok (
                 ViewFate.Continues (ReturnToUserOutcome.ContinueDiscarded signal, OwedReturns.returnGoesOn thread after)
@@ -516,9 +555,9 @@ module UnixSignal =
     /// asleep in a syscall, as a preempted thread returns to user mode.
     ///
     /// A thread must return before it makes another call when a signal
-    /// interrupted its last call (an `Interrupted` answer), and when its last
-    /// call left it a signal to take here; every call the thread makes until
-    /// then throws `InvalidOperationException`.
+    /// interrupted its last call (an `Interrupted` answer), and from the moment
+    /// a signal is deliverable to it, whichever thread's call made it so; every
+    /// call the thread makes until then throws `InvalidOperationException`.
     ///
     /// Returns the possibly-updated system in every case, because an answer can
     /// change the state without producing an action (see the Ignore rule
@@ -606,9 +645,17 @@ module UnixSignal =
     /// process; handlers that disagree about `SA_RESTART`, for a call it
     /// restarts; no handler for a Linux `poll` with a timeout, which Linux
     /// restarts with what is left of it, or for a call with a timeout under
-    /// `epoll_wait` or `kevent`, or a Darwin `poll`, which is unmeasured; and,
+    /// `epoll_wait` or `kevent`, or a Darwin `poll`, which is unmeasured;
     /// under Darwin, an end other than the one a return made as the call was
-    /// interrupted would have given.
+    /// interrupted would have given; and no handler for a `sigsuspend` or
+    /// `pause`, where the mask the return gives back lets through a signal the
+    /// call's temporary mask kept pending, which is unmeasured.
+    ///
+    /// Where the return stops the process with another signal still
+    /// deliverable to the thread, the thread owes the rest of its return. And
+    /// the frames a leader's return pushes may come to block a signal pending
+    /// on the process that, under Linux, another thread then takes: that thread
+    /// owes its return.
     ///
     /// Fails loudly if `caller` names no thread, or is asleep in a syscall, each of
     /// which is a bug in the client.
@@ -628,13 +675,14 @@ module UnixSignal =
         : ProcessView<'Thread, 'Handler>
         =
         UnixSystemState.withSignals (SignalState.sigreturn thread frame system.Process.Signals) system
+        |> OwedReturns.markIfDue thread
 
     /// `sigreturn(2)`, made by `caller`: its thread's handler for the frame
     /// `frame` has returned, and the frame is popped, restoring the mask that
     /// was in force before it was pushed (`HandlerFrame.SavedMask`), whatever
     /// the handler did to the mask meanwhile. The client then asks
     /// `onReturnToUser` again, since signals the frame blocked may now be
-    /// deliverable.
+    /// deliverable, and the thread owes that return if one is.
     ///
     /// Fails loudly unless `frame` is the thread's innermost frame: handlers
     /// return innermost first, so anything else is a bug in the client.
@@ -891,7 +939,10 @@ module UnixSignal =
                 (signals, targets)
                 ||> List.fold (fun signals target -> SignalState.changeMask numbering change set target signals)
 
-            Ok (old, UnixSystemState.withSignals signals system)
+            // Only the caller's own signals become deliverable: another
+            // thread's mask changes only under Darwin's `sigprocmask`, which
+            // refuses to unblock a signal pending for it.
+            Ok (old, UnixSystemState.withSignals signals system |> OwedReturns.markIfDue thread)
 
     /// The signals Linux's C library takes out of every set its mask calls are
     /// handed: its own 32 and 33. Darwin's takes none.
@@ -933,7 +984,8 @@ module UnixSignal =
     ///
     /// Unblocking can make a pending signal deliverable: to the thread as it
     /// returns from this call (`onReturnToUser`), which for several at once
-    /// pushes a frame for each before any handler runs.
+    /// pushes a frame for each before any handler runs, and which the thread
+    /// then owes.
     ///
     /// Darwin's raw `__pthread_sigmask` system call answered exactly as this on
     /// every row measured, so this serves it too.

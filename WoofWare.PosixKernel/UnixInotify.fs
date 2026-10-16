@@ -94,8 +94,6 @@ module internal InotifyAddWatchRefusal =
 type PausedInotifyAddWatch<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality> =
     private
         {
-            /// The thread making the call.
-            Thread : 'Thread
             System : ProcessView<'Thread, 'Handler>
             Instance : OpenFileDescriptionId
             State : InotifyState
@@ -271,7 +269,6 @@ module UnixInotify =
 
     /// `tryInotifyAddWatch` once `Entry` has admitted its caller.
     let private tryInotifyAddWatchIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
         (fd : int)
         (mask : uint32)
         (system : ProcessView<'Thread, 'Handler>)
@@ -306,7 +303,6 @@ module UnixInotify =
         Ok (
             CallProgress.NeedsCopyIn
                 {
-                    Thread = thread
                     System = system
                     Instance = instance
                     State = state
@@ -330,7 +326,7 @@ module UnixInotify =
             CallerRequirement.Running
             caller
             (Shape.result (Shape.progress Shape.withSystem))
-            (tryInotifyAddWatchIn (Caller.thread caller) fd mask)
+            (tryInotifyAddWatchIn fd mask)
             system
 
     /// <summary>
@@ -540,8 +536,7 @@ module UnixInotify =
         (paused : PausedInotifyAddWatch<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, InotifyAddWatchRefusal>
         =
-        let answer = tryInotifyAddWatchWithPathIn path paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) (tryInotifyAddWatchWithPathIn path paused)
 
     /// <summary>
     /// The second half of `inotify_add_watch(2)`: copy in `path`, the

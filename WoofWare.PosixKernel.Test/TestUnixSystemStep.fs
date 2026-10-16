@@ -1276,16 +1276,16 @@ module TestUnixSystemStep =
                     socketFd, socketSystem
                     queueFd, queueSystem
                 ] do
-                Lone.UnixReadWrite.tryAdmitPWrite 0 descriptor UserBuffer.Mapped 4UL -1L holding
+                Lone.UnixReadWrite.tryAdmitPWrite descriptor UserBuffer.Mapped 4UL -1L holding
                 |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
             // And it beats the buffer screen and the no-op too, which the rows
             // above cannot say: both of those sit behind the descriptor steps,
             // so a buffer with no answer at all still earns EINVAL.
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Addressless 4UL -1L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Addressless 4UL -1L system
             |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 0UL -1L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 0UL -1L system
             |> shouldEqual (pwriteFailed UnixError.EINVAL)
 
     [<Test>]
@@ -1298,16 +1298,16 @@ module TestUnixSystemStep =
         //   pipe read end (also unwritable)   ESPIPE   EBADF
         //   regular file O_RDONLY (seekable)  EBADF    EBADF
         for fd in [ 1 ; 2 ] do
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L linux
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L linux
             |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L darwin
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L darwin
             |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 0 UserBuffer.Mapped 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 0 UserBuffer.Mapped 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 0 UserBuffer.Mapped 4UL 0L darwin
+        Lone.UnixReadWrite.tryAdmitPWrite 0 UserBuffer.Mapped 4UL 0L darwin
         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
         // The control that says this is about the tie rather than about
@@ -1315,7 +1315,7 @@ module TestUnixSystemStep =
         for flavour in [ linux ; darwin ] do
             let fd, system = withReadOnlyFile flavour
 
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 4UL 0L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 4UL 0L system
             |> shouldEqual (pwriteFailed UnixError.EBADF)
 
         // And seekability precedes the screen on both: measured,
@@ -1323,13 +1323,13 @@ module TestUnixSystemStep =
         // Darwin, not EFAULT.
         let wild = UserBuffer.Unmapped System.UInt64.MaxValue
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 0 wild 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 0 wild 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 0 wild 4UL 0L darwin
+        Lone.UnixReadWrite.tryAdmitPWrite 0 wild 4UL 0L darwin
         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 1 wild 4UL 0L linux
+        Lone.UnixReadWrite.tryAdmitPWrite 1 wild 4UL 0L linux
         |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
     [<Test>]
@@ -1348,10 +1348,10 @@ module TestUnixSystemStep =
 
             for buffer in [ UserBuffer.Mapped ; wild ; UserBuffer.Opaque ; UserBuffer.Addressless ] do
                 for count in [ 0UL ; 4UL ] do
-                    Lone.UnixReadWrite.tryAdmitPWrite 0 socketFd buffer count 0L socketSystem
+                    Lone.UnixReadWrite.tryAdmitPWrite socketFd buffer count 0L socketSystem
                     |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
-                    Lone.UnixReadWrite.tryAdmitPWrite 0 queueFd buffer count 0L queueSystem
+                    Lone.UnixReadWrite.tryAdmitPWrite queueFd buffer count 0L queueSystem
                     |> shouldEqual (pwriteFailed UnixError.ESPIPE)
 
         // The same socket answers a `write` itself, and so does the event queue, each
@@ -1386,7 +1386,7 @@ module TestUnixSystemStep =
             for descriptor, holding in [ fd, system ; dirFd, dirSystem ] do
                 for buffer in [ UserBuffer.Mapped ; UserBuffer.Addressless ; UserBuffer.Unmapped 0UL ] do
                     for count in [ 0UL ; 4UL ] do
-                        Lone.UnixReadWrite.tryAdmitPWrite 0 descriptor buffer count 0L holding
+                        Lone.UnixReadWrite.tryAdmitPWrite descriptor buffer count 0L holding
                         |> shouldEqual (pwriteFailed UnixError.EBADF)
 
     [<Test>]
@@ -1398,10 +1398,10 @@ module TestUnixSystemStep =
         let fd, system = withOpenFile linux
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 fd wild 0UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd wild 0UL 0L system
         |> shouldEqual (pwriteFailed UnixError.EFAULT)
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 darwinFd wild 0UL 0L darwinSystem
+        Lone.UnixReadWrite.tryAdmitPWrite darwinFd wild 0UL 0L darwinSystem
         |> shouldEqual (Ok (PWriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
         // A *null* pointer passes the screen on both — it is an ordinary user
@@ -1409,32 +1409,32 @@ module TestUnixSystemStep =
         // otherwise. Measured, `pwrite(f, NULL, 0, 0)` is 0 and
         // `pwrite(f, NULL, 4, 0)` is EFAULT, on both.
         for descriptor, holding in [ fd, system ; darwinFd, darwinSystem ] do
-            Lone.UnixReadWrite.tryAdmitPWrite 0 descriptor (UserBuffer.Unmapped 0UL) 0UL 0L holding
+            Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 0UL 0L holding
             |> shouldEqual (Ok (PWriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
-            Lone.UnixReadWrite.tryAdmitPWrite 0 descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding
+            Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding
             |> shouldEqual (pwriteFailed UnixError.EFAULT)
 
     [<Test>]
     let ``a pwrite buffer with no bytes is refused at the copy, not faulted`` () : unit =
         let fd, system = withOpenFile linux
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Opaque 4UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Opaque 4UL 0L system
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer))
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Addressless 4UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Addressless 4UL 0L system
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtScreen))
 
         let darwinFd, darwinSystem = withOpenFile darwin
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 darwinFd UserBuffer.Addressless 4UL 0L darwinSystem
+        Lone.UnixReadWrite.tryAdmitPWrite darwinFd UserBuffer.Addressless 4UL 0L darwinSystem
         |> shouldEqual (Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer))
 
     [<Test>]
     let ``a pwrite that reaches the copy asks for exactly what was requested`` () : unit =
         let fd, system = withOpenFile linux
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 9L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 3UL 9L system
         |> pwriteAdmitted
         |> function
             | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()
@@ -1453,10 +1453,10 @@ module TestUnixSystemStep =
                 UserBuffer.Unmapped 0UL, 3UL
                 UserBuffer.Mapped, 0UL
             ] do
-            Lone.UnixReadWrite.tryAdmitPWrite 0 fd buffer count 0L system
+            Lone.UnixReadWrite.tryAdmitPWrite fd buffer count 0L system
             |> ignore<Result<PWriteAdmission, PWriteRefusal>>
 
-        Lone.UnixReadWrite.tryAdmitPWrite 0 fd UserBuffer.Mapped 3UL 0L system
+        Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped 3UL 0L system
         |> pwriteAdmitted
         |> function
             | PWriteAdmission.Transfer (3, PWriteInto.File _) -> ()

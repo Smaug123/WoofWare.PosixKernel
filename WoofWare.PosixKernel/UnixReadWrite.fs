@@ -56,17 +56,9 @@ type internal ReadRefusal =
     /// A read asleep on a pipe or a connected socket has an answer, and the
     /// library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
-    /// A read of `count` bytes of `/dev/urandom`, more than a page, by a thread
-    /// with a signal pending that it would take on its return to user mode.
-    | SignalAtPageBoundary of count : int
 
 [<RequireQualifiedAccess>]
 module internal ReadRefusal =
-    /// Shared with `PReadRefusal`, whose case of the same name is the same
-    /// fact.
-    let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the read is of %d{count} bytes, more than a page, and a signal is pending that the reading thread would take on its return to user mode. Linux's read stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short read of a device."
-
     /// What this kernel knows about why it cannot answer. The client supplies
     /// its own half — which entry point, which descriptor, and which of its own
     /// callers could have reached this.
@@ -85,7 +77,6 @@ module internal ReadRefusal =
             $"the descriptor is directory %O{inode} on %O{fileSystem}, which this description has read part of the way through. Ahead of a directory's EISDIR, Linux answers EINVAL when position + count passes INT64_MAX and Darwin answers 0 when the position is INT64_MAX, and the position after a partial scan is %O{fileSystem}'s own cookie (on an NFS mount, whatever the server chose, up to INT64_MAX), which is not a number this kernel's position corresponds to. So whether this read is EISDIR or the position's answer is unknown here."
         | ReadRefusal.Interruption refusal ->
             $"the read was asleep on a pipe or a connected socket: %s{SyscallInterruptionRefusal.describe refusal}"
-        | ReadRefusal.SignalAtPageBoundary count -> describeSignalAtPageBoundary count
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadRefusal) : RefusalKind =
@@ -97,7 +88,6 @@ module internal ReadRefusal =
         | ReadRefusal.DatagramSleep _ -> RefusalKind.Unmodelled
         | ReadRefusal.ScannedDirectoryPosition _ -> RefusalKind.Unmodelled
         | ReadRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
-        | ReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `pread`.
 ///
@@ -109,8 +99,6 @@ module internal ReadRefusal =
 type internal PReadRefusal =
     /// The buffer has no answer at the step the read reached.
     | Buffer of BufferRefusal
-    /// As `ReadRefusal.SignalAtPageBoundary`.
-    | SignalAtPageBoundary of count : int
 
 [<RequireQualifiedAccess>]
 module internal PReadRefusal =
@@ -119,13 +107,11 @@ module internal PReadRefusal =
     let describe (refusal : PReadRefusal) : string =
         match refusal with
         | PReadRefusal.Buffer refusal -> BufferRefusal.describe refusal
-        | PReadRefusal.SignalAtPageBoundary count -> ReadRefusal.describeSignalAtPageBoundary count
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PReadRefusal) : RefusalKind =
         match refusal with
         | PReadRefusal.Buffer refusal -> BufferRefusal.kind refusal
-        | PReadRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What became of a `read(2)` this kernel could answer, where "answer" may be
 /// "the calling thread sleeps".
@@ -341,17 +327,9 @@ type internal WriteRefusal =
     /// peer, which raises `SIGPIPE` at its default, which ends the process,
     /// and the process's end is refused.
     | ProcessEnd of target : BrokenWriteTarget * refusal : ProcessEndRefusal
-    /// A write of `count` bytes to `/dev/urandom`, more than a page, by a thread
-    /// with a signal pending that it would take on its return to user mode.
-    | SignalAtPageBoundary of count : int
 
 [<RequireQualifiedAccess>]
 module internal WriteRefusal =
-    /// Shared with `PWriteRefusal`, whose case of the same name is the same
-    /// fact.
-    let internal describeSignalAtPageBoundary (count : int) : string =
-        $"the descriptor is /dev/urandom, the write is of %d{count} bytes, more than a page, and a signal is pending that the writing thread would take on its return to user mode. Linux's write stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short write to a device."
-
     // Its own function because `write` and `pwrite` reach the same limit from
     // different offsets and must say the same thing about it.
     let internal describeUnmeasuredSetIdChange (inode : InodeNumber) (refusal : SetIdChangeRefusal) : string =
@@ -389,7 +367,6 @@ module internal WriteRefusal =
         | WriteRefusal.ProcessEnd (target, refusal) ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE, whose default ends the process; %s{ProcessEndRefusal.describe refusal}"
         | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
-        | WriteRefusal.SignalAtPageBoundary count -> describeSignalAtPageBoundary count
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : WriteRefusal) : RefusalKind =
@@ -407,7 +384,6 @@ module internal WriteRefusal =
         | WriteRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | WriteRefusal.InitProcess _ -> RefusalKind.Unmodelled
         | WriteRefusal.ProcessEnd (_, inner) -> ProcessEndRefusal.kind inner
-        | WriteRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `recv(2)`.
 ///
@@ -725,8 +701,6 @@ type internal PWriteRefusal =
     /// What writing to the file at `inode` would do to its set-ID bits has not
     /// been measured for this writer.
     | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
-    /// As `WriteRefusal.SignalAtPageBoundary`.
-    | SignalAtPageBoundary of count : int
 
 [<RequireQualifiedAccess>]
 module internal PWriteRefusal =
@@ -742,7 +716,6 @@ module internal PWriteRefusal =
             WriteRefusal.describeExceedsRepresentableLength inode offset count
         | PWriteRefusal.UnmeasuredSetIdChange (inode, refusal) ->
             WriteRefusal.describeUnmeasuredSetIdChange inode refusal
-        | PWriteRefusal.SignalAtPageBoundary count -> WriteRefusal.describeSignalAtPageBoundary count
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PWriteRefusal) : RefusalKind =
@@ -750,7 +723,6 @@ module internal PWriteRefusal =
         | PWriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PWriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | PWriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
-        | PWriteRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `copy_file_range(2)`.
 [<RequireQualifiedAccess>]
@@ -840,13 +812,6 @@ type private PWriteTarget =
     | File of inode : InodeNumber * through : ReachedThrough
     /// A character device, whose driver answers.
     | CharacterDevice of device : CharacterDevice
-
-/// Why a device's own read or write has no answer, for each syscall to state
-/// in its own refusals.
-[<RequireQualifiedAccess>]
-type private DeviceRefusal =
-    | Buffer of BufferRefusal
-    | SignalAtPageBoundary of count : int
 
 /// What a `write` will operate on, once the descriptor's access mode has been
 /// checked and before its buffer is screened.
@@ -1678,18 +1643,16 @@ module UnixReadWrite =
         // gigabytes.
         Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)))
 
-    /// What a device's own write of `count` bytes by `thread`, at most one call's
-    /// worth, answers without the bytes, once everything ahead of the driver
-    /// has passed; `None` where it copies them, which it then takes all of.
+    /// What a device's own write of `count` bytes, at most one call's worth,
+    /// answers without the bytes, once everything ahead of the driver has
+    /// passed; `None` where it copies them, which it then takes all of.
     /// Neither device in `CharacterDevice.all` changes anything a later call
     /// could see, so a write moves no timestamp, position or pool.
-    let private deviceWriteWithoutBytes<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
+    let private deviceWriteWithoutBytes
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Result<WriteAnswer option, DeviceRefusal>
+        : Result<WriteAnswer option, BufferRefusal>
         =
         match device with
         | CharacterDevice.Null ->
@@ -1714,25 +1677,21 @@ module UnixReadWrite =
         // pool hands out, which no process could tell from a real kernel's.
         match buffer with
         | UserBuffer.Unmapped _ -> Ok (Some (WriteAnswer.Failed UnixError.EFAULT))
-        | UserBuffer.Opaque -> Error (DeviceRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
-        | UserBuffer.Addressless -> Error (DeviceRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
-        | UserBuffer.Mapped ->
-            if SyscallInterruption.stopsAtPageBoundary thread count system then
-                Error (DeviceRefusal.SignalAtPageBoundary count)
-            else
-                Ok None
+        | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
+        | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
+        // The whole count, as a read takes it (see `readDevice`).
+        | UserBuffer.Mapped -> Ok None
 
     /// A device's own read of `count` bytes, at most one call's worth, once
     /// everything ahead of the driver has passed. Neither device in
     /// `CharacterDevice.all` keeps a position, so neither the description nor
     /// any timestamp moves.
     let private readDevice<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
         (device : CharacterDevice)
         (buffer : UserBuffer)
         (count : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<ReadAnswer * ProcessView<'Thread, 'Handler>, DeviceRefusal>
+        : Result<ReadAnswer * ProcessView<'Thread, 'Handler>, BufferRefusal>
         =
         match device with
         | CharacterDevice.Null ->
@@ -1759,22 +1718,19 @@ module UnixReadWrite =
             // `getrandom`'s does on a fault: no process can tell where a real
             // kernel's pool is.
             Ok (ReadAnswer.Failed UnixError.EFAULT, system)
-        | UserBuffer.Opaque -> Error (DeviceRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
-        | UserBuffer.Addressless -> Error (DeviceRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
+        | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
         | UserBuffer.Mapped ->
 
-        // Measured (`bigread.c`): a read of 4097 bytes interrupted by a signal
-        // answered 4096, and no read was ever EINTR.
-        if SyscallInterruption.stopsAtPageBoundary thread count system then
-            Error (DeviceRefusal.SignalAtPageBoundary count)
-        else
-
-        // The whole count otherwise, from the pool `getrandom` draws on:
-        // measured, every count up to one call's worth is read in full
-        // (`devices.c` READ rows, `bigread.c`). A signal that arrives during a
-        // real read can still stop it short at a page boundary; reading in
-        // full is the outcome in which it arrives after the last check, and it
-        // is then taken as the call returns.
+        // The whole count, from the pool `getrandom` draws on: measured, every
+        // count up to one call's worth is read in full (`devices.c` READ rows,
+        // `bigread.c`). Measured too (`bigread.c`), a read of 4097 bytes that a
+        // signal interrupted answered 4096, and no read was ever EINTR: a
+        // signal arriving during a real read can stop it short at a page
+        // boundary. No signal is deliverable to a thread here as its call
+        // begins, which owes its return to user mode first, so reading in full
+        // is the outcome in which the signal arrives after the last check, and
+        // is taken as the call returns.
         let draw, pool = EntropyPool.take count system.Machine.EntropyPool
 
         Ok (
@@ -1938,9 +1894,8 @@ module UnixReadWrite =
             // count that passed the screen can carry past `INT64_MAX`.
             // `O_NONBLOCK` changes nothing either, neither device ever having
             // anything to wait for.
-            match readDevice thread device buffer (oneCallsWorth platform count) system with
-            | Error (DeviceRefusal.Buffer refusal) -> Error (ReadRefusal.Buffer refusal)
-            | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (ReadRefusal.SignalAtPageBoundary count)
+            match readDevice device buffer (oneCallsWorth platform count) system with
+            | Error refusal -> Error (ReadRefusal.Buffer refusal)
             | Ok (answer, system) -> answered answer system
         | ReadTarget.Socket (socketId, nonBlocking) ->
             // A zero-length read of a socket is where the flavours part, and on
@@ -2202,9 +2157,6 @@ module UnixReadWrite =
     /// through a description without `O_NONBLOCK`, sleeps (`ReadOutcome.WouldBlock`)
     /// without looking at the buffer, and `finishRead` finishes it. Setting
     /// `O_NONBLOCK` on the description while it sleeps does not wake it.
-    ///
-    /// A read of `/dev/urandom` longer than a page, by a thread with a signal
-    /// pending, is refused.
     ///
     /// A read of an inotify instance takes as many whole queued records as fit
     /// in `count`, oldest first, and answers `EINVAL` if the oldest does not
@@ -2766,7 +2718,6 @@ module UnixReadWrite =
 
     /// `tryPread` once `Entry` has admitted its caller.
     let private tryPreadIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
@@ -2935,9 +2886,8 @@ module UnixReadWrite =
 
         match target with
         | PReadTarget.CharacterDevice device ->
-            match readDevice thread device buffer (oneCallsWorth platform count) system with
-            | Error (DeviceRefusal.Buffer refusal) -> Error (PReadRefusal.Buffer refusal)
-            | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (PReadRefusal.SignalAtPageBoundary count)
+            match readDevice device buffer (oneCallsWorth platform count) system with
+            | Error refusal -> Error (PReadRefusal.Buffer refusal)
             | Ok answer -> Ok answer
         | PReadTarget.File inode ->
 
@@ -2961,7 +2911,7 @@ module UnixReadWrite =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryPreadIn (Caller.thread caller) fd buffer count offset)
+            (tryPreadIn fd buffer count offset)
             system
 
     /// `pread(2)`: move up to `count` bytes from `offset` in the file `fd` names
@@ -2979,9 +2929,7 @@ module UnixReadWrite =
     /// the entropy pool (`ReadAnswer.Drawn`).
     ///
     /// `caller` is the thread making the call, which must be one of the
-    /// system's process's and not asleep in another; a read of `/dev/urandom`
-    /// asks whether it has a signal pending, and refuses one longer than a
-    /// page if it does.
+    /// system's process's and not asleep in another.
     let pread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (fd : int)
@@ -3351,9 +3299,8 @@ module UnixReadWrite =
             // 0.
             let count = oneCallsWorth platform count
 
-            match deviceWriteWithoutBytes thread device buffer count system with
-            | Error (DeviceRefusal.Buffer refusal) -> Error (WriteRefusal.Buffer refusal)
-            | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (WriteRefusal.SignalAtPageBoundary count)
+            match deviceWriteWithoutBytes device buffer count with
+            | Error refusal -> Error (WriteRefusal.Buffer refusal)
             | Ok (Some answer) -> Ok (unchanged (WriteAdmission.Answered answer))
             | Ok None -> Ok (unchanged (WriteAdmission.Transfer (count, WriteInto.Device)))
         | WriteTarget.Pipe (pipeId, descriptionId, nonBlocking) ->
@@ -4153,8 +4100,7 @@ module UnixReadWrite =
         | WriteRefusal.EphemeralPortsExhausted _
         | WriteRefusal.ExceedsRepresentableLength _
         | WriteRefusal.UnmeasuredSetIdChange _
-        | WriteRefusal.Interruption _
-        | WriteRefusal.SignalAtPageBoundary _ ->
+        | WriteRefusal.Interruption _ ->
             failwith
                 $"UnixReadWrite: a send to a connected socket was refused with %A{refusal}, which only a write to another object, or a woken write, gives (this is a bug in this library)."
 
@@ -4371,10 +4317,7 @@ module UnixReadWrite =
     /// Every answer `pwrite(2)` gives without reading the caller's buffer, and
     /// otherwise how many bytes to extract and where they go: the step before
     /// the copy, which `pwrite` answers as a `CallProgress`. Changes nothing.
-    /// `thread` is not checked here: `pwrite` checks its caller before it
-    /// reaches this step.
     let internal tryAdmitPWrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
         (fd : int)
         (buffer : UserBuffer)
         (count : uint64)
@@ -4424,9 +4367,8 @@ module UnixReadWrite =
 
         match target with
         | PWriteTarget.CharacterDevice device ->
-            match deviceWriteWithoutBytes thread device buffer count system with
-            | Error (DeviceRefusal.Buffer refusal) -> Error (PWriteRefusal.Buffer refusal)
-            | Error (DeviceRefusal.SignalAtPageBoundary count) -> Error (PWriteRefusal.SignalAtPageBoundary count)
+            match deviceWriteWithoutBytes device buffer count with
+            | Error refusal -> Error (PWriteRefusal.Buffer refusal)
             | Ok (Some answer) -> Ok (PWriteAdmission.Answered answer)
             | Ok None -> Ok (PWriteAdmission.Transfer (count, PWriteInto.Device))
         | PWriteTarget.File (inode, through) ->
@@ -4819,8 +4761,7 @@ module UnixReadWrite =
         (paused : PausedWrite<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, WriteRefusal>
         =
-        let answer = tryWriteWithBytesIn bytes paused
-        Entry.resume paused.Thread (Shape.result Shape.fate) answer
+        Entry.resume (Shape.result Shape.fate) (tryWriteWithBytesIn bytes paused)
 
     /// <summary>
     /// The rest of the write `paused` stopped: `bytes`, exactly the ones
@@ -4982,8 +4923,7 @@ module UnixReadWrite =
         (paused : PausedSend<'Thread, 'Handler>)
         : Result<ProcessFate<WriteOutcome<'Thread>, 'Thread, 'Handler>, SendRefusal>
         =
-        let answer = trySendWithBytesIn bytes paused
-        Entry.resume paused.Thread (Shape.result Shape.fate) answer
+        Entry.resume (Shape.result Shape.fate) (trySendWithBytesIn bytes paused)
 
     /// <summary>
     /// The rest of the `send` `paused` stopped: `bytes`, exactly the ones
@@ -5019,7 +4959,7 @@ module UnixReadWrite =
               PWriteRefusal
            >
         =
-        tryAdmitPWrite thread fd buffer count offset system
+        tryAdmitPWrite fd buffer count offset system
         |> Result.map (fun admission ->
             match admission with
             | PWriteAdmission.Answered answer -> CallProgress.Answered (answer, system)
@@ -5075,13 +5015,10 @@ module UnixReadWrite =
     /// what `write` does too.
     ///
     /// Never short and never `EINTR`: this kernel has nothing that could push
-    /// back on a write, and its filesystem cannot run out of space. A write of
-    /// more than a page to `/dev/urandom` by a thread with a signal pending,
-    /// which a real kernel would cut short, is refused.
+    /// back on a write, and its filesystem cannot run out of space.
     ///
     /// `caller` is the thread making the call, which must be one of the
-    /// system's process's and not asleep in another; a write to
-    /// `/dev/urandom` asks whether it has a signal pending.
+    /// system's process's and not asleep in another.
     /// </remarks>
     let pwrite<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
@@ -5112,8 +5049,7 @@ module UnixReadWrite =
         (paused : PausedPWrite<'Thread, 'Handler>)
         : Result<WriteAnswer * UnixSystem<'Thread, 'Handler>, PWriteRefusal>
         =
-        let answer = tryPwriteWithBytesIn bytes paused
-        Entry.resume paused.Thread (Shape.result Shape.withSystem) answer
+        Entry.resume (Shape.result Shape.withSystem) (tryPwriteWithBytesIn bytes paused)
 
     /// <summary>
     /// The rest of the `pwrite` `paused` stopped: `bytes`, exactly the ones

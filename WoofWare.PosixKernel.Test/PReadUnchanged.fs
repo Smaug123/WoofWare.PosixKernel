@@ -18,8 +18,6 @@ module internal PReadUnchanged =
         =
         match UnixReadWrite.tryPread (Callers.leader system) fd buffer count offset system with
         | Error (PReadRefusal.Buffer refusal) -> Error refusal
-        | Error (PReadRefusal.SignalAtPageBoundary _ as refusal) ->
-            failwith $"pread(%d{fd}, %d{count}@%d{offset}) was refused, which only a device's can be: %A{refusal}"
         | Ok (answer, after) ->
             if after <> system then
                 failwith $"pread(%d{fd}, %d{count}@%d{offset}) answered %A{answer} and changed the system"

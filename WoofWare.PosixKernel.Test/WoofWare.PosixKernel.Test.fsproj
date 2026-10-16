@@ -218,6 +218,7 @@
     <Compile Include="TestEntry.fs" />
     <Compile Include="TestShape.fs" />
     <Compile Include="TestCallerChecks.fs" />
+    <Compile Include="TestSignalDue.fs" />
     <Compile Include="TestSocketAddressing.fs" />
     <Compile Include="TestSocketErrorOption.fs" />
     <Compile Include="TestSocketErrorAgainstHost.fs" />

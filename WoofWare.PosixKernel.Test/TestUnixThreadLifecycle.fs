@@ -105,6 +105,10 @@ module TestUnixThreadLifecycle =
                         Target = ValueSome 2
                     }
                 )
+                // The process's SIGUSR2 is deliverable to the leader, which
+                // blocks nothing, so it owes a return to user mode, as it would
+                // had the signal been sent.
+                |> Lone.mapThreads (UnixThreadTable.owe 0 OwedReturn.SignalDue)
 
             let after = exitOrFail 1 system
 
@@ -709,10 +713,12 @@ module TestUnixThreadLifecycle =
                 | Op.ExitGroup _ -> system, model
 
             // This property puts signals in the state directly rather than
-            // sending them, so a call can leave its thread owing a return to
-            // user mode where a sent signal would have been taken or ended the
-            // process at once. Which return a client makes is not this
-            // property's subject: each such debt is settled before the next op.
+            // sending them, so a thread can have a signal deliverable to it
+            // where a sent signal would have been taken, or ended the process,
+            // at once. Which return a client makes is not this property's
+            // subject: every debt is settled before the next op, and the
+            // invariant that a thread with a deliverable signal owes a return
+            // is not asked of states built so.
             let after =
                 after
                 |> Lone.mapThreads (fun threads ->
@@ -723,7 +729,14 @@ module TestUnixThreadLifecycle =
             // The thread set is exactly the model's, and no per-thread entry outlives its thread.
             Lone.threads after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
             orphans after |> shouldEqual []
-            UnixSystem.checkInvariants after |> shouldEqual []
+
+            UnixSystem.checkInvariants after
+            |> List.filter (fun defect ->
+                match defect with
+                | UnixSystemDefect.SignalDeliverableWithoutOwedReturn _ -> false
+                | _ -> true
+            )
+            |> shouldEqual []
 
             after, model'
 

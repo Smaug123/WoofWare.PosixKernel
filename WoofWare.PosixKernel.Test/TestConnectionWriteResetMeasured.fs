@@ -267,7 +267,9 @@ module TestConnectionWriteResetMeasured =
                 | other, _ -> failwith $"%O{platform} %s{peer}: %A{other}"
             | written -> false, false, answered 100 written
 
-        let system = returnToUser 1 system
+        // The writer returns to user mode, and so does the leader, which on
+        // Darwin is where the SIGPIPE a write raises is deliverable.
+        let system = returnToUser 1 system |> returnToUser 0
         let soError, system = soError client system
 
         let _, system =

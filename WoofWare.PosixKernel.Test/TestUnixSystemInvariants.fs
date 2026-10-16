@@ -1046,18 +1046,91 @@ module TestUnixSystemInvariants =
                 UnixSystemDefect.PendingSignalTargetWithoutThread (Callers.ofDefault 43, Signal.SIGCHLD)
             ]
 
-        // Directed at a live thread, or at the process: sound.
+        // Directed at a live thread, or at the process, whose leader takes
+        // it: sound, the thread it is deliverable to owing a return to user
+        // mode, as it would had the signal been sent.
         system
         |> withThread None
         |> withSignals (directedAt (ValueSome thread))
+        |> Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
 
         system
         |> withThread None
         |> withSignals (directedAt ValueNone)
+        |> Lone.mapThreads (UnixThreadTable.owe (Lone.leader system) OwedReturn.SignalDue)
         |> UnixSystem.checkInvariants
         |> shouldEqual []
+
+    /// A thread in no syscall that a signal is deliverable to and that owes no
+    /// return to user mode is a defect; a parked thread, one that owes the
+    /// return, and one the signal is not deliverable to are not.
+    [<Test>]
+    let ``a thread a signal is deliverable to that owes no return is a defect`` () : unit =
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let numbering = SimulatedUnixPlatform.signalNumbering platform
+
+            let booted =
+                UnixSystem.initial<int, string> platform
+                |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                |> Threads.ensure thread
+
+            let pendingOn (target : int voption) (blockedBy : int list) : UnixSystem<int, string> =
+                let signals =
+                    (SignalState.initial numbering Set.empty, blockedBy)
+                    ||> List.fold (fun signals blocker ->
+                        SignalState.changeMask
+                            numbering
+                            SignalMaskChange.Block
+                            (SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1))
+                            blocker
+                            signals
+                    )
+                    |> SignalState.enqueue
+                        numbering
+                        {
+                            Signal = Signal.SIGUSR1
+                            Target = target
+                        }
+
+                booted |> withSignals signals
+
+            let undue (thread : int) : UnixSystemDefect<int> =
+                UnixSystemDefect.SignalDeliverableWithoutOwedReturn (Callers.ofDefault thread, Signal.SIGUSR1)
+
+            let owes (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+                Lone.mapThreads (UnixThreadTable.owe thread OwedReturn.SignalDue) system
+
+            let check (system : UnixSystem<int, string>) : UnixSystemDefect<int> list =
+                UnixSystem.checkInvariants system
+
+            // Its own signal, unblocked: a defect until it owes the return, and
+            // none while it sleeps or blocks the signal.
+            pendingOn (ValueSome thread) [] |> check |> shouldEqual [ undue thread ]
+            pendingOn (ValueSome thread) [] |> owes thread |> check |> shouldEqual []
+
+            let asleep =
+                let pending = pendingOn (ValueSome thread) []
+
+                pending
+                |> withSignals (SignalState.suspend numbering thread SignalMask.empty (Lone.proc pending).Signals)
+                |> Lone.Parking.park thread ParkedSyscall.SigSuspend
+
+            asleep |> check |> shouldEqual []
+
+            pendingOn (ValueSome thread) [ thread ] |> check |> shouldEqual []
+
+            // The process's signal is the leader's to take, unless it blocks
+            // it, when under Linux another thread that does not takes it.
+            pendingOn ValueNone [] |> check |> shouldEqual [ undue 0 ]
+            pendingOn ValueNone [] |> owes 0 |> check |> shouldEqual []
+
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux -> pendingOn ValueNone [ 0 ] |> check |> shouldEqual [ undue thread ]
+            | SimulatedUnixFlavour.Darwin -> pendingOn ValueNone [ 0 ] |> check |> shouldEqual []
+
+            pendingOn ValueNone [ 0 ; thread ] |> check |> shouldEqual []
 
     [<Test>]
     let ``a mount the flavour cannot report is a defect`` () : unit =

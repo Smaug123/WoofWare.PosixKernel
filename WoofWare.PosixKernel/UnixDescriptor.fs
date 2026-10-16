@@ -2382,7 +2382,6 @@ module UnixDescriptor =
             )
 
         let machine = ended.Machine
-        let threads = ended.Threads
 
         // Measured (`close-ends-call.c` sections P2-P4 and P7): each write the
         // close ends raises SIGPIPE for the process as it returns, which is
@@ -2425,6 +2424,9 @@ module UnixDescriptor =
         | Ok signalled ->
 
         let signals = signalled.Process.Signals
+        // As the signals left them: the thread a SIGPIPE is deliverable to
+        // owes a return to user mode.
+        let threads = signalled.Threads
 
         // Measured on Darwin 27.0.0 (`fcntl-dup.c`, WRITTEN rows): an ended
         // write that had moved bytes returns having written, which marks the

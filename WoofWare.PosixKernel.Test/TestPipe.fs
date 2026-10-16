@@ -1163,7 +1163,7 @@ module TestPipe =
             PReadUnchanged.pread w UserBuffer.Mapped 1UL 0L system
             |> shouldEqual (Ok (ReadAnswer.Failed tie))
 
-            match Lone.UnixReadWrite.tryAdmitPWrite 0 r UserBuffer.Mapped 1UL 0L system with
+            match Lone.UnixReadWrite.tryAdmitPWrite r UserBuffer.Mapped 1UL 0L system with
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> error |> shouldEqual tie
             | other -> failwith $"%O{platform}: %A{other}"
 

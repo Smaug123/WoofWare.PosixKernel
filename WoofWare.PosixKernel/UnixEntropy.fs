@@ -43,9 +43,6 @@ type internal GetRandomRefusal =
     | Buffer of BufferRefusal
     /// The simulated kernel has no `getrandom` system call.
     | NoSuchSyscall of flavour : SimulatedUnixFlavour
-    /// A request that moves `count` bytes, more than a page, by a thread with a
-    /// signal pending that it would take on its return to user mode.
-    | SignalAtPageBoundary of count : int
 
 [<RequireQualifiedAccess>]
 module internal GetRandomRefusal =
@@ -56,15 +53,12 @@ module internal GetRandomRefusal =
         | GetRandomRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | GetRandomRefusal.NoSuchSyscall flavour ->
             $"the simulated kernel is %O{flavour}, which has no getrandom system call; getentropy(2) is how a process asks it for random bytes."
-        | GetRandomRefusal.SignalAtPageBoundary count ->
-            $"the request moves %d{count} bytes, more than a page, and a signal is pending that the calling thread would take on its return to user mode. Linux's getrandom stops at the first page boundary once a signal is pending, short of the count, and this kernel answers no short getrandom."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetRandomRefusal) : RefusalKind =
         match refusal with
         | GetRandomRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | GetRandomRefusal.NoSuchSyscall _ -> RefusalKind.NotOnPlatform
-        | GetRandomRefusal.SignalAtPageBoundary _ -> RefusalKind.Unmodelled
 
 /// What `getentropy(2)` did, for a request this kernel could answer.
 [<RequireQualifiedAccess>]
@@ -127,23 +121,15 @@ module UnixEntropy =
     [<Literal>]
     let getEntropyMaxLength : uint64 = 256UL
 
-    /// Why `transfer` has no answer, for each syscall to state in its own
-    /// refusal.
-    [<RequireQualifiedAccess>]
-    type private TransferRefusal =
-        | Buffer of BufferRefusal
-        | SignalAtPageBoundary of count : int
-
     /// Where a call that has decided how many bytes to move gets them: the
     /// buffer screen, the zero-length shortcut, and the one point at which the
     /// buffer must be able to hold bytes. `Error` is a refusal; `Ok (Error _)`
     /// is an errno.
     let private transfer<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (stopsShort : int -> bool)
         (buffer : UserBuffer)
         (length : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<EntropyDraw * ProcessView<'Thread, 'Handler>, UnixError>, TransferRefusal>
+        : Result<Result<EntropyDraw * ProcessView<'Thread, 'Handler>, UnixError>, BufferRefusal>
         =
         match
             UserBufferCheck.faultsBeforeOperationFor
@@ -151,7 +137,7 @@ module UnixEntropy =
                 buffer
                 (uint64 length)
         with
-        | Error refusal -> Error (TransferRefusal.Buffer refusal)
+        | Error refusal -> Error refusal
         | Ok true -> Ok (Error UnixError.EFAULT)
         | Ok false ->
 
@@ -170,16 +156,15 @@ module UnixEntropy =
             // kernel's pool is, so this one stays put, which keeps a faulting
             // call from changing the system at all.
             Ok (Error UnixError.EFAULT)
-        | UserBuffer.Opaque -> Error (TransferRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
-        | UserBuffer.Addressless -> Error (TransferRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
+        | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
+        | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
         | UserBuffer.Mapped ->
 
-        // After the copy's own fault, which comes at the first block, before
-        // any page boundary.
-        if stopsShort length then
-            Error (TransferRefusal.SignalAtPageBoundary length)
-        else
-
+        // The whole length. Linux's getrandom stops at the first page boundary
+        // past which a signal is pending, but no signal is deliverable to a
+        // thread here as its call begins, which owes its return to user mode
+        // first: moving every byte is the outcome in which a signal arrives
+        // after the last check.
         let draw, pool = EntropyPool.take length system.Machine.EntropyPool
 
         Ok (
@@ -196,7 +181,6 @@ module UnixEntropy =
 
     /// `tryGetRandom` once `Entry` has admitted its caller.
     let private tryGetRandomIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (thread : 'Thread)
         (buffer : UserBuffer)
         (count : uint64)
         (flags : uint32)
@@ -224,12 +208,8 @@ module UnixEntropy =
         // the clamped count succeeds rather than faulting.
         let length = int (min count (getRandomMaxTransfer system.Machine.UnixPlatform))
 
-        let stopsShort (moved : int) =
-            SyscallInterruption.stopsAtPageBoundary thread moved system
-
-        match transfer stopsShort buffer length system with
-        | Error (TransferRefusal.Buffer refusal) -> Error (GetRandomRefusal.Buffer refusal)
-        | Error (TransferRefusal.SignalAtPageBoundary count) -> Error (GetRandomRefusal.SignalAtPageBoundary count)
+        match transfer buffer length system with
+        | Error refusal -> Error (GetRandomRefusal.Buffer refusal)
         | Ok (Error error) -> Ok (GetRandomAnswer.Failed error, system)
         | Ok (Ok (draw, system)) -> Ok (GetRandomAnswer.Completed draw, system)
 
@@ -247,7 +227,7 @@ module UnixEntropy =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryGetRandomIn (Caller.thread caller) buffer count flags)
+            (tryGetRandomIn buffer count flags)
             system
 
     /// <summary>
@@ -262,9 +242,6 @@ module UnixEntropy =
     ///
     /// `caller` is the thread making the call, which must be one of the process's,
     /// and not asleep in another call.
-    /// A request that moves more than a page, by a thread with a signal pending,
-    /// is refused: a real one stops
-    /// short at the first page boundary.
     /// </summary>
     /// <exception cref="T:System.PlatformNotSupportedException">The simulated kernel has no `getrandom` system call.</exception>
     let getRandom<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -295,13 +272,8 @@ module UnixEntropy =
             Ok (GetEntropyAnswer.Failed UnixError.EINVAL, system)
         else
 
-        // This kernel cuts no getentropy short: a request is at most 256
-        // bytes.
-        match transfer (fun _ -> false) buffer (int length) system with
-        | Error (TransferRefusal.Buffer refusal) -> Error (GetEntropyRefusal.Buffer refusal)
-        | Error (TransferRefusal.SignalAtPageBoundary count) ->
-            failwith
-                $"UnixEntropy.getEntropy: a request of %d{count} bytes was cut short for a signal, which getentropy's limit of %d{getEntropyMaxLength} rules out (this is a bug in this library)."
+        match transfer buffer (int length) system with
+        | Error refusal -> Error (GetEntropyRefusal.Buffer refusal)
         | Ok (Error error) -> Ok (GetEntropyAnswer.Failed error, system)
         | Ok (Ok (draw, system)) -> Ok (GetEntropyAnswer.Completed draw, system)
 
