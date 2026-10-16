@@ -290,6 +290,37 @@ module TestLaunchedStreams =
             }
         )
 
+    /// What the `write(2)` of `bytes` through `fd` by the only process's
+    /// leader answers through the call's own functions, held to the same
+    /// write made a step at a time (`WriteOutcomes.admitThenWrite`), in the
+    /// shape `UnixSystem.step` answers it.
+    let private writtenThroughSteps
+        (fd : int)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<int, string>)
+        : Result<ProcessFate<WriteOutcome<int>, int, string>, WriteRefusal>
+        =
+        WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system
+        |> Result.map (fun step ->
+            match step with
+            | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+            | WriteStep.ReturnsRaising (answer, signal, after) ->
+                ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+            | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+            | WriteStep.WouldBlock (condition, after) ->
+                ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+            | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+        )
+
+    /// What a write's `fate` says, without the system it holds.
+    let private outcomeOf
+        (fate : ProcessFate<WriteOutcome<int>, int, string>)
+        : Choice<WriteOutcome<int>, EndedProcess>
+        =
+        match fate with
+        | ProcessFate.Continues (outcome, _) -> Choice1Of2 outcome
+        | ProcessFate.ProcessEnded (ended, _) -> Choice2Of2 ended
+
     /// What the launched streams answer, or `None` where the system refused or
     /// the call would sleep, and the system afterwards.
     let private systemStep (op : Op) (system : UnixSystem<int, string>) : (Answer * UnixSystem<int, string>) option =
@@ -304,8 +335,32 @@ module TestLaunchedStreams =
             failwith $"Syscall.%s{UnionCaseName.ofValue call} answered SteppedCall.%s{UnionCaseName.ofValue answered}"
 
         match op with
-        | Op.Call (Syscall.Write _ as call) ->
-            match stepped call with
+        | Op.Call (Syscall.Write (fd, buffer, _) as call) ->
+            let answered = stepped call
+
+            let bytes =
+                match buffer with
+                | CopiedArgument.Readable bytes -> bytes
+                | CopiedArgument.Unmapped _
+                | CopiedArgument.Opaque
+                | CopiedArgument.Addressless -> failwith $"the property makes no such buffer: %A{buffer}"
+
+            // The same write through the call's own functions, held to it made
+            // a step at a time, answers alike and leaves the same system.
+            let throughSteps = writtenThroughSteps fd bytes system
+
+            match answered, throughSteps with
+            | Ok (SteppedCall.Write fate), Ok steps when fate = steps -> ()
+            | Error (SyscallRefusal.Write refusal), Error steps when refusal = steps -> ()
+            | Ok (SteppedCall.Write fate), _ ->
+                failwith
+                    $"%A{call}: UnixSystem.tryStep answered %A{outcomeOf fate}, and the call's own functions %A{Result.map outcomeOf throughSteps}, or left another system"
+            | Error refusal, _ ->
+                failwith
+                    $"%A{call}: UnixSystem.tryStep refused it (%s{SyscallRefusal.describe refusal}), and the call's own functions answered %A{Result.map outcomeOf throughSteps}"
+            | Ok other, _ -> unexpected call other |> ignore
+
+            match answered with
             | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after)))
             | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after))) ->
                 // A pipe the process made can lose its reader, and a write

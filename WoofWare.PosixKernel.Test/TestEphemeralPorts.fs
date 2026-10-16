@@ -465,6 +465,64 @@ module TestEphemeralPorts =
         | Ok (SteppedCall.Close (answer, _)) -> $"%A{answer}"
         | Ok other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
 
+    /// The bytes the sockaddr `address` holds.
+    let private bytesOf (address : CopiedArgument<ImmutableArray<byte>>) : byte[] =
+        match address with
+        | CopiedArgument.Readable bytes -> Seq.toArray bytes
+        | CopiedArgument.Unmapped _
+        | CopiedArgument.Opaque
+        | CopiedArgument.Addressless -> failwith $"the walk makes no such sockaddr: %A{address}"
+
+    /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
+    /// `bind(fd, address, declaredLength)` in `system`, is what the same bind
+    /// answers through the call's own functions, held to it made a step at a
+    /// time (`CopyIn.bind`): the same answer, leaving the same system, or the
+    /// same refusal.
+    let private requireBoundAlike
+        (fd : int)
+        (address : byte[])
+        (declaredLength : uint32)
+        (stepped : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+        (system : UnixSystem<int, string>)
+        : unit
+        =
+        let throughSteps = CopyIn.bind fd UserBuffer.Mapped declaredLength address system
+
+        match stepped, throughSteps with
+        | Ok (SteppedCall.Bind (answer, after)), Ok (stepsAnswer, stepsAfter) when
+            answer = stepsAnswer && after = stepsAfter
+            ->
+            ()
+        | Error (SyscallRefusal.Bind refusal), Error stepsRefusal when refusal = stepsRefusal -> ()
+        | _ ->
+            failwith
+                $"bind(%d{fd}): UnixSystem.tryStep answered %s{describe stepped}, and the call's own functions %A{Result.map fst throughSteps}, or left another system"
+
+    /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
+    /// `connect(fd, address, declaredLength)` in `system`, is what the same
+    /// connect answers through the call's own functions, held to it made a
+    /// step at a time (`CopyIn.connect`, which fails the test if the call
+    /// sleeps), as `requireBoundAlike` holds a bind.
+    let private requireConnectedAlike
+        (fd : int)
+        (address : byte[])
+        (declaredLength : uint32)
+        (stepped : Result<SteppedCall<int, string>, SyscallRefusal<int>>)
+        (system : UnixSystem<int, string>)
+        : unit
+        =
+        let throughSteps = CopyIn.connect fd UserBuffer.Mapped declaredLength address system
+
+        match stepped, throughSteps with
+        | Ok (SteppedCall.Connect (SyscallOutcome.Answered answer, after)), Ok (stepsAnswer, stepsAfter) when
+            answer = stepsAnswer && after = stepsAfter
+            ->
+            ()
+        | Error (SyscallRefusal.Connect refusal), Error stepsRefusal when refusal = stepsRefusal -> ()
+        | _ ->
+            failwith
+                $"connect(%d{fd}): UnixSystem.tryStep answered %s{describe stepped}, and the call's own functions %A{Result.map fst throughSteps}, or left another system"
+
     /// `call` made by the process's leader, through `UnixSystem.tryStep`. A
     /// listen, and a connect towards a listener, may answer anything; a bind
     /// must take a port or find none (Linux's EADDRINUSE, Darwin's refusal); a
@@ -487,7 +545,9 @@ module TestEphemeralPorts =
                     Sockets = run.Sockets @ [ fd ]
                 }
             | _ -> unexpected ()
-        | Syscall.Bind _ ->
+        | Syscall.Bind (fd, address, declaredLength) ->
+            requireBoundAlike fd (bytesOf address) declaredLength stepped run.System
+
             match stepped with
             | Ok (SteppedCall.Bind (BindAnswer.Bound (SocketAddress.Inet _), system))
             | Ok (SteppedCall.Bind (BindAnswer.Failed UnixError.EADDRINUSE, system)) ->
@@ -504,14 +564,18 @@ module TestEphemeralPorts =
                 }
             | Error (SyscallRefusal.Listen (ListenRefusal.EphemeralPortsExhausted _)) -> run
             | _ -> unexpected ()
-        | Syscall.Connect (_, address, _) when endpointOf address = loopback closedPort ->
+        | Syscall.Connect (fd, address, declaredLength) when endpointOf address = loopback closedPort ->
+            requireConnectedAlike fd (bytesOf address) declaredLength stepped run.System
+
             match stepped with
             | Ok (SteppedCall.Connect (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ECONNREFUSED), system)) ->
                 { run with
                     System = system
                 }
             | _ -> unexpected ()
-        | Syscall.Connect _ ->
+        | Syscall.Connect (fd, address, declaredLength) ->
+            requireConnectedAlike fd (bytesOf address) declaredLength stepped run.System
+
             match stepped with
             | Ok (SteppedCall.Connect (SyscallOutcome.Answered _, system)) ->
                 { run with

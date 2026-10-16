@@ -323,6 +323,60 @@ module TestPipe =
                     $"Syscall.%s{UnionCaseName.ofValue call} answered SteppedCall.%s{UnionCaseName.ofValue stepped}"
         )
 
+    /// What the `write(2)` of `bytes` from `buffer` through `fd` by the only
+    /// process's leader answers through the call's own functions, held to the
+    /// same write made a step at a time (`WriteOutcomes.admitThenWrite`), in
+    /// the shape `UnixSystem.step` answers it.
+    let private writtenThroughSteps
+        (fd : int)
+        (buffer : UserBuffer)
+        (bytes : ImmutableArray<byte>)
+        (system : UnixSystem<int, string>)
+        : Result<ProcessFate<WriteOutcome<int>, int, string>, WriteRefusal>
+        =
+        WriteOutcomes.admitThenWrite (Lone.leader system) fd buffer bytes system
+        |> Result.map (fun step ->
+            match step with
+            | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+            | WriteStep.ReturnsRaising (answer, signal, after) ->
+                ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+            | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+            | WriteStep.WouldBlock (condition, after) ->
+                ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+            | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+        )
+
+    /// What a write's `fate` says, without the system it holds.
+    let private outcomeOf
+        (fate : ProcessFate<WriteOutcome<int>, int, string>)
+        : Choice<WriteOutcome<int>, EndedProcess>
+        =
+        match fate with
+        | ProcessFate.Continues (outcome, _) -> Choice1Of2 outcome
+        | ProcessFate.ProcessEnded (ended, _) -> Choice2Of2 ended
+
+    /// How many bytes the `write(2)` of `count` bytes from `buffer` through
+    /// `fd` by the only process's leader stops to copy through the call's own
+    /// paused protocol (`UnixReadWrite.write`), from the buffer's start; `None`
+    /// for one that answers without stopping to copy.
+    let private copyAskedFor
+        (fd : int)
+        (buffer : UserBuffer)
+        (count : int)
+        (system : UnixSystem<int, string>)
+        : int option
+        =
+        match UnixReadWrite.tryWrite (Callers.leader system) fd buffer (uint64 count) system with
+        | Ok (CallProgress.NeedsCopyIn paused) ->
+            let range = PausedWrite.copyRange paused
+
+            if range.FirstByte <> 0 then
+                failwith $"write stopped to copy %A{range}, which does not start at the buffer's start"
+
+            Some range.ByteCount
+        | Ok (CallProgress.Answered _)
+        | Error _ -> None
+
     /// `buffer` holding only its first `count` bytes, if it is readable: a
     /// step that copies more from it than that fails.
     let private holdingOnly
@@ -401,20 +455,20 @@ module TestPipe =
                 | PipeOp.Call (Syscall.Write (fd, buffer, count)) ->
                     let count = int count
 
-                    // Whether the buffer is mapped, where a write that
-                    // sleeps holds it, and what it offers the reference: its
-                    // bytes, or, where the write cannot copy them, as many
-                    // zeros, since what the reference takes of those depends
-                    // only on their count.
-                    let mapped, userBuffer, offered =
+                    // Whether the buffer is mapped, where the call's own
+                    // functions and a write that sleeps hold it, and what it
+                    // offers: its bytes, or, where the write cannot copy them,
+                    // as many zeros, since what the reference takes of those
+                    // depends only on their count.
+                    let mapped, userBuffer, contents =
                         match buffer with
-                        | CopiedArgument.Readable bytes -> true, UserBuffer.Mapped, List.ofSeq bytes
+                        | CopiedArgument.Readable bytes -> true, UserBuffer.Mapped, bytes
                         | CopiedArgument.Unmapped address ->
-                            false, UserBuffer.Unmapped address, List.replicate count 0uy
+                            false, UserBuffer.Unmapped address, ImmutableArray.Create<byte> (Array.zeroCreate count)
                         | CopiedArgument.Opaque
                         | CopiedArgument.Addressless -> failwith $"%s{where ()}: the property makes no such buffer"
 
-                    let takes, grown = modelWrite offered reference.Buffer
+                    let takes, grown = modelWrite (List.ofSeq contents) reference.Buffer
                     let readerOpen = endOpen PipeEnd.Read reference
 
                     // A write copies only the bytes the pipe takes, through the
@@ -437,6 +491,18 @@ module TestPipe =
                             )
                             (Syscall.Write (fd, holdingOnly copies buffer, uint64 count))
                             system
+
+                    // The same write through the call's own functions, held to
+                    // it made a step at a time, answers alike and leaves the
+                    // same system.
+                    let throughSteps = writtenThroughSteps fd userBuffer contents system
+
+                    match actual, throughSteps with
+                    | Ok stepped, Ok steps when stepped = steps -> ()
+                    | Error (SyscallRefusal.Write refusal), Error steps when refusal = steps -> ()
+                    | _ ->
+                        failwith
+                            $"%s{where ()}: UnixSystem.tryStep answered %A{Result.map outcomeOf actual}, and the call's own functions %A{Result.map outcomeOf throughSteps}, or left another system"
 
                     match Map.tryFind fd reference.Fds with
                     | None ->
@@ -528,11 +594,18 @@ module TestPipe =
 
                         let pipe = UnixMachineState.pipe (pipeOf fd system) after.Machine
                         PipeBuffer.held pipe.Buffer |> shouldEqual (modelHeld reference.Buffer + takes)
+                        // A write that sleeps reads only the bytes it puts in,
+                        // and the rest only once it can put them in.
+                        copyAskedFor fd userBuffer count system
+                        |> shouldEqual (if takes = 0 then None else Some takes)
                     | Ok (answer, _), Ok (ProcessFate.Continues (WriteOutcome.Returns actualAnswer, after)) when
                         answer = actualAnswer
                         ->
                         match answer with
                         | WriteAnswer.Completed n when n > 0L ->
+                            // The caller extracts only what the pipe takes.
+                            copyAskedFor fd userBuffer count system |> shouldEqual (Some takes)
+
                             reference <-
                                 { reference with
                                     Buffer = grown

@@ -1154,6 +1154,46 @@ module TestInotifyDelivery =
             failwith $"expected a write that returns and raises no signal, but it ended the process: %A{ended}"
         | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call the property makes"
 
+    /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
+    /// the `write(2)` of `bytes` through `fd` in `system`, is what the same
+    /// write answers through the call's own functions, held to it made a step
+    /// at a time (`WriteOutcomes.admitThenWrite`), leaving the same system.
+    let private requireWrittenAlike
+        (fd : int)
+        (bytes : System.Collections.Immutable.ImmutableArray<byte>)
+        (stepped : SteppedCall<int, string>)
+        (system : UnixSystem<int, string>)
+        : unit
+        =
+        let throughSteps =
+            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
+            |> Result.map (fun step ->
+                match step with
+                | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
+                | WriteStep.ReturnsRaising (answer, signal, after) ->
+                    ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
+                | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
+                | WriteStep.WouldBlock (condition, after) ->
+                    ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
+                | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
+            )
+
+        match stepped, throughSteps with
+        | SteppedCall.Write fate, Ok steps when fate = steps -> ()
+        | _ ->
+            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>) : string =
+                match fate with
+                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}"
+                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}"
+
+            let viaStep =
+                match stepped with
+                | SteppedCall.Write fate -> answered fate
+                | other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
+
+            failwith
+                $"write(%d{fd}): UnixSystem.tryStep answered %s{viaStep}, and the call's own functions %A{Result.map answered throughSteps}, or left another system"
+
     /// What the model's call answered, and the system after it: `None` for a
     /// refusal of a path syscall or of a watch, which changes nothing, or for
     /// a call through a kept descriptor when none is kept, which is not made.
@@ -1187,6 +1227,12 @@ module TestInotifyDelivery =
                 | Ok other -> failwith $"close(%d{fd}) answered %A{answerOf close other |> fst}"
                 | Error refusal -> failwith $"close(%d{fd}) was refused: %s{SyscallRefusal.describe refusal}"
             | answered -> Some answered
+        | Ok stepped, Op.Write _ ->
+            match syscall with
+            | Syscall.Write (fd, CopiedArgument.Readable bytes, _) -> requireWrittenAlike fd bytes stepped system
+            | other -> failwith $"%A{op} made %A{other}, which is not a write from readable memory"
+
+            Some (answerOf syscall stepped)
         | Ok stepped, _ -> Some (answerOf syscall stepped)
 
     /// Numbers each cookie by the order it first appears in.
