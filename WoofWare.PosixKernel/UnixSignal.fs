@@ -558,6 +558,7 @@ module UnixSignal =
     /// interrupted its last call (an `Interrupted` answer), and from the moment
     /// a signal is deliverable to it, whichever thread's call made it so; every
     /// call the thread makes until then throws `InvalidOperationException`.
+    /// `owesReturn` says whether it must.
     ///
     /// Returns the possibly-updated system in every case, because an answer can
     /// change the state without producing an action (see the Ignore rule
@@ -666,6 +667,39 @@ module UnixSignal =
         =
         tryOnReturnToUser caller system
         |> Refusal.orRaise "UnixSignal.onReturnToUser" ReturnToUserRefusal.kind ReturnToUserRefusal.describe
+
+    /// `owesReturn` once `Entry` has admitted the process.
+    let private owesReturnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (thread : 'Thread)
+        (system : ProcessView<'Thread, 'Handler>)
+        : bool
+        =
+        // The mark `Entry` refuses a call for (`UnixThreadTable.requireIssuer`),
+        // which no parked thread carries.
+        match Map.tryFind thread system.Threads with
+        | Some state -> state.Owes.IsSome
+        | None -> false
+
+    /// Whether the thread `caller` names owes a return to user mode
+    /// (`onReturnToUser`) before it makes another call: `true` exactly when
+    /// any call it made now would throw `InvalidOperationException` for that
+    /// return. It owes one after a call a signal interrupted, from the moment
+    /// a signal is deliverable to it, whichever thread's call made it so, and
+    /// while a return it began is not over. A client asks this before the
+    /// thread runs more of its own code, and returns the thread to user mode
+    /// where it answers `true`. Changes nothing.
+    ///
+    /// `false` for a thread asleep in a syscall, which owes nothing until its
+    /// call has answered, and for a name the process has no thread by.
+    ///
+    /// Throws `InvalidOperationException` if the system holds no process
+    /// `Caller.processId caller`, which is a bug in the client.
+    let owesReturn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (caller : Caller<'Thread>)
+        (system : UnixSystem<'Thread, 'Handler>)
+        : bool
+        =
+        Entry.query "UnixSignal.owesReturn" (Caller.processId caller) (owesReturnIn (Caller.thread caller)) system
 
     /// `sigreturn` once `Entry` has admitted its caller.
     let private sigreturnIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

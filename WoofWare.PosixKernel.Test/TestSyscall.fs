@@ -146,6 +146,7 @@ module TestSyscall =
             "UnixReadWrite.finishWrite", finisher
             "UnixSignal.finishSigsuspend", finisher
             "UnixSignal.onReturnToUser", "the return to user mode, which ends a call rather than making one"
+            "UnixSignal.owesReturn", "a query about the thread, not a call it makes"
             "UnixScheduling.dispatch", "the client's report of which processor runs a thread, which no thread makes"
             "UnixScheduling.runningOn", "reads the client's own report of where a thread runs"
             "UnixDescriptor.setNonBlocking", "sugar for fcntl(F_GETFL) then fcntl(F_SETFL), which have their case"
