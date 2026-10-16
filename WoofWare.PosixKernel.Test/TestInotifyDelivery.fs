@@ -1031,42 +1031,32 @@ module TestInotifyDelivery =
 
     let private linuxAtFdCwd : int = -100
 
-    /// What the model's call answered, and the system after it: `None` for a
-    /// refusal of a path syscall or of a watch, which changes nothing, or for
-    /// a call through a kept descriptor when none is kept, which is not made.
-    /// `kept` is the descriptors the model keeps, oldest first. A call
-    /// through a kept descriptor must not be refused.
-    let private call
+    /// The syscall `op` makes on `platform`, whose inotify instances are `fds`
+    /// and whose kept descriptors are `kept`, oldest first; `None` for a call
+    /// through a kept descriptor when none is kept, which is not made. A
+    /// `Create` or an `OpenTruncate` is this open, and then a close of the
+    /// descriptor it answers.
+    let private syscallOf
+        (platform : SimulatedUnixPlatform)
         (fds : int list)
         (kept : int list)
         (op : Op)
-        (system : UnixSystem<int, string>)
-        : (SyscallAnswer * UnixSystem<int, string>) option
+        : Syscall<int, string> option
         =
         let path (i : int) = PathArg.ofText paths.[i]
-
-        let unrefused (result : Result<SyscallAnswer * UnixSystem<int, string>, 'r>) =
-            match result with
-            | Ok answered -> Some answered
-            | Error _ -> None
-
-        let opened (flags : OpenFlags) (i : int) =
-            match OpenFlagWords.openPath flags (path i) 0o644 system with
-            | Ok (SyscallAnswer.Completed fd, after) -> Some (SyscallAnswer.Completed 0L, close (int fd) after)
-            | Ok answered -> Some answered
-            | Error _ -> None
+        let word (flags : OpenFlags) : int = OpenFlagWords.encode platform flags
 
         match op with
-        | Op.Create (i, exclusive) -> opened (openFlags FileAccessMode.WriteOnly true exclusive false) i
-        | Op.OpenTruncate i -> opened (openFlags FileAccessMode.WriteOnly false false true) i
-        | Op.MkDir i ->
-            UnixNamespace.tryMkdir (Callers.leader system) (path i) 0o755 system
-            |> unrefused
-        | Op.RmDir i -> UnixNamespace.tryRmdir (Callers.leader system) (path i) system |> unrefused
-        | Op.Unlink i -> UnixNamespace.tryUnlink (Callers.leader system) (path i) system |> unrefused
-        | Op.Link (existing, i) -> Eager.tryLink (path existing) (path i) system |> unrefused
-        | Op.Symlink (target, i) -> Eager.trySymlink (path target) (path i) system |> unrefused
-        | Op.Rename (source, destination) -> Eager.tryRename (path source) (path destination) system |> unrefused
+        | Op.Create (i, exclusive) ->
+            Some (Syscall.Open (path i, word (openFlags FileAccessMode.WriteOnly true exclusive false), 0o644))
+        | Op.OpenTruncate i ->
+            Some (Syscall.Open (path i, word (openFlags FileAccessMode.WriteOnly false false true), 0o644))
+        | Op.MkDir i -> Some (Syscall.MkDir (path i, 0o755))
+        | Op.RmDir i -> Some (Syscall.RmDir (path i))
+        | Op.Unlink i -> Some (Syscall.Unlink (path i))
+        | Op.Link (existing, i) -> Some (Syscall.Link (path existing, path i))
+        | Op.Symlink (target, i) -> Some (Syscall.Symlink (path target, path i))
+        | Op.Rename (source, destination) -> Some (Syscall.Rename (path source, path destination))
         | Op.Chmod (i, form, mode) ->
             let text =
                 match form with
@@ -1074,14 +1064,11 @@ module TestInotifyDelivery =
                 | Form.Dot -> paths.[i] + "/."
                 | Form.Slash -> paths.[i] + "/"
 
-            UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText text) mode system
-            |> unrefused
+            Some (Syscall.ChMod (PathArg.ofText text, mode))
         | Op.Chown (i, neither) ->
             let id = if neither then None else Some UserId.root
             let gid = if neither then None else Some (group 0u)
-
-            UnixPathResolution.tryChown (Callers.leader system) (path i) id gid system
-            |> unrefused
+            Some (Syscall.ChOwn (path i, id, gid))
         | Op.Utimes (i, times) ->
             let access, modification =
                 match times with
@@ -1089,20 +1076,17 @@ module TestInotifyDelivery =
                 | Times.AccessOnly -> timespec 1L 0L, timespec 0L utimeOmit
                 | Times.ModificationOnly -> timespec 0L utimeOmit, timespec 2L 0L
 
-            UnixPathResolution.tryUtimensat
-                (Callers.leader system)
-                linuxAtFdCwd
-                (NullablePathArgument.NotNull (path i))
-                (TimesArgument.Fields (access, modification))
-                0
-                system
-            |> unrefused
+            Some (
+                Syscall.UTimensAt (
+                    linuxAtFdCwd,
+                    NullablePathArgument.NotNull (path i),
+                    TimesArgument.Fields (access, modification),
+                    0
+                )
+            )
         | Op.AddWatch (instance, i, mask, dontFollow) ->
-            Eager.tryInotifyAddWatch fds.[instance] (path i) (mask ||| (if dontFollow then 0x02000000u else 0u)) system
-            |> unrefused
-        | Op.RmWatch (instance, wd) ->
-            UnixInotify.tryInotifyRmWatch (Callers.leader system) fds.[instance] wd system
-            |> unrefused
+            Some (Syscall.InotifyAddWatch (fds.[instance], path i, mask ||| (if dontFollow then 0x02000000u else 0u)))
+        | Op.RmWatch (instance, wd) -> Some (Syscall.InotifyRmWatch (fds.[instance], wd))
         | Op.Open (i, readOnly) ->
             let access =
                 if readOnly then
@@ -1110,9 +1094,7 @@ module TestInotifyDelivery =
                 else
                     FileAccessMode.ReadWrite
 
-            match OpenFlagWords.openPath (openFlags access false false false) (path i) 0 system with
-            | Ok answered -> Some answered
-            | Error refusal -> failwith $"%A{op}: refused: %s{OpenRefusal.describe refusal}"
+            Some (Syscall.Open (path i, word (openFlags access false false false), 0))
         | Op.Write _
         | Op.Ftruncate _
         | Op.Fchmod _
@@ -1124,33 +1106,88 @@ module TestInotifyDelivery =
 
         let slotOf (slot : int) = kept.[slotIndex slot kept.Length]
 
-        let mustAnswer (result : Result<SyscallAnswer * UnixSystem<int, string>, 'r>) =
-            match result with
-            | Ok answered -> Some answered
-            | Error refusal -> failwith $"%A{op}: refused: %A{refusal}"
-
         match op with
         | Op.Write (slot, count) ->
             let bytes =
                 System.Collections.Immutable.ImmutableArray.CreateRange (Array.create count (byte 'w'))
 
-            match
-                WriteOutcomes.admitThenWrite 0 (slotOf slot) UserBuffer.Mapped bytes system
-                |> WriteOutcomes.returned
-            with
-            | Ok (WriteAnswer.Completed written, system) -> Some (SyscallAnswer.Completed written, system)
-            | Ok (WriteAnswer.Failed error, system) -> Some (SyscallAnswer.Failed error, system)
-            | Error refusal -> failwith $"%A{op}: refused: %A{refusal}"
-        | Op.Ftruncate slot ->
-            UnixDescriptor.tryFtruncate (Callers.leader system) (slotOf slot) 0L system
-            |> mustAnswer
-        | Op.Fchmod (slot, mode) ->
-            UnixPathResolution.tryFchmod (Callers.leader system) (slotOf slot) mode system
-            |> mustAnswer
-        | Op.Close slot ->
-            UnixDescriptor.tryClose (Callers.leader system) (slotOf slot) system
-            |> mustAnswer
+            Some (Syscall.Write (slotOf slot, CopiedArgument.Readable bytes, uint64 count))
+        | Op.Ftruncate slot -> Some (Syscall.FTruncate (slotOf slot, 0L))
+        | Op.Fchmod (slot, mode) -> Some (Syscall.FChMod (slotOf slot, mode))
+        | Op.Close slot -> Some (Syscall.Close (slotOf slot))
         | other -> failwith $"%A{other} is not a call through a kept descriptor"
+
+    /// The `SyscallAnswer` the call `stepped` answers, and the system after it.
+    /// An open must return, and a write must return and raise no signal.
+    let private answerOf
+        (syscall : Syscall<int, string>)
+        (stepped : SteppedCall<int, string>)
+        : SyscallAnswer * UnixSystem<int, string>
+        =
+        if UnionCaseName.ofValue stepped <> UnionCaseName.ofValue syscall then
+            failwith $"Syscall.%s{UnionCaseName.ofValue syscall} answered SteppedCall.%s{UnionCaseName.ofValue stepped}"
+
+        match stepped with
+        | SteppedCall.MkDir (answer, after)
+        | SteppedCall.RmDir (answer, after)
+        | SteppedCall.Unlink (answer, after)
+        | SteppedCall.Link (answer, after)
+        | SteppedCall.Symlink (answer, after)
+        | SteppedCall.Rename (answer, after)
+        | SteppedCall.ChMod (answer, after)
+        | SteppedCall.ChOwn (answer, after)
+        | SteppedCall.UTimensAt (answer, after)
+        | SteppedCall.InotifyAddWatch (answer, after)
+        | SteppedCall.InotifyRmWatch (answer, after)
+        | SteppedCall.FTruncate (answer, after)
+        | SteppedCall.FChMod (answer, after)
+        | SteppedCall.Close (answer, after) -> answer, after
+        | SteppedCall.Open (SyscallOutcome.Answered answer, after) -> answer, after
+        | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after)) ->
+            SyscallAnswer.Completed written, after
+        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after)) ->
+            SyscallAnswer.Failed error, after
+        | SteppedCall.Write (ProcessFate.Continues (outcome, _)) ->
+            failwith $"expected a write that returns and raises no signal, got %A{outcome}"
+        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _)) ->
+            failwith $"expected a write that returns and raises no signal, but it ended the process: %A{ended}"
+        | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call the property makes"
+
+    /// What the model's call answered, and the system after it: `None` for a
+    /// refusal of a path syscall or of a watch, which changes nothing, or for
+    /// a call through a kept descriptor when none is kept, which is not made.
+    /// `kept` is the descriptors the model keeps, oldest first. An `Open`, and
+    /// a call through a kept descriptor, must not be refused.
+    let private call
+        (fds : int list)
+        (kept : int list)
+        (op : Op)
+        (system : UnixSystem<int, string>)
+        : (SyscallAnswer * UnixSystem<int, string>) option
+        =
+        match syscallOf system.Machine.UnixPlatform fds kept op with
+        | None -> None
+        | Some syscall ->
+
+        match UnixSystem.tryStep (Callers.leader system) syscall system, op with
+        | Error refusal, Op.Open _
+        | Error refusal, Op.Write _
+        | Error refusal, Op.Ftruncate _
+        | Error refusal, Op.Fchmod _
+        | Error refusal, Op.Close _ -> failwith $"%A{op}: refused: %s{SyscallRefusal.describe refusal}"
+        | Error _, _ -> None
+        | Ok stepped, (Op.Create _ | Op.OpenTruncate _) ->
+            match answerOf syscall stepped with
+            | SyscallAnswer.Completed fd, after ->
+                let close = Syscall.Close (int fd)
+
+                match UnixSystem.tryStep (Callers.leader after) close after with
+                | Ok (SteppedCall.Close (SyscallAnswer.Completed 0L, after)) -> Some (SyscallAnswer.Completed 0L, after)
+                | Ok other -> failwith $"close(%d{fd}) answered %A{answerOf close other |> fst}"
+                | Error refusal -> failwith $"close(%d{fd}) was refused: %s{SyscallRefusal.describe refusal}"
+            | answered -> Some answered
+        | Ok stepped, _ -> Some (answerOf syscall stepped)
 
     /// Numbers each cookie by the order it first appears in.
     type private Cookies () =

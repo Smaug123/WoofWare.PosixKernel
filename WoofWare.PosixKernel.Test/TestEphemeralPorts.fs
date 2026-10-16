@@ -1,5 +1,6 @@
 namespace WoofWare.PosixKernel.Test
 
+open System.Collections.Immutable
 open FsCheck
 open FsCheck.FSharp
 open FsUnitTyped
@@ -373,30 +374,11 @@ module TestEphemeralPorts =
     // For all interleavings: the three choices never contradict each other
     // ------------------------------------------------------------------
 
-    [<RequireQualifiedAccess>]
-    type private Op =
-        /// A new stream socket, into the next free slot.
-        | New
-        /// `bind(0.0.0.0:0)` on an unbound slot.
-        | BindEphemeral of slot : int
-        /// `listen` on a slot; the implicit bind if it is unbound.
-        | Listen of slot : int
-        /// `connect` from a slot towards one of the two fixed listeners.
-        | Connect of slot : int * listener : int
-        /// `connect` from a slot towards a port nothing is bound at, which
-        /// the kernel refuses.
-        | ConnectClosed of slot : int
-        /// `accept` on a fixed listener, when its queue is non-empty.
-        | Accept of listener : int
-        /// `close` a slot.
-        | Close of slot : int
-
     type private Run =
         {
             System : UnixSystem<int, string>
-            /// Slot to fd, for sockets this run created and has not closed.
-            Slots : Map<int, int>
-            NextSlot : int
+            /// The sockets this run created and has not closed, oldest first.
+            Sockets : int list
             /// The fds of the two fixed listeners, at 5000 and 5001.
             Listeners : int list
         }
@@ -406,11 +388,10 @@ module TestEphemeralPorts =
     /// Where nothing is ever bound in a walk.
     let private closedPort : uint16 = 6000us
 
-    /// Whether `slot`'s socket is in a state the op can lawfully be asked of:
-    /// the generator is constructive, so an op that the model refuses
-    /// outright (rather than answering an errno) is never generated.
-    /// The slot's phase, and whether it holds a port: a refused connect may
-    /// have given back the port it still reports.
+    /// The phase of the socket behind `fd`, and whether it holds a port: a
+    /// refused connect may have given back the port it still reports. The
+    /// walk is constructive: it makes only the calls the model answers in that
+    /// phase, rather than refuses outright.
     let private phaseOf (fd : int) (run : Run) : SocketPhase * bool =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors run.System) with
         | Some (OpenFileTarget.Socket socketId) ->
@@ -419,7 +400,7 @@ module TestEphemeralPorts =
             socket.Phase,
             socket.Ipv4Binding
             |> Option.exists (fun binding -> PortHold.isHeld binding.PortHold)
-        | other -> failwith $"slot fd %d{fd} is %A{other}"
+        | other -> failwith $"socket fd %d{fd} is %A{other}"
 
     /// Whether `connect` from the unbound socket behind `fd` towards
     /// `destination` would find a port to take.
@@ -446,102 +427,139 @@ module TestEphemeralPorts =
                     run.System.Machine
             with
             | Ok found -> Option.isSome found
-            | Error refusal -> failwith $"slot fd %d{fd}'s search met %A{refusal}"
-        | other -> failwith $"slot fd %d{fd} is %A{other}"
+            | Error refusal -> failwith $"socket fd %d{fd}'s search met %A{refusal}"
+        | other -> failwith $"socket fd %d{fd} is %A{other}"
 
     let private queueLength (listenerFd : int) (run : Run) : int =
         match phaseOf listenerFd run with
         | SocketPhase.Listening state, _ -> List.length state.Queue
         | phase, _ -> failwith $"listener is in phase %A{phase}"
 
-    /// One op against the run. Every answer the kernel gives is accepted;
-    /// what the property rejects is a throw, an invariant defect, or an
-    /// ephemeral port handed to `bind`/`listen` that a surviving connection
-    /// endpoint still occupies.
-    let private execute (op : Op) (run : Run) : Run =
-        match op with
-        | Op.New ->
-            let fd, system = newStream run.System
+    /// A `struct sockaddr_in` holding `endpoint`, as a caller of `bind(2)` or
+    /// `connect(2)` on `platform` declaring it 16 bytes long holds it.
+    let private sockaddr
+        (platform : SimulatedUnixPlatform)
+        (endpoint : Ipv4Endpoint)
+        : CopiedArgument<ImmutableArray<byte>>
+        =
+        CopiedArgument.Readable (CopyIn.inetCopy platform endpoint)
 
-            { run with
-                System = system
-                Slots = Map.add run.NextSlot fd run.Slots
-                NextSlot = run.NextSlot + 1
-            }
-        | Op.BindEphemeral slot ->
-            let fd = run.Slots.[slot]
+    /// The endpoint the `struct sockaddr_in` `address` holds.
+    let private endpointOf (address : CopiedArgument<ImmutableArray<byte>>) : Ipv4Endpoint =
+        match address with
+        | CopiedArgument.Readable bytes -> CopyOut.endpoint bytes
+        | CopiedArgument.Unmapped _
+        | CopiedArgument.Opaque
+        | CopiedArgument.Addressless -> failwith $"the walk makes no such sockaddr: %A{address}"
 
-            match bindEphemeral fd run.System with
-            | Ok _, system
-            | Error (Choice1Of2 UnixError.EADDRINUSE), system
-            | Error (Choice2Of2 (BindRefusal.EphemeralPortsExhausted _)), system ->
+    /// What `stepped` answered, for a failure message: the refusal, or the
+    /// answer without the system beside it.
+    let private describe (stepped : Result<SteppedCall<int, string>, SyscallRefusal<int>>) : string =
+        match stepped with
+        | Error refusal -> $"a refusal: %s{SyscallRefusal.describe refusal}"
+        | Ok (SteppedCall.Socket result) -> $"%A{Result.map fst result}"
+        | Ok (SteppedCall.Bind (answer, _)) -> $"%A{answer}"
+        | Ok (SteppedCall.Listen (answer, _)) -> $"%A{answer}"
+        | Ok (SteppedCall.Connect (outcome, _)) -> $"%A{outcome}"
+        | Ok (SteppedCall.Accept (outcome, _)) -> $"%A{outcome}"
+        | Ok (SteppedCall.Close (answer, _)) -> $"%A{answer}"
+        | Ok other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
+
+    /// `call` made by the process's leader, through `UnixSystem.tryStep`. A
+    /// listen, and a connect towards a listener, may answer anything; a bind
+    /// must take a port or find none (Linux's EADDRINUSE, Darwin's refusal); a
+    /// connect towards the closed port must fail with ECONNREFUSED; and a
+    /// socket, an accept and a close must succeed. The property rejects
+    /// besides a throw, an invariant defect, or an ephemeral port handed to
+    /// `bind`/`listen` that a surviving connection endpoint still occupies.
+    let private execute (call : Syscall<int, string>) (run : Run) : Run =
+        let stepped = UnixSystem.tryStep (Callers.leader run.System) call run.System
+
+        let unexpected () : Run =
+            failwith $"Syscall.%s{UnionCaseName.ofValue call} answered %s{describe stepped}"
+
+        match call with
+        | Syscall.Socket _ ->
+            match stepped with
+            | Ok (SteppedCall.Socket (Ok (fd, system))) ->
+                { run with
+                    System = system
+                    Sockets = run.Sockets @ [ fd ]
+                }
+            | _ -> unexpected ()
+        | Syscall.Bind _ ->
+            match stepped with
+            | Ok (SteppedCall.Bind (BindAnswer.Bound (SocketAddress.Inet _), system))
+            | Ok (SteppedCall.Bind (BindAnswer.Failed UnixError.EADDRINUSE, system)) ->
                 { run with
                     System = system
                 }
-            | Error other, _ -> failwith $"bind answered %A{other}"
-        | Op.Listen slot ->
-            let fd = run.Slots.[slot]
-
-            match UnixSocket.tryListen (Callers.leader run.System) fd 8 run.System with
-            | Ok (_, system) ->
+            | Error (SyscallRefusal.Bind (BindRefusal.EphemeralPortsExhausted _)) -> run
+            | _ -> unexpected ()
+        | Syscall.Listen _ ->
+            match stepped with
+            | Ok (SteppedCall.Listen (_, system)) ->
                 { run with
                     System = system
                 }
-            | Error (ListenRefusal.EphemeralPortsExhausted _) -> run
-            | Error refusal -> failwith $"listen refused: %A{refusal}"
-        | Op.Connect (slot, listener) ->
-            let fd = run.Slots.[slot]
-            let _, system = connectTo fd (loopback (listenerPort listener)) run.System
-
-            { run with
-                System = system
-            }
-        | Op.ConnectClosed slot ->
-            let fd = run.Slots.[slot]
-
-            match connectTo fd (loopback closedPort) run.System with
-            | SyscallAnswer.Failed UnixError.ECONNREFUSED, system ->
+            | Error (SyscallRefusal.Listen (ListenRefusal.EphemeralPortsExhausted _)) -> run
+            | _ -> unexpected ()
+        | Syscall.Connect (_, address, _) when endpointOf address = loopback closedPort ->
+            match stepped with
+            | Ok (SteppedCall.Connect (SyscallOutcome.Answered (SyscallAnswer.Failed UnixError.ECONNREFUSED), system)) ->
                 { run with
                     System = system
                 }
-            | answer, _ -> failwith $"connect to a closed port answered %A{answer}"
-        | Op.Accept listener ->
-            let _, system = acceptFrom run.Listeners.[listener] run.System
+            | _ -> unexpected ()
+        | Syscall.Connect _ ->
+            match stepped with
+            | Ok (SteppedCall.Connect (SyscallOutcome.Answered _, system)) ->
+                { run with
+                    System = system
+                }
+            | _ -> unexpected ()
+        | Syscall.Accept _ ->
+            match stepped with
+            | Ok (SteppedCall.Accept (AcceptOutcome.Accepted _, system)) ->
+                { run with
+                    System = system
+                }
+            | _ -> unexpected ()
+        | Syscall.Close fd ->
+            match stepped with
+            | Ok (SteppedCall.Close (SyscallAnswer.Completed 0L, system)) ->
+                { run with
+                    System = system
+                    Sockets = run.Sockets |> List.filter (fun socket -> socket <> fd)
+                }
+            | _ -> unexpected ()
+        | other -> failwith $"Syscall.%s{UnionCaseName.ofValue other} is not generated by the interleaving walk"
 
-            { run with
-                System = system
-            }
-        | Op.Close slot ->
-            let fd = run.Slots.[slot]
-            let system = closeFd fd run.System
+    /// The next call, chosen among those the model answers rather than refuses.
+    let private nextCall (rng : System.Random) (run : Run) : Syscall<int, string> =
+        let platform = UnixSystem.platform run.System
 
-            { run with
-                System = system
-                Slots = Map.remove slot run.Slots
-            }
+        let domain, kind, protocol =
+            NewSocket.arguments platform SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp
 
-    /// The next op, chosen among those the model answers rather than refuses.
-    let private nextOp (rng : System.Random) (run : Run) : Op =
-        let slots = run.Slots |> Map.toList
-
-        let candidates : Op list =
+        let candidates : Syscall<int, string> list =
             [
-                yield Op.New
+                yield Syscall.Socket (domain, kind, protocol)
 
-                for slot, fd in slots do
+                for fd in run.Sockets do
                     match phaseOf fd run with
                     | SocketPhase.Idle, false ->
-                        yield Op.BindEphemeral slot
-                        yield Op.Listen slot
-                    | SocketPhase.Idle, true -> yield Op.Listen slot
+                        yield Syscall.Bind (fd, sockaddr platform (wildcard 0us), 16u)
+                        yield Syscall.Listen (fd, 8)
+                    | SocketPhase.Idle, true -> yield Syscall.Listen (fd, 8)
                     // EINVAL, on both flavours.
-                    | SocketPhase.Refused _, _ -> yield Op.Listen slot
+                    | SocketPhase.Refused _, _ -> yield Syscall.Listen (fd, 8)
                     | _ -> ()
 
                     match phaseOf fd run with
                     | SocketPhase.Idle, bound ->
                         if bound || implicitBindHasAPort fd (loopback closedPort) run then
-                            yield Op.ConnectClosed slot
+                            yield Syscall.Connect (fd, sockaddr platform (loopback closedPort), 16u)
 
                         for listener in 0..1 do
                             // A listener whose queue is full has no measured
@@ -553,18 +571,18 @@ module TestEphemeralPorts =
                                 queueLength run.Listeners.[listener] run < 8
                                 && (bound || implicitBindHasAPort fd (loopback (listenerPort listener)) run)
                             then
-                                yield Op.Connect (slot, listener)
+                                yield Syscall.Connect (fd, sockaddr platform (loopback (listenerPort listener)), 16u)
                     | _ -> ()
 
                     // A listener created by `Listen` may hold a queue only
                     // through the fixed listeners, which are never closed,
-                    // so any slot may close; and any established peer's
+                    // so any socket may close; and any established peer's
                     // close is answered, never refused.
-                    yield Op.Close slot
+                    yield Syscall.Close fd
 
-                for listener in 0..1 do
-                    if queueLength run.Listeners.[listener] run > 0 then
-                        yield Op.Accept listener
+                for listener in run.Listeners do
+                    if queueLength listener run > 0 then
+                        yield Syscall.Accept (listener, UserBuffer.Mapped, 16u)
             ]
 
         candidates.[rng.Next candidates.Length]
@@ -576,7 +594,25 @@ module TestEphemeralPorts =
         | Some (OpenFileTarget.Socket socketId) ->
             (UnixMachineState.socket socketId run.System.Machine).Ipv4Binding
             |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
-        | other -> failwith $"slot fd %d{fd} is %A{other}"
+        | other -> failwith $"socket fd %d{fd} is %A{other}"
+
+    /// The coverage label `call`, made on `run`, reaches, if any: a connect
+    /// towards the closed port, or another bind, listen or connect on a socket
+    /// whose refused connect gave its port back.
+    let private labelOf (call : Syscall<int, string>) (run : Run) : string option =
+        match call with
+        | Syscall.Connect (_, address, _) when endpointOf address = loopback closedPort -> Some "a refused connect"
+        | Syscall.Bind (fd, _, _)
+        | Syscall.Listen (fd, _)
+        | Syscall.Connect (fd, _, _) when givenBack fd run ->
+            Some "a call on a socket whose refused connect gave its port back"
+        | Syscall.Socket _
+        | Syscall.Bind _
+        | Syscall.Listen _
+        | Syscall.Connect _
+        | Syscall.Accept _
+        | Syscall.Close _ -> None
+        | other -> failwith $"Syscall.%s{UnionCaseName.ofValue other} is not generated by the interleaving walk"
 
     /// Whether `machine` and `without`, which lacks one of its sockets, agree
     /// about every port of the range: what a new stream socket's bind of it
@@ -672,8 +708,7 @@ module TestEphemeralPorts =
             let initial =
                 {
                     System = system
-                    Slots = Map.empty
-                    NextSlot = 0
+                    Sockets = []
                     Listeners = [ listener0 ; listener1 ]
                 }
 
@@ -681,22 +716,13 @@ module TestEphemeralPorts =
 
             (initial, [ 1..steps ])
             ||> List.fold (fun run _ ->
-                let op = nextOp rng run
-
-                match op with
-                | Op.ConnectClosed _ -> cover "a refused connect"
-                | Op.BindEphemeral slot
-                | Op.Listen slot
-                | Op.Connect (slot, _)
-                | Op.ConnectClosed slot when givenBack run.Slots.[slot] run ->
-                    cover "a call on a socket whose refused connect gave its port back"
-                | _ -> ()
-
-                let run' = execute op run
+                let call = nextCall rng run
+                labelOf call run |> Option.iter cover
+                let run' = execute call run
 
                 match UnixSystem.checkInvariants run'.System with
                 | [] -> ()
-                | defects -> failwith $"after %A{op}: %A{defects}"
+                | defects -> failwith $"after %A{call}: %A{defects}"
 
                 // Any bound socket's port that is also an orphaned
                 // endpoint's must have been an explicit bind, which this
@@ -721,7 +747,7 @@ module TestEphemeralPorts =
 
                 match reservedOverlap with
                 | [] -> ()
-                | overlap -> failwith $"after %A{op}: reserved ports on orphaned endpoints: %A{overlap}"
+                | overlap -> failwith $"after %A{call}: reserved ports on orphaned endpoints: %A{overlap}"
 
                 // A port a refused connect gave back holds nothing: taking the
                 // socket away changes no conflict a new socket's bind meets
@@ -738,7 +764,7 @@ module TestEphemeralPorts =
 
                         if invisibleTo run'.System.Scheduling.NanosecondsSinceBoot machine without |> not then
                             failwith
-                                $"after %A{op}: socket %O{socketId}, whose port was given back, still holds something"
+                                $"after %A{call}: socket %O{socketId}, whose port was given back, still holds something"
                     | _ -> ()
 
                 run'

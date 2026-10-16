@@ -1,6 +1,5 @@
 namespace WoofWare.PosixKernel.Test
 
-open System.Collections.Immutable
 open FsCheck
 open FsCheck.FSharp
 open NUnit.Framework
@@ -103,44 +102,30 @@ module TestSocketAddressing =
     let private ipv6OnlyOption (platform : SimulatedUnixPlatform) : int * int =
         SimulatedUnixPlatform.ipv6OptionLevel platform, SimulatedUnixPlatform.ipv6OnlyOption platform
 
-    let private set (fd : int) (value : int) (system : UnixSystem<int, string>) : Answer * UnixSystem<int, string> =
-        let level, name = ipv6OnlyOption system.Machine.UnixPlatform
-        let bytes = OptionValue.ofInt value
-
-        let supplied =
-            match Lone.UnixSocket.tryAdmitSetSockOpt fd level name UserBuffer.Mapped 4u system with
-            | Ok (SetSockOptAdmission.Transfer count) -> Some (ImmutableArray.Create (bytes, 0, count))
-            | Ok SetSockOptAdmission.NoCopy
-            | Ok (SetSockOptAdmission.Answered _)
-            | Error _ -> None
-
-        match Lone.UnixSocket.trySetsockoptBytes fd level name UserBuffer.Mapped 4u supplied system with
-        | Ok (SetSockOptAnswer.Set, system) -> Answer.Succeeded, system
-        | Ok (SetSockOptAnswer.Failed error, system) -> Answer.Failed error, system
-        | Error _ -> Answer.Refused, system
-
-    let private get (fd : int) (system : UnixSystem<int, string>) : Answer =
-        let level, name = ipv6OnlyOption system.Machine.UnixPlatform
-
-        let read =
-            match Lone.UnixSocket.tryAdmitGetSockOpt fd level name UserBuffer.Mapped UserBuffer.Mapped system with
-            | Ok GetSockOptAdmission.ReadLength -> Some 4u
-            | _ -> None
-
-        match Lone.UnixSocket.tryGetsockoptLength fd level name UserBuffer.Mapped UserBuffer.Mapped read system with
-        | Ok (GetSockOptAnswer.Reported bytes, _) when bytes.Length = 4 ->
-            Answer.Read (SimulatedUnixPlatform.decodeCInt system.Machine.UnixPlatform bytes 0)
-        | Ok (GetSockOptAnswer.Reported bytes, _) -> failwith $"getsockopt reported %d{bytes.Length} bytes"
-        | Ok (GetSockOptAnswer.Failed (error, _), _) -> Answer.Failed error
-        | Error _ -> Answer.Refused
-
-    let private bind
-        (fd : int)
+    /// `socket(2)` of `domain` and `kind`, with the default protocol.
+    let private socketCall
+        (platform : SimulatedUnixPlatform)
         (domain : SocketDomain)
-        (system : UnixSystem<int, string>)
-        : Answer * UnixSystem<int, string>
+        (kind : SocketKind)
+        : Syscall<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let domain, kind, protocol =
+            NewSocket.arguments platform domain kind SocketProtocol.Default
+
+        Syscall.Socket (domain, kind, protocol)
+
+    /// `setsockopt(2)` of `IPV6_V6ONLY` to `value` on `fd`.
+    let private setCall (platform : SimulatedUnixPlatform) (fd : int) (value : int) : Syscall<int, string> =
+        let level, name = ipv6OnlyOption platform
+        Syscall.SetSockOpt (fd, level, name, CopiedArgument.Readable (OptionValue.ofInt value), 4u)
+
+    /// `getsockopt(2)` of `IPV6_V6ONLY` on `fd`, into room for a C `int`.
+    let private getCall (platform : SimulatedUnixPlatform) (fd : int) : Syscall<int, string> =
+        let level, name = ipv6OnlyOption platform
+        Syscall.GetSockOpt (fd, level, name, UserBuffer.Mapped, CopiedArgument.Readable 4u)
+
+    /// `bind(2)` of `fd` to loopback and port 0, in `domain`'s own family.
+    let private bindCall (platform : SimulatedUnixPlatform) (fd : int) (domain : SocketDomain) : Syscall<int, string> =
         let loopback = Ipv4Endpoint.ofParts Ipv4Address.loopback 0us
 
         let blob, length =
@@ -149,16 +134,34 @@ module TestSocketAddressing =
             | SocketDomain.Inet
             | SocketDomain.Unix -> CopyIn.inet platform loopback, 16u
 
-        match CopyIn.bind fd UserBuffer.Mapped length blob system with
-        | Ok (BindAnswer.Bound _, system) -> Answer.Succeeded, system
-        | Ok (BindAnswer.Failed error, system) -> Answer.Failed error, system
-        | Error _ -> Answer.Refused, system
+        Syscall.Bind (fd, CopiedArgument.Readable (CopyIn.prefix blob (int length)), length)
 
-    let private listen (fd : int) (system : UnixSystem<int, string>) : Answer * UnixSystem<int, string> =
-        match UnixSocket.tryListen (Callers.leader system) fd 8 system with
-        | Ok (ListenAnswer.Listening _, system) -> Answer.Succeeded, system
-        | Ok (ListenAnswer.Failed error, system) -> Answer.Failed error, system
+    /// `listen(2)` on `fd`.
+    let private listenCall (fd : int) : Syscall<int, string> = Syscall.Listen (fd, 8)
+
+    /// What `UnixSystem.tryStep` of `call` by the process's leader in `system`
+    /// answered, reduced to what the reference model predicts, and the system
+    /// after it.
+    let private answerOf
+        (call : Syscall<int, string>)
+        (system : UnixSystem<int, string>)
+        : Answer * UnixSystem<int, string>
+        =
+        match UnixSystem.tryStep (Callers.leader system) call system with
         | Error _ -> Answer.Refused, system
+        | Ok (SteppedCall.SetSockOpt (SetSockOptAnswer.Set, after)) -> Answer.Succeeded, after
+        | Ok (SteppedCall.SetSockOpt (SetSockOptAnswer.Failed error, after)) -> Answer.Failed error, after
+        | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Reported bytes, after)) when bytes.Length = 4 ->
+            Answer.Read (SimulatedUnixPlatform.decodeCInt system.Machine.UnixPlatform bytes 0), after
+        | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Reported bytes, _)) ->
+            failwith $"getsockopt reported %d{bytes.Length} bytes"
+        | Ok (SteppedCall.GetSockOpt (GetSockOptAnswer.Failed (error, _), after)) -> Answer.Failed error, after
+        | Ok (SteppedCall.Bind (BindAnswer.Bound _, after)) -> Answer.Succeeded, after
+        | Ok (SteppedCall.Bind (BindAnswer.Failed error, after)) -> Answer.Failed error, after
+        | Ok (SteppedCall.Listen (ListenAnswer.Listening _, after)) -> Answer.Succeeded, after
+        | Ok (SteppedCall.Listen (ListenAnswer.Failed error, after)) -> Answer.Failed error, after
+        | Ok other ->
+            failwith $"Syscall.%s{UnionCaseName.ofValue call} answered SteppedCall.%s{UnionCaseName.ofValue other}"
 
     let private callGen : Gen<Call> =
         let index = Gen.choose (0, 3)
@@ -228,7 +231,17 @@ module TestSocketAddressing =
 
                 match call with
                 | Call.Socket (domain, kind) ->
-                    let fd, system = NewSocket.create domain kind SocketProtocol.Default system
+                    let fd, system =
+                        let call = socketCall platform domain kind
+
+                        match UnixSystem.tryStep (Callers.leader system) call system with
+                        | Ok (SteppedCall.Socket (Ok created)) -> created
+                        | Ok (SteppedCall.Socket (Error error)) -> failwith $"%s{describe}: socket answered %O{error}"
+                        | Ok other ->
+                            failwith $"%s{describe}: socket answered SteppedCall.%s{UnionCaseName.ofValue other}"
+                        | Error refusal ->
+                            failwith $"%s{describe}: socket was refused: %s{SyscallRefusal.describe refusal}"
+
                     check describe system
 
                     let expected =
@@ -244,7 +257,7 @@ module TestSocketAddressing =
                     match target i with
                     | None -> go (index + 1) rest sockets system
                     | Some (i, (fd, socket)) ->
-                        let actual, system = set fd value system
+                        let actual, system = answerOf (setCall platform fd value) system
                         let expected, socket = expectedSet platform value socket
                         compare actual expected
                         check describe system
@@ -253,13 +266,15 @@ module TestSocketAddressing =
                     match target i with
                     | None -> go (index + 1) rest sockets system
                     | Some (_, (fd, socket)) ->
-                        compare (get fd system) (expectedGet platform socket)
+                        let actual, system = answerOf (getCall platform fd) system
+                        compare actual (expectedGet platform socket)
+                        check describe system
                         go (index + 1) rest sockets system
                 | Call.Bind i ->
                     match target i with
                     | None -> go (index + 1) rest sockets system
                     | Some (i, (fd, socket)) ->
-                        let actual, system = bind fd socket.Domain system
+                        let actual, system = answerOf (bindCall platform fd socket.Domain) system
                         let expected, socket = expectedBind platform socket
                         compare actual expected
                         check describe system
@@ -267,7 +282,7 @@ module TestSocketAddressing =
                 | Call.Listen i ->
                     match target i with
                     | Some (i, (fd, socket)) when socket.Kind = SocketKind.Stream ->
-                        let actual, system = listen fd system
+                        let actual, system = answerOf (listenCall fd) system
                         let expected, socket = expectedListen socket
                         compare actual expected
                         check describe system

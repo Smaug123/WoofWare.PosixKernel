@@ -233,6 +233,18 @@ module TestSocketAddress =
             mutable Listens : int
         }
 
+    /// `UnixSystem.tryStep` of `call` by the process's leader in `system`.
+    let private stepped
+        (call : Syscall<int, string>)
+        (system : UnixSystem<int, string>)
+        : Result<SteppedCall<int, string>, SyscallRefusal<int>>
+        =
+        UnixSystem.tryStep (Callers.leader system) call system
+
+    /// Fails the test: `call` answered `other`, which is not its own case.
+    let private unexpected<'a> (call : Syscall<int, string>) (other : SteppedCall<int, string>) : 'a =
+        failwith $"Syscall.%s{UnionCaseName.ofValue call} answered SteppedCall.%s{UnionCaseName.ofValue other}"
+
     /// The address `answered` for the socket on `fd` is in the socket's own
     /// family, and is what `getsockname(2)` copies out at once.
     let private checkAnswer
@@ -258,10 +270,14 @@ module TestSocketAddress =
             failwith
                 $"%s{call} on a %O{domain} socket answered %s{SocketAddress.toString answered}, which is not in the socket's own family"
 
-        match UnixSocket.tryGetsockname (Callers.leader system) fd UserBuffer.Mapped 128u system with
-        | Ok (GetSockNameAnswer.Reported (copiedOut, _)) ->
+        let getsockname = Syscall.GetSockName (fd, UserBuffer.Mapped, 128u)
+
+        match stepped getsockname system with
+        | Ok (SteppedCall.GetSockName (GetSockNameAnswer.Reported (copiedOut, _))) ->
             Seq.toArray copiedOut |> shouldEqual (encoded platform answered)
-        | other -> failwith $"getsockname after %s{call} answered %A{other}"
+        | Ok (SteppedCall.GetSockName answer) -> failwith $"getsockname after %s{call} answered %A{answer}"
+        | Ok other -> unexpected getsockname other
+        | Error refusal -> failwith $"getsockname after %s{call} was refused: %s{SyscallRefusal.describe refusal}"
 
     [<Test>]
     let ``a bind or listen answers its address in the socket's own family, as getsockname reports it`` () : unit =
@@ -298,28 +314,36 @@ module TestSocketAddress =
                 | Op.NewSocket (shape, v6Only) ->
                     let domain, kind, protocol = NewSocket.requests.[shape]
 
-                    match NewSocket.tryCreate domain kind protocol system with
-                    | None -> fds, system
-                    | Some (fd, system) ->
+                    let socket =
+                        let domain, kind, protocol = NewSocket.arguments platform domain kind protocol
+                        Syscall.Socket (domain, kind, protocol)
 
-                    let system =
-                        match domain, v6Only with
-                        | SocketDomain.Inet6, Some value ->
-                            match
-                                Lone.UnixSocket.trySetsockoptBytes
-                                    fd
-                                    (SimulatedUnixPlatform.ipv6OptionLevel platform)
-                                    (SimulatedUnixPlatform.ipv6OnlyOption platform)
-                                    UserBuffer.Mapped
-                                    4u
-                                    (Some (ImmutableArray.CreateRange (SimulatedUnixPlatform.encodeCInt platform value)))
-                                    system
-                            with
-                            | Ok (_, system) -> system
-                            | Error _ -> system
-                        | _ -> system
+                    match stepped socket system with
+                    | Ok (SteppedCall.Socket (Error _))
+                    | Error _ -> fds, system
+                    | Ok (SteppedCall.Socket (Ok (fd, system))) ->
+                        let system =
+                            match domain, v6Only with
+                            | SocketDomain.Inet6, Some value ->
+                                let setsockopt =
+                                    Syscall.SetSockOpt (
+                                        fd,
+                                        SimulatedUnixPlatform.ipv6OptionLevel platform,
+                                        SimulatedUnixPlatform.ipv6OnlyOption platform,
+                                        CopiedArgument.Readable (
+                                            ImmutableArray.CreateRange (SimulatedUnixPlatform.encodeCInt platform value)
+                                        ),
+                                        4u
+                                    )
 
-                    fds @ [ fd ], system
+                                match stepped setsockopt system with
+                                | Ok (SteppedCall.SetSockOpt (_, system)) -> system
+                                | Ok other -> unexpected setsockopt other
+                                | Error _ -> system
+                            | _ -> system
+
+                        fds @ [ fd ], system
+                    | Ok other -> unexpected socket other
                 | Op.Bind (slot, family, address, port, length) ->
                     match fdOf slot fds with
                     | None -> fds, system
@@ -327,22 +351,29 @@ module TestSocketAddress =
                         let blob =
                             sockaddr platform (familyNumber fd family system) addresses.[address] port
 
-                        match CopyIn.bind fd UserBuffer.Mapped length blob system with
-                        | Ok (BindAnswer.Bound answered, system) ->
+                        let bind =
+                            Syscall.Bind (fd, CopiedArgument.Readable (ImmutableArray.Create<byte> blob), length)
+
+                        match stepped bind system with
+                        | Ok (SteppedCall.Bind (BindAnswer.Bound answered, system)) ->
                             checkAnswer seen "bind" fd answered system
                             fds, system
-                        | Ok (BindAnswer.Failed _, system) -> fds, system
+                        | Ok (SteppedCall.Bind (BindAnswer.Failed _, system)) -> fds, system
+                        | Ok other -> unexpected bind other
                         | Error _ -> fds, system
                 | Op.Listen slot ->
                     match fdOf slot fds with
                     | None -> fds, system
                     | Some fd ->
-                        match UnixSocket.tryListen (Callers.leader system) fd 4 system with
-                        | Ok (ListenAnswer.Listening answered, system) ->
+                        let listen = Syscall.Listen (fd, 4)
+
+                        match stepped listen system with
+                        | Ok (SteppedCall.Listen (ListenAnswer.Listening answered, system)) ->
                             seen.Listens <- seen.Listens + 1
                             checkAnswer seen "listen" fd answered system
                             fds, system
-                        | Ok (ListenAnswer.Failed _, system) -> fds, system
+                        | Ok (SteppedCall.Listen (ListenAnswer.Failed _, system)) -> fds, system
+                        | Ok other -> unexpected listen other
                         | Error _ -> fds, system
                 | Op.Connect (slot, address, port) ->
                     match fdOf slot fds with
@@ -356,15 +387,16 @@ module TestSocketAddress =
                             else
                                 16u
 
-                        match
-                            CopyIn.connect
-                                fd
-                                UserBuffer.Mapped
-                                length
-                                (sockaddr platform family addresses.[address] port)
-                                system
-                        with
-                        | Ok (_, system) -> fds, system
+                        let blob = sockaddr platform family addresses.[address] port
+
+                        let connect =
+                            Syscall.Connect (fd, CopiedArgument.Readable (ImmutableArray.Create<byte> blob), length)
+
+                        match stepped connect system with
+                        | Ok (SteppedCall.Connect (SyscallOutcome.Answered _, system)) -> fds, system
+                        | Ok (SteppedCall.Connect (outcome, _)) ->
+                            failwith $"expected a connect that returns, got %A{outcome}"
+                        | Ok other -> unexpected connect other
                         | Error _ -> fds, system
 
             let system =
