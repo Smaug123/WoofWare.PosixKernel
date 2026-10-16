@@ -553,15 +553,17 @@ module TestInotifyInvariants =
             afterStep |> shouldEqual after
         | stepped, direct -> failwith $"%A{Result.map Stepped.view stepped}, %A{direct}"
 
-    /// One call of a generated sequence, on the instance in a slot.
+    /// One step of a generated sequence: a call by the leader, thread 0, or by
+    /// the reader, thread 1, of whatever the descriptors 3 to 6 name; or a
+    /// signal for the reader.
     [<RequireQualifiedAccess>]
     type private Op =
-        | Init of nonBlocking : bool
-        | Add of slot : int * path : string * mask : uint32
-        | Remove of slot : int * wd : int
-        | Read of slot : int * count : int * mapped : bool
-        | Dup of slot : int
-        | Close of slot : int
+        /// `call`, made by `thread` through `UnixSystem.tryStep`. While the
+        /// reader sleeps, the leader makes its calls in its stead, and only
+        /// those it need not sleep in.
+        | Call of thread : int * call : Syscall<int, string>
+        /// SIGUSR1, pending on the reader while it sleeps, put in the process's
+        /// signal state directly.
         | Signal
 
     [<RequireQualifiedAccess>]
@@ -609,15 +611,18 @@ module TestInotifyInvariants =
                 )
 
         let opGen : Gen<Op> =
-            let slot = Gen.choose (0, 3)
+            let fd = Gen.choose (3, 6)
+            let leader (call : Syscall<int, string>) : Op = Op.Call (0, call)
 
             Gen.frequency
                 [
-                    2, Gen.elements [ true ; false ] |> Gen.map Op.Init
+                    2,
+                    Gen.elements [ true ; false ]
+                    |> Gen.map (fun nonBlocking -> leader (Syscall.InotifyInit1 (if nonBlocking then 0x800 else 0)))
                     5,
                     Gen.map3
-                        (fun s p m -> Op.Add (s, p, m))
-                        slot
+                        (fun fd p m -> leader (Syscall.InotifyAddWatch (fd, PathArg.ofText p, m)))
+                        fd
                         (Gen.elements [ "d1" ; "d2" ; "f" ; "/" ; "missing" ])
                         (Gen.elements
                             [
@@ -627,21 +632,23 @@ module TestInotifyInvariants =
                                 0x100u ||| 0x10000000u
                                 0u
                             ])
-                    4, Gen.map2 (fun s w -> Op.Remove (s, w)) slot (Gen.choose (0, 4))
+                    4, Gen.map2 (fun fd w -> leader (Syscall.InotifyRmWatch (fd, w))) fd (Gen.choose (0, 4))
                     3,
                     Gen.map3
-                        (fun s c m -> Op.Read (s, c, m))
-                        slot
+                        (fun fd c m ->
+                            let buffer = if m then UserBuffer.Mapped else UserBuffer.Unmapped 0UL
+
+                            Op.Call (1, Syscall.Read (fd, buffer, uint64 c))
+                        )
+                        fd
                         (Gen.elements [ 0 ; 16 ; 64 ])
                         (Gen.frequency [ 4, Gen.constant true ; 1, Gen.constant false ])
-                    1, slot |> Gen.map Op.Dup
-                    1, slot |> Gen.map Op.Close
+                    1, fd |> Gen.map (fun fd -> leader (Syscall.Dup fd))
+                    1, fd |> Gen.map (fun fd -> leader (Syscall.Close fd))
                     1, Gen.constant Op.Signal
                 ]
 
         let property (cover : Label -> unit) (ops : Op list) : unit =
-            // Each slot: a descriptor of the process's leader, or none.
-            let slots = Array.create 4 None
             let mutable system = start
             // The reader, thread 1, asleep in a read if it is.
             let mutable asleep = false
@@ -650,6 +657,19 @@ module TestInotifyInvariants =
                 match UnixSystem.checkInvariants system with
                 | [] -> ()
                 | defects -> failwith $"after %A{op}: %A{defects}"
+
+            let isOpen (fd : int) : bool =
+                FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) |> Option.isSome
+
+            // Whether a read of `fd` sleeps, read off the registry: `fd` names
+            // a blocking instance with nothing queued.
+            let wouldSleep (fd : int) : bool =
+                match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) with
+                | Some {
+                           Target = OpenFileTarget.Inotify state
+                           NonBlocking = false
+                       } -> InotifyQueue.isEmpty state.Queue
+                | _ -> false
 
             let finishReader () =
                 let woken, after = Lone.wake system
@@ -685,34 +705,17 @@ module TestInotifyInvariants =
                     | other -> failwith $"%A{other}"
                 | _ -> ()
 
-            for op in ops do
-                match op with
-                | Op.Init nonBlocking ->
-                    match Array.tryFindIndex Option.isNone slots with
-                    | None -> ()
-                    | Some free ->
-                        match
-                            UnixInotify.tryInotifyInit1
-                                (Callers.leader system)
-                                (if nonBlocking then 0x800 else 0)
-                                system
-                        with
-                        | Ok (Ok (fd, after)) ->
-                            system <- after
-                            slots.[free] <- Some fd
-                        | Ok (Error UnixError.EMFILE) -> ()
-                        | other -> failwith $"%A{other}"
-                | Op.Add (slot, path, mask) ->
-                    let fd = slots.[slot] |> Option.defaultValue 99
-
-                    match Eager.tryInotifyAddWatch fd (PathArg.ofText path) mask system with
-                    | Ok (_, after) -> system <- after
-                    | Error refusal -> failwith $"%A{refusal}"
-                | Op.Remove (slot, wd) ->
-                    let fd = slots.[slot] |> Option.defaultValue 99
-
-                    match UnixInotify.tryInotifyRmWatch (Callers.leader system) fd wd system with
-                    | Ok (_, after) ->
+            let made (thread : int) (call : Syscall<int, string>) : unit =
+                match UnixSystem.tryStep (Callers.thread thread system) call system with
+                | Error refusal -> failwith $"%A{call} by %d{thread}: %s{SyscallRefusal.describe refusal}"
+                | Ok stepped ->
+                    match call, stepped with
+                    | _, SteppedCall.InotifyInit1 (Ok (_, after))
+                    | _, SteppedCall.InotifyAddWatch (_, after)
+                    | _, SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Failed _), after)
+                    | _, SteppedCall.Dup (SyscallAnswer.Completed _, after) -> system <- after
+                    | _, SteppedCall.InotifyInit1 (Error UnixError.EMFILE) -> ()
+                    | Syscall.InotifyRmWatch (fd, _), SteppedCall.InotifyRmWatch (_, after) ->
                         system <- after
 
                         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
@@ -721,73 +724,36 @@ module TestInotifyInvariants =
                             ->
                             cover Label.Overflowed
                         | _ -> ()
-                    | Error refusal -> failwith $"%A{refusal}"
-                | Op.Read (slot, count, mapped) ->
-                    let fd = slots.[slot] |> Option.defaultValue 99
-
-                    let buffer =
-                        if mapped then
-                            UserBuffer.Mapped
-                        else
-                            UserBuffer.Unmapped 0UL
-                    // The reader, thread 1, reads, and sleeps if it must; while
-                    // it sleeps, the leader reads only what it need not sleep
-                    // for.
-                    let leaderWouldSleep =
-                        match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) with
-                        | Some {
-                                   Target = OpenFileTarget.Inotify state
-                                   NonBlocking = false
-                               } -> InotifyQueue.isEmpty state.Queue
-                        | _ -> false
-
-                    if asleep && leaderWouldSleep then
-                        ()
-                    else
-
-                    match
-                        UnixReadWrite.tryRead
-                            (Callers.thread (if asleep then 0 else 1) system)
-                            fd
-                            buffer
-                            (uint64 count)
-                            system
-                    with
-                    | Ok (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
+                    | _, SteppedCall.Read (ReadOutcome.Answered (ReadAnswer.Completed bytes), after) ->
                         if bytes.Length > 0 then
                             cover Label.ReadTookRecords
 
                         system <- after
-                    | Ok (ReadOutcome.Answered (ReadAnswer.Failed _), after) -> system <- after
-                    | Ok (ReadOutcome.WouldBlock _, after) ->
-                        if asleep then
-                            failwith "the leader's read slept"
-
-                        cover Label.ReaderSlept
-                        asleep <- true
-                        system <- after
-                    | other -> failwith $"%A{other}"
-                | Op.Dup slot ->
-                    match slots.[slot], Array.tryFindIndex Option.isNone slots with
-                    | Some fd, Some free ->
-                        match UnixDescriptor.tryDup (Callers.leader system) fd system with
-                        | Ok (SyscallAnswer.Completed copy, after) ->
+                    | Syscall.Read (fd, _, _), SteppedCall.Read (ReadOutcome.WouldBlock _, after) ->
+                        if thread = 1 then
+                            cover Label.ReaderSlept
+                            asleep <- true
                             system <- after
-                            slots.[free] <- Some (int copy)
-                        | other -> failwith $"%A{other}"
-                    | _ -> ()
-                | Op.Close slot ->
-                    match slots.[slot] with
-                    | None -> ()
-                    | Some fd ->
-                        if asleep then
+                        // The leader, which reads in the reader's stead, makes
+                        // no read it would sleep in, which the registry says
+                        // before the call; any other read it makes must not
+                        // sleep.
+                        elif not (wouldSleep fd) then
+                            failwith $"the leader's read of %d{fd} slept"
+                    | Syscall.Dup fd, SteppedCall.Dup (SyscallAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
+                        ()
+                    | Syscall.Close fd, SteppedCall.Close (answer, after) ->
+                        if asleep && answer = SyscallAnswer.Completed 0L then
                             cover Label.ClosedUnderSleepingReader
 
-                        match UnixDescriptor.tryClose (Callers.leader system) fd system with
-                        | Ok (_, after) ->
-                            system <- after
-                            slots.[slot] <- None
-                        | Error refusal -> failwith $"%A{refusal}"
+                        system <- after
+                    | call, stepped ->
+                        failwith
+                            $"%A{call} by %d{thread} answered %A{Stepped.view stepped}, which no call of TestInotifyInvariants's sequences answers"
+
+            for op in ops do
+                match op with
+                | Op.Call (thread, call) -> made (if asleep then 0 else thread) call
                 | Op.Signal ->
                     if asleep then
                         system <-
@@ -810,7 +776,9 @@ module TestInotifyInvariants =
                 check op
 
         let gen =
-            Gen.listOf opGen |> Gen.resize 40 |> Gen.map (fun ops -> Op.Init false :: ops)
+            Gen.listOf opGen
+            |> Gen.resize 40
+            |> Gen.map (fun ops -> Op.Call (0, Syscall.InotifyInit1 0) :: ops)
 
         let coverage =
             CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 500) (Arb.fromGen gen) property
