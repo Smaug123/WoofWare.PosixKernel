@@ -661,6 +661,16 @@ module TestInotifyInvariants =
             let isOpen (fd : int) : bool =
                 FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) |> Option.isSome
 
+            // Whether a read of `fd` sleeps, read off the registry: `fd` names
+            // a blocking instance with nothing queued.
+            let wouldSleep (fd : int) : bool =
+                match FileDescriptorRegistry.tryFind fd (Lone.fileDescriptors system) with
+                | Some {
+                           Target = OpenFileTarget.Inotify state
+                           NonBlocking = false
+                       } -> InotifyQueue.isEmpty state.Queue
+                | _ -> false
+
             let finishReader () =
                 let woken, after = Lone.wake system
                 system <- after
@@ -719,13 +729,17 @@ module TestInotifyInvariants =
                             cover Label.ReadTookRecords
 
                         system <- after
-                    | _, SteppedCall.Read (ReadOutcome.WouldBlock _, after) ->
-                        // The leader, which reads in the reader's stead, makes
-                        // no read it would sleep in.
+                    | Syscall.Read (fd, _, _), SteppedCall.Read (ReadOutcome.WouldBlock _, after) ->
                         if thread = 1 then
                             cover Label.ReaderSlept
                             asleep <- true
                             system <- after
+                        // The leader, which reads in the reader's stead, makes
+                        // no read it would sleep in, which the registry says
+                        // before the call; any other read it makes must not
+                        // sleep.
+                        elif not (wouldSleep fd) then
+                            failwith $"the leader's read of %d{fd} slept"
                     | Syscall.Dup fd, SteppedCall.Dup (SyscallAnswer.Failed UnixError.EBADF, _) when not (isOpen fd) ->
                         ()
                     | Syscall.Close fd, SteppedCall.Close (answer, after) ->

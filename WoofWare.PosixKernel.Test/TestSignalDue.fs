@@ -756,13 +756,15 @@ module TestSignalDue =
 
     /// A client's run: before each step, the thread making it returns to user
     /// mode while it owes that return, as a real thread takes a signal before it
-    /// runs more of its own code; a refused call or return is skipped, as is a
-    /// `pthread_kill` of a thread the process does not have, which no client
-    /// makes, and a process stopped or ended ends the run. After every call and
-    /// return, the system breaks no rule: in particular, every thread in no
-    /// syscall with a signal deliverable to it owes a return to user mode.
-    /// `observe` is given each system the run takes after a call or return,
-    /// with the run's process and what made that system.
+    /// runs more of its own code; a refused return, or a refused `kill`,
+    /// `pthread_kill`, `sigprocmask`, `sigsuspend`, `read` or `write`, is
+    /// skipped, as is a `pthread_kill` of a thread the process does not have,
+    /// which no client makes; any other refusal fails the run, and a process
+    /// stopped or ended ends it. After every call and return, the system breaks
+    /// no rule: in particular, every thread in no syscall with a signal
+    /// deliverable to it owes a return to user mode. `observe` is given each
+    /// system the run takes after a call or return, with the run's process and
+    /// what made that system.
     let private run
         (cover : Marked -> unit)
         (observe : string -> ProcessId -> UnixSystem<int, string> -> unit)
@@ -862,7 +864,15 @@ module TestSignalDue =
             let step = label call
 
             match UnixSystem.tryStep (Caller.make pid thread) call system with
-            | Error _ -> ()
+            | Error refusal ->
+                match call with
+                | Syscall.Kill _
+                | Syscall.PthreadKill _
+                | Syscall.SigProcMask _
+                | Syscall.SigSuspend _
+                | Syscall.Read _
+                | Syscall.Write _ -> ()
+                | _ -> failwith $"%O{platform}: %s{step} by %d{thread} was refused: %s{SyscallRefusal.describe refusal}"
             | Ok stepped ->
                 match left stepped with
                 | Some (Ok after) -> commit step thread after
