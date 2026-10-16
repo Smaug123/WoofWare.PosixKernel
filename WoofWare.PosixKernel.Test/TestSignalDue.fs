@@ -666,8 +666,15 @@ module TestSignalDue =
     /// runs more of its own code; a refused call or return is skipped, and a
     /// process stopped or ended ends the run. After every call and return, the
     /// system breaks no rule: in particular, every thread in no syscall with a
-    /// signal deliverable to it owes a return to user mode.
-    let private run (cover : Marked -> unit) (platform : SimulatedUnixPlatform, steps : Step list) : unit =
+    /// signal deliverable to it owes a return to user mode. `observe` is given
+    /// each system the run takes after a call or return, with the run's
+    /// process and what made that system.
+    let private run
+        (cover : Marked -> unit)
+        (observe : string -> ProcessId -> UnixSystem<int, string> -> unit)
+        (platform : SimulatedUnixPlatform, steps : Step list)
+        : unit
+        =
         let numbering = SimulatedUnixPlatform.signalNumbering platform
         let pid, booted = processOf platform 1
         let leader = Caller.make pid 0
@@ -705,9 +712,13 @@ module TestSignalDue =
 
             system <- after
 
+            let context = $"%O{platform}, after %s{step} by thread %d{actor}"
+
             match UnixSystem.checkInvariants system with
             | [] -> ()
-            | defects -> failwith $"%O{platform}, after %s{step} by thread %d{actor}: %A{defects}"
+            | defects -> failwith $"%s{context}: %A{defects}"
+
+            observe context pid system
 
         let returnTo (thread : int) : unit =
             match UnixSignal.tryOnReturnToUser (Caller.make pid thread) system with
@@ -906,7 +917,10 @@ module TestSignalDue =
         : unit
         =
         let coverage =
-            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 500) (Arb.fromGen runGen) run
+            CoverageSample.check
+                (Config.QuickThrowOnFailure.WithMaxTest 500)
+                (Arb.fromGen runGen)
+                (fun cover case -> run cover (fun _ _ _ -> ()) case)
 
         // Each about a third of what the fixed sample reaches. A leader's
         // return marks another thread only under Linux; a write's SIGPIPE
@@ -933,3 +947,86 @@ module TestSignalDue =
                  })
             |> fun (step, own, count) -> (step, own, count > floor)
             |> shouldEqual (step, own, true)
+
+    /// What `getpid`, a call that changes nothing, does when a thread makes
+    /// it: admitted, or refused for the reason `Entry` gives.
+    [<RequireQualifiedAccess>]
+    type private CallAdmission =
+        | Admitted
+        /// The process has no thread by that name.
+        | Absent
+        | Parked
+        /// The thread owes its return for a signal deliverable to it.
+        | OwesSignal
+        /// The thread owes the return that ends a call a signal interrupted.
+        | OwesInterrupted
+
+    /// What `UnixSystem.processId` by `caller` does in `system`, read from its
+    /// refusal's message, which says why (`TestCallerChecks` holds each
+    /// function's refusals to the same words).
+    let private admission (caller : Caller<int>) (system : UnixSystem<int, string>) : CallAdmission =
+        try
+            UnixSystem.processId caller system |> ignore<ProcessId>
+            CallAdmission.Admitted
+        with :? InvalidOperationException as e ->
+            if e.Message.Contains "is not one of the process's threads" then
+                CallAdmission.Absent
+            elif e.Message.Contains "and is making another call" then
+                CallAdmission.Parked
+            elif e.Message.Contains "a signal is deliverable to it" then
+                CallAdmission.OwesSignal
+            elif e.Message.Contains "interrupted its last call" then
+                CallAdmission.OwesInterrupted
+            else
+                failwith $"getpid by %O{caller}: a refusal this test does not know: %s{e.Message}"
+
+    /// `UnixSignal.owesReturn` answers `true` exactly when a call the thread
+    /// made would be refused for the return to user mode it owes: asked of
+    /// every name a run's threads have or may come to have, and of one no
+    /// thread has, in every system the run reaches. The fixed sample reaches
+    /// each kind of debt, threads parked, threads a call admits, and names
+    /// that are no thread.
+    [<Test>]
+    let ``owesReturn answers true exactly when a call by the thread is refused for the return it owes`` () : unit =
+        let agrees
+            (cover : bool * CallAdmission -> unit)
+            (context : string)
+            (pid : ProcessId)
+            (system : UnixSystem<int, string>)
+            : unit
+            =
+            // No run spawns a thread named `mostThreads`.
+            for thread in 0..mostThreads do
+                let caller = Caller.make pid thread
+                let owes = UnixSignal.owesReturn caller system
+                let admission = admission caller system
+                cover (owes, admission)
+
+                let refusedForReturn =
+                    match admission with
+                    | CallAdmission.OwesSignal
+                    | CallAdmission.OwesInterrupted -> true
+                    | CallAdmission.Admitted
+                    | CallAdmission.Absent
+                    | CallAdmission.Parked -> false
+
+                if owes <> refusedForReturn then
+                    failwith
+                        $"%s{context}: owesReturn of thread %d{thread} answered %b{owes}, and getpid by it was %A{admission}"
+
+        let coverage =
+            CoverageSample.check
+                (Config.QuickThrowOnFailure.WithMaxTest 500)
+                (Arb.fromGen runGen)
+                (fun cover case -> run ignore (agrees cover) case)
+
+        // Each about a third of what the fixed sample reaches.
+        for label, floor in
+            [
+                (true, CallAdmission.OwesSignal), 600
+                (true, CallAdmission.OwesInterrupted), 35
+                (false, CallAdmission.Admitted), 7000
+                (false, CallAdmission.Parked), 1900
+                (false, CallAdmission.Absent), 11000
+            ] do
+            (label, coverage.Count label > floor) |> shouldEqual (label, true)

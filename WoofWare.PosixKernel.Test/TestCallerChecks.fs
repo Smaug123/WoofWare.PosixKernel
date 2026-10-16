@@ -580,6 +580,7 @@ module TestCallerChecks =
             query
                 "UnixWait.satisfied"
                 (fun caller system -> UnixWait.satisfied caller system |> ignore<Set<WakePrimitive> option>)
+            query "UnixSignal.owesReturn" (fun caller system -> UnixSignal.owesReturn caller system |> ignore<bool>)
             query
                 "UnixSystem.leader"
                 (fun caller system -> UnixSystem.leader (Caller.processId caller) system |> ignore<int>)
@@ -947,6 +948,56 @@ module TestCallerChecks =
                                 yield
                                     $"%s{case}: expected InvalidOperationException (%A{refused}), threw %s{e.GetType().Name}: %s{e.Message}"
                             | Some refused, None -> yield $"%s{case}: expected refusal (%A{refused}), was admitted"
+            ]
+
+        mismatches |> shouldEqual []
+
+    /// `UnixSignal.owesReturn` answers `true` for the two threads `world`
+    /// leaves owing a return to user mode, one for a signal deliverable to it
+    /// and one for the call a signal interrupted, and `false` for every thread
+    /// parked in a call, asleep or woken, for a thread a call admits, and for
+    /// a name that is no thread: exactly the threads a call refuses for the
+    /// return they owe.
+    [<Test>]
+    let ``owesReturn answers true for exactly the threads a call refuses for the return they owe`` () : unit =
+        let mismatches =
+            [
+                for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+                    let own, other, view = world platform
+
+                    let wokenView =
+                        (view, UnixSystem.threads own view)
+                        ||> Map.fold (fun view thread state ->
+                            match UnixThreadState.parkedIn state with
+                            | Some _ -> ForgedPark.wokenCaller (Caller.make own thread) view
+                            | None -> view
+                        )
+
+                    for view, woken in [ view, "" ; wokenView, ", woken" ] do
+                        for caller in
+                            [
+                                for thread in 0..absent do
+                                    Caller.make own thread
+                                Caller.make other 0
+                            ] do
+                            let case = $"%O{platform}, %O{caller}%s{woken}"
+                            let owes = UnixSignal.owesReturn caller view
+
+                            let refusedForReturn =
+                                try
+                                    UnixSystem.processId caller view |> ignore<ProcessId>
+                                    false
+                                with :? InvalidOperationException as e ->
+                                    e.Message.Contains (reason Refused.OwesSignal)
+                                    || e.Message.Contains (reason Refused.OwesInterrupted)
+
+                            let debtor =
+                                Caller.processId caller = own
+                                && (Caller.thread caller = signalDebtor || Caller.thread caller = interruptedDebtor)
+
+                            if owes <> refusedForReturn || owes <> debtor then
+                                yield
+                                    $"%s{case}: owesReturn answered %b{owes}; a call was refused for the return: %b{refusedForReturn}; a debtor: %b{debtor}"
             ]
 
         mismatches |> shouldEqual []
