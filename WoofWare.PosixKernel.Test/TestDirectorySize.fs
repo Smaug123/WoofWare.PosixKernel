@@ -592,24 +592,6 @@ module TestDirectorySize =
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_Stat", SetLastError = true)>]
     extern int private hostStat(string path, byte[] output)
 
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(string path, uint32 mode)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(string path)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(string path)
-
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(string source, string destination)
-
     let private hostSucceeded (what : string) (result : int) : unit =
         if result <> 0 then
             failwith $"host %s{what} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -619,11 +601,11 @@ module TestDirectorySize =
 
         match op with
         | DirectorySizeOp.Create path -> File.Create(under path).Dispose ()
-        | DirectorySizeOp.MakeDirectory path -> hostMkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
-        | DirectorySizeOp.Unlink path -> hostUnlink (under path) |> hostSucceeded $"unlink %s{path}"
-        | DirectorySizeOp.RemoveDirectory path -> hostRmdir (under path) |> hostSucceeded $"rmdir %s{path}"
+        | DirectorySizeOp.MakeDirectory path -> HostCalls.mkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
+        | DirectorySizeOp.Unlink path -> HostCalls.unlink (under path) |> hostSucceeded $"unlink %s{path}"
+        | DirectorySizeOp.RemoveDirectory path -> HostCalls.rmdir (under path) |> hostSucceeded $"rmdir %s{path}"
         | DirectorySizeOp.Rename (source, destination) ->
-            hostRename (under source, under destination)
+            HostCalls.rename (under source, under destination)
             |> hostSucceeded $"rename %s{source} %s{destination}"
 
     /// `st_size` through `stat` in .NET's `System.Native` library, whose output
@@ -636,7 +618,7 @@ module TestDirectorySize =
 
     let private hostSeekEnd (fd : int) : Result<int64, UnixError> =
         Marshal.SetLastPInvokeError 0
-        let position = hostLSeek (fd, 0L, 2)
+        let position = HostCalls.lseek (fd, 0L, 2)
 
         if position >= 0L then
             Ok position
@@ -671,12 +653,12 @@ module TestDirectorySize =
             let property (steps : DirectorySizeStep list) : unit =
                 let unique = Guid.NewGuid().ToString "N"
                 let root = Path.Combine (hostBase, $"posixkernel-dirsize-%s{unique}")
-                hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+                HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
 
                 try
                     applyToHost root (DirectorySizeOp.MakeDirectory "d")
                     applyToHost root (DirectorySizeOp.MakeDirectory "o")
-                    let hostFd = hostOpen (Path.Combine (root, "d"), 0, 0)
+                    let hostFd = HostCalls.openFile (Path.Combine (root, "d"), 0, 0)
 
                     if hostFd < 0 then
                         failwith $"host open d failed: errno %d{Marshal.GetLastPInvokeError ()}"

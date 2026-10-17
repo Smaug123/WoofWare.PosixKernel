@@ -19,12 +19,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestPipeAgainstHost =
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
     /// The output struct of `fstat` in .NET's `System.Native` library
     /// (`pal_io.h`), which states every field in fixed-width types whatever the
     /// platform's `struct stat` is.
@@ -53,29 +47,8 @@ module TestPipeAgainstHost =
     [<DllImport("libc", EntryPoint = "pipe2", SetLastError = true)>]
     extern int private hostPipe2(int[] fds, int flags)
 
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWriteAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
     [<DllImport("libc", EntryPoint = "isatty", SetLastError = true)>]
     extern int private hostIsATty(int fd)
-
-    [<DllImport("libc", EntryPoint = "geteuid")>]
-    extern uint32 private hostGetEUid()
-
-    [<DllImport("libc", EntryPoint = "getegid")>]
-    extern uint32 private hostGetEGid()
 
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)>]
     extern int private hostFStat(nativeint fd, HostStatus& output)
@@ -148,12 +121,12 @@ module TestPipeAgainstHost =
 
     let private hostLevel (fd : int) : int16 =
         // Every readiness bit either flavour's `<poll.h>` names below 0x200.
-        let mutable entry = PollFd ()
+        let mutable entry = HostCalls.PollFd ()
         entry.Fd <- fd
         entry.Events <- 0x1c7s
         let fds = [| entry |]
 
-        if hostPoll (fds, 1un, 0) < 0 then
+        if HostCalls.poll (fds, 1un, 0) < 0 then
             failwith $"poll failed: errno %d{Marshal.GetLastPInvokeError ()}"
 
         fds.[0].Revents
@@ -183,8 +156,8 @@ module TestPipeAgainstHost =
             let numbering = SimulatedUnixPlatform.rawErrnoNumbering platform
 
             let initial =
-                let uid = UserId.parseOrFail "TestPipeAgainstHost" (hostGetEUid ())
-                let gid = GroupId.parseOrFail "TestPipeAgainstHost" (hostGetEGid ())
+                let uid = UserId.parseOrFail "TestPipeAgainstHost" (HostCalls.getEUid ())
+                let gid = GroupId.parseOrFail "TestPipeAgainstHost" (HostCalls.getEGid ())
 
                 let system : UnixSystem<int, string> =
                     UnixSystem.initial platform
@@ -364,7 +337,7 @@ module TestPipeAgainstHost =
                                 if mapped then
                                     HostCalls.write (hostFd, bytes, unativeint count)
                                 else
-                                    hostWriteAt (hostFd, 8n, unativeint count)
+                                    HostCalls.writePointer (hostFd, 8n, unativeint count)
 
                             match model with
                             | Ok None ->
@@ -402,7 +375,7 @@ module TestPipeAgainstHost =
                                 if mapped then
                                     HostCalls.read (hostFd, target, unativeint count)
                                 else
-                                    hostReadAt (hostFd, 8n, unativeint count)
+                                    HostCalls.readPointer (hostFd, 8n, unativeint count)
 
                             match
                                 UnixReadWrite.tryRead (Callers.leader system) modelFd buffer (uint64 count) system
@@ -447,7 +420,7 @@ module TestPipeAgainstHost =
                             match slotOf index with
                             | None -> ()
                             | Some (modelFd, hostFd, pipeEnd, group) ->
-                                let hostNew = hostDup hostFd
+                                let hostNew = HostCalls.dup hostFd
 
                                 if hostNew < 0 then
                                     failwith $"%s{where ()}: host dup failed"
@@ -534,7 +507,7 @@ module TestPipeAgainstHost =
                                     failwith $"%s{where ()}: %O{pipeEnd} end: model polls 0x%x{model}, host 0x%x{host}"
 
                             // lseek and isatty: ESPIPE and ENOTTY on every pipe end.
-                            if hostLSeek (hostFd, 0L, 1) <> -1L then
+                            if HostCalls.lseek (hostFd, 0L, 1) <> -1L then
                                 failwith $"%s{where ()}: host lseek succeeded on a pipe"
 
                             UnixError.ofRawErrnoUnder numbering (Marshal.GetLastPInvokeError ())

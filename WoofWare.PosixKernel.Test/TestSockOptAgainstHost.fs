@@ -29,19 +29,6 @@ module TestSockOptAgainstHost =
     [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
     extern int private hostSetSockOpt(int fd, int level, int optionName, nativeint value, uint32 optionLength)
 
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
-
     [<Literal>]
     let private PROT_NONE = 0
 
@@ -65,7 +52,8 @@ module TestSockOptAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestSockOptAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
+                let page =
+                    HostCalls.mmap (0n, 4096un, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestSockOptAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -302,7 +290,7 @@ module TestSockOptAgainstHost =
             Marshal.WriteInt32 (storage, 8, 8)
             Marshal.SetLastPInvokeError 0
 
-            if hostGetSockOpt (fd, level, name, storage, storage + 8n) <> 0 then
+            if HostCalls.getSockOptPointer (fd, level, name, storage, storage + 8n) <> 0 then
                 Marshal.GetLastPInvokeError (), [||]
             else
                 let length = Marshal.ReadInt32 (storage, 8)
@@ -458,7 +446,7 @@ module TestSockOptAgainstHost =
 
                                             let errno =
                                                 if
-                                                    hostGetSockOpt (
+                                                    HostCalls.getSockOptPointer (
                                                         hostFd,
                                                         level,
                                                         name,

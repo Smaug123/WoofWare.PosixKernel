@@ -97,7 +97,7 @@ module TestDescriptorBound =
                             (Callers.leader system)
                             3
                             target
-                            OpenFlagNumbering.LinuxCloseOnExec
+                            (OpenFlagWords.closeOnExec run.Platform)
                             system
                     with
                     | Error (Dup3Refusal.DescriptorLimit refusal) -> refusal |> shouldEqual (refusalAt bound target)

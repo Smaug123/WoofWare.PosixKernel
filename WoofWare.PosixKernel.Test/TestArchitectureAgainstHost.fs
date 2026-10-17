@@ -15,9 +15,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestArchitectureAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private epollCreate1(int flags)
-
     [<DllImport("libc", EntryPoint = "epoll_wait", SetLastError = true)>]
     extern int private epollWait(int epfd, nativeint events, int maxevents, int timeout)
 
@@ -47,7 +44,7 @@ module TestArchitectureAgainstHost =
             | SimulatedUnixFlavour.Darwin -> Assert.Ignore "epoll is a Linux interface"
             | SimulatedUnixFlavour.Linux -> ()
 
-            let ep = epollCreate1 0
+            let ep = HostCalls.epollCreate1 0
 
             if ep < 0 then
                 failwith $"epoll_create1 failed with errno %d{Marshal.GetLastPInvokeError ()}"

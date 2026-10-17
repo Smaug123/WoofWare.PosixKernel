@@ -58,17 +58,6 @@ module TestFcntlMeasured =
 
     // ------------------------------------------------------------------ SETFL
 
-    /// The flags this kernel refuses to set (`FcntlRefusal.UnmodelledStatusFlags`),
-    /// in `platform`'s numbering.
-    let private unmodelledBits (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux ->
-            OpenFlagNumbering.LinuxAppend
-            ||| OpenFlagNumbering.LinuxAsynchronous
-            ||| OpenFlagNumbering.linuxDirect (SimulatedUnixPlatform.architecture platform)
-            ||| OpenFlagNumbering.LinuxNoAccessTime
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinAppend ||| OpenFlagNumbering.DarwinAsynchronous
-
     /// Every F_SETFL the probe made, each bit on its own beside the word
     /// `F_GETFL` reported and three whole words, on a fresh descriptor of each
     /// kind: what it answered, and what `F_GETFL` reported after it and after
@@ -98,7 +87,7 @@ module TestFcntlMeasured =
                                     $"%s{run.Name} %s{kind} %s{label}: before measured 0x%x{measuredBefore}, modelled %s{modelledBefore}"
                             else
 
-                            let unmodelled = word &&& unmodelledBits run.Platform <> 0
+                            let unmodelled = word &&& FcntlWorld.unmodelledStatusFlags run.Platform <> 0
 
                             match UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.SetFl word system with
                             | Error (FcntlRefusal.UnmodelledStatusFlags _) when unmodelled -> refused <- refused + 1
@@ -239,7 +228,7 @@ module TestFcntlMeasured =
                                     | Error refusal -> failwith $"dup2: %s{Dup2Refusal.describe refusal}"
                                 elif operation = "dup2 onto open (cloexec target)" then
                                     let target, system =
-                                        FcntlWorld.openRaw (2 ||| FcntlWorld.closeOnExec platform) "f" system
+                                        FcntlWorld.openRaw (2 ||| OpenFlagWords.closeOnExec platform) "f" system
 
                                     let system =
                                         match SimulatedUnixPlatform.flavour platform with
@@ -261,7 +250,7 @@ module TestFcntlMeasured =
                                 elif operation.StartsWith "dup3" then
                                     let flags =
                                         if operation.StartsWith "dup3 O_CLOEXEC" then
-                                            OpenFlagNumbering.LinuxCloseOnExec
+                                            OpenFlagWords.closeOnExec platform
                                         else
                                             0
 

@@ -94,6 +94,9 @@ module internal OpenFlagWords =
     let nonBlock (platform : SimulatedUnixPlatform) : int =
         bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking)
 
+    /// `O_CLOEXEC` on `platform`.
+    let closeOnExec (platform : SimulatedUnixPlatform) : int = bitOf platform OpenFlagBit.CloseOnExec
+
     /// The flag word `platform`'s C library would pass for `flags`: its access
     /// mode, and the bit of each flag that is set (both of Linux's `O_SYNC`
     /// bits, as `<fcntl.h>` defines it).

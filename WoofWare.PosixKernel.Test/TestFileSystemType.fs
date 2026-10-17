@@ -27,24 +27,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestFileSystemType =
 
-    /// Darwin's anonymous-inode object. Declared unconditionally: a `DllImport`
-    /// binds on first call, so naming a symbol this host lacks costs nothing
-    /// until something calls it.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private kqueue()
-
-    /// Linux's.
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private epoll_create1(int flags)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    /// Darwin arm64's `fstat`, whose `struct stat` begins with a 4-byte
-    /// `st_dev`.
-    [<DllImport("libc", EntryPoint = "fstat", SetLastError = true)>]
-    extern int private darwinFstat(int fd, byte[] buffer)
-
     let private context : string = "TestFileSystemType"
 
     let private propertyConfig : Config = Config.QuickThrowOnFailure.WithMaxTest 200
@@ -769,10 +751,11 @@ module TestFileSystemType =
             let platform = HostPlatform.platformOf flavour
             let mount = EmulatedMount.defaultFor flavour
 
+            // Each flavour's anonymous-inode object.
             let anonymousInode () : int =
                 match flavour with
-                | SimulatedUnixFlavour.Darwin -> kqueue ()
-                | SimulatedUnixFlavour.Linux -> epoll_create1 0
+                | SimulatedUnixFlavour.Darwin -> HostCalls.kqueue ()
+                | SimulatedUnixFlavour.Linux -> HostCalls.epollCreate1 0
 
             let ends : int[] = Array.zeroCreate 2
 
@@ -852,7 +835,7 @@ module TestFileSystemType =
             | SimulatedUnixFlavour.Linux -> "/dev/shm"
             | SimulatedUnixFlavour.Darwin -> Path.GetTempPath ()
 
-        let fd = hostOpen (path, 0, 0)
+        let fd = HostCalls.openFile (path, 0, 0)
 
         if fd < 0 then
             Assert.Ignore $"cannot open %s{path}: errno %d{Marshal.GetLastWin32Error ()}"
@@ -927,9 +910,10 @@ module TestFileSystemType =
                 (fun fd host ->
                     let buffer = Array.zeroCreate<byte> 4096
 
-                    if darwinFstat (fd, buffer) <> 0 then
+                    if HostCalls.fstat (fd, buffer) <> 0 then
                         failwith $"fstat failed: errno %d{Marshal.GetLastWin32Error ()}"
 
+                    // Darwin arm64's `struct stat` begins with a 4-byte `st_dev`.
                     let device = BitConverter.ToInt32 (buffer, 0)
 
                     match host with

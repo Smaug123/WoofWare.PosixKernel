@@ -576,15 +576,6 @@ module TestUnconnectedSocketTransfer =
     // The host the suite runs on
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
     [<Test>]
     let ``this host's failed write binds an unbound socket exactly when the rules say`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
@@ -607,7 +598,7 @@ module TestUnconnectedSocketTransfer =
                                     let name = Array.zeroCreate<byte> 128
                                     let mutable length = 128u
 
-                                    if hostGetSockName (fd, name, &length) <> 0 then
+                                    if HostCalls.getSockName (fd, name, &length) <> 0 then
                                         failwith $"getsockname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                                     let bound = name.[2] <> 0uy || name.[3] <> 0uy
@@ -644,11 +635,11 @@ module TestUnconnectedSocketTransfer =
             let address = SimulatedUnixPlatform.encodeInternetSockaddr platform loopbackAnyPort
 
             let bind () =
-                if hostBind (fd, address, uint32 address.Length) <> 0 then
+                if HostCalls.bind (fd, address, uint32 address.Length) <> 0 then
                     failwith $"the host would not bind %A{row}: errno %d{Marshal.GetLastPInvokeError ()}"
 
             let listen () =
-                if hostListen (fd, 4) <> 0 then
+                if HostCalls.listen (fd, 4) <> 0 then
                     failwith $"the host would not listen on %A{row}: errno %d{Marshal.GetLastPInvokeError ()}"
 
             match row.Phase with

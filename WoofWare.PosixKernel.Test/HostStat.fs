@@ -71,9 +71,6 @@ module HostStat =
     [<DllImport("libc", EntryPoint = "lstat", SetLastError = true)>]
     extern int private hostLStat(string path, byte[] buffer)
 
-    [<DllImport("libc", EntryPoint = "fstat", SetLastError = true)>]
-    extern int private hostFStat(int fd, byte[] buffer)
-
     /// Whether this host's `struct stat` layout is one measured here.
     let isMeasured (flavour : SimulatedUnixFlavour) : bool = (layoutFor flavour).IsSome
 
@@ -123,7 +120,7 @@ module HostStat =
 
     /// `fstat(fd)` on this host.
     let fstat (flavour : SimulatedUnixFlavour) (fd : int) : HostStatus =
-        read flavour $"fstat %d{fd}" (fun buffer -> hostFStat (fd, buffer))
+        read flavour $"fstat %d{fd}" (fun buffer -> HostCalls.fstat (fd, buffer))
 
     /// The fields of a status the model reported, in the same shape.
     let ofModel (status : FileStatus) : HostStatus =

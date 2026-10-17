@@ -93,11 +93,44 @@ module internal FcntlWorld =
         | SimulatedUnixFlavour.Linux -> 1030
         | SimulatedUnixFlavour.Darwin -> 67
 
-    /// `O_CLOEXEC` in `platform`'s numbering.
-    let closeOnExec (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> OpenFlagNumbering.LinuxCloseOnExec
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinCloseOnExec
+    /// The status flags `F_SETFL` takes that this kernel refuses to set
+    /// (`FcntlRefusal.UnmodelledStatusFlags`), in `platform`'s numbering:
+    /// `O_APPEND` and `O_ASYNC`, and on Linux `O_DIRECT` and `O_NOATIME`.
+    let unmodelledStatusFlags (platform : SimulatedUnixPlatform) : int =
+        let unmodelled =
+            match SimulatedUnixPlatform.flavour platform with
+            | SimulatedUnixFlavour.Linux ->
+                [
+                    UnmodelledOpenFlag.Append
+                    UnmodelledOpenFlag.Asynchronous
+                    UnmodelledOpenFlag.Direct
+                    UnmodelledOpenFlag.NoAccessTime
+                ]
+            | SimulatedUnixFlavour.Darwin -> [ UnmodelledOpenFlag.Append ; UnmodelledOpenFlag.Asynchronous ]
+
+        unmodelled
+        |> List.fold (fun word flag -> word ||| OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled flag)) 0
+
+    // The flag words other than open(2)'s that `make` passes, in Linux's
+    // numbering, the only flavour that has them.
+
+    /// `SOCK_NONBLOCK`, as `socket-arguments.c` measured it on Linux 6.18.5
+    /// aarch64 (`socketSyscall/linux.tsv`): type 0x801 made a non-blocking
+    /// stream socket.
+    [<Literal>]
+    let private LinuxSocketNonBlock : int = 0x800
+
+    /// `SOCK_CLOEXEC`, as `socket-arguments.c` measured it on Linux 6.18.5
+    /// aarch64 (`socketSyscall/linux.tsv`): type 0x80001 made a stream socket
+    /// with `FD_CLOEXEC`.
+    [<Literal>]
+    let private LinuxSocketCloseOnExec : int = 0x80000
+
+    /// `EPOLL_CLOEXEC`, as `epoll-wait.c` measured it on Linux 6.18.5 aarch64
+    /// (section A, recorded in its header): the one bit `epoll_create1` took,
+    /// and the one that gave the new descriptor `FD_CLOEXEC`.
+    [<Literal>]
+    let private LinuxEpollCloseOnExec : int = 0x80000
 
     let private name (text : string) : DirectoryEntryName =
         DirectoryEntryName.parseOrFail context text
@@ -347,21 +380,25 @@ module internal FcntlWorld =
         | "pipe2-nonblock-w" ->
             pipe (OpenFlagWords.nonBlock platform) system
             |> fun ((_, w), system) -> Some (w, system)
-        | "pipe2-cloexec-r" -> pipe (closeOnExec platform) system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe2-cloexec-w" -> pipe (closeOnExec platform) system |> fun ((_, w), system) -> Some (w, system)
+        | "pipe2-cloexec-r" ->
+            pipe (OpenFlagWords.closeOnExec platform) system
+            |> fun ((r, _), system) -> Some (r, system)
+        | "pipe2-cloexec-w" ->
+            pipe (OpenFlagWords.closeOnExec platform) system
+            |> fun ((_, w), system) -> Some (w, system)
         | "pipe2-clofork-r" when not linux ->
-            pipe OpenFlagNumbering.DarwinCloseOnFork system
+            pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
             |> fun ((r, _), system) -> Some (r, system)
         | "pipe2-clofork-w" when not linux ->
-            pipe OpenFlagNumbering.DarwinCloseOnFork system
+            pipe (OpenFlagWords.bitOf platform (OpenFlagBit.Unmodelled UnmodelledOpenFlag.CloseOnFork)) system
             |> fun ((_, w), system) -> Some (w, system)
         | "inet-stream" -> socket SocketDomain.Inet SocketKind.Stream
         | "inet-dgram" -> socket SocketDomain.Inet SocketKind.Datagram
         | "inet6-stream" -> socket SocketDomain.Inet6 SocketKind.Stream
         | "unix-stream" -> socket SocketDomain.Unix SocketKind.Stream
         | "unix-dgram" -> socket SocketDomain.Unix SocketKind.Datagram
-        | "inet-stream-sock_nonblock" when linux -> socketWith OpenFlagNumbering.LinuxNonBlock
-        | "inet-stream-sock_cloexec" when linux -> socketWith OpenFlagNumbering.LinuxCloseOnExec
+        | "inet-stream-sock_nonblock" when linux -> socketWith LinuxSocketNonBlock
+        | "inet-stream-sock_cloexec" when linux -> socketWith LinuxSocketCloseOnExec
         | "accepted" -> Some (accepted 5000us false system)
         | "accepted-from-nonblocking" -> Some (accepted 5000us true system)
         | "port" when linux ->
@@ -369,7 +406,7 @@ module internal FcntlWorld =
             | Ok (Ok created) -> Some created
             | other -> failwith $"epoll_create1(0): %A{other}"
         | "port-cloexec" when linux ->
-            match UnixPoll.tryEpollCreate1 (Callers.leader system) EpollCreateFlags.CloseOnExec system with
+            match UnixPoll.tryEpollCreate1 (Callers.leader system) LinuxEpollCloseOnExec system with
             | Ok (Ok created) -> Some created
             | other -> failwith $"epoll_create1(EPOLL_CLOEXEC): %A{other}"
         | "port" ->
