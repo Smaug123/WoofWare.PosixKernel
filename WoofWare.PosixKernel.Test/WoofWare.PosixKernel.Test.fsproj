@@ -243,6 +243,7 @@
     <Compile Include="TestEphemeralSearchMeasured.fs" />
     <Compile Include="TestConnectSearchHoldersMeasured.fs" />
     <Compile Include="TestPortSharingMeasured.fs" />
+    <Compile Include="TestLocalPortRangeMeasured.fs" />
     <Compile Include="TestListen.fs" />
     <Compile Include="TestNonBlocking.fs" />
     <Compile Include="TestConnect.fs" />
@@ -427,6 +428,11 @@
          the model can make. -->
     <EmbeddedResource Include="..\docs\probes\port-sharing\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\port-sharing\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.port-sharing.darwin.txt" />
+    <!-- Which values Linux's ip_local_port_range and
+         ip_unprivileged_port_start accepted, measured by
+         docs/probes/local-port-range. `TestLocalPortRangeMeasured` replays the
+         ranges. -->
+    <EmbeddedResource Include="..\docs\probes\local-port-range\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.local-port-range.linux.txt" />
     <!-- What a TCP TIME_WAIT held once both its sockets had closed, and when a
          connect took its four-tuple over, measured per flavour by
          docs/probes/time-wait. `TestTimeWaitMeasured` replays every row. -->
