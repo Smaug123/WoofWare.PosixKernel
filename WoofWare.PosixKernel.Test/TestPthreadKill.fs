@@ -158,7 +158,11 @@ module TestPthreadKill =
                 | Some thread ->
                     let mask =
                         blocked
-                        |> List.choose (fun signo -> Signal.ofRawSignoUnder numbering signo |> ValueOption.toOption)
+                        |> List.choose (fun signo ->
+                            match Signal.ofRawSignoUnder numbering signo with
+                            | ValueSome signal -> Some signal
+                            | ValueNone -> None
+                        )
                         |> Set.ofList
 
                     HandlerFrames.enterIn "h" thread mask system
