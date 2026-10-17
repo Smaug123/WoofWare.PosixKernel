@@ -56,6 +56,7 @@ module internal Stepped =
     let carriedOn (stepped : SteppedCall<int, string>) : UnixSystem<int, string> option =
         match stepped with
         | SteppedCall.FLock (SyscallOutcome.Answered _, system)
+        | SteppedCall.Futex (SyscallOutcome.Answered _, system)
         | SteppedCall.Open (SyscallOutcome.Answered _, system)
         | SteppedCall.OpenAt (SyscallOutcome.Answered _, system)
         | SteppedCall.Connect (SyscallOutcome.Answered _, system)
@@ -79,6 +80,7 @@ module internal Stepped =
         | SteppedCall.RtSigProcMask (Ok (_, system))
         | SteppedCall.ExitThread (ProcessFate.Continues ((), system)) -> Some system
         | SteppedCall.FLock _
+        | SteppedCall.Futex _
         | SteppedCall.Open _
         | SteppedCall.OpenAt _
         | SteppedCall.Connect _

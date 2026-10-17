@@ -212,6 +212,10 @@ module TestCallProgress =
             fun () ->
                 UnixNamespace.linkWithDestination path Unchecked.defaultof<PausedLink<int, string>>
                 |> ignore<SyscallAnswer * UnixSystem<int, string>>
+            "UnixFutex.futexWithWord",
+            fun () ->
+                UnixFutex.futexWithWord 0u Unchecked.defaultof<PausedFutexWait<int, string>>
+                |> ignore<SyscallOutcome * UnixSystem<int, string>>
             "UnixReadWrite.writeWithBytes",
             fun () ->
                 UnixReadWrite.writeWithBytes bytes Unchecked.defaultof<PausedWrite<int, string>>
