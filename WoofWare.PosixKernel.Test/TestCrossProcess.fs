@@ -898,16 +898,9 @@ module TestCrossProcess =
             | other -> failwith $"%A{ending}: the return to user mode answered %A{other}"
 
         let mask (how : SignalMaskChange) (machine : UnixSystem<int, string>) : UnixSystem<int, string> =
-            let how =
-                match SimulatedUnixPlatform.flavour (UnixSystem.platform machine), how with
-                | SimulatedUnixFlavour.Linux, SignalMaskChange.Block -> 0
-                | SimulatedUnixFlavour.Linux, _ -> 1
-                | SimulatedUnixFlavour.Darwin, SignalMaskChange.Block -> 1
-                | SimulatedUnixFlavour.Darwin, _ -> 2
-
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
-            match UnixSignal.pthreadSigmask caller how (Some set) machine with
+            match UnixSignal.pthreadSigmask caller (MaskHow.number numbering how) (Some set) machine with
             | Ok (_, machine) -> machine
             | Error errno -> failwith $"%A{ending}: pthread_sigmask: %O{errno}"
 

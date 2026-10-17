@@ -278,14 +278,6 @@ module TestUnixSignal =
 
     // ------------- A default that terminates, taken on return ------------- //
 
-    /// `SIG_BLOCK` and `SIG_UNBLOCK` as each `<signal.h>` numbers them.
-    let private sigBlock (flavour : SimulatedUnixFlavour) : int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 0
-        | SimulatedUnixFlavour.Darwin -> 1
-
-    let private sigUnblock (flavour : SimulatedUnixFlavour) : int = sigBlock flavour + 1
-
     /// The signals a death is checked for, each with the core flag its death
     /// carries under `coreDumps`: SIGQUIT dumps core on both flavours, and
     /// SIGTERM on neither.
@@ -305,7 +297,7 @@ module TestUnixSignal =
         let only = SignalMask.ofSignals numbering (Set.singleton signal)
 
         let system =
-            match UnixSignal.pthreadSigmask (Callers.thread 0 system) (sigBlock flavour) (Some only) system with
+            match UnixSignal.pthreadSigmask (Callers.thread 0 system) (MaskHow.block numbering) (Some only) system with
             | Ok (_, system) -> system
             | Error errno -> failwith $"pthread_sigmask: %O{errno}"
 
@@ -359,7 +351,7 @@ module TestUnixSignal =
                         match
                             UnixSignal.pthreadSigmask
                                 (Callers.thread 0 pending)
-                                (sigUnblock flavour)
+                                (MaskHow.unblock numbering)
                                 (Some only)
                                 pending
                         with
@@ -480,11 +472,11 @@ module TestUnixSignal =
 
     let private sentFor (case : ReturnCase) : UnixSystem<int, string> option =
         let setMask (thread : int) (signals : Set<Signal>) (system : UnixSystem<int, string>) =
-            let mask =
-                SignalMask.ofSignals (Lone.UnixSystemState.signalNumbering system) signals
+            let numbering = Lone.UnixSystemState.signalNumbering system
+            let mask = SignalMask.ofSignals numbering signals
 
             match
-                UnixSignal.pthreadSigmask (Callers.thread thread system) (sigBlock case.Flavour + 2) (Some mask) system
+                UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.setMask numbering) (Some mask) system
             with
             | Ok (_, system) -> system
             | Error errno -> failwith $"pthread_sigmask: %O{errno}"

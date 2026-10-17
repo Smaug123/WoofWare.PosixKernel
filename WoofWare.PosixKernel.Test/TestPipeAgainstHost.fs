@@ -237,12 +237,12 @@ module TestPipeAgainstHost =
                 }
 
             let property (startNonBlocking : bool, ops : HostPipeOp list) : unit =
-                let nonBlockFlag =
-                    match flavour with
-                    | SimulatedUnixFlavour.Linux -> 0x800
-                    | SimulatedUnixFlavour.Darwin -> 0x4
+                let flags =
+                    if startNonBlocking then
+                        OpenFlagWords.nonBlock platform
+                    else
+                        0
 
-                let flags = if startNonBlocking then nonBlockFlag else 0
                 let hostFds = Array.zeroCreate<int> 2
 
                 // `pipe` and then O_NONBLOCK on each end: what `pipe2` with the

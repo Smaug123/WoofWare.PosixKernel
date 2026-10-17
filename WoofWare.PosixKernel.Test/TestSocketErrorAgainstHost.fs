@@ -257,13 +257,7 @@ module TestSocketErrorAgainstHost =
         let fd, system =
             NewSocket.create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-        let system =
-            if nonBlocking then
-                match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
-                | SetNonBlockingAnswer.Set, system -> system
-                | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
-            else
-                system
+        let system = if nonBlocking then NonBlocking.set fd system else system
 
         fd, system
 

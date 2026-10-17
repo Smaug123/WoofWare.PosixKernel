@@ -411,11 +411,6 @@ module TestPeerNameAgainstHost =
             | Ok (ListenAnswer.Listening _, system) -> fd, (modelName fd system).Port, system
             | other -> failwith $"the model's listen answered %A{other}"
 
-        let nonBlocking (fd : int) (system : UnixSystem<int, string>) =
-            match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
-            | SetNonBlockingAnswer.Set, system -> system
-            | other, _ -> failwith $"the model would not set O_NONBLOCK: %A{other}"
-
         let accept (listener : int) (system : UnixSystem<int, string>) =
             match UnixConnection.tryAccept (Callers.thread 0 system) listener UserBuffer.Mapped 16u system with
             | Ok (AcceptOutcome.Accepted (fd, _, _), system) -> fd, system
@@ -488,7 +483,7 @@ module TestPeerNameAgainstHost =
             let client, system =
                 create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-            let system = nonBlocking client system
+            let system = NonBlocking.set client system
             let system = connectTo client (CopyIn.inet platform (loopback port)) system
 
             client, Map.ofList [ "listener", loopback port ; "client", modelName client system ], system
@@ -502,7 +497,7 @@ module TestPeerNameAgainstHost =
             let client, system =
                 create SocketDomain.Inet SocketKind.Stream SocketProtocol.Tcp system
 
-            let system = nonBlocking client system
+            let system = NonBlocking.set client system
             let system = connectTo client (CopyIn.inet platform (loopback port)) system
 
             let system =

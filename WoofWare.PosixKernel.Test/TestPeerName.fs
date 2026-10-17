@@ -72,11 +72,6 @@ module TestPeerName =
     let private connect (fd : int) (destination : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         connectBlob fd (CopyIn.inet (UnixSystem.platform system) destination) system
 
-    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
-        | SetNonBlockingAnswer.Set, system -> system
-        | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
-
     let private listening (address : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         let fd, system = stream system
         let system = bindAt fd address system
@@ -159,7 +154,7 @@ module TestPeerName =
 
         // Non-blocking: the refusal pending, then taken by an SO_ERROR read.
         let fd, system = stream (fresh platform)
-        let system = nonBlocking fd system
+        let system = NonBlocking.set fd system
         let outcome, system = connect fd nobody system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         ask fd 16u system |> shouldEqual expected
@@ -282,7 +277,7 @@ module TestPeerName =
         // after the EINPROGRESS; this kernel completes it inside the connect.
         let _, system = listening (loopback listenerPort) (fresh platform)
         let fd, system = stream system
-        let system = nonBlocking fd system
+        let system = NonBlocking.set fd system
         let outcome, system = connect fd (loopback listenerPort) system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         ask fd 16u system |> shouldEqual (reported platform (loopback listenerPort))

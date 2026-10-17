@@ -722,10 +722,7 @@ module TestDeviceDescriptors =
         for device in CharacterDevice.all do
             let fd, system = openDevice device FileAccessMode.ReadOnly booted
 
-            let nonBlocking =
-                match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
-                | SetNonBlockingAnswer.Set, system -> system
-                | other -> failwith $"F_SETFL O_NONBLOCK: %A{other}"
+            let nonBlocking = NonBlocking.set fd system
 
             fst (readOf fd UserBuffer.Mapped 64UL nonBlocking)
             |> readBytes

@@ -166,13 +166,12 @@ module TestSigcontGeneration =
     /// `pthread_sigmask(SIG_SETMASK)` by `thread`, to block exactly `blocked`.
     let private setMask (thread : int) (blocked : Signal list) : Step =
         fun r ->
-            let setmask =
-                match r.Flavour with
-                | SimulatedUnixFlavour.Linux -> 2
-                | SimulatedUnixFlavour.Darwin -> 3
-
             match
-                UnixSignal.pthreadSigmask (Callers.thread thread r.System) setmask (Some (signals blocked r)) r.System
+                UnixSignal.pthreadSigmask
+                    (Callers.thread thread r.System)
+                    (MaskHow.setMask (numbering r))
+                    (Some (signals blocked r))
+                    r.System
             with
             | Ok (_, system) -> returns thread (withSystem system r)
             | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"

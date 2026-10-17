@@ -453,21 +453,19 @@ module TestSignalReceiver =
         let signo = Signal.toRawSignoUnder numbering row.Signal
         let only = SignalMask.ofSignals numbering (Set.singleton row.Signal)
 
-        let how (change : SignalMaskChange) : int =
-            match flavour, change with
-            | SimulatedUnixFlavour.Linux, SignalMaskChange.Block -> 0
-            | SimulatedUnixFlavour.Linux, SignalMaskChange.Unblock -> 1
-            | SimulatedUnixFlavour.Darwin, SignalMaskChange.Block -> 1
-            | SimulatedUnixFlavour.Darwin, SignalMaskChange.Unblock -> 2
-            | _, SignalMaskChange.SetMask -> failwith "unused"
-
         let resumes (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             match UnixSignal.tryOnReturnToUser (Callers.thread thread system) system with
             | Ok (ProcessFate.Continues (ReturnToUserOutcome.Resumes None, system)) -> system
             | other -> failwith $"%s{row.Line}: thread %d{thread} did not resume: %A{other}"
 
         let mask (thread : int) (change : SignalMaskChange) (system : UnixSystem<int, string>) =
-            match UnixSignal.pthreadSigmask (Callers.thread thread system) (how change) (Some only) system with
+            match
+                UnixSignal.pthreadSigmask
+                    (Callers.thread thread system)
+                    (MaskHow.number numbering change)
+                    (Some only)
+                    system
+            with
             | Ok (_, system) -> system
             | Error errno -> failwith $"%s{row.Line}: pthread_sigmask: %O{errno}"
 

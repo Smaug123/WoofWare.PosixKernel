@@ -91,11 +91,6 @@ module TestLaunchedStreams =
         Map.tryFind fd reference.Fds
         |> Option.map (fun id -> reference.Descriptions.[id])
 
-    let private flavourNonBlock (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> 0x800
-        | SimulatedUnixFlavour.Darwin -> 0x4
-
     let private payload (seed : int) (count : int) : ImmutableArray<byte> =
         ImmutableArray.Create<byte> (Array.init count (fun i -> byte ((seed * 31 + i) % 251)))
 
@@ -454,7 +449,7 @@ module TestLaunchedStreams =
                 2, Gen.map (fun fd -> Op.Call (Syscall.Close fd)) fd
                 2, Gen.map2 (fun fd value -> Op.SetNonBlocking (fd, value)) fd (Gen.elements [ true ; false ])
                 1, Gen.map Op.Poll fd
-                1, Gen.constant (Op.Call (Syscall.Pipe2 (UserBuffer.Mapped, flavourNonBlock platform)))
+                1, Gen.constant (Op.Call (Syscall.Pipe2 (UserBuffer.Mapped, OpenFlagWords.nonBlock platform)))
             ]
 
     [<Test>]

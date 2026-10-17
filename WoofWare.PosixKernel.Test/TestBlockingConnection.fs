@@ -2319,13 +2319,14 @@ module TestBlockingConnection =
             let numbering = SimulatedUnixPlatform.signalNumbering platform
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
-            let sigBlock =
-                match SimulatedUnixPlatform.flavour platform with
-                | SimulatedUnixFlavour.Linux -> 0
-                | SimulatedUnixFlavour.Darwin -> 1
-
             let blocking (thread : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-                match UnixSignal.pthreadSigmask (Callers.thread thread system) sigBlock (Some usr1) system with
+                match
+                    UnixSignal.pthreadSigmask
+                        (Callers.thread thread system)
+                        (MaskHow.block numbering)
+                        (Some usr1)
+                        system
+                with
                 | Ok (_, system) -> system
                 | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
