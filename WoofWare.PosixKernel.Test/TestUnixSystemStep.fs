@@ -1407,13 +1407,15 @@ module TestUnixSystemStep =
         // A *null* pointer passes the screen on both — it is an ordinary user
         // address — so it reaches the no-op at length 0 and faults at the copy
         // otherwise. Measured, `pwrite(f, NULL, 0, 0)` is 0 and
-        // `pwrite(f, NULL, 4, 0)` is EFAULT, on both.
+        // `pwrite(f, NULL, 4, 0)` is EFAULT, on both, once the file's write has
+        // run (`TestFaultingFileWrite`).
         for descriptor, holding in [ fd, system ; darwinFd, darwinSystem ] do
             Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 0UL 0L holding
             |> shouldEqual (Ok (PWriteAdmission.Answered (WriteAnswer.Completed 0L)))
 
-            Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding
-            |> shouldEqual (pwriteFailed UnixError.EFAULT)
+            match Lone.UnixReadWrite.tryAdmitPWrite descriptor (UserBuffer.Unmapped 0UL) 4UL 0L holding with
+            | Ok (PWriteAdmission.Faults (4, _, _)) -> ()
+            | other -> failwith $"pwrite(f, NULL, 4, 0): %A{other}"
 
     [<Test>]
     let ``a pwrite buffer with no bytes is refused at the copy, not faulted`` () : unit =

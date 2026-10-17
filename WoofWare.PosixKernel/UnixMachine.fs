@@ -372,9 +372,12 @@ module UnixMachineState =
         | ChangeNotice.SetAttributes (ReachedThrough.Name _, _)
         | ChangeNotice.SetAttributes (ReachedThrough.Unnamed, _)
         | ChangeNotice.Written (ReachedThrough.Name _)
-        | ChangeNotice.Written ReachedThrough.Unnamed -> ()
+        | ChangeNotice.Written ReachedThrough.Unnamed
+        | ChangeNotice.FaultedWrite (ReachedThrough.Name _)
+        | ChangeNotice.FaultedWrite ReachedThrough.Unnamed -> ()
         | ChangeNotice.SetAttributes (ReachedThrough.RemovedDirectory _, _)
-        | ChangeNotice.Written (ReachedThrough.RemovedDirectory _) ->
+        | ChangeNotice.Written (ReachedThrough.RemovedDirectory _)
+        | ChangeNotice.FaultedWrite (ReachedThrough.RemovedDirectory _) ->
             failwith
                 $"UnixMachineState.commitFileSystem: committed %A{notice}, which may be refused; commit it through tryCommitFileSystem (this is a bug in this library)."
 

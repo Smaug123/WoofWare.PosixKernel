@@ -484,16 +484,41 @@ module TestTransferCounts =
             let _, expected =
                 expectedAdmission platform limit case.Position case.Buffer case.Count
 
+            let unmapped =
+                match case.Buffer with
+                | UserBuffer.Unmapped _ -> true
+                | UserBuffer.Mapped
+                | UserBuffer.Opaque
+                | UserBuffer.Addressless -> false
+
             let actual =
-                match WriteAdmissions.unchanged fd case.Buffer case.Count system with
-                | Ok (WriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
+                match WriteOutcomes.admitWrite fd case.Buffer case.Count system with
+                // The one admission that changes the system: an unmapped buffer
+                // reaches the file's write, which changes the file before the
+                // copy faults (`TestFaultingFileWrite`).
+                | Ok (admission, after) when
+                    after <> system
+                    && not (
+                        unmapped
+                        && admission = WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT)
+                    )
+                    ->
+                    failwith $"%A{case}: the admission %A{admission} changed the system"
+                | Ok (WriteAdmission.Answered answer, _) -> Ok (Admitted.Answered answer)
                 // Into the file, at the description's offset.
-                | Ok (WriteAdmission.Transfer (count, WriteInto.File (into, _, offset, _))) when
+                | Ok (WriteAdmission.Transfer (count, WriteInto.File (into, _, offset, _)), _) when
                     into = fd && offset = case.Position
                     ->
                     Ok (Admitted.Transfer count)
-                | Ok other -> failwith $"%A{case}: a regular file's write came to %A{other}"
+                | Ok (other, _) -> failwith $"%A{case}: a regular file's write came to %A{other}"
                 | Error (WriteRefusal.Buffer refusal) -> Error refusal
+                // A faulting write grows the file to its offset, which past this
+                // model's longest file it refuses to do; a real kernel answers
+                // EFAULT there.
+                | Error (WriteRefusal.ExceedsRepresentableLength _) when
+                    unmapped && case.Position > VirtualFileSystem.maxFileLength
+                    ->
+                    Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EFAULT))
                 | Error other ->
                     failwith $"a regular file's write was refused for something other than its buffer: %O{other}"
 
@@ -531,6 +556,8 @@ module TestTransferCounts =
                 // sleeping write, which a file never makes.
                 match Lone.UnixReadWrite.tryAdmitPWrite fd case.Buffer case.Count offset system with
                 | Ok (PWriteAdmission.Answered answer) -> Ok (Admitted.Answered answer)
+                // The call answers EFAULT once the file's write has run.
+                | Ok (PWriteAdmission.Faults _) -> Ok (Admitted.Answered (WriteAnswer.Failed UnixError.EFAULT))
                 | Ok (PWriteAdmission.Transfer (count, PWriteInto.File _)) -> Ok (Admitted.Transfer count)
                 | Ok (PWriteAdmission.Transfer (_, PWriteInto.Device)) ->
                     failwith $"%A{case}: a regular file's pwrite came to a device's"
@@ -823,6 +850,7 @@ module TestTransferCounts =
             | Ok (PWriteAdmission.Answered (WriteAnswer.Failed error)) -> Seen.Errno error
             | Ok (PWriteAdmission.Answered (WriteAnswer.Completed written)) -> Seen.Moved (int written)
             | Ok (PWriteAdmission.Transfer (count, _)) -> Seen.Moved count
+            | Ok (PWriteAdmission.Faults _) -> Seen.Errno UnixError.EFAULT
             | Error _ -> Seen.Refused
         | other -> failwith $"no op %s{other}"
 

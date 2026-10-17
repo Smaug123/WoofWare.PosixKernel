@@ -311,6 +311,10 @@ type internal WriteRefusal =
     /// What writing to the file at `inode` would do to its set-ID bits has not
     /// been measured for this writer.
     | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
+    /// A write to the file at `inode` whose copy from the caller's buffer
+    /// faults, by a writer standing as `standing` towards it, for whom what
+    /// the write does to the file before the copy has not been measured.
+    | UnmeasuredFaultedWrite of inode : InodeNumber * standing : Standing
     /// A write asleep in a pipe or on a connected socket has an answer, and
     /// the library will not say whether that or a signal ends it.
     | Interruption of SyscallInterruptionRefusal
@@ -334,6 +338,9 @@ module internal WriteRefusal =
     // different offsets and must say the same thing about it.
     let internal describeUnmeasuredSetIdChange (inode : InodeNumber) (refusal : SetIdChangeRefusal) : string =
         $"writing to inode %O{inode}: %s{SetIdChangeRefusal.describe refusal}"
+
+    let internal describeUnmeasuredFaultedWrite (inode : InodeNumber) (standing : Standing) : string =
+        $"writing to inode %O{inode} from a buffer whose copy faults: the kernel answers EFAULT having already stripped the file's set-ID bits, grown it to the write's offset and perhaps moved its timestamps, and what this flavour does there has been measured only for an unprivileged writer who owns the file, not for one standing %A{standing} towards it."
 
     let internal describeExceedsRepresentableLength (inode : InodeNumber) (offset : int64) (count : int) : string =
         $"writing %d{count} bytes at offset %d{offset} of inode %O{inode} would leave the file longer than the %d{VirtualFileSystem.maxFileLength} bytes this kernel can represent. A real filesystem answers this without difficulty -- measured on ext4 and APFS alike, a one-byte write at offset 2^40 succeeds and leaves a sparse 1 TB file -- so this is a limit of the model, and refusing beats reporting an errno no kernel would have produced."
@@ -367,6 +374,7 @@ module internal WriteRefusal =
         | WriteRefusal.ProcessEnd (target, refusal) ->
             $"the descriptor is %s{BrokenWriteTarget.describe target}, so the write raises SIGPIPE, whose default ends the process; %s{ProcessEndRefusal.describe refusal}"
         | WriteRefusal.UnmeasuredSetIdChange (inode, refusal) -> describeUnmeasuredSetIdChange inode refusal
+        | WriteRefusal.UnmeasuredFaultedWrite (inode, standing) -> describeUnmeasuredFaultedWrite inode standing
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : WriteRefusal) : RefusalKind =
@@ -380,6 +388,7 @@ module internal WriteRefusal =
         | WriteRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
         | WriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | WriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
+        | WriteRefusal.UnmeasuredFaultedWrite _ -> RefusalKind.Unmodelled
         | WriteRefusal.Interruption inner -> SyscallInterruptionRefusal.kind inner
         | WriteRefusal.SignalReceiver (_, inner) -> SignalReceiverRefusal.kind inner
         | WriteRefusal.InitProcess _ -> RefusalKind.Unmodelled
@@ -570,6 +579,11 @@ type internal PWriteAdmission =
     /// The copy is reached: extract exactly `count` bytes and pass them to
     /// `UnixReadWrite.tryApplyPWrite` with `into`.
     | Transfer of count : int * into : PWriteInto
+    /// The copy of `count` bytes into the file `inode`, from the call's
+    /// offset, is reached and faults at the first byte: the call answers
+    /// EFAULT, having done what a write does to the file before its copy
+    /// (`UnixReadWrite.tryApplyPWriteFault`), reported under `through`.
+    | Faults of count : int * inode : InodeNumber * through : ReachedThrough
 
 /// Which call a `PausedWrite` is, and what it does with the bytes, as the
 /// call decided before it read them.
@@ -701,6 +715,10 @@ type internal PWriteRefusal =
     /// What writing to the file at `inode` would do to its set-ID bits has not
     /// been measured for this writer.
     | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
+    /// A write to the file at `inode` whose copy from the caller's buffer
+    /// faults, by a writer standing as `standing` towards it, for whom what
+    /// the write does to the file before the copy has not been measured.
+    | UnmeasuredFaultedWrite of inode : InodeNumber * standing : Standing
 
 [<RequireQualifiedAccess>]
 module internal PWriteRefusal =
@@ -716,6 +734,8 @@ module internal PWriteRefusal =
             WriteRefusal.describeExceedsRepresentableLength inode offset count
         | PWriteRefusal.UnmeasuredSetIdChange (inode, refusal) ->
             WriteRefusal.describeUnmeasuredSetIdChange inode refusal
+        | PWriteRefusal.UnmeasuredFaultedWrite (inode, standing) ->
+            WriteRefusal.describeUnmeasuredFaultedWrite inode standing
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : PWriteRefusal) : RefusalKind =
@@ -723,6 +743,7 @@ module internal PWriteRefusal =
         | PWriteRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | PWriteRefusal.ExceedsRepresentableLength _ -> RefusalKind.Unmodelled
         | PWriteRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
+        | PWriteRefusal.UnmeasuredFaultedWrite _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer a `copy_file_range(2)`.
 [<RequireQualifiedAccess>]
@@ -3231,6 +3252,35 @@ module UnixReadWrite =
             |> parkConnectionWrite thread call descriptionId fd buffer count 0 connectionId connectionEnd
             |> Ok
 
+    /// What a `write` or `pwrite` of `count` bytes at `offset` into the file
+    /// `inode`, reached `through` a name, does to the file before its copy
+    /// from the caller's buffer faults at the first byte: the system the
+    /// call's EFAULT is answered against.
+    let private tryWriteFaulted<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (inode : InodeNumber)
+        (offset : int64)
+        (count : int)
+        (through : ReachedThrough)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<ProcessView<'Thread, 'Handler>, FaultedWriteRefusal>
+        =
+        let platform = system.Machine.UnixPlatform
+
+        VirtualFileSystem.writeFaulted
+            inode
+            offset
+            count
+            (SimulatedUnixPlatform.setGroupIdOnWrite platform)
+            (SimulatedUnixPlatform.faultedWriteRule platform)
+            system.Process.Credentials
+            (UnixMachineState.realtime system.Scheduling system.Machine)
+            system.Machine.FileSystem
+        |> Result.map (fun mutation ->
+            { system with
+                Machine = UnixMachineState.commitFileSystem (ChangeNotice.FaultedWrite through) mutation system.Machine
+            }
+        )
+
     /// Every answer `write(2)` by `thread` gives *without* reading the caller's
     /// buffer, and otherwise how many bytes to extract and where they go: the
     /// step before the copy, which `write` answers as a `CallProgress`, and
@@ -3365,9 +3415,18 @@ module UnixReadWrite =
 
         match buffer with
         | UserBuffer.Unmapped _ ->
-            // Real `write(2)` answers EFAULT for any non-dereferenceable
-            // address, null included, having performed no I/O.
-            Ok (unchanged (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT)))
+            // An address the screen above let through, null included, reaches
+            // the file's write, which changes the file before its copy faults
+            // (`FaultedWriteRule`).
+            match tryWriteFaulted inode offset count through system with
+            | Ok faulted ->
+                Ok (WriteStep.Returns (WriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT), faulted))
+            | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
+                Error (WriteRefusal.ExceedsRepresentableLength (inode, offset, count))
+            | Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal) ->
+                Error (WriteRefusal.UnmeasuredSetIdChange (inode, refusal))
+            | Error (FaultedWriteRefusal.UnmeasuredWriter standing) ->
+                Error (WriteRefusal.UnmeasuredFaultedWrite (inode, standing))
         | UserBuffer.Opaque -> Error (WriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (WriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
         | UserBuffer.Mapped ->
@@ -4101,6 +4160,7 @@ module UnixReadWrite =
         | WriteRefusal.EphemeralPortsExhausted _
         | WriteRefusal.ExceedsRepresentableLength _
         | WriteRefusal.UnmeasuredSetIdChange _
+        | WriteRefusal.UnmeasuredFaultedWrite _
         | WriteRefusal.Interruption _ ->
             failwith
                 $"UnixReadWrite: a send to a connected socket was refused with %A{refusal}, which only a write to another object, or a woken write, gives (this is a bug in this library)."
@@ -4375,12 +4435,9 @@ module UnixReadWrite =
         | PWriteTarget.File (inode, through) ->
 
         match buffer with
-        | UserBuffer.Unmapped _ ->
-            // Real `pwrite(2)` answers EFAULT for any non-dereferenceable
-            // address, null included, having performed no I/O: measured,
-            // `pwrite(f, NULL, 4, 0)` is EFAULT on both, where the same pointer
-            // at length 0 is a no-op.
-            Ok (PWriteAdmission.Answered (WriteAnswer.Failed UnixError.EFAULT))
+        // An address the screen above let through, null included, reaches the
+        // file's write, which changes the file before its copy faults.
+        | UserBuffer.Unmapped _ -> Ok (PWriteAdmission.Faults (count, inode, through))
         | UserBuffer.Opaque -> Error (PWriteRefusal.Buffer BufferRefusal.OpaqueAtTransfer)
         | UserBuffer.Addressless -> Error (PWriteRefusal.Buffer BufferRefusal.AddresslessAtTransfer)
         | UserBuffer.Mapped -> Ok (PWriteAdmission.Transfer (count, PWriteInto.File (inode, through)))
@@ -4447,6 +4504,27 @@ module UnixReadWrite =
 
             WriteAnswer.Completed (int64 bytes.Length), system
         )
+
+    /// The step after a `pwrite` at `offset` whose admission said its copy
+    /// faults (`PWriteAdmission.Faults`): what the write does to the file
+    /// `inode` before the copy, reported under `through`, and the EFAULT it
+    /// answers. `system` must be the one the admission was made against.
+    let internal tryApplyPWriteFault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (offset : int64)
+        (count : int)
+        (inode : InodeNumber)
+        (through : ReachedThrough)
+        (system : ProcessView<'Thread, 'Handler>)
+        : Result<WriteAnswer * ProcessView<'Thread, 'Handler>, PWriteRefusal>
+        =
+        match tryWriteFaulted inode offset count through system with
+        | Ok faulted -> Ok (WriteAnswer.Failed UnixError.EFAULT, faulted)
+        | Error (FaultedWriteRefusal.WouldExceedMaxLength offset) ->
+            Error (PWriteRefusal.ExceedsRepresentableLength (inode, offset, count))
+        | Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal) ->
+            Error (PWriteRefusal.UnmeasuredSetIdChange (inode, refusal))
+        | Error (FaultedWriteRefusal.UnmeasuredWriter standing) ->
+            Error (PWriteRefusal.UnmeasuredFaultedWrite (inode, standing))
 
     /// A write's or a send's last step, as the call answers it.
     let private fateOf<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -4961,9 +5039,12 @@ module UnixReadWrite =
            >
         =
         tryAdmitPWrite fd buffer count offset system
-        |> Result.map (fun admission ->
+        |> Result.bind (fun admission ->
             match admission with
-            | PWriteAdmission.Answered answer -> CallProgress.Answered (answer, system)
+            | PWriteAdmission.Answered answer -> Ok (CallProgress.Answered (answer, system))
+            | PWriteAdmission.Faults (count, inode, through) ->
+                tryApplyPWriteFault offset count inode through system
+                |> Result.map CallProgress.Answered
             | PWriteAdmission.Transfer (count, into) ->
                 CallProgress.NeedsCopyIn
                     {
@@ -4974,6 +5055,7 @@ module UnixReadWrite =
                         Range = CopyRange.fromStart count
                         System = system
                     }
+                |> Ok
         )
 
     /// `pwrite`, with a refusal answered as the `Error` rather than raised.
