@@ -136,6 +136,8 @@ module WakeCondition =
         | Some (ParkedSyscall.DatagramReceive _)
         | Some (ParkedSyscall.DatagramSend _)
         | Some (ParkedSyscall.Connect _)
+        // Only Linux has futex, and nothing a close does reaches one.
+        | Some (ParkedSyscall.Futex _)
         | None -> false
 
     /// Every primitive `condition` waits for, in order, repeats and all.
@@ -259,6 +261,12 @@ module WakeCondition =
         | WakePrimitive.AwaitedSignalPending _ ->
             failwith
                 $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, but nothing parks a thread in a signal wait yet (`ParkedSyscall.SignalWait` is reserved), and which pending signals such a wait may take is not modelled, so the park was recorded by hand (this is a bug in the caller that recorded it)."
+        | WakePrimitive.FutexWakeTaken ->
+            match Map.tryFind thread system.Threads |> Option.bind UnixThreadState.parkedIn with
+            | Some (ParkedSyscall.Futex wait) -> wait.TakenByWake
+            | parked ->
+                failwith
+                    $"WakeCondition.satisfied: thread %O{thread} waits for %A{primitive}, which only a futex wait waits for, but it is parked in %A{parked} (this is a bug in the caller that recorded the park)."
 
     /// The primitives of `condition`, the wake condition of `thread`, which hold of
     /// `system`: empty exactly when the syscall that parked on it would get no
@@ -345,7 +353,8 @@ module WakeCondition =
         | WakeCondition.Primitive (WakePrimitive.FifoPartnerOpened _)
         | WakeCondition.Primitive (WakePrimitive.InotifyRecordQueued _)
         | WakeCondition.Primitive (WakePrimitive.AwaitedSignalPending _)
-        | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _) -> []
+        | WakeCondition.Primitive (WakePrimitive.AcceptQueueHasRoom _)
+        | WakeCondition.Primitive WakePrimitive.FutexWakeTaken -> []
         | WakeCondition.AnyOf (first, rest) -> deadlines first @ List.collect deadlines rest
 
     /// What the thread holding `parked` is waiting for: what its syscall waits
@@ -508,6 +517,14 @@ module WakeCondition =
             // room in the listener's queue, joins this when something parks a
             // thread in it.
             | ParkedSyscall.Connect _ -> []
+            // A wake that takes it, its deadline, or a signal.
+            | ParkedSyscall.Futex wait ->
+                let deadline =
+                    wait.FutexDeadline
+                    |> Option.map (WakePrimitive.DeadlinePassed >> WakeCondition.Primitive)
+                    |> Option.toList
+
+                WakeCondition.Primitive WakePrimitive.FutexWakeTaken :: deadline
 
         let signal = WakeCondition.Primitive WakePrimitive.SignalDeliverable
 

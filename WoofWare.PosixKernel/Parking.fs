@@ -167,6 +167,9 @@ module internal Parking =
         // waits exclusively on the listener's `peer_wait`, which the
         // connect that sleeps will model.
         | WakePrimitive.AcceptQueueHasRoom _ -> None
+        // A futex wake names the waiters it takes as it is made, so no sweep
+        // has to choose among them.
+        | WakePrimitive.FutexWakeTaken -> None
 
     /// The queues the call `parked` sleeps on, under `machine`'s flavour, whose
     /// waiters a real kernel wakes one at a time: those of the primitives of its

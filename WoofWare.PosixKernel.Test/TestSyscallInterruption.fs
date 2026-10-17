@@ -872,6 +872,12 @@ module TestSyscallInterruption =
                 {
                     ParkedConnect.Socket = description
                 }
+            ParkedSyscall.Futex
+                {
+                    FutexAddress = 0x1000UL
+                    FutexDeadline = None
+                    TakenByWake = false
+                }
         ]
 
     /// The measured rule, per flavour, stated here rather than read from
@@ -887,7 +893,9 @@ module TestSyscallInterruption =
     /// Darwin 27.0.0 a handler does not end one at all, and the rule is
     /// Linux's. A datagram receive and a Linux Unix-domain datagram send
     /// restart under it (`datagram-park.c`), and so does a Linux connect
-    /// asleep on a full listener (`connect-park.c`).
+    /// asleep on a full listener (`connect-park.c`). A futex wait with no
+    /// timeout restarts under it, and one with a timeout answers EINTR under
+    /// it, on Linux 6.18.5 (`docs/probes/futex`).
     let private measuredRule (flavour : SimulatedUnixFlavour) (parked : ParkedSyscall) : SignalRestartRule =
         match parked with
         | ParkedSyscall.Flock _
@@ -912,6 +920,10 @@ module TestSyscallInterruption =
             match flavour with
             | SimulatedUnixFlavour.Linux -> SignalRestartRule.RestartsUnderSaRestart
             | SimulatedUnixFlavour.Darwin -> SignalRestartRule.FailsWithEintr
+        | ParkedSyscall.Futex wait ->
+            match wait.FutexDeadline with
+            | None -> SignalRestartRule.RestartsUnderSaRestart
+            | Some _ -> SignalRestartRule.FailsWithEintr
 
     [<Test>]
     let ``the rule of every park on either flavour is the measured one`` () : unit =

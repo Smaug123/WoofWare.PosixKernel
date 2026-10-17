@@ -626,6 +626,24 @@ type ParkedConnect =
             Socket : OpenFileDescriptionId
         }
 
+/// One thread's in-flight Linux `futex(2)` `FUTEX_WAIT_PRIVATE`: the address
+/// it waits on, when it times out, and whether a `FUTEX_WAKE_PRIVATE` has
+/// taken it off the queue of that address.
+///
+/// A process's waiters on one address form one queue, in the order they
+/// parked (`ThreadPark.Ordinal`). No other process's wake reaches it.
+type ParkedFutex =
+    {
+        /// The user address the thread waits on.
+        FutexAddress : uint64
+        /// The instant, in nanoseconds since boot, at which the wait answers
+        /// `ETIMEDOUT`; or `None` for a wait with no timeout.
+        FutexDeadline : int64 option
+        /// Whether a `FUTEX_WAKE_PRIVATE` has taken the thread off its queue,
+        /// so that the wait answers 0, whatever else has woken it.
+        TakenByWake : bool
+    }
+
 /// <summary>
 /// The syscall a thread is blocked in, if it is blocked in one.
 /// </summary>
@@ -718,6 +736,11 @@ type ParkedSyscall =
     /// one. `UnixSystem.checkInvariants` reports a thread parked in it as a
     /// defect.
     | Connect of ParkedConnect
+    /// A Linux `futex(2)` `FUTEX_WAIT_PRIVATE`, waiting for a
+    /// `FUTEX_WAKE_PRIVATE` on its address to take it, for its deadline if it
+    /// has one, or for a signal with a handler. Holds no open file
+    /// description.
+    | Futex of ParkedFutex
 
 [<RequireQualifiedAccess>]
 module ParkedSyscall =
@@ -770,6 +793,7 @@ module ParkedSyscall =
         | ParkedSyscall.DatagramReceive receive -> [ receive.Socket ]
         | ParkedSyscall.DatagramSend send -> [ send.Socket ]
         | ParkedSyscall.Connect connect -> [ connect.Socket ]
+        | ParkedSyscall.Futex _ -> []
 
 /// Where one park stands in the order every park on this machine was made in.
 ///
@@ -1168,6 +1192,7 @@ module UnixThreadTable =
             | ParkedSyscall.DatagramReceive _ -> 16
             | ParkedSyscall.DatagramSend _ -> 17
             | ParkedSyscall.Connect _ -> 18
+            | ParkedSyscall.Futex _ -> 19
 
         let sameSyscall =
             match existing.Parked with

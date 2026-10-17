@@ -62,6 +62,7 @@
         <Compile Include="EmulatedFileSystemType.fs" />
         <Compile Include="DeviceFileSystem.fs" />
         <Compile Include="UserBuffer.fs" />
+        <Compile Include="TimespecArgument.fs" />
         <Compile Include="OsThreadId.fs" />
         <Compile Include="ProcessIdTable.fs" />
         <Compile Include="WakePrimitive.fs" />
@@ -121,6 +122,7 @@
         <Compile Include="UnixCredentials.fs" />
         <Compile Include="ProcessLaunch.fs" />
         <Compile Include="UnixSignal.fs" />
+        <Compile Include="UnixFutex.fs" />
         <Compile Include="Syscall.fs" />
         <Compile Include="UnixSystem.fs" />
         <Compile Include="UnixBootImage.fs" />

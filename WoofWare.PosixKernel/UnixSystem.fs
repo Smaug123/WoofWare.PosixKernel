@@ -101,6 +101,7 @@ type internal SyscallRefusal<'Thread> =
     | ExitThread of ThreadExitRefusal<'Thread>
     | ExitGroup of ProcessEndRefusal
     | GetCpu of GetCpuRefusal
+    | Futex of FutexRefusal
     /// The call is `call`, a reserved case: this library does not model the
     /// call it names yet.
     | Reserved of call : string
@@ -205,6 +206,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.ExitThread refusal -> $"exit: %s{ThreadExitRefusal.describe refusal}"
         | SyscallRefusal.ExitGroup refusal -> $"exit_group: %s{ProcessEndRefusal.describe refusal}"
         | SyscallRefusal.GetCpu refusal -> $"getcpu: %s{GetCpuRefusal.describe refusal}"
+        | SyscallRefusal.Futex refusal -> $"futex: %s{FutexRefusal.describe refusal}"
         | SyscallRefusal.Reserved call ->
             $"%s{call} is a reserved case: this library does not model the call it names yet, and nothing makes one."
 
@@ -303,6 +305,7 @@ module internal SyscallRefusal =
         | SyscallRefusal.ExitThread inner -> ThreadExitRefusal.kind inner
         | SyscallRefusal.ExitGroup inner -> ProcessEndRefusal.kind inner
         | SyscallRefusal.GetCpu inner -> GetCpuRefusal.kind inner
+        | SyscallRefusal.Futex inner -> FutexRefusal.kind inner
         | SyscallRefusal.Reserved _ -> RefusalKind.Unmodelled
 
 /// A way this system's tables disagree with each other — a state no kernel
@@ -1853,6 +1856,14 @@ module UnixSystem =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
+        | Syscall.Futex (address, op, value, word, timeout) ->
+            CopiedArgument.copyValue
+                "UnixSystem.step of Syscall.Futex"
+                UnixFutex.tryFutexWithWord
+                word
+                (fun buffer -> UnixFutex.tryFutex caller address op value buffer timeout system)
+            |> Result.map SteppedCall.Futex
+            |> Result.mapError SyscallRefusal.Futex
 
     /// <summary>
     /// Make the call `call` names, by `caller`, through that call's own
@@ -3233,7 +3244,8 @@ module UnixSystem =
                 match state.Parked |> Option.map (fun park -> park.Syscall) with
                 | None -> []
                 // Names no description.
-                | Some ParkedSyscall.SigSuspend -> []
+                | Some ParkedSyscall.SigSuspend
+                | Some (ParkedSyscall.Futex _) -> []
                 | Some (ParkedSyscall.Sleep _ as parked)
                 | Some (ParkedSyscall.FifoOpen _ as parked)
                 | Some (ParkedSyscall.Select _ as parked)

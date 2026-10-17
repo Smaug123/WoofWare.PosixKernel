@@ -2130,6 +2130,7 @@ module UnixDescriptor =
                     | ParkedSyscall.DatagramReceive _
                     | ParkedSyscall.DatagramSend _
                     | ParkedSyscall.Connect _
+                    | ParkedSyscall.Futex _
                     // No descriptor names a FIFO open's description until the call
                     // installs it, so no close reaches it.
                     | ParkedSyscall.FifoOpen _
@@ -2176,6 +2177,7 @@ module UnixDescriptor =
                 | ParkedSyscall.DatagramReceive _
                 | ParkedSyscall.DatagramSend _
                 | ParkedSyscall.Connect _
+                | ParkedSyscall.Futex _
                 | ParkedSyscall.FifoOpen _
                 | ParkedSyscall.InotifyRead _
                 | ParkedSyscall.ConnectionRead _
@@ -2217,6 +2219,7 @@ module UnixDescriptor =
                    | ParkedSyscall.DatagramReceive _
                    | ParkedSyscall.DatagramSend _
                    | ParkedSyscall.Connect _
+                   | ParkedSyscall.Futex _
                    | ParkedSyscall.FifoOpen _
                    | ParkedSyscall.InotifyRead _
                    | ParkedSyscall.ConnectionRead _
@@ -2311,6 +2314,8 @@ module UnixDescriptor =
             // Reserved: nothing parks a thread in it yet, and no Darwin connect
             // sleeps.
             | ParkedSyscall.Connect _
+            // Only Linux has futex, and a futex wait holds no description.
+            | ParkedSyscall.Futex _
             | ParkedSyscall.KqueuePoll _ -> None
 
         let endedCalls =
@@ -2461,6 +2466,7 @@ module UnixDescriptor =
                     | ParkedSyscall.DatagramReceive _
                     | ParkedSyscall.DatagramSend _
                     | ParkedSyscall.Connect _
+                    | ParkedSyscall.Futex _
                     | ParkedSyscall.FifoOpen _
                     | ParkedSyscall.InotifyRead _
                     | ParkedSyscall.KqueuePoll _ -> false
@@ -2563,6 +2569,7 @@ module UnixDescriptor =
                         | ParkedSyscall.DatagramReceive _
                         | ParkedSyscall.DatagramSend _
                         | ParkedSyscall.Connect _
+                        | ParkedSyscall.Futex _
                         | ParkedSyscall.FifoOpen _
                         | ParkedSyscall.InotifyRead _
                         | ParkedSyscall.ConnectionRead _

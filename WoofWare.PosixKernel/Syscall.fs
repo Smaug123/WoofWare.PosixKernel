@@ -553,6 +553,10 @@ type Syscall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality
     | ExitGroup of status : int
     /// Linux's `getcpu(2)`, as `UnixScheduling.getcpu` makes it.
     | GetCpu
+    /// Linux's `futex(2)` on the word at `address`, as `UnixFutex.futex` makes
+    /// it, with `word` what the caller's memory at `address` held as the call
+    /// was made. A `FUTEX_WAKE_PRIVATE` reads neither `word` nor `timeout`.
+    | Futex of address : uint64 * op : int * value : int * word : CopiedArgument<uint32> * timeout : TimespecArgument
 
 /// What `UnixSystem.step` answers for a `Syscall.Nanosleep`: what
 /// `SteppedCall.Nanosleep` holds.
@@ -948,3 +952,6 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     | ExitGroup of ended : EndedProcess * system : UnixSystem<'Thread, 'Handler>
     /// What `UnixScheduling.getcpu` answers.
     | GetCpu of answer : GetCpuAnswer
+    /// What `UnixFutex.futexWithWord` answers, or `UnixFutex.futex` where the
+    /// call answers before it reads the word.
+    | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
