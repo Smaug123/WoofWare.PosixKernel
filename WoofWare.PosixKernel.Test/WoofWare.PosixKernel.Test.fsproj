@@ -75,6 +75,7 @@
     <Compile Include="TestGetGroups.fs" />
     <Compile Include="TestCredentialChange.fs" />
     <Compile Include="TestCredentialThreadsMeasured.fs" />
+    <Compile Include="TestCredentialSetxid.fs" />
     <Compile Include="TestModeChange.fs" />
     <Compile Include="TestUmask.fs" />
     <Compile Include="TestAccess.fs" />
