@@ -207,26 +207,39 @@ static void section_group(void)
             memset(&sa, 0, sizeof sa);
             sa.sa_handler = on_usr1;
             sigaction(SIGUSR1, &sa, NULL);
-            int sib_pipe[2];
+            int sib_pipe[2], ready[2];
             pipe(sib_pipe);
+            pipe(ready);
             pid_t sib = fork_or_die();
             if (sib == 0) {
-                /* Same process group as its parent. */
+                /* Same process group as its parent. It says it is ready only
+                 * once its handler has somewhere to report to. */
+                alarm(5);
+                close(pfd[0]);
+                close(pfd[1]);
+                close(sib_pipe[0]);
+                close(ready[0]);
                 report_fd = sib_pipe[1];
+                char r = 'r';
+                write(ready[1], &r, 1);
                 for (;;) pause();
             }
-            sleep_ms(50);
+            close(sib_pipe[1]);
+            close(ready[1]);
+            char x;
+            if (read(ready[0], &x, 1) != 1) { perror("sibling never ready"); _exit(97); }
             main_th = pthread_self();
             const char *a = call(h == 0 ? 0 : -getpgrp(), SIGUSR1);
-            for (int i = 0; i < 200 && handled_by < 0; i++) sleep_ms(1);
-            char x;
-            int sib_ran = 0;
-            sleep_ms(20);
-            /* The sibling writes one byte if its handler ran. */
+            for (int i = 0; i < 500 && handled_by < 0; i++) sleep_ms(1);
+            /* The sibling writes one byte if its handler ran: wait up to
+             * 500 ms for it. */
+            fd_set set;
+            FD_ZERO(&set);
+            FD_SET(sib_pipe[0], &set);
+            struct timeval wait = { 0, 500000 };
+            int sib_ran = select(sib_pipe[0] + 1, &set, NULL, NULL, &wait) == 1 && read(sib_pipe[0], &x, 1) == 1;
             kill(sib, SIGKILL);
             waitpid(sib, NULL, 0);
-            close(sib_pipe[1]);
-            sib_ran = read(sib_pipe[0], &x, 1) == 1;
             char line[256];
             int n = snprintf(line, sizeof line, "section=group target=%s sig=USR1 answer=%s self-handled=%d sibling-handled=%d\n", how[h], a, handled_by >= 0, sib_ran);
             write(pfd[1], line, n);
@@ -300,16 +313,17 @@ static const char *send_as(struct ids id, pid_t target, int sig)
     return answer;
 }
 
+/* How many reports a target's handler has written on `fd`: waiting up to
+ * 300 ms for the first, and then taking what is there. */
 static int drained(int fd)
 {
-    sleep_ms(20);
     int got = 0;
     char x;
     while (1) {
         fd_set set;
         FD_ZERO(&set);
         FD_SET(fd, &set);
-        struct timeval z = { 0, 0 };
+        struct timeval z = { 0, got == 0 ? 300000 : 0 };
         if (select(fd + 1, &set, NULL, NULL, &z) <= 0) break;
         if (read(fd, &x, 1) != 1) break;
         got++;
