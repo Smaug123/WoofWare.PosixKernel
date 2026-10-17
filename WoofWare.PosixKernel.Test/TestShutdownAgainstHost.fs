@@ -42,9 +42,6 @@ module TestShutdownAgainstHost =
     // The host
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
@@ -75,20 +72,8 @@ module TestShutdownAgainstHost =
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOptBytes(int fd, int level, int optionName, byte[] value, uint32& length)
 
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
 
     [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
     extern int private hostDup(int fd)
@@ -107,14 +92,6 @@ module TestShutdownAgainstHost =
 
     [<DllImport("libc", EntryPoint = "kevent", SetLastError = true)>]
     extern int private hostKevent(int kq, byte[] changes, int nchanges, byte[] events, int nevents, int64[] timeout)
-
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably, so these go through .NET's own fixed-arity wrappers.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<Literal>]
     let private AF_INET = 2
@@ -330,7 +307,7 @@ module TestShutdownAgainstHost =
 
         nonLoopbackIpv4Addresses ()
         |> List.filter (fun address ->
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
             if fd < 0 then
                 failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -341,7 +318,7 @@ module TestShutdownAgainstHost =
             Marshal.SetLastPInvokeError 0
             let bound = hostBind (fd, sockaddr, uint32 sockaddr.Length)
             let bindErrno = Marshal.GetLastPInvokeError ()
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
             if bound = 0 then
                 false
@@ -375,12 +352,12 @@ module TestShutdownAgainstHost =
             (int name.[2] <<< 8) ||| int name.[3]
 
         let freePort () : int =
-            let t = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let t = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" t
             let address = loopbackAt 0
             check "bind" (hostBind (t, address, uint32 address.Length))
             let port = portOf t
-            hostClose t |> ignore<int>
+            HostCalls.close t |> ignore<int>
             port
 
         let errorName (errno : int) : string =
@@ -573,7 +550,7 @@ module TestShutdownAgainstHost =
                 foreignHolders <- foreignHolders @ foreign
 
         do
-            let listener = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let listener = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" listener
 
             let address =
@@ -596,7 +573,7 @@ module TestShutdownAgainstHost =
             check "bind" (hostBind (listener, address, uint32 address.Length))
             check "listen" (hostListen (listener, 4))
             let destination = loopbackAt (portOf listener)
-            let client = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" client
 
             match shape with
@@ -612,10 +589,10 @@ module TestShutdownAgainstHost =
             settle ()
             let server = hostAccept (listener, 0n, 0n)
             check "accept" server
-            hostClose listener |> ignore<int>
+            HostCalls.close listener |> ignore<int>
 
             for fd in [ client ; server ] do
-                if hostSetNonBlocking (nativeint fd, 1) <> 0 then
+                if HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                     failwith $"could not make fd %d{fd} non-blocking"
 
             fds <- Map.ofList [ c, client ; p, server ]
@@ -643,14 +620,14 @@ module TestShutdownAgainstHost =
 
         member this.Read (e : ConnectionEnd) (count : int) : string =
             let result, errno =
-                call (fun () -> int64 (hostRead (this.Fd e, hostBuffer, unativeint count)))
+                call (fun () -> int64 (HostCalls.read (this.Fd e, hostBuffer, unativeint count)))
 
             settle ()
             ans result errno
 
         member this.WriteAnswer (e : ConnectionEnd) (count : int) : Result<int, string> =
             let result, errno =
-                call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, unativeint count)))
+                call (fun () -> int64 (HostCalls.write (this.Fd e, hostBuffer, unativeint count)))
 
             if result > 0L then
                 noteWritten e result
@@ -672,10 +649,10 @@ module TestShutdownAgainstHost =
                 hostSetSockOpt (fd, SimulatedUnixPlatform.socketOptionLevel platform, lingerOption flavour, linger, 8u)
                 |> ignore<int>
 
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
             fds <- Map.empty
-            edgePort |> Option.iter (hostClose >> ignore<int>)
+            edgePort |> Option.iter (HostCalls.close >> ignore<int>)
             edgePort <- None
 
         interface IShutdownPair with
@@ -718,7 +695,7 @@ module TestShutdownAgainstHost =
                     checkFilled ()
 
                 awaitAcknowledged ()
-                let result, errno = call (fun () -> int64 (hostClose (this.Fd e)))
+                let result, errno = call (fun () -> int64 (HostCalls.close (this.Fd e)))
                 fds <- Map.remove e fds
                 settle ()
                 ans result errno
@@ -748,7 +725,7 @@ module TestShutdownAgainstHost =
             member this.Fionread e =
                 let mutable available = 0
 
-                if hostBytesAvailable (nativeint (this.Fd e), &available) <> 0 then
+                if HostCalls.bytesAvailable (nativeint (this.Fd e), &available) <> 0 then
                     -1
                 else
                     available
@@ -771,7 +748,7 @@ module TestShutdownAgainstHost =
 
                         let out = Array.zeroCreate<byte> epollEventSize
                         let n = hostEpollWait (ep, out, 1, 0)
-                        hostClose ep |> ignore<int>
+                        HostCalls.close ep |> ignore<int>
                         let events = if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u
                         $"epoll=0x%x{events}"
                     | SimulatedUnixFlavour.Darwin ->
@@ -786,7 +763,7 @@ module TestShutdownAgainstHost =
                         check "kevent" (hostKevent (kq, changes, 2, null, 0, null))
                         let out = Array.zeroCreate<byte> 64
                         let n = hostKevent (kq, null, 0, out, 2, [| 0L ; 0L |])
-                        hostClose kq |> ignore<int>
+                        HostCalls.close kq |> ignore<int>
                         let events = keventsOf out (max n 0)
 
                         let render (filter : int16) =
@@ -807,7 +784,7 @@ module TestShutdownAgainstHost =
                         total
                     else
                         let result, errno =
-                            call (fun () -> int64 (hostWrite (this.Fd e, hostBuffer, 1048576un)))
+                            call (fun () -> int64 (HostCalls.write (this.Fd e, hostBuffer, 1048576un)))
 
                         if result > 0L then
                             go (total + result) 0
@@ -856,7 +833,7 @@ module TestShutdownAgainstHost =
                 // end polls cannot keep the drain going.
                 let rec go (total : int64) (dry : int) (patient : bool) =
                     let result, errno =
-                        call (fun () -> int64 (hostRead (this.Fd e, hostBuffer, 1048576un)))
+                        call (fun () -> int64 (HostCalls.read (this.Fd e, hostBuffer, 1048576un)))
 
                     if result > 0L then
                         go (total + result) 0 true
@@ -954,7 +931,7 @@ module TestShutdownAgainstHost =
             member this.PortOf e = portOf (this.Fd e)
 
             member _.BindFree port =
-                let n = hostSocket (AF_INET, SOCK_STREAM, 0)
+                let n = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
                 check "socket" n
                 let address = loopbackAt port
 
@@ -964,14 +941,14 @@ module TestShutdownAgainstHost =
                 if result < 0L && errorName errno = "EADDRINUSE" then
                     noteRefusal false port
 
-                hostClose n |> ignore<int>
+                HostCalls.close n |> ignore<int>
 
                 if result = 0L then "bind-ok"
                 elif errorName errno = "EADDRINUSE" then "bind-EADDRINUSE"
                 else ans result errno
 
             member _.Candidate reuse wildcard port =
-                let n = hostSocket (AF_INET, SOCK_STREAM, 0)
+                let n = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
                 check "socket" n
 
                 if reuse then
@@ -999,7 +976,7 @@ module TestShutdownAgainstHost =
                         else
                             "bind-ok listen-ok"
 
-                hostClose n |> ignore<int>
+                HostCalls.close n |> ignore<int>
                 answer
 
             member this.ReuseAddress e =
@@ -1287,7 +1264,7 @@ module TestShutdownAgainstHost =
 
             let foreign =
                 if foreignOn attempts.Value then
-                    let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+                    let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
                     if fd < 0 then
                         failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -1298,7 +1275,7 @@ module TestShutdownAgainstHost =
                             (Ipv4Endpoint.ofParts foreignAt (uint16 port))
 
                     if hostBind (fd, address, uint32 address.Length) <> 0 || hostListen (fd, 4) <> 0 then
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
                         raise (PortAlreadyHeld port)
 
                     Some fd
@@ -1306,7 +1283,7 @@ module TestShutdownAgainstHost =
                     None
 
             s.Emit (s.Candidate false wildcard port)
-            foreign |> Option.iter (hostClose >> ignore<int>)
+            foreign |> Option.iter (HostCalls.close >> ignore<int>)
             s.Lines
 
     /// Runs `test` again, up to four more times, while it raises
@@ -1734,7 +1711,7 @@ module TestShutdownAgainstHost =
                 (Ipv4Endpoint.ofParts Ipv4Address.loopback (uint16 port))
 
         let stream () =
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" fd
             fd
 
@@ -1761,7 +1738,7 @@ module TestShutdownAgainstHost =
                     check "epoll_ctl" (hostEpollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
                     let out = Array.zeroCreate<byte> epollEventSize
                     let n = hostEpollWait (ep, out, 1, 0)
-                    hostClose ep |> ignore<int>
+                    HostCalls.close ep |> ignore<int>
                     $"epoll=0x%x{(if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u)}"
                 | SimulatedUnixFlavour.Darwin ->
                     let kq = hostKqueue ()
@@ -1775,7 +1752,7 @@ module TestShutdownAgainstHost =
                     check "kevent" (hostKevent (kq, changes, 2, null, 0, null))
                     let out = Array.zeroCreate<byte> 64
                     let n = hostKevent (kq, null, 0, out, 2, [| 0L ; 0L |])
-                    hostClose kq |> ignore<int>
+                    HostCalls.close kq |> ignore<int>
                     let events = keventsOf out (max n 0)
 
                     let render (filter : int16) =
@@ -1787,7 +1764,7 @@ module TestShutdownAgainstHost =
                     $"kq-read=%s{render KeventFilter.Read} kq-write=%s{render KeventFilter.Write}"
 
             let mutable available = 0
-            hostBytesAvailable (nativeint fd, &available) |> ignore<int>
+            HostCalls.bytesAvailable (nativeint fd, &available) |> ignore<int>
             $"poll=0x%x{revents} %s{waiters} fionread=%d{available}"
 
         let shutdownOf (fd : int) (how : int) : string = call (fun () -> hostShutdown (fd, how))
@@ -1796,16 +1773,16 @@ module TestShutdownAgainstHost =
             Stream = stream
             Datagram =
                 fun () ->
-                    let fd = hostSocket (AF_INET, 2, 0)
+                    let fd = HostCalls.socket (AF_INET, 2, 0)
                     check "socket" fd
                     fd
             NotSocket =
                 fun () ->
                     let fds = Array.zeroCreate<int> 2
 
-                    match hostPipe fds with
+                    match HostCalls.pipe fds with
                     | 0 ->
-                        hostClose fds.[1] |> ignore<int>
+                        HostCalls.close fds.[1] |> ignore<int>
                         fds.[0]
                     | _ -> failwith "pipe failed"
             // Any thread of the test host may open a descriptor, and so take a
@@ -1818,18 +1795,18 @@ module TestShutdownAgainstHost =
                     let any = loopbackAt 0
                     check "bind" (hostBind (fd, any, 16u))
             Shutdown = fun fd how -> ShutdownLine.Line (shutdownOf fd how)
-            Close = fun fd -> hostClose fd |> ignore<int>
+            Close = fun fd -> HostCalls.close fd |> ignore<int>
             Refused =
                 fun () ->
                     let l, name = listening ()
-                    hostClose l |> ignore<int>
+                    HostCalls.close l |> ignore<int>
                     let f = stream ()
                     f, call (fun () -> hostConnect (f, name, 16u))
             Unreported =
                 fun how ->
                     let l, name = listening ()
                     let f = stream ()
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
                     let first = call (fun () -> hostConnect (f, name, 16u))
 
                     let sh =
@@ -1838,8 +1815,8 @@ module TestShutdownAgainstHost =
                         | Some how -> shutdownOf f how
 
                     let again = call (fun () -> hostConnect (f, name, 16u))
-                    hostClose f |> ignore<int>
-                    hostClose l |> ignore<int>
+                    HostCalls.close f |> ignore<int>
+                    HostCalls.close l |> ignore<int>
 
                     let name =
                         match how with
@@ -1852,29 +1829,29 @@ module TestShutdownAgainstHost =
                     let hn = rawHowName how
                     let l, name = listening ()
                     let f = stream ()
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
                     let before = rdy f
                     let sh = shutdownOf f how
                     let after = rdy f
-                    hostSetNonBlocking (nativeint f, 0) |> ignore<int>
+                    HostCalls.setNonBlocking (nativeint f, 0) |> ignore<int>
                     let connected = call (fun () -> hostConnect (f, name, 16u))
-                    hostSetNonBlocking (nativeint f, 1) |> ignore<int>
+                    HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
                     let peer = hostAccept (l, 0n, 0n)
                     check "accept" peer
-                    let written = call (fun () -> int (hostWrite (f, hostBuffer, 1un)))
-                    hostWrite (peer, hostBuffer, 1un) |> ignore<nativeint>
+                    let written = call (fun () -> int (HostCalls.write (f, hostBuffer, 1un)))
+                    HostCalls.write (peer, hostBuffer, 1un) |> ignore<nativeint>
                     Thread.Sleep 30
-                    let read = call (fun () -> int (hostRead (f, hostBuffer, 4096un)))
+                    let read = call (fun () -> int (HostCalls.read (f, hostBuffer, 4096un)))
                     let rc = rdy f
-                    hostClose f |> ignore<int>
-                    hostClose peer |> ignore<int>
-                    hostClose l |> ignore<int>
-                    let u = hostSocket (AF_INET, 2, 0)
+                    HostCalls.close f |> ignore<int>
+                    HostCalls.close peer |> ignore<int>
+                    HostCalls.close l |> ignore<int>
+                    let u = HostCalls.socket (AF_INET, 2, 0)
                     check "socket" u
                     let ub = rdy u
                     let us = shutdownOf u how
                     let ua = rdy u
-                    hostClose u |> ignore<int>
+                    HostCalls.close u |> ignore<int>
 
                     [
                         ShutdownLine.Line
@@ -1910,7 +1887,7 @@ module TestShutdownAgainstHost =
         HostPlatform.onUnixHost (fun flavour ->
             let own = Array.zeroCreate<int> 2
 
-            if hostPipe own <> 0 then
+            if HostCalls.pipe own <> 0 then
                 failwith $"pipe failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             let held = ResizeArray<int> ()
@@ -1941,10 +1918,10 @@ module TestShutdownAgainstHost =
                     |> ShutdownProbe.disagreements ShutdownProbe.Probe.Shutdown flavour "U" withoutSigPipe
                 finally
                     for fd in held do
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
 
-                    hostClose own.[0] |> ignore<int>
-                    hostClose own.[1] |> ignore<int>
+                    HostCalls.close own.[0] |> ignore<int>
+                    HostCalls.close own.[1] |> ignore<int>
 
             disagreements |> shouldEqual []
         )

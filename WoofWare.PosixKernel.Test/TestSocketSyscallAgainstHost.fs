@@ -18,12 +18,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketSyscallAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, int& optionLength)
 
@@ -45,7 +39,7 @@ module TestSocketSyscallAgainstHost =
     /// errno.
     let private hostAnswer (flavour : SimulatedUnixFlavour) (domain : int) (kind : int) (protocol : int) =
         let solSocket, soType, nonBlock = constants flavour
-        let fd = hostSocket (domain, kind, protocol)
+        let fd = HostCalls.socket (domain, kind, protocol)
 
         if fd < 0 then
             Error (Marshal.GetLastPInvokeError ())
@@ -64,7 +58,7 @@ module TestSocketSyscallAgainstHost =
 
                 Ok (value, flags &&& nonBlock <> 0)
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``every call the library answers is answered the same by this host`` () : unit =

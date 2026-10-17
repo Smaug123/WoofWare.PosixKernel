@@ -44,8 +44,7 @@ module TestProcessTerminationAgainstHost =
         (cases : (string * ProcessTermination) list)
         : unit
         =
-        let numbering =
-            SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+        let numbering = HostPlatform.signalNumberingOf flavour
 
         let expected =
             cases
@@ -104,8 +103,7 @@ module TestProcessTerminationAgainstHost =
     [<Test>]
     let ``a death by signal renders as this host reports it`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             [ 1 .. Signal.highestSignoUnder numbering ]
             |> List.choose (fun signo ->

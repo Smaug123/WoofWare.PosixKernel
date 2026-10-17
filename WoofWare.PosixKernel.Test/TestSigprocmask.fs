@@ -36,9 +36,6 @@ module TestSigprocmask =
         | Ok answered -> answered
         | Error refusal -> failwith $"sigprocmask was refused: %s{SigprocmaskRefusal.describe refusal}"
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     /// Which call a row makes: the probe's routes.
     type private Route =
         | Libc
@@ -67,7 +64,7 @@ module TestSigprocmask =
         | Route.Raw -> UnixSignal.rtSigprocmask (Callers.thread thread system) how set 8UL system
 
     let private maskOfWord (flavour : SimulatedUnixFlavour) (word : uint64) : SignalMask =
-        match SignalMask.ofWord (numberingOf flavour) word with
+        match SignalMask.ofWord (HostPlatform.signalNumberingOf flavour) word with
         | Ok mask -> mask
         | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
@@ -89,7 +86,7 @@ module TestSigprocmask =
         =
         UnixSignal.pthreadSigmask
             (Callers.thread thread system)
-            (MaskHow.setMask (numberingOf flavour))
+            (MaskHow.setMask (HostPlatform.signalNumberingOf flavour))
             (Some (maskOfWord flavour word))
             system
         |> orFail
@@ -108,7 +105,7 @@ module TestSigprocmask =
         let unnamed = [ -1 ; 0 ; 1 ; 2 ; 3 ; 4 ; 5 ; 100 ; Int32.MaxValue ; Int32.MinValue ]
 
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
             let start = systemOn flavour |> withMask flavour 0 (hup ||| int')
 
             for route in routesOf flavour do
@@ -154,7 +151,7 @@ module TestSigprocmask =
             | SimulatedUnixFlavour.Darwin, _ -> 0xfffefeffUL
 
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let full =
                 match flavour with
@@ -178,7 +175,7 @@ module TestSigprocmask =
         // then left 1; and from 180000001, glibc's SIG_UNBLOCK of 32 and 33
         // left 180000001.
         let flavour = SimulatedUnixFlavour.Linux
-        let numbering = numberingOf flavour
+        let numbering = HostPlatform.signalNumberingOf flavour
         let rt = 0x180000000UL
 
         let blocked =
@@ -216,7 +213,7 @@ module TestSigprocmask =
         // with a NULL set, and with a NULL set and an unnamed how, and left
         // the mask as it was.
         let flavour = SimulatedUnixFlavour.Linux
-        let block = MaskHow.block (numberingOf flavour)
+        let block = MaskHow.block (HostPlatform.signalNumberingOf flavour)
         let start = systemOn flavour |> withMask flavour 0 (hup ||| int')
         let set = Some (maskOfWord flavour (int' ||| term))
 
@@ -251,7 +248,7 @@ module TestSigprocmask =
         // second thread INT (2), then the main thread calls.
         let measured (flavour : SimulatedUnixFlavour) (route : Route) (how : int) : uint64 * uint64 =
             let everyThread = flavour = SimulatedUnixFlavour.Darwin && route = Route.Libc
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             if how = MaskHow.block numbering then
                 0x4001UL, (if everyThread then 0x4002UL else 0x2UL)
@@ -261,7 +258,7 @@ module TestSigprocmask =
                 0x4000UL, (if everyThread then 0x4000UL else 0x2UL)
 
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let start =
                 systemOn flavour
@@ -287,7 +284,7 @@ module TestSigprocmask =
                     | Error errno -> failwith $"%O{flavour} %A{route}: %O{errno}"
 
     let private signo (flavour : SimulatedUnixFlavour) (signal : Signal) : int =
-        Signal.toRawSignoUnder (numberingOf flavour) signal
+        Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
     let private catching (flavour : SimulatedUnixFlavour) (signal : Signal) (system : UnixSystem<int, string>) =
         match
@@ -326,7 +323,7 @@ module TestSigprocmask =
             | SimulatedUnixFlavour.Darwin -> [ Signal.SIGUSR1 ; Signal.SIGTERM ; Signal.SIGILL ]
 
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
             let three = [ Signal.SIGTERM ; Signal.SIGUSR1 ; Signal.SIGILL ]
             let mask = SignalMask.ofSignals numbering (Set.ofList three)
 
@@ -380,7 +377,7 @@ module TestSigprocmask =
         // `sigpending-scope.c`, rows "proc" and "thread": the main thread and
         // a second both block the signal.
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let both (signal : Signal) =
                 let mask = SignalMask.ofSignals numbering (Set.singleton signal)
@@ -436,7 +433,7 @@ module TestSigprocmask =
             ]
 
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signal, disposition, (onLinux, onDarwin) in rows do
                 let mask = SignalMask.ofSignals numbering (Set.singleton signal)
@@ -494,7 +491,7 @@ module TestSigprocmask =
         // it, and its mask, were both {USR1, TERM}; once it returned, USR1's
         // handler ran again and then TERM's, on both.
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let system =
                 let system = systemOn flavour |> catching flavour Signal.SIGTERM
@@ -577,7 +574,7 @@ module TestSigprocmask =
         // model (`SignalReceiverRefusal.LeaderBlocks`).
         for flavour in flavours do
             let usr1 =
-                SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGUSR1)
+                SignalMask.ofSignals (HostPlatform.signalNumberingOf flavour) (Set.singleton Signal.SIGUSR1)
                 |> SignalMask.toWord
 
             let system =
@@ -612,7 +609,7 @@ module TestSigprocmask =
         // own condition ended the call, which this library cannot express
         // (`TestUnblockForAnotherThread` searches every call and signal).
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             let system =
@@ -662,7 +659,7 @@ module TestSigprocmask =
         (thread : int, call : Syscall<int, string>)
         : Result<uint64 * Map<int, uint64>, UnixError>
         =
-        let numbering = numberingOf flavour
+        let numbering = HostPlatform.signalNumberingOf flavour
         let route, how, set, size = routeOf call
         let old = Map.find thread masks
 
@@ -721,7 +718,7 @@ module TestSigprocmask =
         let gen =
             gen {
                 let! flavour = Gen.elements flavours
-                let numbering = numberingOf flavour
+                let numbering = HostPlatform.signalNumberingOf flavour
 
                 let bits =
                     match flavour with
@@ -821,7 +818,7 @@ module TestSigprocmask =
         let gen =
             gen {
                 let! flavour = Gen.elements flavours
-                let numbering = numberingOf flavour
+                let numbering = HostPlatform.signalNumberingOf flavour
 
                 let signals =
                     [
@@ -855,7 +852,7 @@ module TestSigprocmask =
             (flavour : SimulatedUnixFlavour, before : Signal list, saMask : Signal list, noDefer : bool, inside)
             : unit
             =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let ofList (signals : Signal list) =
                 SignalMask.ofSignals numbering (Set.ofList signals)

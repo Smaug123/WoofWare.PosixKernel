@@ -53,23 +53,11 @@ module TestPipeAgainstHost =
     [<DllImport("libc", EntryPoint = "pipe2", SetLastError = true)>]
     extern int private hostPipe2(int[] fds, int flags)
 
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
     extern int private hostDup(int fd)
 
     [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
     extern nativeint private hostWriteAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
 
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
@@ -88,15 +76,6 @@ module TestPipeAgainstHost =
 
     [<DllImport("libc", EntryPoint = "getegid")>]
     extern uint32 private hostGetEGid()
-
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably, so these go through .NET's own fixed-arity wrappers in its
-    // `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FStat", SetLastError = true)>]
     extern int private hostFStat(nativeint fd, HostStatus& output)
@@ -187,12 +166,12 @@ module TestPipeAgainstHost =
         if wasNonBlocking then
             call ()
         else
-            hostSetNonBlocking (nativeint fd, 1) |> ignore
+            HostCalls.setNonBlocking (nativeint fd, 1) |> ignore
 
             try
                 call ()
             finally
-                hostSetNonBlocking (nativeint fd, 0) |> ignore
+                HostCalls.setNonBlocking (nativeint fd, 0) |> ignore
 
     [<Test>]
     let ``a real pipe and the model answer every call on a pipe alike`` () : unit =
@@ -247,12 +226,12 @@ module TestPipeAgainstHost =
 
                 // `pipe` and then O_NONBLOCK on each end: what `pipe2` with the
                 // flag makes, on a host whose libc may have no `pipe2`.
-                if hostPipe hostFds <> 0 then
+                if HostCalls.pipe hostFds <> 0 then
                     failwith $"pipe failed: errno %d{Marshal.GetLastPInvokeError ()}"
 
                 if startNonBlocking then
                     for fd in hostFds do
-                        hostSetNonBlocking (nativeint fd, 1) |> shouldEqual 0
+                        HostCalls.setNonBlocking (nativeint fd, 1) |> shouldEqual 0
 
                 let created, modelFds =
                     match UnixPipe.tryPipe2 (Callers.leader initial) flags UserBuffer.Mapped initial with
@@ -383,7 +362,7 @@ module TestPipeAgainstHost =
 
                             let hostCall () =
                                 if mapped then
-                                    hostWrite (hostFd, bytes, unativeint count)
+                                    HostCalls.write (hostFd, bytes, unativeint count)
                                 else
                                     hostWriteAt (hostFd, 8n, unativeint count)
 
@@ -421,7 +400,7 @@ module TestPipeAgainstHost =
 
                             let hostCall () =
                                 if mapped then
-                                    hostRead (hostFd, target, unativeint count)
+                                    HostCalls.read (hostFd, target, unativeint count)
                                 else
                                     hostReadAt (hostFd, 8n, unativeint count)
 
@@ -455,7 +434,8 @@ module TestPipeAgainstHost =
                             match slotOf index with
                             | None -> ()
                             | Some (modelFd, hostFd, _, group) ->
-                                hostSetNonBlocking (nativeint hostFd, (if value then 1 else 0)) |> shouldEqual 0
+                                HostCalls.setNonBlocking (nativeint hostFd, (if value then 1 else 0))
+                                |> shouldEqual 0
 
                                 let answer, after =
                                     UnixDescriptor.setNonBlocking (Callers.leader system) modelFd value system
@@ -481,7 +461,7 @@ module TestPipeAgainstHost =
                             match slotOf index with
                             | None -> ()
                             | Some (modelFd, hostFd, _, _ as closing) ->
-                                hostClose hostFd |> shouldEqual 0
+                                HostCalls.close hostFd |> shouldEqual 0
 
                                 match UnixDescriptor.tryClose (Callers.leader system) modelFd system with
                                 | Ok (SyscallAnswer.Completed _, after) -> system <- after
@@ -493,7 +473,7 @@ module TestPipeAgainstHost =
                         for modelFd, hostFd, pipeEnd, _ in slots do
                             let mutable available = 0
 
-                            if hostBytesAvailable (nativeint hostFd, &available) <> 0 then
+                            if HostCalls.bytesAvailable (nativeint hostFd, &available) <> 0 then
                                 failwith $"%s{where ()}: host FIONREAD failed"
 
                             UnixDescriptor.tryBytesAvailable (Callers.leader system) modelFd UserBuffer.Mapped system
@@ -596,7 +576,7 @@ module TestPipeAgainstHost =
                         | defects -> failwith $"%s{where ()}: %A{defects}"
                 finally
                     for _, hostFd, _, _ in slots do
-                        hostClose hostFd |> ignore
+                        HostCalls.close hostFd |> ignore
 
             Check.One (
                 Config.QuickThrowOnFailure.WithMaxTest 200,
@@ -618,8 +598,8 @@ module TestPipeAgainstHost =
                     let fds = [| -1 ; -1 |]
 
                     if hostPipe2 (fds, 0) = 0 then
-                        hostClose fds.[0] |> ignore
-                        hostClose fds.[1] |> ignore
+                        HostCalls.close fds.[0] |> ignore
+                        HostCalls.close fds.[1] |> ignore
 
                     true
                 with :? System.EntryPointNotFoundException ->
@@ -635,8 +615,8 @@ module TestPipeAgainstHost =
                 let errno = Marshal.GetLastPInvokeError ()
 
                 if rc = 0 then
-                    hostClose fds.[0] |> ignore
-                    hostClose fds.[1] |> ignore
+                    HostCalls.close fds.[0] |> ignore
+                    HostCalls.close fds.[1] |> ignore
 
                 let host =
                     if rc = 0 then

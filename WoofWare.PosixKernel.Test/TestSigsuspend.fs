@@ -17,9 +17,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSigsuspend =
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     let private boot (flavour : SimulatedUnixFlavour) : UnixSystem<int, string> =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -37,7 +34,7 @@ module TestSigsuspend =
         | SimulatedUnixFlavour.Darwin -> 0xffffffffUL
 
     let private maskOfWord (flavour : SimulatedUnixFlavour) (word : uint64) : SignalMask =
-        match SignalMask.ofWord (numberingOf flavour) word with
+        match SignalMask.ofWord (HostPlatform.signalNumberingOf flavour) word with
         | Ok mask -> mask
         | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
@@ -89,7 +86,8 @@ module TestSigsuspend =
 
     let private nothing : Step = Ok
 
-    let private numbering (r : Replay) : SignalNumbering = numberingOf r.Flavour
+    let private numbering (r : Replay) : SignalNumbering =
+        HostPlatform.signalNumberingOf r.Flavour
 
     let private signo (r : Replay) (signal : Signal) : int32 =
         Signal.toRawSignoUnder (numbering r) signal
@@ -698,7 +696,7 @@ module TestSigsuspend =
             UnixSystem.checkInvariants r.System |> shouldEqual []
             Ok (line r " end=exit0")
         | Error (Stop.Killed (signal, r)) ->
-            Ok (line r $" end=signal%d{Signal.toRawSignoUnder (numberingOf flavour) signal}")
+            Ok (line r $" end=signal%d{Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal}")
         | Error (Stop.Refused refusal) -> Error refusal
 
     let private replaysExactly (flavour : SimulatedUnixFlavour) : unit =
@@ -909,7 +907,7 @@ module TestSigsuspend =
         | StaleDiscard
 
     let private checkAgainstModel (flavour : SimulatedUnixFlavour) : unit =
-        let numbering = numberingOf flavour
+        let numbering = HostPlatform.signalNumberingOf flavour
 
         let property (cover : ModelLabel -> unit) (seed : int) : unit =
             let rng = Random seed
@@ -1376,14 +1374,14 @@ module TestSigsuspend =
             asleep |> UnixSystem.checkInvariants |> shouldEqual []
 
             asleep
-            |> withSignals (SignalState.initial (numberingOf flavour) Set.empty)
+            |> withSignals (SignalState.initial (HostPlatform.signalNumberingOf flavour) Set.empty)
             |> UnixSystem.checkInvariants
             |> shouldEqual [ UnixSystemDefect.SigsuspendWithoutMaskToRestore (Callers.ofDefault main) ]
 
     [<Test>]
     let ``a thread's exit and the process's end leave no mask to restore`` () : unit =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
             let hup = SignalMask.ofSignals numbering (Set.singleton Signal.SIGHUP)
             let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
@@ -1474,7 +1472,7 @@ module TestSigsuspend =
         // to user mode, and wakes the sleeper for, where Darwin does neither.
         for disposition in [ SignalDisposition.Ignore ; SignalDisposition.Default ] do
             let flavour = SimulatedUnixFlavour.Darwin
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
             let cont = SignalMask.ofSignals numbering (Set.singleton Signal.SIGCONT)
             let contSigno = Signal.toRawSignoUnder numbering Signal.SIGCONT
 

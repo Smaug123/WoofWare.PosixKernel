@@ -99,9 +99,6 @@ module TestEntropyAgainstHost =
     [<DllImport("libc", EntryPoint = "munmap", SetLastError = true)>]
     extern int private linuxMunmap(nativeint address, unativeint length)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private linuxClose(int fd)
-
     /// How much memory `mapAliased` really uses, however long a region it maps.
     [<Literal>]
     let private AliasedChunkBytes : int = 16 * 1024 * 1024
@@ -158,7 +155,7 @@ module TestEntropyAgainstHost =
             reserved
         finally
             // The mappings keep the file alive.
-            linuxClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``getrandom agrees with this kernel`` () : unit =

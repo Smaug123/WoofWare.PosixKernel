@@ -42,16 +42,10 @@ module TestInotifyAgainstHost =
     extern int private hostRmWatch(int fd, int wd)
 
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
 
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
     extern int private hostDup(int fd)
@@ -59,19 +53,11 @@ module TestInotifyAgainstHost =
     [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
     extern int64 private hostLSeek(int fd, int64 offset, int whence)
 
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "geteuid")>]
     extern uint32 private hostGetEUid()
 
     [<DllImport("libc", EntryPoint = "getegid")>]
     extern uint32 private hostGetEGid()
-
-    // `ioctl(2)` is variadic, so FIONREAD goes through .NET's own fixed-arity
-    // wrapper in its `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     let private context : string = "TestInotifyAgainstHost"
 
@@ -318,7 +304,7 @@ module TestInotifyAgainstHost =
 
                                 let host =
                                     if mapped then
-                                        hostAnswer numbering (hostRead (hostFd, buffer, unativeint count))
+                                        hostAnswer numbering (HostCalls.read (hostFd, buffer, unativeint count))
                                     else
                                         hostAnswer numbering (hostReadAt (hostFd, 0n, unativeint count))
 
@@ -390,7 +376,7 @@ module TestInotifyAgainstHost =
                                 | None -> ()
                                 | Some (hostFd, modelFd) ->
                                     let mutable available = 0
-                                    hostBytesAvailable (nativeint hostFd, &available) |> shouldEqual 0
+                                    HostCalls.bytesAvailable (nativeint hostFd, &available) |> shouldEqual 0
 
                                     match
                                         UnixDescriptor.tryBytesAvailable
@@ -405,7 +391,7 @@ module TestInotifyAgainstHost =
                                 match slots.[slot] with
                                 | None -> ()
                                 | Some (hostFd, modelFd) ->
-                                    hostClose hostFd |> shouldEqual 0
+                                    HostCalls.close hostFd |> shouldEqual 0
 
                                     match UnixDescriptor.tryClose (Callers.leader system) modelFd system with
                                     | Ok (SyscallAnswer.Completed 0L, after) -> system <- after
@@ -440,7 +426,7 @@ module TestInotifyAgainstHost =
                                 compare op host model
                             | Op.Write slot ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (hostWrite (hostFd, [| 0x78uy |], 1un))
+                                let host = hostAnswer numbering (HostCalls.write (hostFd, [| 0x78uy |], 1un))
 
                                 let model =
                                     match
@@ -461,7 +447,7 @@ module TestInotifyAgainstHost =
                     finally
                         for slot in slots do
                             match slot with
-                            | Some (hostFd, _) -> hostClose hostFd |> ignore<int>
+                            | Some (hostFd, _) -> HostCalls.close hostFd |> ignore<int>
                             | None -> ()
 
                 let gen =
@@ -531,7 +517,7 @@ module TestInotifyAgainstHost =
                 let host = hostAnswer numbering (nativeint fd)
 
                 if fd >= 0 then
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
 
                 let model =
                     match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with

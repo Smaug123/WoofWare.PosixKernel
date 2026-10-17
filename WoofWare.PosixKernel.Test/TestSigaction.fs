@@ -26,9 +26,6 @@ module TestSigaction =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams leader (CpuId 0)
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     /// Which way a call reaches the kernel: the probe's `libc` and `raw` rows.
     type private Entry =
         | CLibrary
@@ -102,7 +99,7 @@ module TestSigaction =
     /// A handler action as the probe installs it: `sa_mask` holding every bit.
     let private probeHandler (flavour : SimulatedUnixFlavour) : SignalDisposition<string> =
         let mask =
-            match SignalMask.ofWord (numberingOf flavour) (fullWord flavour) with
+            match SignalMask.ofWord (HostPlatform.signalNumberingOf flavour) (fullWord flavour) with
             | Ok mask -> mask
             | Error refusal -> failwith (SignalMaskRefusal.describe refusal)
 
@@ -216,7 +213,7 @@ module TestSigaction =
     [<Test>]
     let ``sigaction behaves as a table of dispositions with the measured refusals`` () : unit =
         let actionGen (flavour : SimulatedUnixFlavour) : Gen<SignalDisposition<string> option> =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let catchGen =
                 gen {
@@ -272,7 +269,7 @@ module TestSigaction =
             }
 
         let property (flavour : SimulatedUnixFlavour, calls : (Entry * int * SignalDisposition<string> option) list) =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let installedNow (oracle : Map<int, Installed>) (signo : int) : Installed =
                 Map.tryFind signo oracle |> Option.defaultValue Installed.Dfl
@@ -370,7 +367,7 @@ module TestSigaction =
         // handler: a signal generated while caught is pending on both
         // flavours, so the change alone decides whether it stays.
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signo in [ 1 .. highestSigno flavour ] do
                 if measured flavour Entry.CLibrary signo = Row.Accepted && signo <> 27 then
@@ -443,7 +440,7 @@ module TestSigaction =
             }
 
         let property (flavour : SimulatedUnixFlavour, entry : Entry, signo : int, pendingSigno : int) =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             // Something pending, so that a query that discarded would show.
             let system =

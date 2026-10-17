@@ -213,9 +213,6 @@ module TestConnectedTransferAgainstHost =
 
     // The host the suite runs on
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
@@ -237,12 +234,6 @@ module TestConnectedTransferAgainstHost =
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
 
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "recv", SetLastError = true)>]
     extern nativeint private hostRecv(int fd, byte[] buffer, unativeint count, int flags)
 
@@ -251,18 +242,6 @@ module TestConnectedTransferAgainstHost =
 
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably (Apple's arm64 ABI passes variadic arguments on the stack), so
-    // these go through .NET's own fixed-arity wrappers in `System.Native`.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<Literal>]
     let private AF_INET = 2
@@ -312,7 +291,7 @@ module TestConnectedTransferAgainstHost =
 
         let mutable available = 0
 
-        if hostBytesAvailable (nativeint fd, &available) <> 0 then
+        if HostCalls.bytesAvailable (nativeint fd, &available) <> 0 then
             failwith $"FIONREAD failed on fd %d{fd}"
 
         {
@@ -327,7 +306,7 @@ module TestConnectedTransferAgainstHost =
             if result < 0 then
                 failwith $"%s{what} failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-        let listener = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let listener = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
         check "socket" listener
 
         let address =
@@ -338,21 +317,21 @@ module TestConnectedTransferAgainstHost =
         let name = Array.zeroCreate<byte> address.Length
         let mutable length = uint32 name.Length
         check "getsockname" (hostGetSockName (listener, name, &length))
-        let client = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
         check "socket" client
         check "connect" (hostConnect (client, name, length))
         let server = hostAccept (listener, 0n, 0n)
         check "accept" server
-        hostClose listener |> ignore<int>
+        HostCalls.close listener |> ignore<int>
 
         for fd in [ client ; server ] do
-            if hostSetNonBlocking (nativeint fd, 1) <> 0 then
+            if HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                 failwith $"could not make fd %d{fd} non-blocking"
 
         client, server
 
     let private writeExactly (fd : int) (count : int) : unit =
-        let written = hostWrite (fd, payload, unativeint count)
+        let written = HostCalls.write (fd, payload, unativeint count)
 
         if written <> nativeint count then
             failwith $"a write of %d{count} took %d{written} (errno %d{Marshal.GetLastPInvokeError ()})"
@@ -364,11 +343,11 @@ module TestConnectedTransferAgainstHost =
         let s, p = hostPair platform
 
         let fill () : unit =
-            while hostWrite (s, payload, 65536un) > 0n do
+            while HostCalls.write (s, payload, 65536un) > 0n do
                 ()
 
         let closed () : int option =
-            hostClose p |> ignore<int>
+            HostCalls.close p |> ignore<int>
             None
 
         let peer =
@@ -392,7 +371,7 @@ module TestConnectedTransferAgainstHost =
                 writeExactly p 1000
                 let peer = closed ()
                 settle ()
-                let got = hostRead (s, Array.zeroCreate 4096, 4096un)
+                let got = HostCalls.read (s, Array.zeroCreate 4096, 4096un)
 
                 if got <> 1000n then
                     failwith $"FIN_DRAINED: the drain read %d{got}"
@@ -470,8 +449,8 @@ module TestConnectedTransferAgainstHost =
                 failwith $"getsockopt(SO_ERROR) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             [ 0L, value ]
-        | Operation.Read -> thrice (fun _ -> hostRead (s, buffer, 4096un))
-        | Operation.ReadZero -> thrice (fun _ -> hostRead (s, buffer, 0un))
+        | Operation.Read -> thrice (fun _ -> HostCalls.read (s, buffer, 4096un))
+        | Operation.ReadZero -> thrice (fun _ -> HostCalls.read (s, buffer, 0un))
         | Operation.Recv -> thrice (fun _ -> hostRecv (s, buffer, 4096un, 0))
         | Operation.RecvZero -> thrice (fun _ -> hostRecv (s, buffer, 0un, 0))
         | Operation.Peek ->
@@ -479,18 +458,18 @@ module TestConnectedTransferAgainstHost =
                 if i < 2 then
                     hostRecv (s, buffer, 4096un, MSG_PEEK)
                 else
-                    hostRead (s, buffer, 4096un)
+                    HostCalls.read (s, buffer, 4096un)
             )
-        | Operation.Write -> thrice (fun _ -> hostWrite (s, payload, 100un))
-        | Operation.WriteZero -> thrice (fun _ -> hostWrite (s, payload, 0un))
+        | Operation.Write -> thrice (fun _ -> HostCalls.write (s, payload, 100un))
+        | Operation.WriteZero -> thrice (fun _ -> HostCalls.write (s, payload, 0un))
         | Operation.Send -> thrice (fun _ -> hostSend (s, payload, 100un, 0))
         | Operation.SendZero -> thrice (fun _ -> hostSend (s, payload, 0un, 0))
         | Operation.SendNoSignal -> thrice (fun _ -> hostSend (s, payload, 100un, noSignal flavour))
         | Operation.DontWait ->
-            hostSetNonBlocking (nativeint s, 0) |> ignore<int>
+            HostCalls.setNonBlocking (nativeint s, 0) |> ignore<int>
             let received = call (fun () -> hostRecv (s, buffer, 4096un, dontWait flavour))
             let sent = call (fun () -> hostSend (s, payload, 65536un, dontWait flavour))
-            hostSetNonBlocking (nativeint s, 1) |> ignore<int>
+            HostCalls.setNonBlocking (nativeint s, 1) |> ignore<int>
             [ received ; sent ]
 
     /// What the row says the host's calls answer, in the host's numbering.
@@ -539,8 +518,8 @@ module TestConnectedTransferAgainstHost =
                                 $"%A{row.State} %A{row.Operation}: after the calls this host reports %A{after}, measured %A{row.After}"
                         ]
                     finally
-                        hostClose s |> ignore<int>
-                        peer |> Option.iter (hostClose >> ignore<int>)
+                        HostCalls.close s |> ignore<int>
+                        peer |> Option.iter (HostCalls.close >> ignore<int>)
                 )
                 |> Seq.concat
                 |> Seq.toList

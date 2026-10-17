@@ -56,9 +56,6 @@ module TestDirectoryReadAgainstHost =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
     extern int private hostDup(int fd)
 
@@ -73,12 +70,6 @@ module TestDirectoryReadAgainstHost =
 
     [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
     extern int private hostUnlink(string path)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
 
     let private hostSucceeded (what : string) (result : int) : unit =
         if result < 0 then
@@ -198,7 +189,7 @@ module TestDirectoryReadAgainstHost =
             else
                 None
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     let private onMeasurableHost (action : SimulatedUnixFlavour -> string -> unit) : unit =
         HostPlatform.onUnixHost (fun flavour ->
@@ -452,7 +443,7 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    hostClose target.HostFd |> hostSucceeded "close"
+                                    HostCalls.close target.HostFd |> hostSucceeded "close"
                                     live <- live |> List.filter (fun l -> l.HostFd <> target.HostFd)
 
                                     match UnixDescriptor.tryClose (Callers.leader system) target.ModelFd system with
@@ -576,7 +567,7 @@ module TestDirectoryReadAgainstHost =
                             | Error refusal -> failwith $"model read of a removed directory refused: %A{refusal}"
                 finally
                     for target in live do
-                        hostClose target.HostFd |> ignore<int>
+                        HostCalls.close target.HostFd |> ignore<int>
 
                     if Directory.Exists root then
                         Directory.Delete (root, true)
@@ -605,11 +596,11 @@ module TestDirectoryReadAgainstHost =
 
             let hostPipe =
                 let fds = Array.zeroCreate<int> 2
-                hostPipe fds |> hostSucceeded "pipe"
+                HostCalls.pipe fds |> hostSucceeded "pipe"
                 fds
 
             // AF_UNIX and SOCK_STREAM, 1 and 1 on both kernels.
-            let hostSocket = hostSocket (1, 1, 0)
+            let hostSocket = HostCalls.socket (1, 1, 0)
             hostSucceeded "socket" hostSocket
             let hostReadable = hostOpen (hostFile, 0, 0)
             hostSucceeded "open f O_RDONLY" hostReadable
@@ -677,7 +668,7 @@ module TestDirectoryReadAgainstHost =
                 )
             finally
                 for fd in [ hostPipe.[0] ; hostPipe.[1] ; hostSocket ; hostReadable ; hostWriteOnly ] do
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
 
                 Directory.Delete (root, true)
         )

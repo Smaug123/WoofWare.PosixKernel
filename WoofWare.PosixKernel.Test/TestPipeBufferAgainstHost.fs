@@ -23,33 +23,14 @@ module TestPipeBufferAgainstHost =
         val mutable Events : int16
         val mutable Revents : int16
 
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
 
-    // `fcntl(2)` and `ioctl(2)` are variadic, which a P/Invoke cannot call
-    // portably (Apple's arm64 ABI passes variadic arguments on the stack), so
-    // these two go through .NET's own fixed-arity wrappers of them in its
-    // `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
+    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
+    // arm64 ABI passes variadic arguments on the stack), so this goes through
+    // .NET's own fixed-arity wrapper of it in its `System.Native` library.
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlGetPipeSz")>]
     extern int private hostGetPipeSize(nativeint fd)
-
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_GetBytesAvailable")>]
-    extern int private hostBytesAvailable(nativeint fd, int& available)
 
     [<Literal>]
     let private POLLIN = 0x1s
@@ -88,12 +69,12 @@ module TestPipeBufferAgainstHost =
 
             let fds = Array.zeroCreate<int> 2
 
-            if hostPipe fds <> 0 then
+            if HostCalls.pipe fds <> 0 then
                 failwith $"pipe failed: errno %d{Marshal.GetLastPInvokeError ()}"
 
             let capacity = hostGetPipeSize (nativeint fds.[1])
-            hostClose fds.[0] |> ignore
-            hostClose fds.[1] |> ignore
+            HostCalls.close fds.[0] |> ignore
+            HostCalls.close fds.[1] |> ignore
 
             if capacity <> expected then
                 Assert.Ignore
@@ -108,12 +89,12 @@ module TestPipeBufferAgainstHost =
             let property (ops : PipeBufferOp list) : unit =
                 let fds = Array.zeroCreate<int> 2
 
-                if hostPipe fds <> 0 then
+                if HostCalls.pipe fds <> 0 then
                     failwith $"pipe failed: errno %d{Marshal.GetLastPInvokeError ()}"
 
                 try
                     for fd in fds do
-                        if hostSetNonBlocking (nativeint fd, 1) <> 0 then
+                        if HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                             failwith $"could not make fd %d{fd} non-blocking"
 
                     let mutable buffer = PipeBuffer.empty platform
@@ -125,7 +106,7 @@ module TestPipeBufferAgainstHost =
                         match op with
                         | PipeBufferOp.Write count ->
                             let bytes = TestPipeBuffer.payload offered count
-                            let host = hostWrite (fds.[1], Seq.toArray bytes, unativeint count)
+                            let host = HostCalls.write (fds.[1], Seq.toArray bytes, unativeint count)
                             let errno = Marshal.GetLastPInvokeError ()
                             let accepted, b = PipeBuffer.write bytes buffer
 
@@ -144,7 +125,7 @@ module TestPipeBufferAgainstHost =
                             offered <- offered + accepted
                         | PipeBufferOp.Read count ->
                             let target = Array.zeroCreate<byte> (max count 1)
-                            let host = hostRead (fds.[0], target, unativeint count)
+                            let host = HostCalls.read (fds.[0], target, unativeint count)
                             let errno = Marshal.GetLastPInvokeError ()
                             let got, b = PipeBuffer.read count buffer
 
@@ -164,7 +145,7 @@ module TestPipeBufferAgainstHost =
 
                         let mutable available = 0
 
-                        if hostBytesAvailable (nativeint fds.[0], &available) <> 0 then
+                        if HostCalls.bytesAvailable (nativeint fds.[0], &available) <> 0 then
                             failwith $"%s{where ()}: FIONREAD failed"
 
                         if available <> PipeBuffer.held buffer then
@@ -181,8 +162,8 @@ module TestPipeBufferAgainstHost =
                             failwith
                                 $"%s{where ()}: with %d{available} held, the host polls (readable %b{hostReadable}, writable %b{hostWritable}), the model (%b{PipeBuffer.readable buffer}, %b{PipeBuffer.writable buffer})"
                 finally
-                    hostClose fds.[0] |> ignore
-                    hostClose fds.[1] |> ignore
+                    HostCalls.close fds.[0] |> ignore
+                    HostCalls.close fds.[1] |> ignore
 
             Check.One (
                 Config.QuickThrowOnFailure.WithMaxTest 300,
