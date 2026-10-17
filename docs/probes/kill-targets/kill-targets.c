@@ -71,6 +71,15 @@ static void sleep_ms(int ms)
     while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {}
 }
 
+/* fork(2), or the probe stops: a failed fork's -1, later killed, would be
+ * kill(-1, SIGKILL). */
+static pid_t fork_or_die(void)
+{
+    pid_t p = fork();
+    if (p < 0) { perror("fork"); exit(98); }
+    return p;
+}
+
 static const char *call(pid_t pid, int sig)
 {
     errno = 0;
@@ -80,7 +89,7 @@ static const char *call(pid_t pid, int sig)
 
 static pid_t reaped_pid(void)
 {
-    pid_t p = fork();
+    pid_t p = fork_or_die();
     if (p == 0) _exit(0);
     waitpid(p, NULL, 0);
     return p;
@@ -123,7 +132,7 @@ static void section_target(void)
             int pfd[2];
             pipe(pfd);
             fflush(stdout);
-            pid_t c = fork();
+            pid_t c = fork_or_die();
             if (c == 0) {
                 alarm(5);
                 setpgid(0, 0);
@@ -147,7 +156,7 @@ static void section_target(void)
     int pfd[2];
     pipe(pfd);
     fflush(stdout);
-    pid_t c = fork();
+    pid_t c = fork_or_die();
     if (c == 0) {
         alarm(5);
         setpgid(0, 0);
@@ -190,7 +199,7 @@ static void section_group(void)
         int pfd[2];
         pipe(pfd);
         fflush(stdout);
-        pid_t c = fork();
+        pid_t c = fork_or_die();
         if (c == 0) {
             alarm(5);
             setpgid(0, 0);
@@ -200,7 +209,7 @@ static void section_group(void)
             sigaction(SIGUSR1, &sa, NULL);
             int sib_pipe[2];
             pipe(sib_pipe);
-            pid_t sib = fork();
+            pid_t sib = fork_or_die();
             if (sib == 0) {
                 /* Same process group as its parent. */
                 report_fd = sib_pipe[1];
@@ -248,7 +257,7 @@ static pid_t spawn_target(struct ids id, int fd, int new_session)
 {
     int ready[2];
     pipe(ready);
-    pid_t t = fork();
+    pid_t t = fork_or_die();
     if (t == 0) {
         alarm(10);
         if (new_session) setsid();
@@ -275,7 +284,7 @@ static const char *send_as(struct ids id, pid_t target, int sig)
     int pfd[2];
     pipe(pfd);
     fflush(stdout);
-    pid_t c = fork();
+    pid_t c = fork_or_die();
     if (c == 0) {
         alarm(5);
         become(id);
@@ -340,12 +349,16 @@ static void section_cred(void)
     }
     struct ids root = { 0, 0, 0 }, u1000 = { 1000, 1000, 1000 }, u1001 = { 1001, 1001, 1001 };
     pid_t t = spawn_target(u1000, rep[1], 0);
-    printf("section=cred sender=0/0/0 target=1000/1000/1000 sig=USR1 answer=%s handled=%d\n", send_as(root, t, SIGUSR1), drained(rep[0]));
+    const char *a = send_as(root, t, SIGUSR1);
+    int handled = drained(rep[0]);
+    printf("section=cred sender=0/0/0 target=1000/1000/1000 sig=USR1 answer=%s handled=%d\n", a, handled);
     printf("section=cred sender=1001/1001/1001 target=1000/1000/1000 sig=999 answer=%s\n", send_as(u1001, t, 999));
     kill(t, SIGKILL);
     waitpid(t, NULL, 0);
     t = spawn_target(root, rep[1], 0);
-    printf("section=cred sender=1000/1000/1000 target=0/0/0 sig=USR1 answer=%s handled=%d\n", send_as(u1000, t, SIGUSR1), drained(rep[0]));
+    a = send_as(u1000, t, SIGUSR1);
+    handled = drained(rep[0]);
+    printf("section=cred sender=1000/1000/1000 target=0/0/0 sig=USR1 answer=%s handled=%d\n", a, handled);
     printf("section=cred sender=1000/1000/1000 target=0/0/0 sig=0 answer=%s\n", send_as(u1000, t, 0));
     kill(t, SIGKILL);
     waitpid(t, NULL, 0);
@@ -375,7 +388,9 @@ static void section_all(void)
     pipe(rep);
     pid_t t = spawn_target(u1000, rep[1], 0);
     printf("section=all sender=1000 others=sibling-1000 sig=0 answer=%s\n", send_as(u1000, -1, 0));
-    printf("section=all sender=1000 others=sibling-1000 sig=USR1 answer=%s sibling-handled=%d\n", send_as(u1000, -1, SIGUSR1), drained(rep[0]));
+    const char *a = send_as(u1000, -1, SIGUSR1);
+    int handled = drained(rep[0]);
+    printf("section=all sender=1000 others=sibling-1000 sig=USR1 answer=%s sibling-handled=%d\n", a, handled);
     kill(t, SIGKILL);
     waitpid(t, NULL, 0);
 }
