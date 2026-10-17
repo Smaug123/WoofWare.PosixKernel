@@ -410,12 +410,20 @@ module TestWithFileSystemAndCurrentDirectory =
                     (Map.ofList [ name (String.replicate 255 "中"), SeedEntry.directory FileSystemSeed.empty ])
                     ("/" + String.replicate 255 "中")
                 // A symlink whose expansion carries the walk past Darwin's
-                // PATH_MAX, which is the length the walk itself refuses: four
-                // hundred two-byte components, each within NAME_MAX.
+                // PATH_MAX, which is the length the walk itself refuses: a
+                // target of 333 two-byte components, each within NAME_MAX and
+                // together within what `symlink` stores, spliced in ahead of
+                // the rest of the path.
                 startAt
                     SimulatedUnixPlatform.macOsArm64
-                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 400 "/ab"), None) ])
-                    "/l"
+                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 333 "/ab"), None) ])
+                    "/l/abcdefghijklmnopqrstuvwxyz"
+                // A symlink whose target is longer than Darwin's `symlink`
+                // stores.
+                startAt
+                    SimulatedUnixPlatform.macOsArm64
+                    (Map.ofList [ name "l", SeedEntry.Symlink (target (String.replicate 1024 "a"), None) ])
+                    "/"
                 // A seed name no Darwin filesystem would bind.
                 startAt
                     SimulatedUnixPlatform.macOsArm64
@@ -494,25 +502,28 @@ module TestWithFileSystemAndCurrentDirectory =
         // Darwin re-checks the total length when it splices a symlink target in,
         // and reports the same `ENAMETOOLONG` a component past `NAME_MAX` earns.
         // So `TooLong` covers both, and must not be read as the NAME_MAX story:
-        // nothing about `/l` here is too long, and shortening it cannot help --
-        // it is the seed's symlink target that no path can accommodate.
-        // Four hundred components of two bytes each: every one of them is
+        // no component of the path is too long, and nor is the path itself --
+        // it is the seed's symlink target, spliced in ahead of the rest of the
+        // path, that the total cannot accommodate (999 + 27 + the NUL is past
+        // 1024). 333 components of two bytes each: every one of them is
         // comfortably inside `NAME_MAX`, so the only limit this can reach is
-        // the total length. A single 1100-byte component would take the
-        // `NAME_MAX` path instead and prove nothing about the splice.
-        let deep = String.replicate 400 "/ab"
+        // the total length; and 999 bytes is within the 1023 a `symlink` on
+        // Darwin stores, so the seed itself is one Darwin could hold.
+        let deep = String.replicate 333 "/ab"
 
         let entries =
             Map.ofList [ name "l", SeedEntry.Symlink (SymlinkTarget.parseOrFail "test" deep, None) ]
 
-        startAt SimulatedUnixPlatform.macOsArm64 entries "/l"
+        let path = "/l/abcdefghijklmnopqrstuvwxyz"
+
+        startAt SimulatedUnixPlatform.macOsArm64 entries path
         |> Result.map ignore
         |> shouldEqual (Error (StartFault.Directory (CurrentDirectoryFault.TooLong SimulatedUnixFlavour.Darwin)))
 
         // Linux does not re-check a splice at all, so the same seed gets all the
         // way to the target and finds nothing there. This is what says the row
         // above measures the re-check rather than the length of anything.
-        startAt SimulatedUnixPlatform.linuxX64 entries "/l"
+        startAt SimulatedUnixPlatform.linuxX64 entries path
         |> Result.map ignore
         |> shouldEqual (Error (StartFault.Directory (CurrentDirectoryFault.DoesNotResolve UnixError.ENOENT)))
 
