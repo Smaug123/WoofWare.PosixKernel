@@ -23,43 +23,38 @@ module TestProcessView =
 
     let private sorted (defects : 'a list) : 'a list = List.sortBy (sprintf "%A") defects
 
-    /// One step of a walk through the processes' own syscalls: each index is
-    /// read modulo whatever it picks from.
+    /// One step of a walk through the processes' own syscalls, each made by
+    /// the leader of the `proc`th process, read modulo how many there are.
     [<RequireQualifiedAccess>]
     type private Op =
+        /// A listening socket bound to one of `ports`, read modulo how many
+        /// there are.
         | Listener of proc : int * port : int
+        /// A socket connecting to one of `ports`, read modulo how many there
+        /// are.
         | Client of proc : int * port : int
-        | Accept of proc : int * fd : int
-        | Pipe of proc : int
-        | Dup of proc : int * fd : int
-        | Close of proc : int * fd : int
+        /// `call`, made through `UnixSystem.tryStep`.
+        | Call of proc : int * call : Syscall<int, string>
         | Launch
 
     let private opGen : Gen<Op> =
         let small = Gen.choose (0, 63)
+        let fd = Gen.choose (0, 15)
 
         Gen.frequency
             [
                 2, Gen.map2 (fun p port -> Op.Listener (p, port)) small small
                 3, Gen.map2 (fun p port -> Op.Client (p, port)) small small
-                2, Gen.map2 (fun p fd -> Op.Accept (p, fd)) small small
-                2, Gen.map Op.Pipe small
-                2, Gen.map2 (fun p fd -> Op.Dup (p, fd)) small small
-                3, Gen.map2 (fun p fd -> Op.Close (p, fd)) small small
+                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Accept (fd, UserBuffer.Mapped, 16u))) small fd
+                2, Gen.map (fun p -> Op.Call (p, Syscall.Pipe2 (UserBuffer.Mapped, 0))) small
+                2, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Dup fd)) small fd
+                3, Gen.map2 (fun p fd -> Op.Call (p, Syscall.Close fd)) small fd
                 1, Gen.constant Op.Launch
             ]
 
     let private ports : uint16 list = [ 8080us ; 8081us ]
 
-    let private openFds (pid : ProcessId) (system : UnixSystem<int, string>) : int list =
-        FileDescriptorRegistry.fds (UnixSystem.fileDescriptors pid system)
-        |> Map.keys
-        |> List.ofSeq
-
     let private apply (system : UnixSystem<int, string>) (op : Op) : UnixSystem<int, string> =
-        let pick (i : int) (from : 'a list) : 'a option =
-            if from.IsEmpty then None else Some from.[i % from.Length]
-
         let processes = UnixSystem.processIds system |> Set.toList
 
         let leaderOf (i : int) : Caller<int> =
@@ -104,39 +99,16 @@ module TestProcessView =
             // A full accept queue is outside what the kernel models; the socket
             // stays, unconnected.
             | Error _ -> system
-        | Op.Accept (proc, fd) ->
-            let caller = leaderOf proc
-
-            match pick fd (openFds (Caller.processId caller) system) with
-            | None -> system
-            | Some fd ->
-                match UnixConnection.tryAccept caller fd UserBuffer.Mapped 16u system with
-                | Ok (_, system) -> system
-                // Outside what the kernel models, so the step changes nothing.
-                | Error _ -> system
-        | Op.Pipe proc ->
-            match UnixPipe.tryPipe2 (leaderOf proc) 0 UserBuffer.Mapped system with
-            | Ok (_, system) -> system
-            | Error refusal -> failwith $"pipe: %A{refusal}"
-        | Op.Dup (proc, fd) ->
-            let caller = leaderOf proc
-
-            match pick fd (openFds (Caller.processId caller) system) with
-            | None -> system
-            | Some fd ->
-                match UnixDescriptor.tryDup caller fd system with
-                | Ok (_, system) -> system
-                | Error refusal -> failwith $"dup: %A{refusal}"
-        | Op.Close (proc, fd) ->
-            let caller = leaderOf proc
-
-            match pick fd (openFds (Caller.processId caller) system) with
-            | None -> system
-            | Some fd ->
-                match UnixDescriptor.tryClose caller fd system with
-                | Ok (_, system) -> system
-                // Outside what the kernel models, so the step changes nothing.
-                | Error _ -> system
+        | Op.Call (proc, call) ->
+            match UnixSystem.tryStep (leaderOf proc) call system with
+            | Ok stepped ->
+                match Stepped.carriedOn stepped with
+                | Some system -> system
+                | None -> failwith $"%A{call} answered %A{Stepped.view stepped}, leaving no system to walk on from"
+            // Outside what the kernel models, so the step changes nothing.
+            | Error (SyscallRefusal.Accept _)
+            | Error (SyscallRefusal.Close _) -> system
+            | Error refusal -> failwith $"%A{call}: %s{SyscallRefusal.describe refusal}"
         | Op.Launch ->
             match Machines.tryLaunch (Machines.launchOn (UnixSystem.platform system)) system with
             | Ok (_, system) -> system
