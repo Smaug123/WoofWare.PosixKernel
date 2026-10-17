@@ -53,7 +53,8 @@ module TestUnionCaseName =
     let ``every ConnectRefusal's name is the first word %A prints`` () : unit = agreesWithFormatting<ConnectRefusal> ()
 
     [<Test>]
-    let ``every FcntlOp's name is the first word %A prints`` () : unit = agreesWithFormatting<FcntlOp> ()
+    let ``every Syscall's name is the first word %A prints`` () : unit =
+        agreesWithFormatting<Syscall<int, string>> ()
 
     [<Test>]
     let ``a type that is no union is refused`` () : unit =

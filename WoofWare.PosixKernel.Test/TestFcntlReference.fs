@@ -7,67 +7,13 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Which of `O_SYNC` and `O_DSYNC` an `open(2)` of the descriptor-table
-/// property asks for. `O_DSYNC` alone is not among them: the library refuses
-/// it.
-[<RequireQualifiedAccess>]
-type FcntlSyncRequest =
-    | Neither
-    /// `O_SYNC`, which on Linux is both of its bits.
-    | Sync
-    /// `O_SYNC|O_DSYNC`, the same word as `Sync` on Linux.
-    | SyncAndDataSync
-
-/// A non-blocking `flock(2)` of the descriptor-table property.
-[<RequireQualifiedAccess>]
-type FcntlFlockOp =
-    /// `LOCK_SH|LOCK_NB`.
-    | Shared
-    /// `LOCK_EX|LOCK_NB`.
-    | Exclusive
-    /// `LOCK_UN`.
-    | Unlock
-
-/// One step of the descriptor-table property.
-[<RequireQualifiedAccess>]
-type FcntlOp =
-    /// `open(2)` of the file `f`, with the access mode, `O_CLOEXEC`, `O_SYNC`
-    /// and `O_DSYNC`, `O_NOFOLLOW` and `O_TRUNC` as asked.
-    | Open of
-        access : FileAccessMode *
-        closeOnExec : bool *
-        synchronous : FcntlSyncRequest *
-        noFollow : bool *
-        truncate : bool
-    /// `open(2)` of the directory `d` with `O_RDONLY|O_DIRECTORY`, as
-    /// `opendir(3)` opens one, with `O_CLOEXEC`, `O_SYNC` and `O_DSYNC` as
-    /// asked.
-    | OpenDirectory of closeOnExec : bool * synchronous : FcntlSyncRequest
-    /// `pipe2(2)`, with `O_NONBLOCK` and `O_CLOEXEC` as asked.
-    | Pipe of nonBlocking : bool * closeOnExec : bool
-    | Dup of fd : int
-    /// `F_DUPFD`, or with `closeOnExec` `F_DUPFD_CLOEXEC`.
-    | DupFd of fd : int * minimum : int * closeOnExec : bool
-    | GetFd of fd : int
-    | SetFd of fd : int * word : int
-    | GetFl of fd : int
-    | SetFl of fd : int * word : int
-    | Dup2 of oldFd : int * newFd : int
-    | Dup3 of oldFd : int * newFd : int * closeOnExec : bool * stray : bool
-    /// A one-byte `write(2)`.
-    | Write of fd : int
-    /// A one-byte `pwrite(2)` at offset 0.
-    | Pwrite of fd : int
-    | Ftruncate of fd : int * length : int64
-    | Flock of fd : int * operation : FcntlFlockOp
-    | Close of fd : int
-
 /// `fcntl(2)`, `dup2(2)` and `dup3(2)`, and the calls that change what
 /// `F_GETFL` reports (`open(2)`, `write(2)`, `pwrite(2)`, `ftruncate(2)` and
-/// `flock(2)`), against a reference descriptor table written out again from
-/// the measurements: each descriptor names a description and carries its own
-/// flags, each description carries the status flags, and the flag words are
-/// spelled in each flavour's numbering independently of the library's tables.
+/// `flock(2)`), made through `UnixSystem.tryStep` against a reference
+/// descriptor table written out again from the measurements: each descriptor
+/// names a description and carries its own flags, each description carries
+/// the status flags, and the flag words are spelled in each flavour's
+/// numbering independently of the library's tables.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestFcntlReference =
@@ -107,8 +53,8 @@ module TestFcntlReference =
     type private Description =
         {
             Kind : Kind
-            /// For a pipe's write end made by `Pipe`, its read end's description;
-            /// a launched output stream's reader never goes.
+            /// For a pipe's write end made by `pipe2`, its read end's
+            /// description; a launched output stream's reader never goes.
             Reader : int option
             /// What `flock` contends on: the file, the directory, or a pipe
             /// (both of whose ends are one).
@@ -151,31 +97,76 @@ module TestFcntlReference =
     /// The `Object` of the directory `d`.
     let private directoryObject : int = 1
 
+    /// The file every `open(2)` of a file names.
+    let private filePath : PathArgumentBytes = PathArg.ofText "f"
+    /// The directory every `open(2)` of a directory names.
+    let private directoryPath : PathArgumentBytes = PathArg.ofText "d"
+
+    let private isDarwin (platform : SimulatedUnixPlatform) : bool =
+        SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+
+    let private x64 (platform : SimulatedUnixPlatform) : bool =
+        SimulatedUnixPlatform.architecture platform = SimulatedUnixArchitecture.X64
+
     // Each flavour's numbering, written out from the headers and the probe's
     // HEADER rows rather than read from the library.
-    let private nonBlockBit (r : Reference) : int = if r.Darwin then 0x4 else 0x800
-    let private appendBit (r : Reference) : int = if r.Darwin then 0x8 else 0x400
-    let private asyncBit (r : Reference) : int = if r.Darwin then 0x40 else 0x2000
-    let private syncBit (r : Reference) : int = if r.Darwin then 0x80 else 0x100000
-    let private dsyncBit (r : Reference) : int = if r.Darwin then 0x400000 else 0x1000
-    let private cloexecBit (r : Reference) : int = if r.Darwin then 0x1000000 else 0x80000
+    let private nonBlockBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x4 else 0x800
 
-    let private x64 (r : Reference) : bool =
-        SimulatedUnixPlatform.architecture r.Platform = SimulatedUnixArchitecture.X64
+    let private appendBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x8 else 0x400
 
-    let private largeFileBit (r : Reference) : int = if x64 r then 0x8000 else 0x20000
-    let private directBit (r : Reference) : int = if x64 r then 0x4000 else 0x10000
-    let private noAtimeBit (r : Reference) : int = 0x40000
-    let private noFollowBit (r : Reference) : int = if x64 r then 0x20000 else 0x8000
-    let private directoryBit (r : Reference) : int = if x64 r then 0x10000 else 0x4000
+    let private asyncBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x40 else 0x2000
+
+    let private syncBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x80 else 0x100000
+
+    let private dsyncBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x400000 else 0x1000
+
+    let private cloexecBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x1000000 else 0x80000
+
+    let private truncateBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x400 else 0x200
+
+    let private largeFileBit (platform : SimulatedUnixPlatform) : int =
+        if x64 platform then 0x8000 else 0x20000
+
+    let private directBit (platform : SimulatedUnixPlatform) : int =
+        if x64 platform then 0x4000 else 0x10000
+
+    let private noAtimeBit (platform : SimulatedUnixPlatform) : int = 0x40000
+
+    let private noFollowBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x100
+        elif x64 platform then 0x20000
+        else 0x8000
+
+    let private directoryBit (platform : SimulatedUnixPlatform) : int =
+        if isDarwin platform then 0x100000
+        elif x64 platform then 0x10000
+        else 0x4000
+
+    /// `dup3(2)`'s `O_CLOEXEC`, in Linux's numbering whatever the flavour.
+    let private dup3CloseOnExec : int = 0x80000
+
+    /// Whether `command` is `F_DUPFD` or `F_DUPFD_CLOEXEC` in `platform`'s
+    /// numbering.
+    let private isDupFd (platform : SimulatedUnixPlatform) (command : int) : bool =
+        command = FcntlWorld.DupFd || command = FcntlWorld.dupFdCloexec platform
 
     let private unmodelled (r : Reference) : int =
+        let p = r.Platform
+
         if r.Darwin then
-            appendBit r ||| asyncBit r
+            appendBit p ||| asyncBit p
         else
-            appendBit r ||| asyncBit r ||| directBit r ||| noAtimeBit r
+            appendBit p ||| asyncBit p ||| directBit p ||| noAtimeBit p
 
     let private statusWord (r : Reference) (d : Description) : int =
+        let p = r.Platform
         let bit (set : bool) (value : int) = if set then value else 0
 
         let madeByOpen =
@@ -186,12 +177,12 @@ module TestFcntlReference =
             | Kind.PipeWrite -> false
 
         d.Access
-        ||| bit d.NonBlocking (nonBlockBit r)
-        ||| bit d.Synchronous (syncBit r)
-        ||| bit d.DataSynchronous (dsyncBit r)
-        ||| bit (not r.Darwin && madeByOpen) (largeFileBit r)
-        ||| bit (not r.Darwin && d.NoFollow) (noFollowBit r)
-        ||| bit (not r.Darwin && d.OpenedDirectory) (directoryBit r)
+        ||| bit d.NonBlocking (nonBlockBit p)
+        ||| bit d.Synchronous (syncBit p)
+        ||| bit d.DataSynchronous (dsyncBit p)
+        ||| bit (not r.Darwin && madeByOpen) (largeFileBit p)
+        ||| bit (not r.Darwin && d.NoFollow) (noFollowBit p)
+        ||| bit (not r.Darwin && d.OpenedDirectory) (directoryBit p)
         ||| bit (r.Darwin && d.Written) 0x10000
         ||| bit (r.Darwin && d.Flocked) 0x4000
 
@@ -212,14 +203,6 @@ module TestFcntlReference =
             Descriptions = Map.add description d r.Descriptions
         }
 
-    /// What `open(2)` keeps of `synchronous`: on Linux, `O_SYNC` is both of
-    /// its bits.
-    let private synchronisation (r : Reference) (synchronous : FcntlSyncRequest) : bool * bool =
-        match synchronous with
-        | FcntlSyncRequest.Neither -> false, false
-        | FcntlSyncRequest.Sync -> true, not r.Darwin
-        | FcntlSyncRequest.SyncAndDataSync -> true, true
-
     let private add (description : Description) (fd : int) (cloexec : bool) (r : Reference) : Reference =
         { r with
             Fds = Map.add fd (r.Next, cloexec, false) r.Fds
@@ -227,10 +210,18 @@ module TestFcntlReference =
             Next = r.Next + 1
         }
 
-    /// What the reference answers for `op`. Every descriptor a call would make
-    /// must lie below the bound; one that would not is refused, naming the
-    /// lowest it could have had.
-    let private step (op : FcntlOp) (r : Reference) : Outcome * Reference =
+    /// Fails unless the flag word `word` holds no bit outside `known`: this
+    /// test generates no other, so the reference models no other.
+    let private requireGenerated (call : string) (known : int) (word : int) : unit =
+        if word &&& ~~~known <> 0 then
+            failwith $"%s{call} with 0x%x{word} is not generated by TestFcntlReference"
+
+    /// What the reference answers for `call`. Every descriptor a call would
+    /// make must lie below the bound; one that would not is refused, naming
+    /// the lowest it could have had.
+    let private step (call : Syscall<int, string>) (r : Reference) : Outcome * Reference =
+        let p = r.Platform
+
         let ok (value : int) =
             Outcome.Answered (SyscallAnswer.Completed (int64 value))
 
@@ -267,50 +258,46 @@ module TestFcntlReference =
                 Fds = Map.add newFd (description, cloexec, false) r.Fds
             }
 
-        match op with
-        | FcntlOp.Open _
-        | FcntlOp.OpenDirectory _ when lowestFreeFrom 0 r >= bound r -> atBound (lowestFreeFrom 0 r), r
-        | FcntlOp.Open (access, cloexec, synchronous, noFollow, truncate) ->
+        match call with
+        | Syscall.Open _ when lowestFreeFrom 0 r >= bound r -> atBound (lowestFreeFrom 0 r), r
+        | Syscall.Open (path, flags, _) ->
             let fd = lowestFreeFrom 0 r
+            let has (bit : int) : bool = flags &&& bit <> 0
+            let shared = cloexecBit p ||| syncBit p ||| dsyncBit p
 
-            let access =
-                match access with
-                | FileAccessMode.ReadOnly -> 0
-                | FileAccessMode.WriteOnly -> 1
-                | FileAccessMode.ReadWrite -> 2
+            let description =
+                if path = filePath then
+                    requireGenerated "open of f" (3 ||| shared ||| noFollowBit p ||| truncateBit p) flags
 
-            let synchronous, dataSynchronous = synchronisation r synchronous
+                    { fresh Kind.File fileObject (flags &&& 3) with
+                        NoFollow = has (noFollowBit p)
+                        // `f` always exists, so `O_TRUNC` always truncates a
+                        // file that was there.
+                        Written = has (truncateBit p)
+                    }
+                elif path = directoryPath then
+                    requireGenerated "open of d" (directoryBit p ||| shared) flags
+
+                    { fresh Kind.Directory directoryObject 0 with
+                        OpenedDirectory = has (directoryBit p)
+                    }
+                else
+                    failwith $"an open of %A{path} is not generated by TestFcntlReference"
 
             ok fd,
             add
-                { fresh Kind.File fileObject access with
-                    Synchronous = synchronous
-                    DataSynchronous = dataSynchronous
-                    NoFollow = noFollow
-                    // `f` always exists, so `O_TRUNC` always truncates a file
-                    // that was there.
-                    Written = truncate
+                { description with
+                    Synchronous = has (syncBit p)
+                    DataSynchronous = has (dsyncBit p)
                 }
                 fd
-                cloexec
+                (has (cloexecBit p))
                 r
-        | FcntlOp.OpenDirectory (cloexec, synchronous) ->
-            let fd = lowestFreeFrom 0 r
-            let synchronous, dataSynchronous = synchronisation r synchronous
-
-            ok fd,
-            add
-                { fresh Kind.Directory directoryObject 0 with
-                    Synchronous = synchronous
-                    DataSynchronous = dataSynchronous
-                    OpenedDirectory = true
-                }
-                fd
-                cloexec
-                r
-        | FcntlOp.Pipe _ when lowestFreeFrom (lowestFreeFrom 0 r + 1) r >= bound r ->
+        | Syscall.Pipe2 _ when lowestFreeFrom (lowestFreeFrom 0 r + 1) r >= bound r ->
             atBound (lowestFreeFrom (lowestFreeFrom 0 r + 1) r), r
-        | FcntlOp.Pipe (nonBlocking, cloexec) ->
+        | Syscall.Pipe2 (_, flags) ->
+            requireGenerated "pipe2" (nonBlockBit p ||| cloexecBit p) flags
+            let nonBlocking = flags &&& nonBlockBit p <> 0
             let readFd = lowestFreeFrom 0 r
             let object = r.NextObject
 
@@ -320,7 +307,7 @@ module TestFcntlReference =
                         NonBlocking = nonBlocking
                     }
                     readFd
-                    cloexec
+                    (flags &&& cloexecBit p <> 0)
                     { r with
                         NextObject = object + 1
                     }
@@ -335,9 +322,9 @@ module TestFcntlReference =
                     Reader = Some readDescription
                 }
                 writeFd
-                cloexec
+                (flags &&& cloexecBit p <> 0)
                 r
-        | FcntlOp.Dup fd ->
+        | Syscall.Dup fd ->
             if not (Map.containsKey fd r.Fds) then
                 failed UnixError.EBADF, r
             elif lowestFreeFrom 0 r >= bound r then
@@ -345,7 +332,7 @@ module TestFcntlReference =
             else
                 let newFd = lowestFreeFrom 0 r
                 ok newFd, duplicate fd newFd false r
-        | FcntlOp.DupFd (fd, minimum, cloexec) ->
+        | Syscall.Fcntl (fd, command, minimum) when isDupFd p command ->
             if not (Map.containsKey fd r.Fds) then
                 failed UnixError.EBADF, r
             elif minimum < 0 then
@@ -354,12 +341,12 @@ module TestFcntlReference =
                 atBound (lowestFreeFrom minimum r), r
             else
                 let newFd = lowestFreeFrom minimum r
-                ok newFd, duplicate fd newFd cloexec r
-        | FcntlOp.GetFd fd ->
+                ok newFd, duplicate fd newFd (command <> FcntlWorld.DupFd) r
+        | Syscall.Fcntl (fd, FcntlWorld.GetFd, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (_, cloexec, clofork) -> ok ((if cloexec then 1 else 0) ||| (if clofork then 2 else 0)), r
-        | FcntlOp.SetFd (fd, word) ->
+        | Syscall.Fcntl (fd, FcntlWorld.SetFd, word) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) ->
@@ -367,11 +354,11 @@ module TestFcntlReference =
                 { r with
                     Fds = Map.add fd (description, word &&& 1 <> 0, r.Darwin && word &&& 2 <> 0) r.Fds
                 }
-        | FcntlOp.GetFl fd ->
+        | Syscall.Fcntl (fd, FcntlWorld.GetFl, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) -> ok (statusWord r r.Descriptions.[description]), r
-        | FcntlOp.SetFl (fd, word) ->
+        | Syscall.Fcntl (fd, FcntlWorld.SetFl, word) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some _ when word &&& unmodelled r <> 0 -> Outcome.Refused, r
@@ -381,20 +368,21 @@ module TestFcntlReference =
                 let d =
                     if r.Darwin then
                         { d with
-                            NonBlocking = word &&& nonBlockBit r <> 0
-                            Synchronous = word &&& syncBit r <> 0
-                            DataSynchronous = word &&& dsyncBit r <> 0
+                            NonBlocking = word &&& nonBlockBit p <> 0
+                            Synchronous = word &&& syncBit p <> 0
+                            DataSynchronous = word &&& dsyncBit p <> 0
                         }
                     else
                         { d with
-                            NonBlocking = word &&& nonBlockBit r <> 0
+                            NonBlocking = word &&& nonBlockBit p <> 0
                         }
 
                 ok 0,
                 { r with
                     Descriptions = Map.add description d r.Descriptions
                 }
-        | FcntlOp.Dup2 (oldFd, newFd) ->
+        | Syscall.Fcntl (_, command, _) -> failwith $"fcntl command %d{command} is not generated by TestFcntlReference"
+        | Syscall.Dup2 (oldFd, newFd) ->
             if newFd < 0 || not (Map.containsKey oldFd r.Fds) then
                 failed UnixError.EBADF, r
             elif oldFd = newFd then
@@ -403,10 +391,10 @@ module TestFcntlReference =
                 atBound newFd, r
             else
                 ok newFd, duplicate oldFd newFd false r
-        | FcntlOp.Dup3 (oldFd, newFd, cloexec, stray) ->
+        | Syscall.Dup3 (oldFd, newFd, flags) ->
             if r.Darwin then
                 Outcome.Refused, r
-            elif stray then
+            elif flags &&& ~~~dup3CloseOnExec <> 0 then
                 failed UnixError.EINVAL, r
             elif oldFd = newFd then
                 failed UnixError.EINVAL, r
@@ -415,8 +403,8 @@ module TestFcntlReference =
             elif newFd >= bound r then
                 atBound newFd, r
             else
-                ok newFd, duplicate oldFd newFd cloexec r
-        | FcntlOp.Write fd ->
+                ok newFd, duplicate oldFd newFd (flags &&& dup3CloseOnExec <> 0) r
+        | Syscall.Write (fd, _, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) ->
@@ -438,7 +426,7 @@ module TestFcntlReference =
                             Written = true
                         }
                         r
-        | FcntlOp.Pwrite fd ->
+        | Syscall.PWrite (fd, _, _, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) ->
@@ -461,8 +449,8 @@ module TestFcntlReference =
                             Written = true
                         }
                         r
-        | FcntlOp.Ftruncate (_, length) when length < 0L -> failed UnixError.EINVAL, r
-        | FcntlOp.Ftruncate (fd, _) ->
+        | Syscall.FTruncate (_, length) when length < 0L -> failed UnixError.EINVAL, r
+        | Syscall.FTruncate (fd, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) ->
@@ -482,7 +470,7 @@ module TestFcntlReference =
                             Written = true
                         }
                         r
-        | FcntlOp.Flock (fd, operation) ->
+        | Syscall.FLock (fd, operation) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
             | Some (description, _, _) ->
@@ -522,10 +510,12 @@ module TestFcntlReference =
                             }
                             r
 
+                // LOCK_SH|LOCK_NB, LOCK_EX|LOCK_NB and LOCK_UN, which both
+                // flavours number alike.
                 match d.Kind, operation with
                 | Kind.PipeRead, _
                 | Kind.PipeWrite, _ when r.Darwin -> Outcome.Refused, r
-                | _, FcntlFlockOp.Unlock ->
+                | _, 8 ->
                     ok 0,
                     withDescription
                         description
@@ -535,9 +525,10 @@ module TestFcntlReference =
                         r
                 // A conversion, which this library refuses under Darwin.
                 | _, _ when r.Darwin && d.Lock.IsSome -> Outcome.Refused, r
-                | _, FcntlFlockOp.Shared -> acquire Lock.Shared
-                | _, FcntlFlockOp.Exclusive -> acquire Lock.Exclusive
-        | FcntlOp.Close fd ->
+                | _, 5 -> acquire Lock.Shared
+                | _, 6 -> acquire Lock.Exclusive
+                | _, operation -> failwith $"flock with 0x%x{operation} is not generated by TestFcntlReference"
+        | Syscall.Close fd ->
             if Map.containsKey fd r.Fds then
                 ok 0,
                 { r with
@@ -545,6 +536,29 @@ module TestFcntlReference =
                 }
             else
                 failed UnixError.EBADF, r
+        | other -> failwith $"%s{UnionCaseName.ofValue other} is not generated by TestFcntlReference"
+
+    /// The name a call that completed is counted under.
+    let private kindOf (platform : SimulatedUnixPlatform) (call : Syscall<int, string>) : string =
+        match call with
+        | Syscall.Open (path, _, _) when path = directoryPath -> "open of a directory"
+        | Syscall.Open _ -> "open"
+        | Syscall.Pipe2 _ -> "pipe2"
+        | Syscall.Dup _ -> "dup"
+        | Syscall.Fcntl (_, command, _) when isDupFd platform command -> "F_DUPFD"
+        | Syscall.Fcntl (_, FcntlWorld.GetFd, _) -> "F_GETFD"
+        | Syscall.Fcntl (_, FcntlWorld.SetFd, _) -> "F_SETFD"
+        | Syscall.Fcntl (_, FcntlWorld.GetFl, _) -> "F_GETFL"
+        | Syscall.Fcntl (_, FcntlWorld.SetFl, _) -> "F_SETFL"
+        | Syscall.Fcntl (_, command, _) -> failwith $"fcntl command %d{command} is not generated by TestFcntlReference"
+        | Syscall.Dup2 _ -> "dup2"
+        | Syscall.Dup3 _ -> "dup3"
+        | Syscall.Write _ -> "write"
+        | Syscall.PWrite _ -> "pwrite"
+        | Syscall.FTruncate _ -> "ftruncate"
+        | Syscall.FLock _ -> "flock"
+        | Syscall.Close _ -> "close"
+        | other -> failwith $"%s{UnionCaseName.ofValue other} is not generated by TestFcntlReference"
 
     let private system (platform : SimulatedUnixPlatform) : UnixSystem<int, string> =
         let seed =
@@ -579,142 +593,65 @@ module TestFcntlReference =
             )
         | Error fault -> failwith $"could not build the system: %A{fault}"
 
-    /// The library's answer to `op`.
+    let private ofWrite (answer : WriteAnswer) : SyscallAnswer =
+        match answer with
+        | WriteAnswer.Completed written -> SyscallAnswer.Completed written
+        | WriteAnswer.Failed error -> SyscallAnswer.Failed error
+
+    /// The library's answer to `call`, made by the process's leader through
+    /// `UnixSystem.tryStep`.
     let private library
-        (r : Reference)
-        (op : FcntlOp)
+        (call : Syscall<int, string>)
         (system : UnixSystem<int, string>)
         : Outcome * UnixSystem<int, string>
         =
-        let platform = r.Platform
+        match UnixSystem.tryStep (Callers.leader system) call system with
+        | Ok (SteppedCall.Open (SyscallOutcome.Answered answer, after))
+        | Ok (SteppedCall.Dup (answer, after))
+        | Ok (SteppedCall.Fcntl (answer, after))
+        | Ok (SteppedCall.Dup2 (answer, after))
+        | Ok (SteppedCall.Dup3 (answer, after))
+        | Ok (SteppedCall.FTruncate (answer, after))
+        | Ok (SteppedCall.FLock (SyscallOutcome.Answered answer, after))
+        | Ok (SteppedCall.Close (answer, after)) -> Outcome.Answered answer, after
+        | Ok (SteppedCall.Pipe2 (Pipe2Answer.Created (readFd, _), after)) ->
+            Outcome.Answered (SyscallAnswer.Completed (int64 readFd)), after
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns answer, after)))
+        | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, _), after)))
+        | Ok (SteppedCall.PWrite (answer, after)) -> Outcome.Answered (ofWrite answer), after
+        | Ok stepped -> failwith $"%A{call} answered %A{stepped}"
+        | Error (SyscallRefusal.Open (OpenRefusal.DescriptorLimit refusal))
+        | Error (SyscallRefusal.Pipe2 (Pipe2Refusal.DescriptorLimit refusal))
+        | Error (SyscallRefusal.Dup refusal)
+        | Error (SyscallRefusal.Fcntl (FcntlRefusal.DescriptorLimit refusal))
+        | Error (SyscallRefusal.Dup2 (Dup2Refusal.DescriptorLimit refusal))
+        | Error (SyscallRefusal.Dup3 (Dup3Refusal.DescriptorLimit refusal)) -> Outcome.RefusedAtBound refusal, system
+        | Error (SyscallRefusal.Fcntl (FcntlRefusal.UnmodelledStatusFlags _))
+        | Error (SyscallRefusal.Dup3 (Dup3Refusal.NotProvided _))
+        | Error (SyscallRefusal.FLock (FLockRefusal.DarwinPipe _))
+        | Error (SyscallRefusal.FLock FLockRefusal.DarwinConversion) -> Outcome.Refused, system
+        | Error refusal -> failwith $"%A{call} was refused: %s{SyscallRefusal.describe refusal}"
 
-        let ofFcntl (result : Result<SyscallAnswer * UnixSystem<int, string>, FcntlRefusal>) =
-            match result with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error (FcntlRefusal.UnmodelledStatusFlags _) -> Outcome.Refused, system
-            | Error (FcntlRefusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
-            | Error refusal -> failwith $"fcntl refused: %s{FcntlRefusal.describe refusal}"
-
-        let openPath (flags : OpenFlags) (path : string) : Outcome * UnixSystem<int, string> =
-            match OpenFlagWords.openPath flags (PathArg.ofText path) 0o644 system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error (OpenRefusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
-            | Error refusal -> failwith $"open refused: %A{refusal}"
-
-        // As `OpenFlagWords.encode` reads them: Linux's word holds both of
-        // `O_SYNC`'s bits whenever `Synchronous` is set.
-        let synchronised (synchronous : FcntlSyncRequest) (flags : OpenFlags) : OpenFlags =
-            match synchronous with
-            | FcntlSyncRequest.Neither -> flags
-            | FcntlSyncRequest.Sync ->
-                { flags with
-                    Synchronous = true
-                    DataSynchronous = not r.Darwin
-                }
-            | FcntlSyncRequest.SyncAndDataSync ->
-                { flags with
-                    Synchronous = true
-                    DataSynchronous = true
-                }
-
-        let thread = Lone.leader system
-
-        match op with
-        | FcntlOp.Open (access, cloexec, synchronous, noFollow, truncate) ->
-            let flags =
-                { FcntlWorld.opening access with
-                    CloseOnExec = cloexec
-                    NoFollow = noFollow
-                    Truncate = truncate
-                }
-                |> synchronised synchronous
-
-            openPath flags "f"
-        | FcntlOp.OpenDirectory (cloexec, synchronous) ->
-            let flags =
-                { FcntlWorld.opening FileAccessMode.ReadOnly with
-                    CloseOnExec = cloexec
-                    Directory = true
-                }
-                |> synchronised synchronous
-
-            openPath flags "d"
-        | FcntlOp.Pipe (nonBlocking, cloexec) ->
-            let flags =
-                (if nonBlocking then nonBlockBit r else 0)
-                ||| (if cloexec then cloexecBit r else 0)
-
-            match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
-            | Ok (Pipe2Answer.Created (readFd, _), system) ->
-                Outcome.Answered (SyscallAnswer.Completed (int64 readFd)), system
-            | Error (Pipe2Refusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
-            | other -> failwith $"pipe2: %A{other}"
-        | FcntlOp.Dup fd ->
-            match UnixDescriptor.tryDup (Callers.leader system) fd system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error refusal -> Outcome.RefusedAtBound refusal, system
-        | FcntlOp.DupFd (fd, minimum, cloexec) ->
-            let command =
-                if cloexec then
-                    FcntlWorld.dupFdCloexec platform
-                else
-                    FcntlWorld.DupFd
-
-            ofFcntl (UnixDescriptor.tryFcntl (Callers.leader system) fd command minimum system)
-        | FcntlOp.GetFd fd -> ofFcntl (UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.GetFd 0 system)
-        | FcntlOp.SetFd (fd, word) ->
-            ofFcntl (UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.SetFd word system)
-        | FcntlOp.GetFl fd -> ofFcntl (UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.GetFl 0 system)
-        | FcntlOp.SetFl (fd, word) ->
-            ofFcntl (UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.SetFl word system)
-        | FcntlOp.Dup2 (oldFd, newFd) ->
-            match UnixDescriptor.tryDup2 (Callers.leader system) oldFd newFd system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error (Dup2Refusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
-            | Error refusal -> failwith $"dup2 refused: %s{Dup2Refusal.describe refusal}"
-        | FcntlOp.Dup3 (oldFd, newFd, cloexec, stray) ->
-            let flags = (if cloexec then cloexecBit r else 0) ||| (if stray then 0x800 else 0)
-
-            match UnixDescriptor.tryDup3 (Callers.leader system) oldFd newFd flags system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error (Dup3Refusal.NotProvided _) -> Outcome.Refused, system
-            | Error (Dup3Refusal.DescriptorLimit refusal) -> Outcome.RefusedAtBound refusal, system
-            | Error refusal -> failwith $"dup3 refused: %s{Dup3Refusal.describe refusal}"
-        | FcntlOp.Write fd ->
-            match WriteOutcomes.admitThenWrite thread fd UserBuffer.Mapped (ImmutableArray.Create 1uy) system with
-            | Ok (WriteStep.Returns (WriteAnswer.Completed n, system))
-            | Ok (WriteStep.ReturnsRaising (WriteAnswer.Completed n, _, system)) ->
-                Outcome.Answered (SyscallAnswer.Completed n), system
-            | Ok (WriteStep.Returns (WriteAnswer.Failed error, system))
-            | Ok (WriteStep.ReturnsRaising (WriteAnswer.Failed error, _, system)) ->
-                Outcome.Answered (SyscallAnswer.Failed error), system
+    /// What the same `write(2)` or `pwrite(2)` as `call` answers through the
+    /// call's own functions, held to the call made a step at a time
+    /// (`WriteOutcomes.admitThenWrite` and `admitThenPwrite`): the answer
+    /// `library` must also give. `None` for any other call.
+    let private writtenThroughSteps
+        (call : Syscall<int, string>)
+        (system : UnixSystem<int, string>)
+        : (Outcome * UnixSystem<int, string>) option
+        =
+        match call with
+        | Syscall.Write (fd, CopiedArgument.Readable bytes, _) ->
+            match WriteOutcomes.admitThenWrite (Lone.leader system) fd UserBuffer.Mapped bytes system with
+            | Ok (WriteStep.Returns (answer, after))
+            | Ok (WriteStep.ReturnsRaising (answer, _, after)) -> Some (Outcome.Answered (ofWrite answer), after)
             | other -> failwith $"write: %A{other}"
-        | FcntlOp.Pwrite fd ->
-            match WriteOutcomes.admitThenPwrite thread fd (ImmutableArray.Create 1uy) 0L system with
-            | Ok (WriteAnswer.Completed n, system) -> Outcome.Answered (SyscallAnswer.Completed n), system
-            | Ok (WriteAnswer.Failed error, system) -> Outcome.Answered (SyscallAnswer.Failed error), system
+        | Syscall.PWrite (fd, CopiedArgument.Readable bytes, _, offset) ->
+            match WriteOutcomes.admitThenPwrite (Lone.leader system) fd bytes offset system with
+            | Ok (answer, after) -> Some (Outcome.Answered (ofWrite answer), after)
             | Error refusal -> failwith $"pwrite refused: %A{refusal}"
-        | FcntlOp.Ftruncate (fd, length) ->
-            match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error refusal -> failwith $"ftruncate refused: %s{TruncationRefusal.describe refusal}"
-        | FcntlOp.Flock (fd, operation) ->
-            let word =
-                match operation with
-                | FcntlFlockOp.Shared -> 1 ||| 4
-                | FcntlFlockOp.Exclusive -> 2 ||| 4
-                | FcntlFlockOp.Unlock -> 8
-
-            match UnixDescriptor.tryFlock (Callers.thread thread system) fd word system with
-            | Ok (SyscallOutcome.Answered answer, system) -> Outcome.Answered answer, system
-            | Ok (other, _) -> failwith $"a non-blocking flock answered %A{other}"
-            | Error (FLockRefusal.DarwinPipe _)
-            | Error FLockRefusal.DarwinConversion -> Outcome.Refused, system
-            | Error refusal -> failwith $"flock refused: %s{FLockRefusal.describe refusal}"
-        | FcntlOp.Close fd ->
-            match UnixDescriptor.tryClose (Callers.leader system) fd system with
-            | Ok (answer, system) -> Outcome.Answered answer, system
-            | Error refusal -> failwith $"close refused: %s{CloseRefusal.describe refusal}"
+        | _ -> None
 
     /// Which descriptors `fds` name a description in common: the partition the
     /// library and the reference must agree on.
@@ -726,7 +663,7 @@ module TestFcntlReference =
         |> Set.ofList
 
     let private wordGen (platform : SimulatedUnixPlatform) : Gen<int> =
-        let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+        let darwin = isDarwin platform
 
         let modelled =
             if darwin then
@@ -756,7 +693,7 @@ module TestFcntlReference =
             return List.fold (|||) 0 (modelledBits @ ignoredBits @ stray)
         }
 
-    let private opGen (platform : SimulatedUnixPlatform) : Gen<FcntlOp> =
+    let private callGen (platform : SimulatedUnixPlatform) : Gen<Syscall<int, string>> =
         let bound = SimulatedUnixPlatform.descriptorBound platform
         // Around the bound, so that F_DUPFD and dup2 put descriptors just below
         // it and then reach it.
@@ -781,16 +718,21 @@ module TestFcntlReference =
                     FileAccessMode.ReadWrite
                 ]
 
+        // Which of `O_SYNC` and `O_DSYNC` an `open(2)` asks for, as
+        // `OpenFlags.Synchronous` and `DataSynchronous`: neither, `O_SYNC`
+        // (which on Linux is both of its bits), or `O_SYNC|O_DSYNC`. `O_DSYNC`
+        // alone is not among them: the library refuses it.
         let synchronous =
-            Gen.elements
-                [
-                    FcntlSyncRequest.Neither
-                    FcntlSyncRequest.Sync
-                    FcntlSyncRequest.SyncAndDataSync
-                ]
+            Gen.elements [ false, false ; true, not (isDarwin platform) ; true, true ]
 
-        let flockOp =
-            Gen.elements [ FcntlFlockOp.Shared ; FcntlFlockOp.Exclusive ; FcntlFlockOp.Unlock ]
+        let opening (path : PathArgumentBytes) (flags : OpenFlags) : Syscall<int, string> =
+            Syscall.Open (path, OpenFlagWords.encode platform flags, 0o644)
+
+        // LOCK_SH|LOCK_NB, LOCK_EX|LOCK_NB and LOCK_UN.
+        let flockWord = Gen.elements [ 1 ||| 4 ; 2 ||| 4 ; 8 ]
+
+        // Every write and pwrite is of one byte, and every pwrite at offset 0.
+        let oneByte = CopiedArgument.Readable (ImmutableArray.Create 1uy)
 
         Gen.frequency
             [
@@ -798,17 +740,60 @@ module TestFcntlReference =
                 gen {
                     let! a = access
                     let! c = bool
-                    let! s = synchronous
+                    let! s, d = synchronous
                     let! n = bool
                     let! t = Gen.frequency [ 3, Gen.constant false ; 1, Gen.constant true ]
-                    return FcntlOp.Open (a, c, s, n, t)
+
+                    return
+                        opening
+                            filePath
+                            { FcntlWorld.opening a with
+                                CloseOnExec = c
+                                Synchronous = s
+                                DataSynchronous = d
+                                NoFollow = n
+                                Truncate = t
+                            }
                 }
-                1, Gen.map2 (fun c s -> FcntlOp.OpenDirectory (c, s)) bool synchronous
-                2, Gen.map2 (fun n c -> FcntlOp.Pipe (n, c)) bool bool
-                2, Gen.map FcntlOp.Dup fd
+                // As `opendir(3)` opens one: `O_RDONLY|O_DIRECTORY`.
+                1,
+                Gen.map2
+                    (fun c (s, d) ->
+                        opening
+                            directoryPath
+                            { FcntlWorld.opening FileAccessMode.ReadOnly with
+                                CloseOnExec = c
+                                Directory = true
+                                Synchronous = s
+                                DataSynchronous = d
+                            }
+                    )
+                    bool
+                    synchronous
+                2,
+                Gen.map2
+                    (fun n c ->
+                        Syscall.Pipe2 (
+                            UserBuffer.Mapped,
+                            (if n then nonBlockBit platform else 0)
+                            ||| (if c then cloexecBit platform else 0)
+                        )
+                    )
+                    bool
+                    bool
+                2, Gen.map Syscall.Dup fd
                 3,
                 Gen.map3
-                    (fun f m c -> FcntlOp.DupFd (f, m, c))
+                    (fun f m c ->
+                        Syscall.Fcntl (
+                            f,
+                            (if c then
+                                 FcntlWorld.dupFdCloexec platform
+                             else
+                                 FcntlWorld.DupFd),
+                            m
+                        )
+                    )
                     fd
                     (Gen.frequency
                         [
@@ -817,26 +802,34 @@ module TestFcntlReference =
                             3, nearBound
                         ])
                     bool
-                3, Gen.map FcntlOp.GetFd fd
-                3, Gen.map2 (fun f w -> FcntlOp.SetFd (f, w)) fd (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ; 4 ; 0x80000 ])
-                3, Gen.map FcntlOp.GetFl fd
-                3, Gen.map2 (fun f w -> FcntlOp.SetFl (f, w)) fd (wordGen platform)
-                4, Gen.map2 (fun o n -> FcntlOp.Dup2 (o, n)) fd fd
+                3, Gen.map (fun f -> Syscall.Fcntl (f, FcntlWorld.GetFd, 0)) fd
+                3,
+                Gen.map2
+                    (fun f w -> Syscall.Fcntl (f, FcntlWorld.SetFd, w))
+                    fd
+                    (Gen.elements [ 0 ; 1 ; 2 ; 3 ; -1 ; 4 ; 0x80000 ])
+                3, Gen.map (fun f -> Syscall.Fcntl (f, FcntlWorld.GetFl, 0)) fd
+                3, Gen.map2 (fun f w -> Syscall.Fcntl (f, FcntlWorld.SetFl, w)) fd (wordGen platform)
+                4, Gen.map2 (fun o n -> Syscall.Dup2 (o, n)) fd fd
+                // `O_CLOEXEC`, and now and then Linux's `O_NONBLOCK`, which
+                // `dup3` refuses.
                 2,
                 Gen.map3
-                    (fun (o, n) c s -> FcntlOp.Dup3 (o, n, c, s))
+                    (fun (o, n) c s ->
+                        Syscall.Dup3 (o, n, (if c then dup3CloseOnExec else 0) ||| (if s then 0x800 else 0))
+                    )
                     (Gen.zip fd fd)
                     bool
                     (Gen.frequency [ 5, Gen.constant false ; 1, Gen.constant true ])
-                2, Gen.map FcntlOp.Write fd
-                1, Gen.map FcntlOp.Pwrite fd
+                2, Gen.map (fun f -> Syscall.Write (f, oneByte, 1UL)) fd
+                1, Gen.map (fun f -> Syscall.PWrite (f, oneByte, 1UL, 0L)) fd
                 1,
                 Gen.map2
-                    (fun f l -> FcntlOp.Ftruncate (f, l))
+                    (fun f l -> Syscall.FTruncate (f, l))
                     fd
                     (Gen.frequency [ 8, Gen.map int64 (Gen.choose (0, 4)) ; 1, Gen.constant -1L ])
-                3, Gen.map2 (fun f o -> FcntlOp.Flock (f, o)) fd flockOp
-                3, Gen.map FcntlOp.Close fd
+                3, Gen.map2 (fun f o -> Syscall.FLock (f, o)) fd flockWord
+                3, Gen.map Syscall.Close fd
             ]
 
     [<Test>]
@@ -844,9 +837,13 @@ module TestFcntlReference =
         ()
         : unit
         =
-        let property (cover : string -> unit) (platform : SimulatedUnixPlatform, ops : FcntlOp list) : unit =
+        let property
+            (cover : string -> unit)
+            (platform : SimulatedUnixPlatform, calls : Syscall<int, string> list)
+            : unit
+            =
             let mutable system = system platform
-            let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+            let darwin = isDarwin platform
 
             // The launched standard streams, as the reference sees them: each
             // its own pipe end, the first read and the others write, and each
@@ -883,28 +880,38 @@ module TestFcntlReference =
                     NextObject = 5
                 }
 
-            for i, op in List.indexed ops do
-                let where () : string = $"%O{platform}, op %d{i} (%A{op})"
-                let expected, after = step op reference
-                let actual, afterSystem = library reference op system
+            for i, call in List.indexed calls do
+                let where () : string = $"%O{platform}, call %d{i} (%A{call})"
+                let expected, after = step call reference
+                let actual, afterSystem = library call system
 
                 if actual <> expected then
                     failwith $"%s{where ()}: expected %A{expected}, got %A{actual}"
 
+                match writtenThroughSteps call system with
+                | Some (throughSteps, afterSteps) when throughSteps <> actual || afterSteps <> afterSystem ->
+                    failwith
+                        $"%s{where ()}: UnixSystem.tryStep answered %A{actual}, and the call's own functions %A{throughSteps}, or left another system"
+                | Some _
+                | None -> ()
+
                 cover (
-                    match op, actual with
+                    match call, actual with
                     | _, Outcome.Refused -> "refused"
-                    | FcntlOp.DupFd _, Outcome.RefusedAtBound _ -> "F_DUPFD at the bound"
-                    | FcntlOp.Dup2 _, Outcome.RefusedAtBound _ -> "dup2 at the bound"
+                    | Syscall.Fcntl (_, command, _), Outcome.RefusedAtBound _ when isDupFd platform command ->
+                        "F_DUPFD at the bound"
+                    | Syscall.Dup2 _, Outcome.RefusedAtBound _ -> "dup2 at the bound"
                     | _, Outcome.RefusedAtBound _ -> "at the bound"
-                    | FcntlOp.Dup2 (o, n), Outcome.Answered (SyscallAnswer.Completed _) when
+                    | Syscall.Dup2 (o, n), Outcome.Answered (SyscallAnswer.Completed _) when
                         o <> n && Map.containsKey n reference.Fds
                         ->
                         "dup2 onto an open descriptor"
-                    | FcntlOp.DupFd (_, m, _), Outcome.Answered (SyscallAnswer.Completed fd) when fd > int64 m ->
+                    | Syscall.Fcntl (_, command, m), Outcome.Answered (SyscallAnswer.Completed fd) when
+                        isDupFd platform command && fd > int64 m
+                        ->
                         "F_DUPFD past a taken minimum"
                     | _, Outcome.Answered (SyscallAnswer.Failed error) -> $"%O{error}"
-                    | op, Outcome.Answered (SyscallAnswer.Completed _) -> UnionCaseName.ofValue op
+                    | call, Outcome.Answered (SyscallAnswer.Completed _) -> kindOf platform call
                 )
 
                 reference <- after
@@ -936,19 +943,22 @@ module TestFcntlReference =
                                  DescriptorFlags.Linux (closeOnExec = cloexec)
                          ))
 
-                // Every descriptor's status word, whether or not the step
+                // Every descriptor's status word, whether or not the call
                 // asked for one.
                 for fd in Map.keys reference.Fds do
                     let description, _, _ = reference.Fds.[fd]
 
-                    match UnixDescriptor.tryFcntl (Callers.leader system) fd FcntlWorld.GetFl 0 system with
-                    | Ok (answer, _) ->
+                    match
+                        UnixSystem.tryStep (Callers.leader system) (Syscall.Fcntl (fd, FcntlWorld.GetFl, 0)) system
+                    with
+                    | Ok (SteppedCall.Fcntl (answer, _)) ->
                         answer
                         |> Expect.equal
                             (fun () -> $"%s{where ()}, F_GETFL of %d{fd}")
                             (SyscallAnswer.Completed (int64 (statusWord reference reference.Descriptions.[description])))
+                    | Ok stepped -> failwith $"%s{where ()}: F_GETFL of %d{fd} answered %A{stepped}"
                     | Error refusal ->
-                        failwith $"%s{where ()}: F_GETFL of %d{fd} refused: %s{FcntlRefusal.describe refusal}"
+                        failwith $"%s{where ()}: F_GETFL of %d{fd} refused: %s{SyscallRefusal.describe refusal}"
 
                 // Every description's status is its machine's flavour's.
                 for KeyValue (id, description) in OpenFileTable.descriptions system.Machine.OpenFiles do
@@ -961,8 +971,8 @@ module TestFcntlReference =
         let gen =
             gen {
                 let! platform = Gen.elements platforms
-                let! ops = Gen.listOf (opGen platform)
-                return platform, ops
+                let! calls = Gen.listOf (callGen platform)
+                return platform, calls
             }
 
         let coverage =
@@ -977,13 +987,13 @@ module TestFcntlReference =
                 "F_DUPFD past a taken minimum"
                 "EBADF"
                 "EINVAL"
-                "SetFl"
-                "Dup3"
-                "Write"
-                "Pwrite"
-                "Ftruncate"
-                "Flock"
-                "OpenDirectory"
+                "F_SETFL"
+                "dup3"
+                "write"
+                "pwrite"
+                "ftruncate"
+                "flock"
+                "open of a directory"
                 "EAGAIN"
                 "ESPIPE"
             ] do

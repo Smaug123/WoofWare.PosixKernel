@@ -594,14 +594,19 @@ module TestThreadIds =
     // ------------------------------------------------------------------
     // The reference model.
 
+    /// One step of a run. Each call's thread is resolved against the live
+    /// threads as the step is made, and the call goes through `UnixSystem.step`.
     [<RequireQualifiedAccess>]
     type private Op =
-        /// Spawn a new thread from the `parent`th live thread (modulo how many there are).
+        /// `Syscall.Spawn` of a thread of a new name by the `parent`th live
+        /// thread (modulo how many there are).
         | Spawn of parent : int
-        /// Exit the `thread`th live thread other than the leader (modulo how many).
+        /// `Syscall.ExitThread` by the `thread`th live thread other than the
+        /// leader (modulo how many).
         | Exit of thread : int
-        /// `exit_group` from the `thread`th live thread (modulo how many), which ends the
-        /// process; the run goes on from the state before, as if it had not been made.
+        /// `Syscall.ExitGroup` by the `thread`th live thread (modulo how many),
+        /// which ends the process; the run goes on from the state before, as if
+        /// it had not been made.
         | ExitGroup of thread : int
         /// The administrator writes Linux's `pid_max`, whatever the live ids are.
         | WritePidMax of pidMax : int32
@@ -773,21 +778,21 @@ module TestThreadIds =
                 let held = liveIds system
 
                 let actual =
-                    UnixThreadLifecycle.trySpawn (Callers.thread parent system) nextName (CpuId 0) system
+                    UnixSystem.tryStep (Callers.thread parent system) (Syscall.Spawn (nextName, CpuId 0)) system
 
                 match modelNext held model, actual with
-                | Expected.Exhausted, Ok (SpawnAnswer.Failed error, after) ->
+                | Expected.Exhausted, Ok (SteppedCall.Spawn (SpawnAnswer.Failed error, after)) ->
                     error |> shouldEqual UnixError.EAGAIN
                     // A failed creation hands out no thread ID and adds no thread.
                     after |> shouldEqual system
                     cover ThreadIdLabel.Exhausted
                     system, model, nextName + 1, minted, last
-                | Expected.CounterAtTop, Error refusal ->
+                | Expected.CounterAtTop, Error (SyscallRefusal.Spawn refusal) ->
                     refusal |> shouldEqual SpawnRefusal.ThreadIdCounterExhausted
                     // A refusal carries no system, so the run goes on from this one.
                     cover ThreadIdLabel.CounterAtTop
                     system, model, nextName + 1, minted, last
-                | Expected.Issued (expected, model), Ok (SpawnAnswer.Spawned id, after) ->
+                | Expected.Issued (expected, model), Ok (SteppedCall.Spawn (SpawnAnswer.Spawned id, after)) ->
                     let id = OsThreadId.toUInt64 id
                     id |> shouldEqual expected
                     idOf nextName after |> shouldEqual id
@@ -814,19 +819,31 @@ module TestThreadIds =
                     check after
                     let minted = if id <= last then Set.singleton id else Set.add id minted
                     after, model, nextName + 1, minted, id
-                | expected, actual -> failwith $"the model says %A{expected}, and the library %A{actual}"
+                | expected, actual ->
+                    failwith $"the model says %A{expected}, and the library %A{Result.map Stepped.view actual}"
             | Op.Exit index ->
                 match live |> List.filter (fun thread -> thread <> (Lone.leader system)) with
                 | [] -> system, model, nextName, minted, last
                 | others ->
                     let thread = others.[index % others.Length]
-                    let after = exitOrFail thread system
+
+                    let after =
+                        match UnixSystem.step (Callers.thread thread system) (Syscall.ExitThread 0) system with
+                        | SteppedCall.ExitThread (ProcessFate.Continues ((), after)) -> after
+                        | other ->
+                            failwith
+                                $"expected thread %d{thread}'s exit to leave the process running, got %A{Stepped.view other}"
+
                     cover ThreadIdLabel.Exits
                     check after
                     after, model, nextName, minted, last
             | Op.ExitGroup index ->
                 let thread = live.[index % live.Length]
-                let _, ended = UnixThreadLifecycle.exitGroup (Callers.thread thread system) 0 system
+
+                let ended =
+                    match UnixSystem.step (Callers.thread thread system) (Syscall.ExitGroup 0) system with
+                    | SteppedCall.ExitGroup (_, ended) -> ended
+                    | other -> failwith $"exit_group by thread %d{thread} answered %A{Stepped.view other}"
 
                 // Every thread's ID is freed with it, and the process leaves the
                 // machine, its descriptors closed; the counter the IDs come from
