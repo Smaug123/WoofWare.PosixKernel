@@ -4641,8 +4641,13 @@ module UnixReadWrite =
     /// The system that comes with an answer, or with the paused call, is the
     /// one a real kernel is in by the time it either answers or copies. It is
     /// the one that arrived, except that on Darwin a write reaching a pipe
-    /// moves the pipe's timestamps whatever it answers but `EPIPE`, and that a
-    /// write into a pipe with no reader raises `SIGPIPE`.
+    /// moves the pipe's timestamps whatever it answers but `EPIPE`, that a
+    /// write into a pipe with no reader raises `SIGPIPE`, and that a write of
+    /// at least one byte to a regular file through an unmapped buffer the
+    /// address check let through answers `EFAULT` only after the file's write
+    /// has run: it strips the set-ID bits a successful write would, grows the
+    /// file to the write's offset, and moves its `mtime` and `ctime` (on
+    /// Darwin, only when the write reaches past the file's end).
     ///
     /// A write into a pipe with no reader answers `EPIPE` without the buffer,
     /// ahead of `EAGAIN`, `EFAULT` and a short count, and raises `SIGPIPE`
@@ -5090,6 +5095,11 @@ module UnixReadWrite =
     /// does before the copy is a question. Otherwise the call stops at the
     /// copy, and `pwriteWithBytes` takes the bytes `PausedPWrite.copyRange`
     /// names.
+    ///
+    /// The one answer that changes the system is `EFAULT` from a regular file
+    /// through an unmapped buffer the address check let through: the file's
+    /// write has already run, so the file's set-ID bits, its length and its
+    /// timestamps can have moved, as `write`'s do.
     ///
     /// The length limit is not settled before the copy: `pwriteWithBytes`
     /// reports it as it commits, so a caller can be asked for bytes for a
