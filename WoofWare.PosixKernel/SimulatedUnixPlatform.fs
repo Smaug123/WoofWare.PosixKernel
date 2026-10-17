@@ -1328,6 +1328,29 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> localRoutes |> List.exists (Ipv4Prefix.contains address)
         | SimulatedUnixFlavour.Darwin -> false
 
+    /// Whether this machine's own TCP answers a SYN to `address`, given the
+    /// addresses it holds and its local routes: Linux answers at every address
+    /// inside a local route as well as at those it holds; Darwin answers only
+    /// at an address it holds, and drops a SYN to any other address its local
+    /// routes bring back to it.
+    let internal receivesStreamAt
+        (platform : SimulatedUnixPlatform)
+        (localAddresses : Ipv4Address list)
+        (localRoutes : Ipv4Prefix list)
+        (address : Ipv4Address)
+        : bool
+        =
+        // Measured by `docs/probes/loopback-alias-connect`, on Linux 6.18.5
+        // and Darwin 27.0, connecting to 127.0.0.2 with loopback's
+        // 127.0.0.0/8 route: Linux completes against a wildcard listener and
+        // answers ECONNREFUSED with none; Darwin waits whatever listens.
+        List.contains address localAddresses
+        || (
+            match flavour platform with
+            | SimulatedUnixFlavour.Linux -> localRoutes |> List.exists (Ipv4Prefix.contains address)
+            | SimulatedUnixFlavour.Darwin -> false
+        )
+
     /// What this platform's `bind(2)` makes of `address` on a socket of `kind`,
     /// if it is the broadcast address or a multicast one; `None` for any other.
     ///
