@@ -15,12 +15,19 @@
 //         created there takes that group, and an "in" row chowns it to the
 //         caller's egid. A mode the caller could not set is reported as
 //         `unsettable` rather than measured.
+// Darwin, as root: docs/probes/darwin-root/run.sh runs it so. Each row forks
+//         a child as on Linux, with the machine's own accounts: root chowns
+//         the file to uid 501 and to group 20 (the writer's) or 7777 (a group
+//         no account is in), and the child keeps root or takes uid 501 or 502,
+//         gid 20, groups 20 alone.
 //
 // Fields of a row:
 //   writer   uid1000 (the file's owner), uid1001 (not its owner, writing
 //            through the group or other write bit, which its rows' modes
 //            add: 06755 is measured as 06777, 04644 as 04666), root, or self
-//            (Darwin's caller, which owns the file).
+//            (Darwin's caller, which owns the file). Darwin's root run names
+//            them uid501 and uid502, and adds rootowner: root writing a file
+//            it owns, in group 0 (in) or 7777 (out).
 //   group    in or out: whether the writer's groups hold the file's group.
 //   call     write (lseek to the offset first) or pwrite (at the offset).
 //   size     the file's length before the call, all of it bytes 'h'.
@@ -74,6 +81,18 @@
 
 static char base[PATH_MAX - 2];
 static void *protnone;
+
+// The file's owner and another user, the writer's group and one it is not in,
+// as root sets them up.
+#ifdef __APPLE__
+static const uid_t OWNER = 501, OTHER = 502;
+static const gid_t GROUP_IN = 20, GROUP_OUT = 7777;
+static const char *const OWNER_NAME = "uid501", *const OTHER_NAME = "uid502";
+#else
+static const uid_t OWNER = 1000, OTHER = 1001;
+static const gid_t GROUP_IN = 1000, GROUP_OUT = 2000;
+static const char *const OWNER_NAME = "uid1000", *const OTHER_NAME = "uid1001";
+#endif
 
 static void die(const char *what) {
     perror(what);
@@ -137,7 +156,7 @@ static void events(int in, char *out, size_t cap) {
 
 // Make the file as the row needs it. Returns 0, or -1 when the mode would not
 // stick (a mode the caller may not set), having printed nothing.
-static int setup(const char *pth, int mode, int group_in, long size) {
+static int setup(const char *pth, int mode, int group_in, long size, int root_owns) {
     unlink(pth);
     int fd = open(pth, O_CREAT | O_EXCL | O_WRONLY, 0600);
     if (fd < 0) die("create");
@@ -147,7 +166,7 @@ static int setup(const char *pth, int mode, int group_in, long size) {
     if (write(fd, seed, size) != size) die("seed");
     free(seed);
     if (geteuid() == 0) {
-        if (fchown(fd, 1000, group_in ? 1000 : 2000) != 0) die("fchown");
+        if (fchown(fd, root_owns ? 0 : OWNER, root_owns ? (group_in ? 0 : GROUP_OUT) : group_in ? GROUP_IN : GROUP_OUT) != 0) die("fchown");
     } else if (group_in) {
         if (fchown(fd, (uid_t)-1, getegid()) != 0) die("fchown egid");
     }
@@ -175,7 +194,7 @@ static void row(const char *writer, int group_in, long size, const char *call, l
     char pth[PATH_MAX];
     snprintf(pth, sizeof pth, "%s/f", base);
     const char *group = group_in ? "in" : "out";
-    if (setup(pth, mode, group_in, size) != 0) {
+    if (setup(pth, mode, group_in, size, strcmp(writer, "rootowner") == 0) != 0) {
         printf("writer=%s group=%s size=%ld call=%s offset=%ld buffer=%s count=%zu before=%05o -> unsettable\n", writer,
                group, size, call, offset, bufname, count, mode);
         fflush(stdout);
@@ -185,17 +204,23 @@ static void row(const char *writer, int group_in, long size, const char *call, l
     pid_t child = fork();
     if (child < 0) die("fork");
     if (child == 0) {
-        if (strcmp(writer, "uid1000") == 0 || strcmp(writer, "uid1001") == 0) {
+        if (strcmp(writer, OWNER_NAME) == 0 || strcmp(writer, OTHER_NAME) == 0) {
+#ifdef __APPLE__
+            // Darwin's setgroups(0, NULL) would leave a group of its own
+            // choosing; name the writer's one group.
+            if (setgroups(1, &GROUP_IN) != 0) die("setgroups");
+#else
             if (setgroups(0, NULL) != 0) die("setgroups");
-            if (setgid(1000) != 0) die("setgid");
-            if (setuid(strcmp(writer, "uid1000") == 0 ? 1000 : 1001) != 0) die("setuid");
+#endif
+            if (setgid(GROUP_IN) != 0) die("setgid");
+            if (setuid(strcmp(writer, OWNER_NAME) == 0 ? OWNER : OTHER) != 0) die("setuid");
         }
         int fd = open(pth, O_RDWR);
         if (fd < 0) die("open");
         struct stat st0;
         if (fstat(fd, &st0) != 0) die("fstat");
         // The group as the writer stands towards it, checked rather than assumed.
-        if (writer_in_group(st0.st_gid) != group_in && strcmp(writer, "root") != 0) {
+        if (writer_in_group(st0.st_gid) != group_in && strcmp(writer, "root") != 0 && strcmp(writer, "rootowner") != 0) {
             printf("writer=%s group=%s: the writer's groups disagree with the row (file gid %d)\n", writer, group,
                    (int)st0.st_gid);
             exit(3);
@@ -257,10 +282,15 @@ int main(int argc, char **argv) {
     printf("# caller uid=%d egid=%d, base directory gid=%d\n", (int)geteuid(), (int)getegid(), (int)bs.st_gid);
     fflush(stdout);
 
-    const char *writers_root[] = {"uid1000", "uid1001", "root"};
+#ifdef __APPLE__
+    // Darwin's root run adds root writing a file it owns, in group 0 or 7777.
+    const char *writers_root[] = {OWNER_NAME, OTHER_NAME, "root", "rootowner"};
+#else
+    const char *writers_root[] = {OWNER_NAME, OTHER_NAME, "root"};
+#endif
     const char *writers_self[] = {"self"};
     const char **writers = geteuid() == 0 ? writers_root : writers_self;
-    int nwriters = geteuid() == 0 ? 3 : 1;
+    int nwriters = geteuid() == 0 ? (int)(sizeof writers_root / sizeof writers_root[0]) : 1;
     if (geteuid() != 0 && writer_in_group(bs.st_gid)) {
         printf("# the caller is in the base directory's group, so no `out` row can be measured here\n");
     }
@@ -283,7 +313,7 @@ int main(int argc, char **argv) {
                     for (size_t o = 0; o < sizeof offsets / sizeof offsets[0]; o++)
                         for (size_t b = 0; b < nbuffers; b++)
                             row(writers[w], g, 5, calls[c], offsets[o], buffers[b], 5,
-                                strcmp(writers[w], "uid1001") == 0 ? modes[m] | 0066 : modes[m]);
+                                strcmp(writers[w], OTHER_NAME) == 0 ? modes[m] | 0066 : modes[m]);
 
     // Section zero: a count of zero, through each faulting buffer.
     printf("# section zero\n");
@@ -292,7 +322,7 @@ int main(int argc, char **argv) {
             for (size_t o = 0; o < sizeof offsets / sizeof offsets[0]; o++)
                 for (size_t b = 1; b < nbuffers; b++)
                     row(writers[w], 1, 5, calls[c], offsets[o], buffers[b], 0,
-                        strcmp(writers[w], "uid1001") == 0 ? 06777 : 06755);
+                        strcmp(writers[w], OTHER_NAME) == 0 ? 06777 : 06755);
 
     // Section extent: which of the file's length, the write's offset and its
     // count decide what moves, around page boundaries (4 KiB on Linux, 16 KiB

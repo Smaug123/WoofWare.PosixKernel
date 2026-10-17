@@ -3,6 +3,8 @@
 // Build and run, as a user that is not root:
 //   Darwin: cc -Wall -o /tmp/pp privileged-port.c && /tmp/pp
 //   Linux:  gcc -Wall -o /tmp/pp privileged-port.c && /tmp/pp
+// docs/probes/darwin-root/run.sh also runs it as Darwin's root, for root's
+// own column (measured-darwin-*-root.txt).
 //
 // Every row makes a fresh socket, binds it once, prints the answer and closes
 // it. The rows cover:

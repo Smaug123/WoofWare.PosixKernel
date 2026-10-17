@@ -36,6 +36,9 @@
 // declares no setresuid, setresgid, getresuid or getresgid. Its rows are the
 // same size and buffer arguments as Linux's, from the process's own
 // credentials, since uid 501 cannot take any other.
+// docs/probes/darwin-root/run.sh runs the same rows as Darwin's root
+// (setresid.darwin-*-root.txt); docs/probes/darwin-root/credentials.c
+// measures what a privileged setgroups leaves the process holding.
 //
 // Measured on Linux 6.18.5 (aarch64, root in the container, gcc:14) and Darwin
 // 27.0 (arm64, uid 501) on 2026-10-03. The output is beside this file as
