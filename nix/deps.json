@@ -6,8 +6,8 @@
   },
   {
     "pname": "FSharp.Core",
-    "version": "10.1.203",
-    "hash": "sha256-uOy6XGuHE6rSjI88K5imM67v+od644nqQpuZZQIC/NU="
+    "version": "8.0.300",
+    "hash": "sha256-BGDVf+oYfTgeqdS5iApzfT+rEhFN3P/9iuJDC1PuHZU="
   },
   {
     "pname": "Microsoft.AspNetCore.App.Ref",

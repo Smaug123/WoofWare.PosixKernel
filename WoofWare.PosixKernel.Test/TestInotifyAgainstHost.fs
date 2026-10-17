@@ -498,6 +498,6 @@ module TestInotifyAgainstHost =
                     | Ok (Error UnixError.EINVAL) -> false
                     | other -> failwith $"0x%x{flags}: %A{other}"
 
-                if host.IsOk <> model then
+                if Result.isOk host <> model then
                     failwith $"flags 0x%x{flags}: the host answered %A{host}, the model created %b{model}"
         )

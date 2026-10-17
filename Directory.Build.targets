@@ -13,8 +13,15 @@
        silently raise what every consumer must reference. This is an Update of the SDK's implicit
        reference rather than an Include of our own: that reference is declared in the SDK's
        Microsoft.FSharp.NetSdk.props, which is evaluated after Directory.Build.props and before
-       this file, and an Update applies only to items already declared. -->
+       this file, and an Update applies only to items already declared.
+       8.0.300 is the oldest FSharp.Core the library compiles against, so that a consumer pinned to
+       an older one meets no downgrade error it need not. Below it, RequireQualifiedAccessAttribute's
+       AttributeUsage names only classes, and the compiler refuses it on the library's struct
+       unions (NameLengthLimit, SpliceLengthRecheck) with FS0842; below 6.0.6 there is also no
+       Result.toOption or Result.defaultValue. The tests reference the same version, so they run
+       against the floor and must keep to its API: 8.0.300 has no ValueOption.toOption, and no
+       IsOk-style properties on its own unions. -->
   <ItemGroup>
-    <PackageReference Update="FSharp.Core" Version="10.1.203" />
+    <PackageReference Update="FSharp.Core" Version="8.0.300" />
   </ItemGroup>
 </Project>

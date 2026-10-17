@@ -5089,10 +5089,10 @@ module UnixReadWrite =
         // links are EINVAL; 0-to-5 of 5 is not, nor is 8-to-0 of 5 from a
         // 10-byte file, which copies 2. The overlap is judged on the count
         // shortened to the source's end: 0-to-12 of 20 from a 10-byte file
-        // copies 10. Lengths SSIZE_MAX and SIZE_MAX copy what remains; a copy
-        // from past the source's end is 0 and moves nothing, timestamps
-        // included; a copy into an offset past the destination's end leaves a
-        // hole of zeroes. A copy moves the destination's mtime and ctime and
+        // copies 10. From offset 0, lengths SSIZE_MAX and SIZE_MAX copy what
+        // remains; a copy from past the source's end is 0 and moves nothing,
+        // timestamps included; a copy into an offset past the destination's
+        // end leaves a hole of zeroes. A copy moves the destination's mtime and ctime and
         // nothing else of it, and strips the set-ID bits exactly as a write by
         // the same caller does (uid 1000: 06755 to 0755, 06745 to 02745,
         // 02644 kept; root keeps every bit). A destination at offset
@@ -5149,10 +5149,21 @@ module UnixReadWrite =
             | EmulatedFileSystemType.Nfs as fileSystem -> Error (CopyFileRangeRefusal.UnmeasuredFileSystem fileSystem)
             | EmulatedFileSystemType.Tmpfs ->
 
+            // Either offset plus the length asked for passing 2^64 - 1 is
+            // EOVERFLOW, judged before the length is shortened to the
+            // source's end, and so before EFBIG, the overlap and the answer
+            // 0 (`copy-file-range-overflow.c`, every offset pair and length
+            // its GRID rows try, and its ORDER rows). The offsets are never
+            // negative, so each sum is an unsigned one.
+            let wraps (offset : int64) : bool =
+                length > System.UInt64.MaxValue - uint64 offset
+
+            if wraps sourceOffset || wraps destinationOffset then
+                failed UnixError.EOVERFLOW
             // A destination already at tmpfs's largest file size, INT64_MAX,
             // takes nothing: EFBIG, ahead of the length and of the source's
             // end, so even a copy of nothing from an empty file is refused.
-            if destinationOffset = System.Int64.MaxValue then
+            elif destinationOffset = System.Int64.MaxValue then
                 failed UnixError.EFBIG
             else
 
@@ -5258,8 +5269,10 @@ module UnixReadWrite =
     /// EBADF for a descriptor the process does not hold, then EINVAL for any
     /// `flags`, EISDIR if either names a directory, EINVAL if either is not a
     /// regular file, EBADF for a source not open for reading or a destination
-    /// not open for writing, EFBIG for a destination at offset `INT64_MAX`,
-    /// and EINVAL for a copy within one file whose two ranges overlap. A copy writes as `write(2)` does: the destination's
+    /// not open for writing, EOVERFLOW if either offset plus `length` passes
+    /// 2^64 - 1 (even where the source holds nothing to copy), EFBIG for a
+    /// destination at offset `INT64_MAX`, and EINVAL for a copy within one
+    /// file whose two ranges overlap. A copy writes as `write(2)` does: the destination's
     /// modification and status-change times move and its set-ID bits are
     /// stripped as a write strips them. A copy of nothing changes nothing.
     /// </summary>
