@@ -22,34 +22,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketErrorAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
-
     [<Literal>]
     let private AF_INET = 2
 
@@ -71,7 +43,7 @@ module TestSocketErrorAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestSocketErrorAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
+                let page = HostCalls.mmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestSocketErrorAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -166,13 +138,13 @@ module TestSocketErrorAgainstHost =
 
         let address = hostSockaddr platform 0us
 
-        if hostBind (fd, address, uint32 address.Length) <> 0 then
+        if HostCalls.bind (fd, address, uint32 address.Length) <> 0 then
             failwith $"bind failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let name = Array.zeroCreate<byte> 16
         let mutable length = 16u
 
-        if hostGetSockName (fd, name, &length) <> 0 then
+        if HostCalls.getSockName (fd, name, &length) <> 0 then
             failwith $"getsockname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         fd, (uint16 name.[2] <<< 8) ||| uint16 name.[3]
@@ -184,7 +156,7 @@ module TestSocketErrorAgainstHost =
 
         try
             let address = hostSockaddr platform port
-            hostBind (fd, address, uint32 address.Length) <> 0
+            HostCalls.bind (fd, address, uint32 address.Length) <> 0
         finally
             HostCalls.close fd |> ignore<int>
 
@@ -194,7 +166,7 @@ module TestSocketErrorAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 POLLOUT <<< 32) |]
 
-        if hostPoll (entry, 1un, 5000) <> 1 then
+        if HostCalls.pollPacked (entry, 1un, 5000) <> 1 then
             failwith $"the host's connect on fd %d{fd} had no outcome after five seconds"
 
     let private modelConnect
@@ -283,7 +255,9 @@ module TestSocketErrorAgainstHost =
                         Marshal.SetLastPInvokeError 0
 
                         let errno =
-                            if hostGetSockOpt (fd, level, optionName, valueAddress, lengthAddress) = 0 then
+                            if
+                                HostCalls.getSockOptPointer (fd, level, optionName, valueAddress, lengthAddress) = 0
+                            then
                                 0
                             else
                                 Marshal.GetLastPInvokeError ()
@@ -365,7 +339,7 @@ module TestSocketErrorAgainstHost =
         let listener, listenerPort = hostBound platform
 
         try
-            if hostListen (listener, 16) <> 0 then
+            if HostCalls.listen (listener, 16) <> 0 then
                 failwith $"listen failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
@@ -380,7 +354,7 @@ module TestSocketErrorAgainstHost =
                     let address = hostSockaddr platform port
                     Marshal.SetLastPInvokeError 0
 
-                    if hostConnect (fd, address, uint32 address.Length) = 0 then
+                    if HostCalls.connect (fd, address, uint32 address.Length) = 0 then
                         0
                     else
                         let errno = Marshal.GetLastPInvokeError ()
@@ -430,7 +404,7 @@ module TestSocketErrorAgainstHost =
                             Marshal.SetLastPInvokeError 0
 
                             let host =
-                                if hostListen (fd, 4) = 0 then
+                                if HostCalls.listen (fd, 4) = 0 then
                                     0
                                 else
                                     Marshal.GetLastPInvokeError ()

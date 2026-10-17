@@ -25,39 +25,8 @@ open WoofWare.PosixKernel
 // on, which a host test beside it could bind in the meantime.
 module TestPeerNameAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
     [<DllImport("libc", EntryPoint = "getpeername", SetLastError = true)>]
     extern int private hostGetPeerName(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, byte[] value, uint32& optionLength)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
 
     [<Literal>]
     let private AF_UNIX = 1
@@ -86,7 +55,7 @@ module TestPeerNameAgainstHost =
             match HostPlatform.flavour () with
             | None -> failwith "TestPeerNameAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
-                let page = hostMmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
+                let page = HostCalls.mmap (0n, 4096un, 0, mapPrivateAnonymous flavour, -1, 0L)
 
                 if page = -1n then
                     failwith $"TestPeerNameAgainstHost: mmap failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -181,12 +150,12 @@ module TestPeerNameAgainstHost =
 
     let private hostBindTo (platform : SimulatedUnixPlatform) (fd : int) (endpoint : Ipv4Endpoint) : unit =
         let address = SimulatedUnixPlatform.encodeInternetSockaddr platform endpoint
-        check "bind" (hostBind (fd, address, uint32 address.Length))
+        check "bind" (HostCalls.bind (fd, address, uint32 address.Length))
 
     let private hostName (fd : int) : Ipv4Endpoint =
         let name = Array.zeroCreate<byte> 16
         let mutable length = 16u
-        check "getsockname" (hostGetSockName (fd, name, &length))
+        check "getsockname" (HostCalls.getSockName (fd, name, &length))
 
         Ipv4Endpoint.ofParts
             (Ipv4Address (Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian (ReadOnlySpan (name, 4, 4))))
@@ -197,7 +166,7 @@ module TestPeerNameAgainstHost =
         let address = SimulatedUnixPlatform.encodeInternetSockaddr platform endpoint
         Marshal.SetLastPInvokeError 0
 
-        if hostConnect (fd, address, uint32 address.Length) = 0 then
+        if HostCalls.connect (fd, address, uint32 address.Length) = 0 then
             0
         else
             Marshal.GetLastPInvokeError ()
@@ -208,13 +177,13 @@ module TestPeerNameAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 POLLOUT <<< 32) |]
 
-        if hostPoll (entry, 1un, 5000) <> 1 then
+        if HostCalls.pollPacked (entry, 1un, 5000) <> 1 then
             failwith $"the host's connect on fd %d{fd} had no outcome after five seconds"
 
     let private hostListener (platform : SimulatedUnixPlatform) (address : Ipv4Endpoint) : int * uint16 =
         let fd = hostNew AF_INET SOCK_STREAM
         hostBindTo platform fd address
-        check "listen" (hostListen (fd, 16))
+        check "listen" (HostCalls.listen (fd, 16))
         fd, (hostName fd).Port
 
     let private hostDeadPort (platform : SimulatedUnixPlatform) : uint16 =
@@ -230,7 +199,7 @@ module TestPeerNameAgainstHost =
 
         check
             "getsockopt(SO_ERROR)"
-            (hostGetSockOpt (
+            (HostCalls.getSockOptBytes (
                 fd,
                 SimulatedUnixPlatform.socketOptionLevel platform,
                 SimulatedUnixPlatform.socketErrorOption platform,
@@ -254,7 +223,7 @@ module TestPeerNameAgainstHost =
             listener, client, roles
 
         let accept (listener : int) : int =
-            let fd = hostAccept (listener, 0n, 0n)
+            let fd = HostCalls.accept (listener, 0n, 0n)
             check "accept" fd
             fd
 
@@ -338,7 +307,7 @@ module TestPeerNameAgainstHost =
 
             if scenario = Scenario.DatagramDissolved then
                 let unspecified = CopyIn.blob platform 0 (wildcard 0us)
-                hostConnect (fd, unspecified, 16u) |> ignore<int>
+                HostCalls.connect (fd, unspecified, 16u) |> ignore<int>
 
             fd, Map.ofList [ "receiver", loopback port ], [ fd ; receiver ]
         | Scenario.FreshInet6Stream ->

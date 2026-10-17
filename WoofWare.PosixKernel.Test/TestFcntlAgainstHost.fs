@@ -27,21 +27,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestFcntlAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "fcntl", SetLastError = true)>]
-    extern int private hostFcntl(int fd, int command, int argument)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     /// Run `action` on this Linux host's preset, or skip.
     let private onLinux (action : SimulatedUnixPlatform -> unit) : unit =
         HostPlatform.onUnixHostPreset (fun platform ->
@@ -84,20 +69,20 @@ module TestFcntlAgainstHost =
 
         let fd, extra =
             match kind with
-            | "file-rdwr" -> hostOpen (file, 2, 0), []
-            | "file-rdonly" -> hostOpen (file, 0, 0), []
-            | "dir-o_directory" -> hostOpen (dir, directoryFlag, 0), []
+            | "file-rdwr" -> HostCalls.openFile (file, 2, 0), []
+            | "file-rdonly" -> HostCalls.openFile (file, 0, 0), []
+            | "dir-o_directory" -> HostCalls.openFile (dir, directoryFlag, 0), []
             | "pipe-r"
             | "pipe-w" ->
                 let fds = [| -1 ; -1 |]
-                hostPipe fds |> shouldEqual 0
+                HostCalls.pipe fds |> shouldEqual 0
 
                 if kind = "pipe-r" then
                     fds.[0], [ fds.[1] ]
                 else
                     fds.[1], [ fds.[0] ]
-            | "inet-stream" -> hostSocket (2, 1, 0), []
-            | "unix-stream" -> hostSocket (1, 1, 0), []
+            | "inet-stream" -> HostCalls.socket (2, 1, 0), []
+            | "unix-stream" -> HostCalls.socket (1, 1, 0), []
             | other -> failwith $"unknown kind %s{other}"
 
         if fd < 0 then
@@ -132,8 +117,8 @@ module TestFcntlAgainstHost =
             withHostDirectory (fun directory ->
                 for kind in kinds do
                     let fd, opened = hostMake platform directory kind
-                    let host = hostWord platform (hostFcntl (fd, FcntlWorld.GetFl, 0))
-                    List.iter (hostClose >> ignore) opened
+                    let host = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFl, 0))
+                    List.iter (HostCalls.close >> ignore) opened
 
                     match FcntlWorld.make kind (FcntlWorld.system (runFor platform)) with
                     | Some (fd, system) -> (kind, FcntlWorld.statusFlags fd system) |> shouldEqual (kind, host)
@@ -154,11 +139,11 @@ module TestFcntlAgainstHost =
                 for kind in kinds do
                     for bit in 0..31 do
                         let fd, opened = hostMake platform directory kind
-                        let before = hostFcntl (fd, FcntlWorld.GetFl, 0)
+                        let before = HostCalls.fcntl (fd, FcntlWorld.GetFl, 0)
                         let word = before ||| (1 <<< bit)
-                        let set = hostWord platform (hostFcntl (fd, FcntlWorld.SetFl, word))
-                        let after = hostWord platform (hostFcntl (fd, FcntlWorld.GetFl, 0))
-                        List.iter (hostClose >> ignore) opened
+                        let set = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.SetFl, word))
+                        let after = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFl, 0))
+                        List.iter (HostCalls.close >> ignore) opened
 
                         match FcntlWorld.make kind (FcntlWorld.system (runFor platform)) with
                         | None -> failwith $"the model makes no %s{kind}"
@@ -184,9 +169,9 @@ module TestFcntlAgainstHost =
             withHostDirectory (fun directory ->
                 for word in [ 0 ; -1 ] @ [ for bit in 0..31 -> 1 <<< bit ] do
                     let fd, opened = hostMake platform directory "file-rdwr"
-                    let set = hostWord platform (hostFcntl (fd, FcntlWorld.SetFd, word))
-                    let after = hostWord platform (hostFcntl (fd, FcntlWorld.GetFd, 0))
-                    List.iter (hostClose >> ignore) opened
+                    let set = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.SetFd, word))
+                    let after = hostWord platform (HostCalls.fcntl (fd, FcntlWorld.GetFd, 0))
+                    List.iter (HostCalls.close >> ignore) opened
 
                     let fd, system =
                         FcntlWorld.make "file-rdwr" (FcntlWorld.system (runFor platform)) |> Option.get

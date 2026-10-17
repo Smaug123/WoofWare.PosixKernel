@@ -17,15 +17,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestPipeBufferAgainstHost =
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
     // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
     // arm64 ABI passes variadic arguments on the stack), so this goes through
     // .NET's own fixed-arity wrapper of it in its `System.Native` library.
@@ -44,12 +35,12 @@ module TestPipeBufferAgainstHost =
         | SimulatedUnixFlavour.Darwin -> 35
 
     let private readyIn (fd : int) (events : int16) : bool =
-        let mutable entry = PollFd ()
+        let mutable entry = HostCalls.PollFd ()
         entry.Fd <- fd
         entry.Events <- events
         let fds = [| entry |]
 
-        if hostPoll (fds, 1un, 0) < 0 then
+        if HostCalls.poll (fds, 1un, 0) < 0 then
             failwith $"poll failed: errno %d{Marshal.GetLastPInvokeError ()}"
 
         (fds.[0].Revents &&& events) <> 0s

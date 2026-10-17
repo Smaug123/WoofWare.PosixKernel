@@ -19,12 +19,6 @@ module TestDeviceFileSystemAgainstHost =
 
     let private context : string = "TestDeviceFileSystemAgainstHost"
 
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(string source, string destination)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
     let private booted (flavour : SimulatedUnixFlavour) : UnixSystem<int, string> =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -65,7 +59,7 @@ module TestDeviceFileSystemAgainstHost =
             | SimulatedUnixFlavour.Darwin, other -> failwith $"statfs on Darwin: expected a refusal, got %A{other}"
             | SimulatedUnixFlavour.Linux, Ok (FileSystemStatisticsAnswer.Reported statistics) ->
                 // O_RDONLY: the host's /dev/null is readable by everyone.
-                let fd = hostOpen ("/dev/null", 0, 0)
+                let fd = HostCalls.openFile ("/dev/null", 0, 0)
 
                 if fd < 0 then
                     failwith $"opening the host's /dev/null failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -106,7 +100,7 @@ module TestDeviceFileSystemAgainstHost =
 
             try
                 Marshal.SetLastPInvokeError 0
-                let result = hostRename (source, destination)
+                let result = HostCalls.rename (source, destination)
                 let errno = Marshal.GetLastPInvokeError ()
 
                 if result = 0 then
