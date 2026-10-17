@@ -40,23 +40,17 @@ module TestSignalMaskAgainstHost =
     [<Literal>]
     let private sigsetBytes : int = 256
 
-    /// `SIG_BLOCK` and `SIG_SETMASK` for this host: 0 and 2 on Linux, 1 and 3
-    /// on Darwin (from each libc's `signal.h`).
-    let private howFor (flavour : SimulatedUnixFlavour) : int * int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 0, 2
-        | SimulatedUnixFlavour.Darwin -> 1, 3
-
     let private setBit (buffer : byte[]) (signo : int) : unit =
         buffer.[(signo - 1) / 8] <- buffer.[(signo - 1) / 8] ||| (1uy <<< ((signo - 1) % 8))
 
     let private getBit (buffer : byte[]) (signo : int) : bool =
         (buffer.[(signo - 1) / 8] >>> ((signo - 1) % 8)) &&& 1uy = 1uy
 
-    /// Whether this host lets the calling thread block `signo`: block it,
-    /// read the mask back, restore the original mask.
-    let private hostCanBlock (flavour : SimulatedUnixFlavour) (signo : int) : bool =
-        let sigBlock, sigSetMask = howFor flavour
+    /// Whether this host, whose signals `numbering` numbers, lets the calling
+    /// thread block `signo`: block it, read the mask back, restore the
+    /// original mask.
+    let private hostCanBlock (numbering : SignalNumbering) (signo : int) : bool =
+        let sigBlock = MaskHow.block numbering
         let one : byte[] = Array.zeroCreate sigsetBytes
         setBit one signo
         let original : byte[] = Array.zeroCreate sigsetBytes
@@ -75,7 +69,7 @@ module TestSignalMaskAgainstHost =
 
             getBit current signo
         finally
-            pthread_sigmask (sigSetMask, original, null) |> ignore<int>
+            pthread_sigmask (MaskHow.setMask numbering, original, null) |> ignore<int>
 
     [<Test>]
     let ``isUnblockableUnder agrees with this host's pthread_sigmask about every signo`` () : unit =
@@ -94,7 +88,7 @@ module TestSignalMaskAgainstHost =
                                 $"%O{numbering}: signo %d{signo} is within the model's range but ofRawSignoUnder refused it"
 
                     let modelled = not (Signal.isUnblockableUnder numbering signal)
-                    let measured = hostCanBlock flavour signo
+                    let measured = hostCanBlock numbering signo
 
                     if modelled = measured then
                         None
@@ -127,7 +121,8 @@ module TestSignalMaskAgainstHost =
         HostPlatform.onUnixHost (fun flavour ->
             let platform = HostPlatform.platformOf flavour
             let numbering = SimulatedUnixPlatform.signalNumbering platform
-            let sigBlock, sigSetMask = howFor flavour
+            let sigBlock = MaskHow.block numbering
+            let sigSetMask = MaskHow.setMask numbering
 
             let bitOf (signal : Signal) : int =
                 Signal.toRawSignoUnder numbering signal - 1
@@ -149,7 +144,7 @@ module TestSignalMaskAgainstHost =
                     | SimulatedUnixFlavour.Darwin -> [ 31 ]
                 )
 
-            let hows = [ sigBlock ; sigBlock + 1 ; sigSetMask ; 100 ]
+            let hows = [ sigBlock ; MaskHow.unblock numbering ; sigSetMask ; 100 ]
             let rng = Random 20261008
             let original : byte[] = Array.zeroCreate sigsetBytes
 

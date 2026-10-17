@@ -936,11 +936,10 @@ module TestConnectedTransfer =
             let sigterm = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 
             let how (block : bool) : int =
-                match SimulatedUnixPlatform.flavour platform, block with
-                | SimulatedUnixFlavour.Linux, true -> 0
-                | SimulatedUnixFlavour.Linux, false -> 1
-                | SimulatedUnixFlavour.Darwin, true -> 1
-                | SimulatedUnixFlavour.Darwin, false -> 2
+                if block then
+                    MaskHow.block numbering
+                else
+                    MaskHow.unblock numbering
 
             let mask (block : bool) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match UnixSignal.pthreadSigmask caller (how block) (Some sigterm) system with

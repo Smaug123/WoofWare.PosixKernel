@@ -745,7 +745,7 @@ module TestFcntlMeasured =
 
             // A pipe whose only writer is the target, with and without a dup of
             // it kept.
-            let nonBlock = FcntlWorld.nonBlock run.Platform
+            let nonBlock = OpenFlagWords.nonBlock run.Platform
 
             let lastWriter =
                 let system = FcntlWorld.system run

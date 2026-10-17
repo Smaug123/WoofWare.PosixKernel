@@ -371,12 +371,10 @@ module TestUnixThreadLifecycle =
 
         // `pthread_sigmask(SIG_BLOCK)` of the signal.
         let block (signal : Signal) : Syscall<int, string> =
-            let how =
-                match numbering with
-                | SignalNumbering.Linux -> 0
-                | SignalNumbering.Darwin -> 1
-
-            Syscall.PthreadSigMask (how, Some (SignalMask.ofSignals numbering (Set.singleton signal)))
+            Syscall.PthreadSigMask (
+                MaskHow.block numbering,
+                Some (SignalMask.ofSignals numbering (Set.singleton signal))
+            )
 
         Gen.frequency
             [

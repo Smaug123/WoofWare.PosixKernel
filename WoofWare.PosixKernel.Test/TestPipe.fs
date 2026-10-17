@@ -44,12 +44,6 @@ module TestPipe =
     let private flavourOf (system : UnixSystem<int, string>) : SimulatedUnixFlavour =
         SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
 
-    /// Each flavour's `O_NONBLOCK`, as its `<fcntl.h>` numbers it.
-    let private nonBlockFlag (flavour : SimulatedUnixFlavour) : int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 0x800
-        | SimulatedUnixFlavour.Darwin -> 0x4
-
     let private pipeOrFail (flags : int) (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
         match UnixPipe.tryPipe2 (Callers.leader system) flags UserBuffer.Mapped system with
         | Ok (Pipe2Answer.Created (readFd, writeFd), system) -> (readFd, writeFd), system
@@ -404,7 +398,11 @@ module TestPipe =
             let flavour = SimulatedUnixPlatform.flavour platform
             let darwin = flavour = SimulatedUnixFlavour.Darwin
 
-            let flags = if startNonBlocking then nonBlockFlag flavour else 0
+            let flags =
+                if startNonBlocking then
+                    OpenFlagWords.nonBlock platform
+                else
+                    0
 
             // Without the standard streams, so that every descriptor the
             // property can name is one of the pipe's or a dup of one.
@@ -1131,7 +1129,11 @@ module TestPipe =
 
     [<Test>]
     let ``on Linux no call moves a pipe's timestamps`` () : unit =
-        let (r, w), system = pipeOrFail 0x800 (systemOn SimulatedUnixPlatform.linuxArm64)
+        let platform = SimulatedUnixPlatform.linuxArm64
+
+        let (r, w), system =
+            pipeOrFail (OpenFlagWords.nonBlock platform) (systemOn platform)
+
         let before = fstatOrFail r system
 
         let system =
@@ -1169,7 +1171,8 @@ module TestPipe =
                                 let where () : string =
                                     $"%O{platform}, fill %d{fill}, O_NONBLOCK %b{nonBlocking}, count %d{count}, %A{buffer}, %A{disposition}"
 
-                                let (r, w), system = pipeOrFail (nonBlockFlag flavour) (systemOn platform)
+                                let (r, w), system =
+                                    pipeOrFail (OpenFlagWords.nonBlock platform) (systemOn platform)
 
                                 // Filled through the non-blocking write end, then
                                 // the flag set as the row asks.
@@ -1464,7 +1467,10 @@ module TestPipe =
 
     [<Test>]
     let ``poll reports a pipe's levels as measured on Linux`` () : unit =
-        let (r, w), system = pipeOrFail 0x800 (systemOn SimulatedUnixPlatform.linuxX64)
+        let platform = SimulatedUnixPlatform.linuxX64
+
+        let (r, w), system =
+            pipeOrFail (OpenFlagWords.nonBlock platform) (systemOn platform)
 
         let level fd system =
             let id =

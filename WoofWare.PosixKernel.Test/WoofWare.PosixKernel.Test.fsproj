@@ -44,6 +44,8 @@
     <Compile Include="ReuseAddress.fs" />
     <Compile Include="PathText.fs" />
     <Compile Include="OpenFlagWords.fs" />
+    <Compile Include="MaskHow.fs" />
+    <Compile Include="NonBlocking.fs" />
     <Compile Include="Answered.fs" />
     <Compile Include="Eager.fs" />
     <Compile Include="PReadUnchanged.fs" />

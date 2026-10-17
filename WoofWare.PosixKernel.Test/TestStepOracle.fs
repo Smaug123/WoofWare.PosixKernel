@@ -602,12 +602,6 @@ module TestStepOracle =
         | SimulatedUnixFlavour.Linux -> SignalNumbering.Linux
         | SimulatedUnixFlavour.Darwin -> SignalNumbering.Darwin
 
-    /// `SIG_BLOCK` in the flavour's numbering.
-    let private sigBlock (flavour : SimulatedUnixFlavour) : int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 0
-        | SimulatedUnixFlavour.Darwin -> 1
-
     /// `system` once its leader has returned to user mode, as a client returns
     /// it after a call of the setting up.
     let private leaderReturned (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -726,7 +720,7 @@ module TestStepOracle =
         let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
         let system =
-            match UnixSignal.pthreadSigmask (Callers.leader system) (sigBlock flavour) (Some usr1) system with
+            match UnixSignal.pthreadSigmask (Callers.leader system) (MaskHow.block numbering) (Some usr1) system with
             | Ok (_, system) -> leaderReturned system
             | Error error -> failwith $"setting up, pthread_sigmask: %O{error}"
 

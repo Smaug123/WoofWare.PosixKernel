@@ -1099,22 +1099,11 @@ module TestMultiProcessFuzz =
 
         // `pthread_sigmask(2)` of `signal` alone, and the return from it.
         let mask (change : SignalMaskChange) (signal : Signal) (view : UnixSystem<int, string>) : Made =
-            let block =
-                match SimulatedUnixPlatform.flavour view.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux -> 0
-                | SimulatedUnixFlavour.Darwin -> 1
-
-            let how =
-                match change with
-                | SignalMaskChange.Block -> block
-                | SignalMaskChange.Unblock -> block + 1
-                | SignalMaskChange.SetMask -> block + 2
-
-            let set =
-                SignalMask.ofSignals (Lone.UnixSystemState.signalNumbering view) (Set.singleton signal)
+            let numbering = Lone.UnixSystemState.signalNumbering view
+            let set = SignalMask.ofSignals numbering (Set.singleton signal)
 
             match
-                UnixSignal.pthreadSigmask (Caller.make pid thread) how (Some set) view
+                UnixSignal.pthreadSigmask (Caller.make pid thread) (MaskHow.number numbering change) (Some set) view
                 |> logged log
             with
             | Ok (_, after) -> returnToUser after
@@ -2925,11 +2914,10 @@ module TestMultiProcessFuzz =
         // `pthread_sigmask(2)` of SIGTERM alone, and the return from it.
         let mask (block : bool) (onwards : UnixSystem<int, string> -> Ended) (kernel : UnixSystem<int, string>) =
             let how =
-                match SimulatedUnixPlatform.flavour platform, block with
-                | SimulatedUnixFlavour.Linux, true -> 0
-                | SimulatedUnixFlavour.Linux, false -> 1
-                | SimulatedUnixFlavour.Darwin, true -> 1
-                | SimulatedUnixFlavour.Darwin, false -> 2
+                if block then
+                    MaskHow.block numbering
+                else
+                    MaskHow.unblock numbering
 
             let set = SignalMask.ofSignals numbering (Set.singleton Signal.SIGTERM)
 

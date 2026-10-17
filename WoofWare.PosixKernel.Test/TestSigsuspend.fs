@@ -30,19 +30,6 @@ module TestSigsuspend =
     /// The probe's helper thread, which blocks every signal.
     let private helper : int = 1
 
-    /// `SIG_BLOCK`, `SIG_UNBLOCK` and `SIG_SETMASK` as each `<signal.h>`
-    /// numbers them.
-    let private how (flavour : SimulatedUnixFlavour) (change : SignalMaskChange) : int =
-        let block =
-            match flavour with
-            | SimulatedUnixFlavour.Linux -> 0
-            | SimulatedUnixFlavour.Darwin -> 1
-
-        match change with
-        | SignalMaskChange.Block -> block
-        | SignalMaskChange.Unblock -> block + 1
-        | SignalMaskChange.SetMask -> block + 2
-
     /// Every bit a `sigset_t` holds.
     let private everyBitWord (flavour : SimulatedUnixFlavour) : uint64 =
         match flavour with
@@ -129,7 +116,7 @@ module TestSigsuspend =
     let private setMask (thread : int) (mask : Replay -> SignalMask) : Step =
         fun r ->
             let set = Some (mask r)
-            let setmask = how r.Flavour SignalMaskChange.SetMask
+            let setmask = MaskHow.setMask (numbering r)
 
             let result =
                 match r.Flavour with
@@ -578,7 +565,7 @@ module TestSigsuspend =
                 match
                     UnixSignal.trySigprocmask
                         (Callers.thread helper r.System)
-                        (how r.Flavour change)
+                        (MaskHow.number (numbering r) change)
                         (Some (signals set r))
                         r.System
                 with
@@ -976,7 +963,7 @@ module TestSigsuspend =
                                              system)) -> system
                 | other -> failwith $"the main thread's return took %A{other}"
 
-            let setmask = how flavour SignalMaskChange.SetMask
+            let setmask = MaskHow.setMask numbering
             let everyBit = maskOfWord flavour (everyBitWord flavour)
 
             let withMask (thread : int) (mask : SignalMask) (system : UnixSystem<int, string>) =
@@ -1175,7 +1162,7 @@ module TestSigsuspend =
                     match
                         UnixSignal.pthreadSigmask
                             (Callers.thread main system)
-                            (how flavour change)
+                            (MaskHow.number numbering change)
                             (Some (maskOf set))
                             system
                     with
@@ -1259,7 +1246,7 @@ module TestSigsuspend =
                     match
                         UnixSignal.trySigprocmask
                             (Callers.thread helper system)
-                            (how flavour change)
+                            (MaskHow.number numbering change)
                             (Some (maskOf set))
                             system
                     with
@@ -1411,7 +1398,7 @@ module TestSigsuspend =
                 match
                     UnixSignal.pthreadSigmask
                         (Callers.thread helper spawned)
-                        (how flavour SignalMaskChange.SetMask)
+                        (MaskHow.setMask numbering)
                         (Some hup)
                         spawned
                 with
@@ -1504,11 +1491,7 @@ module TestSigsuspend =
                 | other -> failwith $"spawn: %A{other}"
 
             let setMask (thread : int) (system : UnixSystem<int, string>) =
-                UnixSignal.pthreadSigmask
-                    (Callers.thread thread system)
-                    (how flavour SignalMaskChange.SetMask)
-                    (Some cont)
-                    system
+                UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.setMask numbering) (Some cont) system
 
             let blocking =
                 spawned
@@ -1538,11 +1521,7 @@ module TestSigsuspend =
             Lone.wakes asleep |> shouldEqual []
 
             match
-                UnixSignal.trySigprocmask
-                    (Callers.thread helper asleep)
-                    (how flavour SignalMaskChange.Unblock)
-                    (Some cont)
-                    asleep
+                UnixSignal.trySigprocmask (Callers.thread helper asleep) (MaskHow.unblock numbering) (Some cont) asleep
             with
             | Error refusal ->
                 refusal
