@@ -53,9 +53,10 @@ type internal PollRefusal =
     /// not root. Darwin fails root's only when it also exceeds `FD_SETSIZE`
     /// (1024), so for root this is a count from 1025 to `OPEN_MAX`.
     | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : int * assumedLimit : int
-    /// Under Darwin, a sleeping call has both something to report and reached
-    /// its deadline. Darwin answers whichever reached the sleeping thread first,
-    /// which this kernel does not record.
+    /// Under Darwin, a sleeping call was woken both with something to report
+    /// and past its deadline, and has something to report now. Darwin answers
+    /// whichever reached the sleeping thread first, which a wake that found
+    /// both does not say.
     | EventsBesideDeadline
     /// Nothing is ready, and the timeout ends past the last instant the
     /// machine's monotonic clock (`UnixSystem.nanosecondsSinceBoot`,
@@ -160,7 +161,7 @@ module internal PollRefusal =
         | PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, count, assumedLimit) ->
             $"the poll has %d{count} entries, more than %d{assumedLimit} (more than FD_SETSIZE, 1024, for root) and no more than OPEN_MAX (%d{PollEntryCount.ceiling SimulatedUnixFlavour.Darwin}). Darwin answers EINVAL for such a count exactly when it exceeds the process's RLIMIT_NOFILE soft limit (for root, only when it also exceeds 1024), and this kernel does not model the limit: it assumes only that it is at least %d{assumedLimit}."
         | PollRefusal.EventsBesideDeadline ->
-            "a thread asleep in poll has both something to report and reached its deadline (0). Darwin answers whichever reached the sleeping thread first, and this kernel does not record which did."
+            "a thread asleep in poll was woken both with something to report and past its deadline (0), and has something to report now. Darwin answers whichever reached the sleeping thread first, which the wake does not say."
         | PollRefusal.DeadlineBeyondClock (now, timeoutMilliseconds) ->
             $"the machine has been up for %d{now} ns and the timeout is %d{timeoutMilliseconds}ms, which ends past the last nanosecond the monotonic clock can represent. Linux's source saturates such a deadline, making the wait infinite, but that is unmeasured."
         | PollRefusal.Interruption refusal -> SyscallInterruptionRefusal.describe refusal
@@ -1117,9 +1118,11 @@ module UnixPoll =
         // descriptor beats a pending signal, and a pending signal beats an
         // expired deadline, whichever came first.
         if triggered > 0 then
-            SyscallInterruption.beforeCompleting thread system
-            |> Result.mapError PollRefusal.Interruption
-            |> Result.map (fun () -> PollOutcome.Answered (reported, triggered), finished)
+            match SyscallInterruption.beforeCompleting thread system with
+            | Error refusal -> Error (PollRefusal.Interruption refusal)
+            | Ok SyscallInterruption.Completion.Completes -> Ok (PollOutcome.Answered (reported, triggered), finished)
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (PollOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         else
 
         match SyscallInterruption.ofPark thread system with
@@ -1401,20 +1404,55 @@ module UnixPoll =
 
         let finished = (UnixParkState.unpark thread system)
 
-        // A woken Darwin wait answers whichever of its wake-ups reached it
-        // first -- a report, its deadline or a signal -- and this library does
-        // not record which; `SyscallInterruption.beforeCompleting` refuses a
-        // signal pending beside an answer, as it does for `kevent`.
-        if reported > 0 && timedOut then
-            Error PollRefusal.EventsBesideDeadline
-        elif reported > 0 then
-            SyscallInterruption.beforeCompleting thread system
-            |> Result.mapError PollRefusal.Interruption
-            |> Result.map (fun () -> PollOutcome.Answered (revents, reported), finished)
+        // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the poll rows):
+        // held off the CPU from its wake until a second wake-up had come, a
+        // woken poll answered what woke it: a report, 0 for its deadline, or
+        // EINTR for a signal, whatever came second. Woken by a report and
+        // something else, it gives the report's answer where there is nothing
+        // to report any more, since its scan then finds nothing and it waits
+        // again; and otherwise, as when woken by both its deadline and a
+        // signal, it cannot be told which came first.
+        let fired = SyscallInterruption.wokenBy thread system
+        let byReport = Set.contains WakePrimitive.KqueuePollReportable fired
+
+        let byDeadline =
+            fired
+            |> Set.exists (fun primitive ->
+                match primitive with
+                | WakePrimitive.DeadlinePassed _ -> true
+                | _ -> false
+            )
+
+        let bySignal = Set.contains WakePrimitive.SignalDeliverable fired
+
+        let signalBeside =
+            PollRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)
+
+        match byReport, byDeadline, bySignal with
+        | true, true, _ when reported > 0 -> Error PollRefusal.EventsBesideDeadline
+        | true, false, true when reported > 0 -> Error signalBeside
+        | false, true, true -> Error signalBeside
+        | false, true, false -> Ok (PollOutcome.Answered (zero, 0), finished)
+        | false, false, true ->
+            match SyscallInterruption.ofPark thread system with
+            | Error refusal -> Error (PollRefusal.Interruption refusal)
+            | Ok (Some interruption) -> Ok (PollOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+            | Ok None ->
+                failwith
+                    $"UnixPoll.finishPoll: a signal woke thread %O{thread}'s Darwin poll, which a signal gone by its finish fails with EINTR or is refused, and SyscallInterruption.ofPark says it sleeps on (this is a bug in this library)."
+        | true, _, _
+        | false, false, false ->
+
+        if reported > 0 then
+            Ok (PollOutcome.Answered (revents, reported), finished)
         elif timedOut then
-            SyscallInterruption.beforeCompleting thread system
-            |> Result.mapError PollRefusal.Interruption
-            |> Result.map (fun () -> PollOutcome.Answered (zero, 0), finished)
+            // What woke it has gone, and its deadline has passed since: it
+            // waits again, and whether a pending signal or the deadline then
+            // ends that wait is unmeasured.
+            match SyscallInterruption.beforeCompleting thread system with
+            | Error refusal -> Error (PollRefusal.Interruption refusal)
+            | Ok SyscallInterruption.Completion.Completes -> Ok (PollOutcome.Answered (zero, 0), finished)
+            | Ok (SyscallInterruption.Completion.Interrupted _) -> Error signalBeside
         else
 
         match SyscallInterruption.ofPark thread system with
@@ -1589,14 +1627,18 @@ module UnixPoll =
     ///
     /// **Under Darwin** it scans the kqueue the call made for itself, which a
     /// close of a watched descriptor has left without that descriptor's
-    /// filters. It answers the count when anything is reported, 0 when the
-    /// deadline has passed, and `Interrupted` when the thread would take a
-    /// signal as it returned to user mode, or when a signal woke the thread and
-    /// has gone since (another thread ignored it), whose return then fails the
-    /// call with `EINTR`; and refuses each pair of those that hold at once,
-    /// since Darwin answers whichever reached the sleeping thread first. It
-    /// refuses a call with a timeout whose waking signal has gone, which is
-    /// unmeasured.
+    /// filters. It answers as what woke the thread (`ParkState.Woken`) says,
+    /// whatever has happened since: for something to report, the count it
+    /// finds; for the deadline, 0; for a signal, `Interrupted`, which the
+    /// thread's return to user mode then ends, failing the call with `EINTR`
+    /// even if another thread has ignored the signal since. Woken by
+    /// something to report and finding nothing, it answers 0 if the deadline
+    /// has passed and `Interrupted` if the thread would take a signal as it
+    /// returned to user mode. It refuses a wake that found two of these whose
+    /// answers differ, since Darwin answers whichever reached the sleeping
+    /// thread first; a call with a timeout whose waking signal has gone; and
+    /// one woken by something to report, finding nothing past its deadline
+    /// with a signal pending, which are unmeasured.
     ///
     /// Otherwise it re-parks the thread on the same call and deadline, since
     /// whatever woke it has gone again. An answer clears the park.
@@ -1856,10 +1898,13 @@ module UnixPoll =
         // beats a pending signal, and so does an expired deadline, whichever
         // came first.
         if not (List.isEmpty delivered) || timedOut then
-            SyscallInterruption.beforeCompleting thread system
-            |> Result.mapError EpollWaitRefusal.Interruption
-            |> Result.bind (fun () -> copyOut parked.Epoll parked.Buffer delivered)
-            |> Result.map (fun () -> EpollWaitOutcome.Answered delivered, finished)
+            match SyscallInterruption.beforeCompleting thread system with
+            | Error refusal -> Error (EpollWaitRefusal.Interruption refusal)
+            | Ok SyscallInterruption.Completion.Completes ->
+                copyOut parked.Epoll parked.Buffer delivered
+                |> Result.map (fun () -> EpollWaitOutcome.Answered delivered, finished)
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (EpollWaitOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
         else
 
         match SyscallInterruption.ofPark thread system with

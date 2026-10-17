@@ -400,13 +400,19 @@ module UnixWait =
         // watches non-exclusively, so every poller of a description that
         // becomes ready wakes; and a deadline, like a signal, is each waiter's
         // own.
-        // A thread woken and not yet finished stands, on each queue its own
-        // call waits on exclusively, for whatever woke it.
+        // A thread woken and not yet finished stands for whatever woke it: on
+        // the queue of each primitive that held as it woke, and on no queue
+        // for a signal or a deadline alone. Measured on Linux 6.18.5 and
+        // Darwin 27.0.0 (`docs/probes/first-wake`, the two-sleeper rows): with
+        // the first accepter, pipe reader or epoll waiter signalled, and held
+        // off the CPU, the next connection, byte or event woke the other
+        // sleeper too, and on Darwin the other accepted the connection while
+        // the first failed with EINTR.
         let finishing : Set<ExclusiveWaitQueue> =
             parks
             |> List.collect (fun (_, _, park) ->
                 match park.State with
-                | ParkState.Woken _ -> Parking.exclusiveQueuesOfPark machine park.Syscall
+                | ParkState.Woken fired -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine)
                 | ParkState.Asleep -> []
             )
             |> Set.ofList
@@ -515,7 +521,9 @@ module UnixWait =
     /// `read` or `write` on a connected socket all wake, under either
     /// flavour. Exclusive
     /// queues wake none while any thread parked on the same queue has been woken
-    /// and has not yet finished its call, since that thread will take it. The
+    /// by something to take from it and has not yet finished its call, since
+    /// that thread will take it; one a signal or its deadline alone woke holds
+    /// no queue. The
     /// end of a pipe closing
     /// wakes every waiter on the other end, under either flavour; and an event
     /// to report, or a close that drains a kqueue, wakes every waiter in

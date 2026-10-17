@@ -935,7 +935,7 @@ module TestKeventRegistration =
         | other -> failwith $"expected one event, got %A{other}"
 
     [<Test>]
-    let ``an event beside a drain, a deadline or a signal is refused`` () : unit =
+    let ``an event beside a drain is EBADF, and beside a deadline or a signal is refused`` () : unit =
         let system, listener, kq, _ = world
         let kqueueId = KeventWorld.idOf kq system
         let d, system = KeventWorld.dup kq system
@@ -946,11 +946,17 @@ module TestKeventRegistration =
         let parked = parkIn 1 kq (KeventTimeout.Readable (0L, 5L)) system
         let withEvent = KeventWorld.client 5000us parked |> snd
 
-        // Darwin answers whichever reached the sleeper first.
+        // A drain and an event both end the wait with EBADF, whichever came
+        // first (`docs/probes/first-wake`).
         let drained = KeventWorld.close kq withEvent
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 drained) (Woken.thread 1 drained)
-        |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 drained) (Woken.thread 1 drained) with
+        | Ok (KeventOutcome.Failed UnixError.EBADF, _) -> ()
+        | other -> failwith $"expected EBADF, got %A{other}"
+
+        // Darwin answers whichever of an event and its deadline, or of an
+        // event and a signal, reached the sleeper first, which a wake that
+        // found both does not say.
 
         let expired =
             { withEvent with
@@ -1050,11 +1056,13 @@ module TestKeventRegistration =
             |> shouldEqual true
         | other -> failwith $"expected the held kqueue, got %A{other}"
 
-        // An event can still reach the held kqueue, and then meets the drain.
+        // An event can still reach the held kqueue, and the wait it ends
+        // answers the drain's EBADF.
         let withEvent = KeventWorld.client 5000us closed |> snd
 
-        UnixKqueue.tryFinishKevent (Callers.thread 1 withEvent) (Woken.thread 1 withEvent)
-        |> shouldEqual (Error (KeventRefusal.DrainBesideEvents kqueueId))
+        match UnixKqueue.tryFinishKevent (Callers.thread 1 withEvent) (Woken.thread 1 withEvent) with
+        | Ok (KeventOutcome.Failed UnixError.EBADF, _) -> ()
+        | other -> failwith $"expected EBADF, got %A{other}"
 
         let finished =
             match UnixKqueue.tryFinishKevent (Callers.thread 1 closed) (Woken.thread 1 closed) with
