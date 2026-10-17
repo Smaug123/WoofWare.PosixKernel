@@ -105,66 +105,17 @@ module TestFcntlReference =
     let private isDarwin (platform : SimulatedUnixPlatform) : bool =
         SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 
-    let private x64 (platform : SimulatedUnixPlatform) : bool =
-        SimulatedUnixPlatform.architecture platform = SimulatedUnixArchitecture.X64
-
-    // Each flavour's numbering, written out from the headers and the probe's
-    // HEADER rows rather than read from the library.
-    let private appendBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x8 else 0x400
-
-    let private asyncBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x40 else 0x2000
-
-    let private syncBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x80 else 0x100000
-
-    let private dsyncBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x400000 else 0x1000
-
-    let private cloexecBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x1000000 else 0x80000
-
-    let private truncateBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x400 else 0x200
-
-    let private largeFileBit (platform : SimulatedUnixPlatform) : int =
-        if x64 platform then 0x8000 else 0x20000
-
-    let private directBit (platform : SimulatedUnixPlatform) : int =
-        if x64 platform then 0x4000 else 0x10000
-
-    let private noAtimeBit (platform : SimulatedUnixPlatform) : int = 0x40000
-
-    let private noFollowBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x100
-        elif x64 platform then 0x20000
-        else 0x8000
-
-    let private directoryBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x100000
-        elif x64 platform then 0x10000
-        else 0x4000
-
-    /// `dup3(2)`'s `O_CLOEXEC`, in Linux's numbering whatever the flavour.
-    let private dup3CloseOnExec : int = 0x80000
-
     /// Whether `command` is `F_DUPFD` or `F_DUPFD_CLOEXEC` in `platform`'s
     /// numbering.
     let private isDupFd (platform : SimulatedUnixPlatform) (command : int) : bool =
         command = FcntlWorld.DupFd || command = FcntlWorld.dupFdCloexec platform
 
-    let private unmodelled (r : Reference) : int =
-        let p = r.Platform
-
-        if r.Darwin then
-            appendBit p ||| asyncBit p
-        else
-            appendBit p ||| asyncBit p ||| directBit p ||| noAtimeBit p
-
     let private statusWord (r : Reference) (d : Description) : int =
-        let p = r.Platform
-        let bit (set : bool) (value : int) = if set then value else 0
+        let bit (set : bool) (value : int) : int = if set then value else 0
+
+        // A flag the flavour may not number at all, looked up only when set.
+        let flag (set : bool) (meaning : OpenFlagBit) : int =
+            if set then OpenFlagWords.bitOf r.Platform meaning else 0
 
         let madeByOpen =
             match d.Kind with
@@ -174,12 +125,14 @@ module TestFcntlReference =
             | Kind.PipeWrite -> false
 
         d.Access
-        ||| bit d.NonBlocking (OpenFlagWords.nonBlock p)
-        ||| bit d.Synchronous (syncBit p)
-        ||| bit d.DataSynchronous (dsyncBit p)
-        ||| bit (not r.Darwin && madeByOpen) (largeFileBit p)
-        ||| bit (not r.Darwin && d.NoFollow) (noFollowBit p)
-        ||| bit (not r.Darwin && d.OpenedDirectory) (directoryBit p)
+        ||| flag d.NonBlocking (OpenFlagBit.Unmodelled UnmodelledOpenFlag.NonBlocking)
+        ||| flag d.Synchronous OpenFlagBit.Synchronous
+        ||| flag d.DataSynchronous OpenFlagBit.DataSynchronous
+        ||| flag (not r.Darwin && madeByOpen) (OpenFlagBit.Unmodelled UnmodelledOpenFlag.LargeFile)
+        ||| flag (not r.Darwin && d.NoFollow) OpenFlagBit.NoFollow
+        ||| flag (not r.Darwin && d.OpenedDirectory) OpenFlagBit.Directory
+        // Darwin's FWASWRITTEN and FHASLOCK, which only F_GETFL reports
+        // (`fcntl-dup.c`, WRITTEN rows).
         ||| bit (r.Darwin && d.Written) 0x10000
         ||| bit (r.Darwin && d.Flocked) 0x4000
 
@@ -218,6 +171,7 @@ module TestFcntlReference =
     /// the lowest it could have had.
     let private step (call : Syscall<int, string>) (r : Reference) : Outcome * Reference =
         let p = r.Platform
+        let flag (meaning : OpenFlagBit) : int = OpenFlagWords.bitOf p meaning
 
         let ok (value : int) =
             Outcome.Answered (SyscallAnswer.Completed (int64 value))
@@ -259,24 +213,31 @@ module TestFcntlReference =
         | Syscall.Open _ when lowestFreeFrom 0 r >= bound r -> atBound (lowestFreeFrom 0 r), r
         | Syscall.Open (path, flags, _) ->
             let fd = lowestFreeFrom 0 r
-            let has (bit : int) : bool = flags &&& bit <> 0
-            let shared = cloexecBit p ||| syncBit p ||| dsyncBit p
+            let has (meaning : OpenFlagBit) : bool = flags &&& flag meaning <> 0
+
+            let shared =
+                flag OpenFlagBit.CloseOnExec
+                ||| flag OpenFlagBit.Synchronous
+                ||| flag OpenFlagBit.DataSynchronous
 
             let description =
                 if path = filePath then
-                    requireGenerated "open of f" (3 ||| shared ||| noFollowBit p ||| truncateBit p) flags
+                    requireGenerated
+                        "open of f"
+                        (3 ||| shared ||| flag OpenFlagBit.NoFollow ||| flag OpenFlagBit.Truncate)
+                        flags
 
                     { fresh Kind.File fileObject (flags &&& 3) with
-                        NoFollow = has (noFollowBit p)
+                        NoFollow = has OpenFlagBit.NoFollow
                         // `f` always exists, so `O_TRUNC` always truncates a
                         // file that was there.
-                        Written = has (truncateBit p)
+                        Written = has OpenFlagBit.Truncate
                     }
                 elif path = directoryPath then
-                    requireGenerated "open of d" (directoryBit p ||| shared) flags
+                    requireGenerated "open of d" (flag OpenFlagBit.Directory ||| shared) flags
 
                     { fresh Kind.Directory directoryObject 0 with
-                        OpenedDirectory = has (directoryBit p)
+                        OpenedDirectory = has OpenFlagBit.Directory
                     }
                 else
                     failwith $"an open of %A{path} is not generated by TestFcntlReference"
@@ -284,16 +245,16 @@ module TestFcntlReference =
             ok fd,
             add
                 { description with
-                    Synchronous = has (syncBit p)
-                    DataSynchronous = has (dsyncBit p)
+                    Synchronous = has OpenFlagBit.Synchronous
+                    DataSynchronous = has OpenFlagBit.DataSynchronous
                 }
                 fd
-                (has (cloexecBit p))
+                (has OpenFlagBit.CloseOnExec)
                 r
         | Syscall.Pipe2 _ when lowestFreeFrom (lowestFreeFrom 0 r + 1) r >= bound r ->
             atBound (lowestFreeFrom (lowestFreeFrom 0 r + 1) r), r
         | Syscall.Pipe2 (_, flags) ->
-            requireGenerated "pipe2" (OpenFlagWords.nonBlock p ||| cloexecBit p) flags
+            requireGenerated "pipe2" (OpenFlagWords.nonBlock p ||| OpenFlagWords.closeOnExec p) flags
             let nonBlocking = flags &&& OpenFlagWords.nonBlock p <> 0
             let readFd = lowestFreeFrom 0 r
             let object = r.NextObject
@@ -304,7 +265,7 @@ module TestFcntlReference =
                         NonBlocking = nonBlocking
                     }
                     readFd
-                    (flags &&& cloexecBit p <> 0)
+                    (flags &&& OpenFlagWords.closeOnExec p <> 0)
                     { r with
                         NextObject = object + 1
                     }
@@ -319,7 +280,7 @@ module TestFcntlReference =
                     Reader = Some readDescription
                 }
                 writeFd
-                (flags &&& cloexecBit p <> 0)
+                (flags &&& OpenFlagWords.closeOnExec p <> 0)
                 r
         | Syscall.Dup fd ->
             if not (Map.containsKey fd r.Fds) then
@@ -358,7 +319,7 @@ module TestFcntlReference =
         | Syscall.Fcntl (fd, FcntlWorld.SetFl, word) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
-            | Some _ when word &&& unmodelled r <> 0 -> Outcome.Refused, r
+            | Some _ when word &&& FcntlWorld.unmodelledStatusFlags p <> 0 -> Outcome.Refused, r
             | Some (description, _, _) ->
                 let d = r.Descriptions.[description]
 
@@ -366,8 +327,8 @@ module TestFcntlReference =
                     if r.Darwin then
                         { d with
                             NonBlocking = word &&& OpenFlagWords.nonBlock p <> 0
-                            Synchronous = word &&& syncBit p <> 0
-                            DataSynchronous = word &&& dsyncBit p <> 0
+                            Synchronous = word &&& flag OpenFlagBit.Synchronous <> 0
+                            DataSynchronous = word &&& flag OpenFlagBit.DataSynchronous <> 0
                         }
                     else
                         { d with
@@ -391,7 +352,7 @@ module TestFcntlReference =
         | Syscall.Dup3 (oldFd, newFd, flags) ->
             if r.Darwin then
                 Outcome.Refused, r
-            elif flags &&& ~~~dup3CloseOnExec <> 0 then
+            elif flags &&& ~~~(OpenFlagWords.closeOnExec p) <> 0 then
                 failed UnixError.EINVAL, r
             elif oldFd = newFd then
                 failed UnixError.EINVAL, r
@@ -400,7 +361,7 @@ module TestFcntlReference =
             elif newFd >= bound r then
                 atBound newFd, r
             else
-                ok newFd, duplicate oldFd newFd (flags &&& dup3CloseOnExec <> 0) r
+                ok newFd, duplicate oldFd newFd (flags &&& OpenFlagWords.closeOnExec p <> 0) r
         | Syscall.Write (fd, _, _) ->
             match Map.tryFind fd r.Fds with
             | None -> failed UnixError.EBADF, r
@@ -773,7 +734,7 @@ module TestFcntlReference =
                         Syscall.Pipe2 (
                             UserBuffer.Mapped,
                             (if n then OpenFlagWords.nonBlock platform else 0)
-                            ||| (if c then cloexecBit platform else 0)
+                            ||| (if c then OpenFlagWords.closeOnExec platform else 0)
                         )
                     )
                     bool
@@ -808,12 +769,17 @@ module TestFcntlReference =
                 3, Gen.map (fun f -> Syscall.Fcntl (f, FcntlWorld.GetFl, 0)) fd
                 3, Gen.map2 (fun f w -> Syscall.Fcntl (f, FcntlWorld.SetFl, w)) fd (wordGen platform)
                 4, Gen.map2 (fun o n -> Syscall.Dup2 (o, n)) fd fd
-                // `O_CLOEXEC`, and now and then Linux's `O_NONBLOCK`, which
-                // `dup3` refuses.
+                // `O_CLOEXEC`, and now and then `O_NONBLOCK`, which `dup3`
+                // refuses.
                 2,
                 Gen.map3
                     (fun (o, n) c s ->
-                        Syscall.Dup3 (o, n, (if c then dup3CloseOnExec else 0) ||| (if s then 0x800 else 0))
+                        Syscall.Dup3 (
+                            o,
+                            n,
+                            (if c then OpenFlagWords.closeOnExec platform else 0)
+                            ||| (if s then OpenFlagWords.nonBlock platform else 0)
+                        )
                     )
                     (Gen.zip fd fd)
                     bool
