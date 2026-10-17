@@ -146,3 +146,9 @@ The `ParkedSyscall` matches `nanosleep-options.md` §6 lists, plus `UnixThreadTa
 1. **Should a zero (or 1 ns, or already-passed) timeout park,** as measured and as was decided for `nanosleep`, or answer `ETIMEDOUT` at once? I recommend parking, through `Parking.park` with a comment where `parkWaiting`'s assertion would otherwise fire.
 2. **A timed wait whose waking signal has gone by its finish:** refuse (§4.4 A, recommended), or add a public "restart with what is left of the timeout" case (B)?
 3. **The call's shape:** the raw call (§4.3 A, recommended), or a parsed one (B)?
+
+## Decision (Patrick, 2026-10-17)
+
+- **Q1:** a zero (or 1 ns, or already-passed) timeout parks, as measured and as for `nanosleep`; the futex arm parks through `Parking.park`, saying why where `parkWaiting`'s assertion would fail.
+- **Q2:** refuse a timed wait whose waking signal has gone by its finish (§4.4 A).
+- **Q3:** the raw call, as `fcntl` takes its command (§4.3 A).
