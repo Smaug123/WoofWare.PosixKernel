@@ -8,8 +8,8 @@ open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 
-/// Random sequences of the path and namespace syscalls, made through their
-/// public entry points by one process's leader: creating, linking, renaming
+/// Random sequences of the path and namespace syscalls, made through
+/// `UnixSystem.step` by one process's leader: creating, linking, renaming
 /// and removing names, opening and closing descriptors onto them, moving the
 /// current directory, and reading and changing their attributes, with the
 /// `*at` forms relative to the descriptors the sequence holds.
@@ -657,12 +657,13 @@ module TestNamespaceSequence =
 
     let private arg : string -> PathArgumentBytes = PathArg.ofText
 
-    /// Makes `op` in `world`, which `configuration` booted.
-    let private apply (configuration : Configuration) (world : World) (op : Op) : Outcome * World =
-        let system = world.System
+    /// The call `op` makes in `world`, which `configuration` booted: its slots
+    /// resolved to the descriptors they hold, and the owner it asks for to
+    /// IDs. `None` for a call that names an empty slot where only a descriptor
+    /// will do, which is not made.
+    let private resolve (configuration : Configuration) (world : World) (op : Op) : Syscall<int, string> option =
         let platform = platformOf configuration
-        let flavour = SimulatedUnixPlatform.flavour platform
-        let atFdCwd = AtDirectory.atFdCwd flavour
+        let atFdCwd = AtDirectory.atFdCwd (SimulatedUnixPlatform.flavour platform)
 
         let dirfd (fd : Fd) : int =
             match fd with
@@ -674,16 +675,8 @@ module TestNamespaceSequence =
             | Fd.Slot slot -> Map.tryFind slot world.Slots
             | Fd.AtFdCwd -> Some atFdCwd
 
-        let answered (answer : SyscallAnswer, after : UnixSystem<int, string>) : Outcome * World =
-            Outcome.Answered answer,
-            { world with
-                System = after
-            }
-
-        let unchanged (outcome : Outcome) : Outcome * World = outcome, world
-
         let owner (choice : OwnerChoice) : UserId option * GroupId option =
-            let credentials = (Lone.proc system).Credentials
+            let credentials = (Lone.proc world.System).Credentials
 
             match choice with
             | OwnerChoice.Unchanged -> None, None
@@ -691,143 +684,29 @@ module TestNamespaceSequence =
             | OwnerChoice.Other -> Some otherUser.User, Some otherUser.Group
             | OwnerChoice.OtherGroup -> None, Some otherUser.Group
 
-        /// `world` holding `fd` in its first empty slot, or with `fd`
-        /// closed again if there is none.
-        let keep (world : World) (fd : int) : World =
-            match
-                Seq.init slots id
-                |> Seq.tryFind (fun slot -> not (Map.containsKey slot world.Slots))
-            with
-            | Some slot ->
-                { world with
-                    Slots = Map.add slot fd world.Slots
-                }
-            | None ->
-                { world with
-                    System = UnixDescriptor.close (Callers.leader world.System) fd world.System |> snd
-                }
-
-        let opened (answer : SyscallAnswer) (after : UnixSystem<int, string>) : Outcome * World =
-            let world =
-                { world with
-                    System = after
-                }
-
-            match answer with
-            | SyscallAnswer.Failed _ -> Outcome.Answered answer, world
-            | SyscallAnswer.Completed fd -> Outcome.Answered answer, keep world (int fd)
-
-        let openOutcome (outcome : SyscallOutcome, after : UnixSystem<int, string>) : Outcome * World =
-            match outcome with
-            | SyscallOutcome.Answered answer -> opened answer after
-            | SyscallOutcome.WouldBlock _
-            | SyscallOutcome.Interrupted ->
-                failwith $"%A{op} did not return, though the filesystem holds nothing an open can sleep on"
-
         match op with
-        | Op.MkDir (path, mode) -> UnixNamespace.mkdir (Callers.leader system) (arg path) mode system |> answered
-        | Op.MkDirAt (dir, path, mode) ->
-            UnixNamespace.mkdirat (Callers.leader system) (dirfd dir) (arg path) mode system
-            |> answered
-        | Op.MkNod path ->
-            UnixNamespace.mknod (Callers.leader system) (arg path) 0o100644 0u system
-            |> answered
-        | Op.RmDir path -> UnixNamespace.rmdir (Callers.leader system) (arg path) system |> answered
-        | Op.Unlink path -> UnixNamespace.unlink (Callers.leader system) (arg path) system |> answered
-        | Op.UnlinkAt (dir, path, flags) ->
-            UnixNamespace.unlinkat (Callers.leader system) (dirfd dir) (arg path) flags system
-            |> answered
-        | Op.Rename (source, destination) ->
-            match UnixNamespace.rename (Callers.leader system) (arg source) system with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused ->
-                UnixNamespace.renameWithDestination (arg destination) paused |> answered
+        | Op.MkDir (path, mode) -> Some (Syscall.MkDir (arg path, mode))
+        | Op.MkDirAt (dir, path, mode) -> Some (Syscall.MkDirAt (dirfd dir, arg path, mode))
+        | Op.MkNod path -> Some (Syscall.MkNod (arg path, 0o100644, 0u))
+        | Op.RmDir path -> Some (Syscall.RmDir (arg path))
+        | Op.Unlink path -> Some (Syscall.Unlink (arg path))
+        | Op.UnlinkAt (dir, path, flags) -> Some (Syscall.UnlinkAt (dirfd dir, arg path, flags))
+        | Op.Rename (source, destination) -> Some (Syscall.Rename (arg source, arg destination))
         | Op.RenameAt (sourceDir, source, destinationDir, destination) ->
-            match
-                UnixNamespace.renameat
-                    (Callers.leader system)
-                    (dirfd sourceDir)
-                    (arg source)
-                    (dirfd destinationDir)
-                    system
-            with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused ->
-                UnixNamespace.renameWithDestination (arg destination) paused |> answered
-        | Op.Link (source, destination) ->
-            match UnixNamespace.link (Callers.leader system) (arg source) system with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused -> UnixNamespace.linkWithDestination (arg destination) paused |> answered
+            Some (Syscall.RenameAt (dirfd sourceDir, arg source, dirfd destinationDir, arg destination))
+        | Op.Link (source, destination) -> Some (Syscall.Link (arg source, arg destination))
         | Op.LinkAt (sourceDir, source, destinationDir, destination, flags) ->
-            match
-                UnixNamespace.linkat
-                    (Callers.leader system)
-                    (dirfd sourceDir)
-                    (arg source)
-                    (dirfd destinationDir)
-                    flags
-                    system
-            with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused -> UnixNamespace.linkWithDestination (arg destination) paused |> answered
-        | Op.Symlink (target, path) ->
-            match UnixNamespace.symlink (Callers.leader system) (arg target) system with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused -> UnixNamespace.symlinkWithPath (arg path) paused |> answered
-        | Op.SymlinkAt (target, dir, path) ->
-            match UnixNamespace.symlinkat (Callers.leader system) (arg target) (dirfd dir) system with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused -> UnixNamespace.symlinkWithPath (arg path) paused |> answered
-        | Op.CloneFile (source, destination, flags) ->
-            match UnixNamespace.cloneFile (Callers.leader system) flags system with
-            | CallProgress.Answered answer -> answered answer
-            | CallProgress.NeedsCopyIn paused ->
-                match UnixNamespace.cloneFileWithSource (arg source) paused with
-                | CallProgress.Answered answer -> answered answer
-                | CallProgress.NeedsCopyIn paused ->
-                    UnixNamespace.cloneFileWithDestination (arg destination) paused |> answered
-        | Op.ChDir path -> UnixPathResolution.chdir (Callers.leader system) (arg path) system |> answered
-        | Op.Open (path, variant) ->
-            UnixNamespace.openPath (Callers.leader system) (openFlags platform variant) (arg path) 0o644 system
-            |> openOutcome
+            Some (Syscall.LinkAt (dirfd sourceDir, arg source, dirfd destinationDir, arg destination, flags))
+        | Op.Symlink (target, path) -> Some (Syscall.Symlink (arg target, arg path))
+        | Op.SymlinkAt (target, dir, path) -> Some (Syscall.SymlinkAt (arg target, dirfd dir, arg path))
+        | Op.CloneFile (source, destination, flags) -> Some (Syscall.CloneFile (arg source, arg destination, flags))
+        | Op.ChDir path -> Some (Syscall.ChDir (arg path))
+        | Op.Open (path, variant) -> Some (Syscall.Open (arg path, openFlags platform variant, 0o644))
         | Op.OpenAt (dir, path, variant) ->
-            UnixNamespace.openat
-                (Callers.leader system)
-                (dirfd dir)
-                (arg path)
-                (openFlags platform variant)
-                0o644
-                system
-            |> openOutcome
-        | Op.Dup fd ->
-            match descriptor fd with
-            | None -> unchanged Outcome.Skipped
-            | Some fd -> UnixDescriptor.dup (Callers.leader system) fd system ||> opened
-        | Op.Pipe ->
-            match UnixPipe.pipe2 (Callers.leader system) 0 UserBuffer.Mapped system with
-            | Pipe2Answer.Failed error, after ->
-                Outcome.Answered (SyscallAnswer.Failed error),
-                { world with
-                    System = after
-                }
-            | Pipe2Answer.Created (readFd, writeFd), after ->
-                let world =
-                    { world with
-                        System = after
-                    }
-
-                Outcome.Answered (SyscallAnswer.Completed 0L), keep (keep world readFd) writeFd
-        | Op.Close slot ->
-            match Map.tryFind slot world.Slots with
-            | None -> unchanged Outcome.Skipped
-            | Some fd ->
-                let answer, after = UnixDescriptor.close (Callers.leader system) fd system
-
-                Outcome.Answered answer,
-                {
-                    System = after
-                    Slots = Map.remove slot world.Slots
-                }
+            Some (Syscall.OpenAt (dirfd dir, arg path, openFlags platform variant, 0o644))
+        | Op.Dup fd -> descriptor fd |> Option.map Syscall.Dup
+        | Op.Pipe -> Some (Syscall.Pipe2 (UserBuffer.Mapped, 0))
+        | Op.Close slot -> Map.tryFind slot world.Slots |> Option.map Syscall.Close
         | Op.Stat (path, follow) ->
             let policy =
                 if follow then
@@ -835,73 +714,125 @@ module TestNamespaceSequence =
                 else
                     SymlinkPolicy.NoFollowFinal
 
-            UnixPathResolution.stat (Callers.leader system) policy (arg path) system
-            |> Outcome.Status
-            |> unchanged
-        | Op.FStat fd ->
-            match descriptor fd with
-            | None -> unchanged Outcome.Skipped
-            | Some fd ->
-                UnixPathResolution.fstat (Callers.leader system) fd system
-                |> Outcome.Status
-                |> unchanged
-        | Op.FStatAt (dir, path, flags) ->
-            UnixPathResolution.fstatat (Callers.leader system) (dirfd dir) (arg path) flags system
-            |> Outcome.Status
-            |> unchanged
-        | Op.ReadDir fd ->
-            match descriptor fd with
-            | None -> unchanged Outcome.Skipped
-            | Some fd ->
-                let answer, after =
-                    UnixNamespace.readDirectoryEntry (Callers.leader system) fd system
-
-                Outcome.Directory answer,
-                { world with
-                    System = after
-                }
-        | Op.Getcwd ->
-            UnixPathResolution.getcwd (Callers.leader system) UserBuffer.Mapped 4096UL system
-            |> Outcome.WorkingDirectory
-            |> unchanged
-        | Op.Chmod (path, mode) ->
-            UnixPathResolution.chmod (Callers.leader system) (arg path) mode system
-            |> answered
-        | Op.FChmod (fd, mode) ->
-            match descriptor fd with
-            | None -> unchanged Outcome.Skipped
-            | Some fd -> UnixPathResolution.fchmod (Callers.leader system) fd mode system |> answered
-        | Op.FChmodAt (dir, path, mode, flags) ->
-            UnixPathResolution.fchmodat (Callers.leader system) (dirfd dir) (arg path) mode flags system
-            |> answered
+            Some (Syscall.Stat (policy, arg path))
+        | Op.FStat fd -> descriptor fd |> Option.map Syscall.FStat
+        | Op.FStatAt (dir, path, flags) -> Some (Syscall.FStatAt (dirfd dir, arg path, flags))
+        | Op.ReadDir fd -> descriptor fd |> Option.map Syscall.ReadDirectoryEntry
+        | Op.Getcwd -> Some (Syscall.GetCwd (UserBuffer.Mapped, 4096UL))
+        | Op.Chmod (path, mode) -> Some (Syscall.ChMod (arg path, mode))
+        | Op.FChmod (fd, mode) -> descriptor fd |> Option.map (fun fd -> Syscall.FChMod (fd, mode))
+        | Op.FChmodAt (dir, path, mode, flags) -> Some (Syscall.FChModAt (dirfd dir, arg path, mode, flags))
         | Op.FChown (fd, choice) ->
-            match descriptor fd with
-            | None -> unchanged Outcome.Skipped
-            | Some fd ->
-                let user, group = owner choice
-
-                UnixPathResolution.fchown (Callers.leader system) fd user group system
-                |> answered
+            let user, group = owner choice
+            descriptor fd |> Option.map (fun fd -> Syscall.FChOwn (fd, user, group))
         | Op.FChownAt (dir, path, choice, flags) ->
             let user, group = owner choice
-
-            UnixPathResolution.fchownat (Callers.leader system) (dirfd dir) (arg path) user group flags system
-            |> answered
+            Some (Syscall.FChOwnAt (dirfd dir, arg path, user, group, flags))
         | Op.UTimensAt (dir, path, flags) ->
             let path =
                 match path with
                 | None -> NullablePathArgument.Null
                 | Some path -> NullablePathArgument.NotNull (arg path)
 
-            UnixPathResolution.utimensat (Callers.leader system) (dirfd dir) path TimesArgument.Null flags system
-            |> answered
-        | Op.FAccessAt (dir, path, mode, flags) ->
-            match UnixPathResolution.faccessat (Callers.leader system) (dirfd dir) mode flags system with
-            | CallProgress.Answered answer -> unchanged (Outcome.Answered answer)
-            | CallProgress.NeedsCopyIn paused ->
-                UnixPathResolution.accessWithPath (arg path) paused
-                |> Outcome.Answered
-                |> unchanged
+            Some (Syscall.UTimensAt (dirfd dir, path, TimesArgument.Null, flags))
+        | Op.FAccessAt (dir, path, mode, flags) -> Some (Syscall.FAccessAt (dirfd dir, arg path, mode, flags))
+
+    /// What `stepped` answered, and the system after it: `before`, the system
+    /// the call was made in, where the call could change nothing.
+    let private answered
+        (before : UnixSystem<int, string>)
+        (stepped : SteppedCall<int, string>)
+        : Outcome * UnixSystem<int, string>
+        =
+        match stepped with
+        | SteppedCall.MkDir (answer, after)
+        | SteppedCall.MkDirAt (answer, after)
+        | SteppedCall.MkNod (answer, after)
+        | SteppedCall.RmDir (answer, after)
+        | SteppedCall.Unlink (answer, after)
+        | SteppedCall.UnlinkAt (answer, after)
+        | SteppedCall.Rename (answer, after)
+        | SteppedCall.RenameAt (answer, after)
+        | SteppedCall.Link (answer, after)
+        | SteppedCall.LinkAt (answer, after)
+        | SteppedCall.Symlink (answer, after)
+        | SteppedCall.SymlinkAt (answer, after)
+        | SteppedCall.CloneFile (answer, after)
+        | SteppedCall.ChDir (answer, after)
+        | SteppedCall.Dup (answer, after)
+        | SteppedCall.Close (answer, after)
+        | SteppedCall.ChMod (answer, after)
+        | SteppedCall.FChMod (answer, after)
+        | SteppedCall.FChModAt (answer, after)
+        | SteppedCall.FChOwn (answer, after)
+        | SteppedCall.FChOwnAt (answer, after)
+        | SteppedCall.UTimensAt (answer, after) -> Outcome.Answered answer, after
+        | SteppedCall.Open (outcome, after)
+        | SteppedCall.OpenAt (outcome, after) ->
+            match outcome with
+            | SyscallOutcome.Answered answer -> Outcome.Answered answer, after
+            | SyscallOutcome.WouldBlock _
+            | SyscallOutcome.Interrupted ->
+                failwith $"an open answered %A{outcome}, though the filesystem holds nothing an open can sleep on"
+        | SteppedCall.Pipe2 (Pipe2Answer.Failed error, after) -> Outcome.Answered (SyscallAnswer.Failed error), after
+        | SteppedCall.Pipe2 (Pipe2Answer.Created _, after) -> Outcome.Answered (SyscallAnswer.Completed 0L), after
+        | SteppedCall.Stat answer
+        | SteppedCall.FStat answer
+        | SteppedCall.FStatAt answer -> Outcome.Status answer, before
+        | SteppedCall.ReadDirectoryEntry (answer, after) -> Outcome.Directory answer, after
+        | SteppedCall.GetCwd answer -> Outcome.WorkingDirectory answer, before
+        | SteppedCall.FAccessAt answer -> Outcome.Answered answer, before
+        | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call TestNamespaceSequence makes"
+
+    /// `world` holding `fd` in its first empty slot, or with `fd` closed again
+    /// if there is none.
+    let private keep (world : World) (fd : int) : World =
+        match
+            Seq.init slots id
+            |> Seq.tryFind (fun slot -> not (Map.containsKey slot world.Slots))
+        with
+        | Some slot ->
+            { world with
+                Slots = Map.add slot fd world.Slots
+            }
+        | None ->
+            match UnixSystem.step (Callers.leader world.System) (Syscall.Close fd) world.System with
+            | SteppedCall.Close (_, after) ->
+                { world with
+                    System = after
+                }
+            | other -> failwith $"a close answered SteppedCall.%s{UnionCaseName.ofValue other}"
+
+    /// `world` after `op`, which `stepped` answered: holding each descriptor
+    /// an open, a dup or a pipe made, and without the slot a close emptied.
+    let private track (op : Op) (stepped : SteppedCall<int, string>) (world : World) : World =
+        match op, stepped with
+        | Op.Close slot, _ ->
+            { world with
+                Slots = Map.remove slot world.Slots
+            }
+        | _, SteppedCall.Open (SyscallOutcome.Answered (SyscallAnswer.Completed fd), _)
+        | _, SteppedCall.OpenAt (SyscallOutcome.Answered (SyscallAnswer.Completed fd), _)
+        | _, SteppedCall.Dup (SyscallAnswer.Completed fd, _) -> keep world (int fd)
+        | _, SteppedCall.Pipe2 (Pipe2Answer.Created (readFd, writeFd), _) -> keep (keep world readFd) writeFd
+        | _ -> world
+
+    /// Makes `op` in `world`, which `configuration` booted, through
+    /// `UnixSystem.step` by the process's leader.
+    let private apply (configuration : Configuration) (world : World) (op : Op) : Outcome * World =
+        match resolve configuration world op with
+        | None -> Outcome.Skipped, world
+        | Some call ->
+            let stepped = UnixSystem.step (Callers.leader world.System) call world.System
+            let outcome, after = answered world.System stepped
+
+            outcome,
+            track
+                op
+                stepped
+                { world with
+                    System = after
+                }
 
     /// Every defect the system's, its descriptor table's and its
     /// filesystem's invariants find.
