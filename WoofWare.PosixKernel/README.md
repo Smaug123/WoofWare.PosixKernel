@@ -1334,6 +1334,7 @@ The filesystem type is chosen separately (see "Giving the machine files"), from 
 The kernel mounts a device filesystem over `/dev` at boot, as a real one does.
 On Linux it is a devtmpfs holding a node for each device the kernel has a driver for (`/dev/null` and `/dev/urandom`); since a real devtmpfs holds hundreds, any other name in it is refused rather than answered ENOENT, and so are listing it and adding or removing a name in it.
 Opening a node gives a descriptor whose syscalls are the driver's: `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
+Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. No read or write moves them, and mounting `/dev` moves none of the root directory's times.
 `CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so no node names any of them.
 On Darwin it is devfs, which is not modelled, so any path that reaches `/dev` is refused.
 

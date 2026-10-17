@@ -2023,7 +2023,9 @@ module VirtualFileSystem =
 
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
     /// `permissions` owned by `owner`, holding one node for each of `devices`
-    /// owned by `owner` too, all created at `now`.
+    /// owned by `owner` too, all created at `now`. The root directory's own
+    /// times do not move: a mount changes no directory of the filesystem it
+    /// covers.
     ///
     /// The root may already bind `name` to an empty directory, which the mount
     /// then covers; otherwise the mount covers a directory that held nothing,
@@ -2047,6 +2049,11 @@ module VirtualFileSystem =
             | None ->
                 failwith
                     $"VirtualFileSystem.mountAtRoot: the root, inode %O{vfs.Root}, is not a directory this filesystem holds. Run VirtualFileSystem.checkInvariants."
+
+        // Unbinding a covered directory and binding the mounted root below go
+        // through the builders every directory change goes through, which move
+        // the root's times; they are put back once the mount is made.
+        let rootTimes = vfs.Inodes.[vfs.Root].Times
 
         let covered =
             match Map.tryFind name rootContent.Entries with
@@ -2110,8 +2117,17 @@ module VirtualFileSystem =
                 )
                 (vfs, Map.add mountRoot mountRoot vfs.MountMembers)
 
+        let root = vfs.Inodes.[vfs.Root]
+
         Ok
             { vfs with
+                Inodes =
+                    Map.add
+                        vfs.Root
+                        { root with
+                            Times = rootTimes
+                        }
+                        vfs.Inodes
                 Mounts =
                     Map.add
                         mountRoot

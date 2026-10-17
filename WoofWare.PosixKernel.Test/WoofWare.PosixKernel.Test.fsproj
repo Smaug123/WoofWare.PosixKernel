@@ -551,6 +551,10 @@
          every row against the syscall and the boot filesystem's seed. -->
     <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.darwin.txt" />
+    <!-- The times a Linux devtmpfs reported for /dev and its nodes over three
+         boots, measured by docs/probes/devtmpfs-times. `TestDeviceFileSystem`
+         replays them. -->
+    <EmbeddedResource Include="..\docs\probes\devtmpfs-times\measured-linux-6.18.5-aarch64-3-boots.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-times.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>

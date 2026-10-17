@@ -678,7 +678,7 @@ module UnixBootImage =
                 defaultOwner
                 (SimulatedUnixPlatform.symlinkCreationPermissions platform SeedEntry.symlinkCreatorsUmask)
                 seed
-            |> UnixSystem.mountDeviceFileSystem machine.DeviceMount createdAt
+            |> UnixSystem.mountDeviceFileSystem machine.DeviceMount
         with
         | Error (MountFault.CoveredEntryNotAnEmptyDirectory name) ->
             Error (FileSystemSeedFault.SeedCoversDeviceFileSystem name)
