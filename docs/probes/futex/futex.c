@@ -203,7 +203,8 @@ struct waiter {
     uint32_t *addr;
     uint32_t val;
     const struct timespec *timeout;
-    int rewaits;
+    // The main thread lowers this while the waiter runs, to let it stop.
+    atomic_int rewaits;
     int policy_fifo;
     char name;
     pthread_t thread;
@@ -224,7 +225,7 @@ static void *waiter_main(void *p)
     if (w->block_set)
         pthread_sigmask(SIG_BLOCK, &w->block, NULL);
     atomic_store(&w->tid, (int)gettid());
-    for (int i = 0; i <= w->rewaits && i < 8; i++) {
+    for (int i = 0; i <= atomic_load(&w->rewaits) && i < 8; i++) {
         w->start[i] = now_ns();
         long r = futex(w->addr, FUTEX_WAIT_PRIVATE, (int)w->val, w->timeout);
         w->err[i] = r < 0 ? errno : 0;
@@ -299,7 +300,7 @@ static void finish(uint32_t *addr, struct waiter *ws, int count)
     for (int i = 0; i < 100; i++) {
         int pending = 0;
         for (int j = 0; j < count; j++)
-            if (atomic_load(&ws[j].returns) <= ws[j].rewaits)
+            if (atomic_load(&ws[j].returns) <= atomic_load(&ws[j].rewaits))
                 pending = 1;
         if (!pending)
             break;
@@ -555,7 +556,7 @@ static void row_order(const void *arg)
                     wait_asleep(&ws[i]);
     }
     for (int i = 0; i < 3; i++)
-        ws[i].rewaits = atomic_load(&ws[i].returns);
+        atomic_store(&ws[i].rewaits, atomic_load(&ws[i].returns));
     // Rewaiters loop for ever otherwise: let each fall out at its next return.
     finish(&words[0], ws, 3);
 }

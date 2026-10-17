@@ -54,7 +54,7 @@ From Linux 6.18's source (`kernel/futex/waitwake.c`), not measured, for the rule
 
 ## 3. What the existing kernel decides for us
 
-- **The park names its own deadline.** `WakeCondition.ofPark` is public and reads only the park (`nanosleep-options.md` §3.1), and `SyscallInterruption.ruleOf` must tell a timed wait from an untimed one, which it is given only the park to do. So `ParkedFutex` carries `Deadline : int64 option`.
+- **The park names its own deadline.** `WakeCondition.ofPark` is public and reads only the park (`nanosleep-options.md` §3.1), and `SyscallInterruption.ruleOf` must tell a timed wait from an untimed one, which it is given only the park to do. So `ParkedFutex` carries `FutexDeadline : int64 option`.
 - **A park can be rewritten in place.** `UnixThreadTable.withPark` accepts a write that keeps the park's ordinal and state: a Darwin close rewrites the call it ends to `SleepTarget.EndedByClose`, and `WakePrimitive.EndedByClose` holds by reading the waiter's own park. A wake can mark its waiters the same way.
 - **Only `UnixWait.wake` wakes.** `withPark` refuses any state change except through `markWoken`, and `wake`'s answer is how a client learns a thread woke.
 - **A taken waiter's signal is not lost.** Finishing a park runs `OwedReturns.markIfDue`, so a signal that also woke the waiter is taken as the thread returns to user mode, with no interruption: "returns 0, and the handler runs".
@@ -69,7 +69,7 @@ The README's "Blocks inside the process" made futexes the client's "for now", wi
 
 ### 4.2 How a wake reaches the waiter
 
-- **A (recommended): the wake marks the park.** `ParkedFutex` carries `Taken : bool` (or a two-case union). `futex(FUTEX_WAKE)` rewrites each chosen park in place with `Taken = true`; `FutexWakeTaken` holds for a taken park; `UnixWait.wake` then wakes it as any other; the finishing call answers 0. A mark cannot exist without its park, needs no invariant of its own, and goes when the park goes (a process ending unparks every thread). A client can see it through `UnixThreadState.parkedIn`.
+- **A (recommended): the wake marks the park.** `ParkedFutex` carries `TakenByWake : bool` (or a two-case union). `futex(FUTEX_WAKE)` rewrites each chosen park in place with `TakenByWake = true`; `FutexWakeTaken` holds for a taken park; `UnixWait.wake` then wakes it as any other; the finishing call answers 0. A mark cannot exist without its park, needs no invariant of its own, and goes when the park goes (a process ending unparks every thread). A client can see it through `UnixThreadState.parkedIn`.
 - **B: a per-process `Set<'Thread>` of taken waiters.** Passes the skill's "an absent key has a truthful reading" test, but makes "taken and not parked in a futex" representable, so `checkInvariants` needs a rule tying the two, and process end must clear it.
 - **C: the wake sets `ParkState.Woken` directly.** Simplest to write, but a second way to wake a thread, which `withPark` forbids, and the client would never see these wakes in `UnixWait.wake`'s answer.
 
@@ -103,11 +103,11 @@ See §8, Q1. Linux sleeps before answering (§1), as it does for a zero `nanosle
 type ParkedFutex =
     {
         /// The address the waiter waits on; with the waiter's process, the queue's key.
-        Address : uint64
+        FutexAddress : uint64
         /// Nanoseconds since boot at which the wait times out, if it has a timeout.
-        Deadline : int64 option
+        FutexDeadline : int64 option
         /// Whether a `FUTEX_WAKE` has taken this waiter off its queue.
-        Taken : bool
+        TakenByWake : bool
     }
 
 // WakePrimitive.fs, appended
@@ -120,6 +120,7 @@ type ParkedFutex =
 | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>   // as FLock's: an answer, or WouldBlock
 ```
 
+- **Field labels:** none is a label another public record has (`Address` is `Ipv4Endpoint`'s and `Ipv6Endpoint`'s, `Deadline` several parks'), which `TestSurface`'s record-label check requires: F# resolves a shared label to the record declared last, so a reused one could change what a client's code means.
 - **Condition:** `AnyOf [FutexWakeTaken; SignalDeliverable]`, plus `DeadlinePassed d` for a timed wait.
 - **Finishing call** (`UnixFutex.tryFinishFutexIn`, reached by `UnixWait.finish`): taken → 0; deadline passed → `ETIMEDOUT`; a signal → as `SyscallInterruption` says, with `ruleOf` answering `RestartsUnderSaRestart` untimed and `FailsWithEintr` timed, and `withoutHandler` answering as §4.4; otherwise sleep again (a spurious wake, which `futex_wait` also answers by sleeping again).
 - **Wake:** among the caller's process's futex parks on `address` that are not taken, in park order, rewrite the first `max(n, 1)` as taken; answer the count.
