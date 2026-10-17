@@ -543,6 +543,10 @@ static int set_state(const char *state, const char *op, struct target t) {
   return 0;
 }
 
+// Darwin: the descriptor the kqueue watches, which closing the kqueue does not
+// close.
+static int watched_fd = -1;
+
 // Start watching the target for the events the columns name; answers a handle.
 static int watch(struct target t) {
   char p[4096];
@@ -561,6 +565,7 @@ static int watch(struct target t) {
   int fd = open(p, O_EVTONLY | (t.nofollow ? O_SYMLINK : 0));
   if (fd < 0)
     die("open O_EVTONLY");
+  watched_fd = fd;
   struct kevent ev;
   EV_SET(&ev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_ATTRIB | NOTE_WRITE | NOTE_EXTEND, 0, NULL);
   if (kevent(kq, &ev, 1, NULL, 0, NULL) < 0)
@@ -624,6 +629,10 @@ static void row(const char *state, const char *op) {
   char ev[64];
   events(handle, ev);
   close(handle);
+  if (watched_fd >= 0) {
+    close(watched_fd);
+    watched_fd = -1;
+  }
   if (held_fd >= 0)
     close(held_fd);
   printf("%s %s %s ret=%ld atime=%lld.%09ld->%lld.%09ld moved=%d mtime=%d ctime=%d events=%s\n", label,

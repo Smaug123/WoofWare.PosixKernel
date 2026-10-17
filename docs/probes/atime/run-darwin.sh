@@ -9,6 +9,8 @@
 # which writes measured-darwin-27.0-apfs-*.txt beside it.
 
 set -e
+# launchd's default soft limit, so that a leaked descriptor shows.
+ulimit -n 256
 here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d /private/tmp/atime.XXXXXX)
 cc -Wall -O1 -Wno-deprecated-declarations -o "$work/atime" "$here/atime.c"
