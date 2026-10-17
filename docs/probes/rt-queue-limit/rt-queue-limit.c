@@ -5,7 +5,7 @@
 // reports what the platform has and how often a blocked standard signal sent
 // eight times is delivered.
 //
-// Linux sections, each row in a fresh forked child that blocks every signal,
+// Linux sections, each row in a fresh forked child that blocks every signal but SIGALRM (its watchdog),
 // lowers its RLIMIT_SIGPENDING (soft and hard) to `limit`, and sends to itself:
 //   send  - eight sends of one signal by one method, each send's answer, then
 //           SigQ from /proc/self/status, then every instance drained with
@@ -65,10 +65,17 @@ static pid_t fork_or_die(void)
     return p;
 }
 
+/* Every signal but SIGALRM, which a row's watchdog alarm raises. */
+static void all_but_alarm(sigset_t *set)
+{
+    sigfillset(set);
+    sigdelset(set, SIGALRM);
+}
+
 static void block_all(void)
 {
     sigset_t all;
-    sigfillset(&all);
+    all_but_alarm(&all);
     sigprocmask(SIG_BLOCK, &all, NULL);
 }
 
@@ -131,7 +138,7 @@ static void sigq(char *out, size_t n)
 static int drain(char *out, size_t n)
 {
     sigset_t all;
-    sigfillset(&all);
+    all_but_alarm(&all);
     struct timespec zero = { 0, 0 };
     int count = 0;
     size_t len = strlen(out);
@@ -222,18 +229,20 @@ static void user_body(int fd, void *arg)
         close(fd);
         block_all();
         set_limit(limit);
-        for (rlim_t i = 0; i < limit; i++) send_by("sigqueue", SIGRTMIN);
-        char c = 'r';
+        char c = 0;
+        for (rlim_t i = 0; i < limit; i++) if (send_by("sigqueue", SIGRTMIN) == 0) c++;
         write(ready[1], &c, 1);
         read(done[0], &c, 1);
         _exit(0);
     }
     char c;
-    read(ready[0], &c, 1);
+    if (read(ready[0], &c, 1) != 1) { perror("sibling never ready"); _exit(94); }
+    int held = c;
     block_all();
     set_limit(limit);
     char out[1024];
-    int len = snprintf(out, sizeof out, "section=user limit=%d sibling-holds=%d method=%s sig=RTMIN answer=%s", (int)limit, (int)limit, method, errname(send_by(method, SIGRTMIN)));
+    int answer = send_by(method, SIGRTMIN);
+    int len = snprintf(out, sizeof out, "section=user limit=%d sibling-holds=%d%s method=%s sig=RTMIN answer=%s", (int)limit, held, held == (int)limit ? "" : "(incomplete)", method, errname(answer));
     char q[64];
     sigq(q, sizeof q);
     len += snprintf(out + len, sizeof out - len, " sigq=%s drained:", q);
@@ -260,8 +269,8 @@ static void other_body(int fd, void *arg)
         block_all();
         set_limit(limit);
         if (setresgid(1000, 1000, 1000) || setresuid(1000, 1000, 1000)) { perror("setresuid"); _exit(95); }
-        for (rlim_t i = 0; i < limit; i++) send_by("sigqueue", SIGRTMIN);
-        char c = 'r';
+        char c = 0;
+        for (rlim_t i = 0; i < limit; i++) if (send_by("sigqueue", SIGRTMIN) == 0) c++;
         write(ready[1], &c, 1);
         read(done[0], &c, 1);
         char out[1024] = "";
@@ -275,7 +284,8 @@ static void other_body(int fd, void *arg)
         _exit(0);
     }
     char c;
-    read(ready[0], &c, 1);
+    if (read(ready[0], &c, 1) != 1) { perror("target never ready"); _exit(94); }
+    int held = c;
     char out[2048];
     union sigval v = { .sival_int = 7 };
     errno = 0;
@@ -284,7 +294,8 @@ static void other_body(int fd, void *arg)
     errno = 0;
     int r2 = kill(t, SIGRTMIN + 1);
     int e2 = r2 == 0 ? 0 : errno;
-    int len = snprintf(out, sizeof out, "section=other limit=%d target=uid1000-holding-%d sender=uid%d sigqueue(RTMIN)=%s kill(RTMIN+1)=%s", (int)limit, (int)limit, (int)getuid(), errname(e), errname(e2));
+    int len = snprintf(out, sizeof out, "section=other limit=%d target=uid1000-holding-%d%s sender=uid%d sigqueue(RTMIN)=%s", (int)limit, held, held == (int)limit ? "" : "(incomplete)", (int)getuid(), errname(e));
+    len += snprintf(out + len, sizeof out - len, " kill(RTMIN+1)=%s", errname(e2));
     write(done[1], &c, 1);
     close(res[1]);
     int got;
