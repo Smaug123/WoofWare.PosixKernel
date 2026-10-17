@@ -920,6 +920,11 @@ type internal FileSystemSeedFault =
         first : DirectoryEntryName *
         second : DirectoryEntryName *
         flavour : SimulatedUnixFlavour
+    /// The seed holds a symbolic link, bound under `name`, whose target is
+    /// longer than this flavour's `symlink(2)` will copy in (`PATH_MAX` less
+    /// its NUL: 1023 bytes on Darwin, 4095 on Linux), so no process of that
+    /// flavour could have created it.
+    | SeedSymlinkTargetTooLong of name : DirectoryEntryName * flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal FileSystemSeedFault =
@@ -935,6 +940,8 @@ module internal FileSystemSeedFault =
             $"the seed binds %s{DirectoryEntryName.toEscaped name} at its root to something other than an empty directory, and the kernel mounts its device filesystem there at boot, which would hide what the seed put there. Leave it out of the seed: the kernel supplies /dev itself."
         | FileSystemSeedFault.SeedNamesPossiblyEquivalent (first, second, flavour) ->
             $"the seed has a directory holding both %s{DirectoryEntryName.toEscaped first} and %s{DirectoryEntryName.toEscaped second}. A %O{flavour} filesystem takes a name as reaching the entry bound under any canonically equivalent Unicode spelling of it, so it holds at most one spelling of a name in a directory, and this library holds no Unicode tables to decide whether these two are spellings of one name. Keep one of them in that directory."
+        | FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour) ->
+            $"the seed holds a symbolic link named %s{DirectoryEntryName.toEscaped name} whose target is longer than a %O{flavour} kernel's symlink(2) copies in (PATH_MAX less its NUL), so no process of that flavour could have created it. Shorten the target, or simulate a flavour whose PATH_MAX admits it."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : FileSystemSeedFault) : RefusalKind =
@@ -943,6 +950,7 @@ module internal FileSystemSeedFault =
         | FileSystemSeedFault.SeedNameNotBindable _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedCoversDeviceFileSystem _ -> RefusalKind.Contradictory "seed"
         | FileSystemSeedFault.SeedNamesPossiblyEquivalent _ -> RefusalKind.Unmodelled
+        | FileSystemSeedFault.SeedSymlinkTargetTooLong _ -> RefusalKind.Contradictory "seed"
 
 /// Why `UnixSystem.launch` will not start a process.
 [<RequireQualifiedAccess>]

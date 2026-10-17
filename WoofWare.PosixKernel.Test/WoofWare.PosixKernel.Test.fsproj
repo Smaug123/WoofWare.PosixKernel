@@ -149,6 +149,7 @@
     <Compile Include="TestDirectorySize.fs" />
     <Compile Include="TestLinkCount.fs" />
     <Compile Include="TestWithFileSystemAndCurrentDirectory.fs" />
+    <Compile Include="TestSeedSymlinkTarget.fs" />
     <Compile Include="TestInodeLifetime.fs" />
     <Compile Include="ErrnoHeaders.fs" />
     <Compile Include="TestUnixError.fs" />
@@ -523,6 +524,12 @@
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-rules.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.linkRules.linux.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-rules.darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.linkRules.darwin.txt" />
     <EmbeddedResource Include="..\docs\plans\2026-08-23-posix-kernel-extraction\link-empty-path.linux-6.18.5-aarch64-root.txt" LogicalName="WoofWare.PosixKernel.Test.linkEmptyPath.linux.txt" />
+    <!-- The longest target symlink(2) and symlinkat(2) store, on tmpfs and ext4
+         under Linux and on APFS and HFS+ under Darwin, measured by
+         docs/probes/symlink-target-length. `TestSeedSymlinkTarget` replays
+         every row against the syscall and the boot filesystem's seed. -->
+    <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\symlink-target-length\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.symlink-target-length.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
