@@ -453,9 +453,7 @@ module TestThreadIds =
                 match
                     UnixSignal.pthreadSigmask
                         (Callers.thread 0 system)
-                        (match numbering with
-                         | SignalNumbering.Linux -> 2
-                         | SignalNumbering.Darwin -> 3)
+                        (MaskHow.setMask numbering)
                         (Some (SignalMask.ofSignals numbering (Set.ofList signals)))
                         system
                 with

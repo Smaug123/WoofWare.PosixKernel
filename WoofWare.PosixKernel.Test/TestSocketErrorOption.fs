@@ -68,11 +68,6 @@ module TestSocketErrorOption =
     let private datagram (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
 
-    let private nonBlocking (fd : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        match UnixDescriptor.setNonBlocking (Callers.leader system) fd true system with
-        | SetNonBlockingAnswer.Set, system -> system
-        | other, _ -> failwith $"setting O_NONBLOCK on fd %d{fd} answered %A{other}"
-
     let private bindAt (fd : int) (endpoint : Ipv4Endpoint) (system : UnixSystem<int, string>) =
         match CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform system) endpoint) system with
         | Ok (BindAnswer.Bound _, system) -> system
@@ -109,7 +104,7 @@ module TestSocketErrorOption =
         : int * UnixSystem<int, string>
         =
         let fd, system = stream (fresh platform)
-        let system = nonBlocking fd system |> prepare fd
+        let system = NonBlocking.set fd system |> prepare fd
         let outcome, system = connect fd nobody system
         outcome |> shouldEqual (SyscallAnswer.Failed UnixError.EINPROGRESS)
         phaseOf fd system |> shouldEqual (SocketPhase.Refused RefusalError.Pending)
@@ -220,7 +215,7 @@ module TestSocketErrorOption =
                         yield
                             (let _, system = listening (fresh platform)
                              let client, system = stream system
-                             let system = nonBlocking client system
+                             let system = NonBlocking.set client system
                              let _, system = connect client (loopback listenerPort) system
 
                              phaseOf client system

@@ -815,14 +815,15 @@ module TestCallerChecks =
                 | Error error -> failwith $"sigaction: %O{error}"
 
             let view =
-                let block =
-                    match numbering with
-                    | SignalNumbering.Linux -> 0
-                    | SignalNumbering.Darwin -> 1
-
                 let usr1Mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
-                match UnixSignal.pthreadSigmask (Caller.make own interruptedDebtor) block (Some usr1Mask) view with
+                match
+                    UnixSignal.pthreadSigmask
+                        (Caller.make own interruptedDebtor)
+                        (MaskHow.block numbering)
+                        (Some usr1Mask)
+                        view
+                with
                 | Ok (_, view) -> view
                 | Error error -> failwith $"pthread_sigmask: %O{error}"
 

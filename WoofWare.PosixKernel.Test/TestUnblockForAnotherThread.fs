@@ -36,14 +36,6 @@ module TestUnblockForAnotherThread =
     let private signo (flavour : SimulatedUnixFlavour) (signal : Signal) : int =
         Signal.toRawSignoUnder (numberingOf flavour) signal
 
-    /// `SIG_UNBLOCK` and `SIG_SETMASK`, as each `<signal.h>` numbers them.
-    let private unblockHow (flavour : SimulatedUnixFlavour) : int =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> 1
-        | SimulatedUnixFlavour.Darwin -> 2
-
-    let private setmaskHow (flavour : SimulatedUnixFlavour) : int = unblockHow flavour + 1
-
     /// The process's threads: 0 is the leader.
     let private threads : int list = [ 0 ; 1 ; 2 ]
 
@@ -450,8 +442,8 @@ module TestUnblockForAnotherThread =
         | Refused of SigprocmaskRefusal<int>
 
     let private unblock (case : Case) (system : UnixSystem<int, string>) : Unblocked =
-        let s =
-            SignalMask.ofSignals (numberingOf case.Flavour) (Set.singleton (signalOf case.Disposition))
+        let numbering = numberingOf case.Flavour
+        let s = SignalMask.ofSignals numbering (Set.singleton (signalOf case.Disposition))
 
         let answered (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : Unblocked =
             match result with
@@ -460,14 +452,14 @@ module TestUnblockForAnotherThread =
 
         match case.Route with
         | Route.PthreadSigmaskUnblock ->
-            UnixSignal.pthreadSigmask (Callers.thread case.Unblocker system) (unblockHow case.Flavour) (Some s) system
+            UnixSignal.pthreadSigmask (Callers.thread case.Unblocker system) (MaskHow.unblock numbering) (Some s) system
             |> answered
         | Route.SigprocmaskUnblock
         | Route.SigprocmaskSetEmpty ->
             let how, set =
                 match case.Route with
-                | Route.SigprocmaskUnblock -> unblockHow case.Flavour, s
-                | _ -> setmaskHow case.Flavour, SignalMask.empty
+                | Route.SigprocmaskUnblock -> MaskHow.unblock numbering, s
+                | _ -> MaskHow.setMask numbering, SignalMask.empty
 
             match UnixSignal.trySigprocmask (Callers.thread case.Unblocker system) how (Some set) system with
             | Ok answer -> answered answer
@@ -511,7 +503,7 @@ module TestUnblockForAnotherThread =
         let system =
             (system, threads)
             ||> List.fold (fun system thread ->
-                UnixSignal.pthreadSigmask (Callers.thread thread system) (setmaskHow case.Flavour) (Some s) system
+                UnixSignal.pthreadSigmask (Callers.thread thread system) (MaskHow.setMask numbering) (Some s) system
                 |> orFail "pthread_sigmask"
             )
 

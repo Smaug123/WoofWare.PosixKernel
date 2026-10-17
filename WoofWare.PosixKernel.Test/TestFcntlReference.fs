@@ -110,9 +110,6 @@ module TestFcntlReference =
 
     // Each flavour's numbering, written out from the headers and the probe's
     // HEADER rows rather than read from the library.
-    let private nonBlockBit (platform : SimulatedUnixPlatform) : int =
-        if isDarwin platform then 0x4 else 0x800
-
     let private appendBit (platform : SimulatedUnixPlatform) : int =
         if isDarwin platform then 0x8 else 0x400
 
@@ -177,7 +174,7 @@ module TestFcntlReference =
             | Kind.PipeWrite -> false
 
         d.Access
-        ||| bit d.NonBlocking (nonBlockBit p)
+        ||| bit d.NonBlocking (OpenFlagWords.nonBlock p)
         ||| bit d.Synchronous (syncBit p)
         ||| bit d.DataSynchronous (dsyncBit p)
         ||| bit (not r.Darwin && madeByOpen) (largeFileBit p)
@@ -296,8 +293,8 @@ module TestFcntlReference =
         | Syscall.Pipe2 _ when lowestFreeFrom (lowestFreeFrom 0 r + 1) r >= bound r ->
             atBound (lowestFreeFrom (lowestFreeFrom 0 r + 1) r), r
         | Syscall.Pipe2 (_, flags) ->
-            requireGenerated "pipe2" (nonBlockBit p ||| cloexecBit p) flags
-            let nonBlocking = flags &&& nonBlockBit p <> 0
+            requireGenerated "pipe2" (OpenFlagWords.nonBlock p ||| cloexecBit p) flags
+            let nonBlocking = flags &&& OpenFlagWords.nonBlock p <> 0
             let readFd = lowestFreeFrom 0 r
             let object = r.NextObject
 
@@ -368,13 +365,13 @@ module TestFcntlReference =
                 let d =
                     if r.Darwin then
                         { d with
-                            NonBlocking = word &&& nonBlockBit p <> 0
+                            NonBlocking = word &&& OpenFlagWords.nonBlock p <> 0
                             Synchronous = word &&& syncBit p <> 0
                             DataSynchronous = word &&& dsyncBit p <> 0
                         }
                     else
                         { d with
-                            NonBlocking = word &&& nonBlockBit p <> 0
+                            NonBlocking = word &&& OpenFlagWords.nonBlock p <> 0
                         }
 
                 ok 0,
@@ -775,7 +772,7 @@ module TestFcntlReference =
                     (fun n c ->
                         Syscall.Pipe2 (
                             UserBuffer.Mapped,
-                            (if n then nonBlockBit platform else 0)
+                            (if n then OpenFlagWords.nonBlock platform else 0)
                             ||| (if c then cloexecBit platform else 0)
                         )
                     )

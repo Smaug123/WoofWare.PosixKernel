@@ -93,12 +93,6 @@ module internal FcntlWorld =
         | SimulatedUnixFlavour.Linux -> 1030
         | SimulatedUnixFlavour.Darwin -> 67
 
-    /// `O_NONBLOCK` in `platform`'s numbering.
-    let nonBlock (platform : SimulatedUnixPlatform) : int =
-        match SimulatedUnixPlatform.flavour platform with
-        | SimulatedUnixFlavour.Linux -> OpenFlagNumbering.LinuxNonBlock
-        | SimulatedUnixFlavour.Darwin -> OpenFlagNumbering.DarwinNonBlock
-
     /// `O_CLOEXEC` in `platform`'s numbering.
     let closeOnExec (platform : SimulatedUnixPlatform) : int =
         match SimulatedUnixPlatform.flavour platform with
@@ -347,8 +341,12 @@ module internal FcntlWorld =
         | "foreign-rdonly" -> Some (openWith (opening FileAccessMode.ReadOnly) "foreign" system)
         | "pipe-r" -> pipe 0 system |> fun ((r, _), system) -> Some (r, system)
         | "pipe-w" -> pipe 0 system |> fun ((_, w), system) -> Some (w, system)
-        | "pipe2-nonblock-r" -> pipe (nonBlock platform) system |> fun ((r, _), system) -> Some (r, system)
-        | "pipe2-nonblock-w" -> pipe (nonBlock platform) system |> fun ((_, w), system) -> Some (w, system)
+        | "pipe2-nonblock-r" ->
+            pipe (OpenFlagWords.nonBlock platform) system
+            |> fun ((r, _), system) -> Some (r, system)
+        | "pipe2-nonblock-w" ->
+            pipe (OpenFlagWords.nonBlock platform) system
+            |> fun ((_, w), system) -> Some (w, system)
         | "pipe2-cloexec-r" -> pipe (closeOnExec platform) system |> fun ((r, _), system) -> Some (r, system)
         | "pipe2-cloexec-w" -> pipe (closeOnExec platform) system |> fun ((_, w), system) -> Some (w, system)
         | "pipe2-clofork-r" when not linux ->
