@@ -911,7 +911,11 @@ module UnixBootImage =
     /// this machine's own. The wildcard always binds. Beyond that the flavours
     /// read the lists differently: Linux binds any address inside a route's
     /// prefix, so `127.9.9.9` binds under `127.0.0.0/8`, while Darwin binds
-    /// only the addresses themselves.
+    /// only the addresses themselves. Likewise a TCP connect: Linux answers it
+    /// at any address inside a route's prefix, while Darwin answers it only at
+    /// the addresses themselves and drops the SYN to any other address on a
+    /// route, a wait `connect(2)` refuses to model. A datagram connect needs
+    /// only the route, on both.
     ///
     /// Admits any lists, stored as given. An empty list is a machine with
     /// nothing in it: with no addresses, only the wildcard binds. Entries may

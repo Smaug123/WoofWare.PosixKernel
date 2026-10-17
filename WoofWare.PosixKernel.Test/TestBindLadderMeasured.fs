@@ -167,8 +167,8 @@ module TestBindLadderMeasured =
         fromDecoding @ fromLadder
 
     /// What this kernel answers for `call`, in the probe's words.
-    let private replay (platform : SimulatedUnixPlatform) (call : Call) : string =
-        let fd, system = setUp platform call.Kind call.State
+    let private replay (routes : Routes) (platform : SimulatedUnixPlatform) (call : Call) : string =
+        let fd, system = setUp routes platform call.Kind call.State
         let before = local (socketOf fd system)
 
         match CopyIn.bind fd UserBuffer.Mapped call.Length (CopyIn.blob platform call.Family call.Endpoint) system with
@@ -204,7 +204,7 @@ module TestBindLadderMeasured =
     /// came from: a bind of a broadcast or multicast address that would
     /// succeed, which this kernel does not record because nothing downstream
     /// could honour it.
-    let private refusedOnPurpose (flavour : string) : string list =
+    let private refusedOnPurpose (_ : Routes) (flavour : string) : string list =
         match flavour with
         | "linux" ->
             [
@@ -224,13 +224,13 @@ module TestBindLadderMeasured =
                         $"Z dgram %s{family} 224.0.0.1 %s{port} fresh"
             ]
 
-    let private check (flavour : string) (platform : SimulatedUnixPlatform) : unit =
+    let private check (routes : Routes) (flavour : string) (platform : SimulatedUnixPlatform) : unit =
         let all = calls flavour platform
         all |> List.isEmpty |> shouldEqual false
 
         let actual =
             all
-            |> List.map (fun call -> call, replay platform call)
+            |> List.map (fun call -> call, replay routes platform call)
             |> List.filter (fun (call, answer) -> answer <> expected call)
             |> List.groupBy (fun (call, _) -> call.Source)
             |> List.map (fun (source, rows) ->
@@ -241,7 +241,7 @@ module TestBindLadderMeasured =
             )
 
         let allowed =
-            refusedOnPurpose flavour
+            refusedOnPurpose routes flavour
             |> List.map (fun line -> line, "refused:UnmodelledMulticast")
             |> Set.ofList
 
@@ -257,12 +257,16 @@ module TestBindLadderMeasured =
             let missing = Set.difference allowed actual |> Set.toList
 
             failwith
-                $"%s{flavour}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} refused lines now answered otherwise:\n%s{show missing}"
+                $"%s{flavour}, routes %A{routes}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} refused lines now answered otherwise:\n%s{show missing}"
 
-    [<Test>]
-    let ``every Linux row is answered as measured`` () : unit =
-        check "linux" SimulatedUnixPlatform.linuxX64
+    /// Each replay runs on the machine `UnixSystem.initial` boots, and on one
+    /// with no local routes.
+    let private routeConfigurations : Routes list = allRoutes
 
-    [<Test>]
-    let ``every Darwin row is answered as measured`` () : unit =
-        check "darwin" SimulatedUnixPlatform.macOsArm64
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Linux row is answered as measured`` (routes : Routes) : unit =
+        check routes "linux" SimulatedUnixPlatform.linuxX64
+
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Darwin row is answered as measured`` (routes : Routes) : unit =
+        check routes "darwin" SimulatedUnixPlatform.macOsArm64

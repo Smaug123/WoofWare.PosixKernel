@@ -69,13 +69,35 @@ module SocketLadder =
             let step = (high - low) / 64
             [ low..step..high ] @ [ high ] |> List.distinct
 
-    /// The machine every call is made in: a listener at 127.0.0.1:5000, a
-    /// datagram socket bound at 127.0.0.1:5001, and nothing at 5002; and the
-    /// socket the call is made on, in `state`.
-    let setUp (platform : SimulatedUnixPlatform) (kind : SocketKind) (state : State) : int * UnixSystem<int, string> =
+    /// The local routes the machine boots with.
+    [<RequireQualifiedAccess>]
+    type Routes =
+        /// `UnixSystem.initial`'s own, loopback's `127.0.0.0/8`: the machine a
+        /// client gets.
+        | Initial
+        /// None, so that only the addresses the machine holds are local.
+        | NoRoutes
+
+    let allRoutes : Routes list = [ Routes.Initial ; Routes.NoRoutes ]
+
+    /// The machine every call is made in, booted with `routes`: a listener at
+    /// 127.0.0.1:5000, a datagram socket bound at 127.0.0.1:5001, and nothing
+    /// at 5002; and the socket the call is made on, in `state`.
+    let setUp
+        (routes : Routes)
+        (platform : SimulatedUnixPlatform)
+        (kind : SocketKind)
+        (state : State)
+        : int * UnixSystem<int, string>
+        =
+        let configure =
+            match routes with
+            | Routes.Initial -> id
+            | Routes.NoRoutes -> UnixBootImage.withLocalIpv4Addresses UnixSystem.defaultLocalIpv4Addresses []
+
         let system =
             UnixSystem.initial platform
-            |> UnixBootImage.withLocalIpv4Addresses UnixSystem.defaultLocalIpv4Addresses []
+            |> configure
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
         let bindTo (fd : int) (endpoint : Ipv4Endpoint) (system : UnixSystem<int, string>) =

@@ -165,8 +165,8 @@ module TestConnectDestinationMeasured =
         | _ -> None
 
     /// What this kernel answers for `call`, in the probe's words.
-    let private replay (platform : SimulatedUnixPlatform) (call : Call) : string =
-        let fd, system = setUp platform call.Kind call.State
+    let private replay (routes : Routes) (platform : SimulatedUnixPlatform) (call : Call) : string =
+        let fd, system = setUp routes platform call.Kind call.State
         let beforeSocket = socketOf fd system
         let before = local beforeSocket
         let peerBefore = peerOf system beforeSocket
@@ -201,13 +201,18 @@ module TestConnectDestinationMeasured =
             $"%s{answer} local=%s{dotted now.Address}:%s{portClass} peer=%s{peer}"
 
     /// The rows this kernel refuses rather than answers, by the probe line they
-    /// came from, with the refusal: a connect that would reach beyond this
-    /// machine, whose source address depends on the host's own routes and
-    /// interfaces (`DestinationNotLocal`, and a SYN to 127.0.0.2 Darwin drops);
-    /// and a datagram connect to a broadcast or multicast destination that
-    /// would succeed (`DatagramGroupDestination`).
-    let private refused (flavour : string) : (string * string) list =
+    /// came from, with the refusal, on a machine booted with `routes`: a
+    /// connect that would reach beyond this machine (`DestinationNotLocal`:
+    /// 8.8.8.8 always, and 127.0.0.2 without loopback's route); one to
+    /// 127.0.0.2 from a socket with no concrete source, whose source this
+    /// kernel does not resolve for a destination other than 127.0.0.1
+    /// (`SourceForNonLoopbackDestination`); a Darwin stream connect to
+    /// 127.0.0.2, whose SYN Darwin drops (`UnheldDestination`); and a datagram
+    /// connect to a broadcast or multicast destination that would succeed
+    /// (`DatagramGroupDestination`).
+    let private refused (routes : Routes) (flavour : string) : (string * string) list =
         let notLocal = "refused:DestinationNotLocal"
+        let noSource = "refused:SourceForNonLoopbackDestination"
         let group = "refused:DatagramGroupDestination"
         let states = [ "fresh" ; "bound" ; "wildbound" ; "connected" ]
 
@@ -215,39 +220,61 @@ module TestConnectDestinationMeasured =
         | "linux" ->
             [
                 for state in [ "fresh" ; "bound" ; "wildbound" ] do
-                    $"D stream 127.0.0.2 0 %s{state}", notLocal
-                    $"D stream 127.0.0.2 P %s{state}", notLocal
                     $"D stream 8.8.8.8 0 %s{state}", notLocal
                 for state in states do
-                    $"D dgram 127.0.0.2 0 %s{state}", notLocal
-                    $"D dgram 127.0.0.2 P %s{state}", notLocal
                     $"D dgram 8.8.8.8 0 %s{state}", notLocal
                     $"D dgram 8.8.8.8 P %s{state}", notLocal
                     $"D dgram 224.0.0.1 0 %s{state}", group
                     $"D dgram 224.0.0.1 P %s{state}", group
                 "M dgram AF_INET 224.0.0.1 fresh len 16..128", group
+                match routes with
+                | Routes.NoRoutes ->
+                    for port in [ "0" ; "P" ] do
+                        for state in [ "fresh" ; "bound" ; "wildbound" ] do
+                            $"D stream 127.0.0.2 %s{port} %s{state}", notLocal
+
+                        for state in states do
+                            $"D dgram 127.0.0.2 %s{port} %s{state}", notLocal
+                | Routes.Initial ->
+                    for port in [ "0" ; "P" ] do
+                        for state in [ "fresh" ; "wildbound" ] do
+                            $"D stream 127.0.0.2 %s{port} %s{state}", noSource
+                            $"D dgram 127.0.0.2 %s{port} %s{state}", noSource
             ]
         | _ ->
             [
                 for state in [ "fresh" ; "bound" ; "wildbound" ] do
-                    $"D stream 127.0.0.2 P %s{state}", notLocal
                     $"D stream 8.8.8.8 P %s{state}", notLocal
                 for state in states do
-                    $"D dgram 127.0.0.2 P %s{state}", notLocal
                     $"D dgram 8.8.8.8 P %s{state}", notLocal
                     $"D dgram 224.0.0.1 P %s{state}", group
                     $"D dgram 255.255.255.255 P %s{state}", group
                 "M dgram AF_INET 224.0.0.1 fresh len 16..16", group
                 "M dgram AF_INET 255.255.255.255 fresh len 16..16", group
+                match routes with
+                | Routes.NoRoutes ->
+                    for state in [ "fresh" ; "bound" ; "wildbound" ] do
+                        $"D stream 127.0.0.2 P %s{state}", notLocal
+
+                    for state in states do
+                        $"D dgram 127.0.0.2 P %s{state}", notLocal
+                | Routes.Initial ->
+                    for state in [ "fresh" ; "bound" ; "wildbound" ] do
+                        $"D stream 127.0.0.2 P %s{state}", "refused:UnheldDestination"
+
+                    // A Darwin disconnect leaves a connected socket's
+                    // address to be resolved again.
+                    for state in [ "fresh" ; "wildbound" ; "connected" ] do
+                        $"D dgram 127.0.0.2 P %s{state}", noSource
             ]
 
-    let private check (flavour : string) (platform : SimulatedUnixPlatform) : unit =
+    let private check (routes : Routes) (flavour : string) (platform : SimulatedUnixPlatform) : unit =
         let all = calls flavour
         all |> List.isEmpty |> shouldEqual false
 
         let actual =
             all
-            |> List.map (fun call -> call, replay platform call)
+            |> List.map (fun call -> call, replay routes platform call)
             |> List.filter (fun (call, answer) -> answer <> call.Expected)
             |> List.groupBy (fun (call, _) -> call.Source)
             |> List.map (fun (source, rows) ->
@@ -259,7 +286,7 @@ module TestConnectDestinationMeasured =
             |> Set.ofList
 
         let allowed =
-            refused flavour
+            refused routes flavour
             |> List.map (fun (line, answer) -> Regex.Replace (line, " +", " "), answer)
             |> Set.ofList
 
@@ -273,15 +300,19 @@ module TestConnectDestinationMeasured =
             let missing = Set.difference allowed actual |> Set.toList
 
             failwith
-                $"%s{flavour}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} refused lines now answered otherwise:\n%s{show missing}"
+                $"%s{flavour}, routes %A{routes}: %d{List.length unexpected} probe lines answered otherwise than measured:\n%s{show unexpected}\n%d{List.length missing} refused lines now answered otherwise:\n%s{show missing}"
 
-    [<Test>]
-    let ``every Linux row is answered as measured`` () : unit =
-        check "linux" SimulatedUnixPlatform.linuxX64
+    /// Each replay runs on the machine `UnixSystem.initial` boots, and on one
+    /// with no local routes.
+    let private routeConfigurations : Routes list = allRoutes
 
-    [<Test>]
-    let ``every Darwin row is answered as measured`` () : unit =
-        check "darwin" SimulatedUnixPlatform.macOsArm64
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Linux row is answered as measured`` (routes : Routes) : unit =
+        check routes "linux" SimulatedUnixPlatform.linuxX64
+
+    [<TestCaseSource(nameof routeConfigurations)>]
+    let ``every Darwin row is answered as measured`` (routes : Routes) : unit =
+        check routes "darwin" SimulatedUnixPlatform.macOsArm64
 
     /// `sockaddr-dgram-reconnect.c`'s rows: a socket bound to an interface
     /// address connecting to 127.0.0.1 and to 0.0.0.0 -- a datagram socket,
