@@ -153,7 +153,7 @@ module internal BindRefusal =
         | BindRefusal.UnmodelledMulticast (socket, address) ->
             $"socket %O{socket} asked to bind %s{Ipv4Address.toString address}, a broadcast or multicast address, and the bind would succeed. This kernel models no group membership and no interface to receive or broadcast on, so nothing could honour such a binding. Model multicast and broadcast before binding either."
         | BindRefusal.EphemeralPortsExhausted (low, high) ->
-            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a datagram socket's bind answers is unmeasured. Widen the range."
+            $"every port in the ephemeral range %d{low}-%d{high} is taken, so this bind of port 0 has no answer here. Darwin answers EADDRNOTAVAIL (measured), but this kernel's search can pass over a port Darwin's would take, and what a Darwin datagram socket's bind answers is unmeasured. Widen the range."
         | BindRefusal.UnmodelledIpv6Address (socket, address) ->
             $"IPv6 socket %O{socket} asked to bind [%s{Ipv6Address.toString address}]. This kernel has no IPv6 transport, so it binds an IPv6 socket only to a specific v4-mapped address (::ffff:a.b.c.d). A native address needs IPv6, and the mapped wildcard ::ffff:0.0.0.0 (and ::, which also takes it) conflicts with other sockets by rules Darwin does not share with the IPv4 wildcard."
         | BindRefusal.TimeWait refusal -> TimeWaitRefusal.describe refusal
@@ -1371,11 +1371,10 @@ module UnixSocket =
         | Error refusal -> Error (BindRefusal.TimeWait refusal)
         | Ok None ->
             match
-                socket.Kind,
                 SimulatedUnixPlatform.ephemeralPortsExhausted system.Machine.UnixPlatform EphemeralSearchCall.Bind
             with
-            | SocketKind.Stream, Some error -> Ok (BindAnswer.Failed error, system)
-            | _ -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
+            | Some error -> Ok (BindAnswer.Failed error, system)
+            | None -> Error (BindRefusal.EphemeralPortsExhausted system.Machine.EphemeralPortRange)
         | Ok (Some (bound, machine)) ->
 
         // From `machine` rather than `system.Machine`: the ephemeral allocator
