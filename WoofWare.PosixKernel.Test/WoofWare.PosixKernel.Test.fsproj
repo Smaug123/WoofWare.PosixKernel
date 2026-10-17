@@ -296,6 +296,7 @@
     <Compile Include="TestShutdownAgainstHost.fs" />
     <Compile Include="TestKeventWriteData.fs" />
     <Compile Include="TestDarwinPoll.fs" />
+    <Compile Include="TestPollEntryCount.fs" />
     <Compile Include="TestKqueueTimerReserved.fs" />
     <Compile Include="TestPipeBuffer.fs" />
     <Compile Include="TestPipeBufferCorpus.fs" />
@@ -338,6 +339,11 @@
     <!-- docs/probes/disposition-before-return. `TestDispositionBeforeReturn` replays every held row. -->
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.darwin.txt" />
+    <!-- docs/probes/poll-entry-count. `TestPollEntryCount` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-aarch64-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.18.5-aarch64-uid1000.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-aarch64-uid1000.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.12.113-x86_64-uid0-qemu.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-x86_64-uid0.txt" />
+    <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
   </ItemGroup>
