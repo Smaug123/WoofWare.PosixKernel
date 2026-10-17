@@ -66,7 +66,7 @@ module TestSignalReceiver =
         ||> Set.fold (fun system thread -> HandlerFrames.enterIn "carrier" thread (Set.singleton Signal.SIGUSR1) system)
 
     let private usr1 (flavour : SimulatedUnixFlavour) : int =
-        Signal.toRawSignoUnder (SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)) Signal.SIGUSR1
+        Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGUSR1
 
     let private self (system : UnixSystem<int, string>) : int32 = ProcessId.toInt32 (Lone.pid system)
 
@@ -387,8 +387,7 @@ module TestSignalReceiver =
         }
 
     let private unblockRows (flavour : SimulatedUnixFlavour) : UnblockRow list =
-        let numbering =
-            SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+        let numbering = HostPlatform.signalNumberingOf flavour
 
         let name =
             match flavour with

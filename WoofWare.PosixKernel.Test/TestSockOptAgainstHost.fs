@@ -26,20 +26,11 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSockOptAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
     extern int private hostSetSockOpt(int fd, int level, int optionName, nativeint value, uint32 optionLength)
 
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
     extern nativeint private hostMmap(
@@ -225,19 +216,19 @@ module TestSockOptAgainstHost =
         | Target.Pipe ->
             let fds = Array.zeroCreate<int> 2
 
-            if hostPipe fds <> 0 then
+            if HostCalls.pipe fds <> 0 then
                 failwith $"pipe failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
             try
                 action fds.[0] 0 system
             finally
-                hostClose fds.[0] |> ignore<int>
-                hostClose fds.[1] |> ignore<int>
+                HostCalls.close fds.[0] |> ignore<int>
+                HostCalls.close fds.[1] |> ignore<int>
         | Target.Socket (domain, kind) ->
             let rawDomain, rawKind, _ =
                 NewSocket.arguments system.Machine.UnixPlatform domain kind SocketProtocol.Default
 
-            let fd = hostSocket (rawDomain, rawKind, 0)
+            let fd = HostCalls.socket (rawDomain, rawKind, 0)
 
             if fd < 0 then
                 failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -246,7 +237,7 @@ module TestSockOptAgainstHost =
                 let modelFd, system = NewSocket.create domain kind SocketProtocol.Default system
                 action fd modelFd system
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
 
     /// Real storage holding `bytes`, or the address `buffer` names, for the
     /// duration of `action`.

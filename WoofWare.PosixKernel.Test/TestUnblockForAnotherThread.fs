@@ -30,11 +30,8 @@ module TestUnblockForAnotherThread =
     let private flavours : SimulatedUnixFlavour list =
         [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ]
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     let private signo (flavour : SimulatedUnixFlavour) (signal : Signal) : int =
-        Signal.toRawSignoUnder (numberingOf flavour) signal
+        Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
     /// The process's threads: 0 is the leader.
     let private threads : int list = [ 0 ; 1 ; 2 ]
@@ -442,7 +439,7 @@ module TestUnblockForAnotherThread =
         | Refused of SigprocmaskRefusal<int>
 
     let private unblock (case : Case) (system : UnixSystem<int, string>) : Unblocked =
-        let numbering = numberingOf case.Flavour
+        let numbering = HostPlatform.signalNumberingOf case.Flavour
         let s = SignalMask.ofSignals numbering (Set.singleton (signalOf case.Disposition))
 
         let answered (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : Unblocked =
@@ -471,7 +468,7 @@ module TestUnblockForAnotherThread =
     /// sleeper's call answered at once.
     let private before (case : Case) : UnixSystem<int, string> option =
         let world = Map.find case.Flavour worlds
-        let numbering = numberingOf case.Flavour
+        let numbering = HostPlatform.signalNumberingOf case.Flavour
         let signal = signalOf case.Disposition
         let s = SignalMask.ofSignals numbering (Set.singleton signal)
 

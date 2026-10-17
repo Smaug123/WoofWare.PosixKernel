@@ -595,9 +595,6 @@ module TestDirectorySize =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
     extern int64 private hostLSeek(int fd, int64 offset, int whence)
 
@@ -723,7 +720,7 @@ module TestDirectorySize =
                         )
                         |> ignore<UnixSystem<int, string>>
                     finally
-                        hostClose hostFd |> ignore<int>
+                        HostCalls.close hostFd |> ignore<int>
                 finally
                     Directory.Delete (root, true)
 

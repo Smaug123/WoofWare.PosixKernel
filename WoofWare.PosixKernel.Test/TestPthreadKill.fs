@@ -43,9 +43,6 @@ module TestPthreadKill =
 
     let private withWorker (system : UnixSystem<int, string>) : UnixSystem<int, string> = Threads.spawn worker system
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     let private self (system : UnixSystem<int, string>) : int32 = ProcessId.toInt32 (Lone.pid system)
 
     /// The highest signal number, written out rather than taken from
@@ -150,7 +147,7 @@ module TestPthreadKill =
             )
             : unit
             =
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let system =
                 let system =
@@ -323,7 +320,7 @@ module TestPthreadKill =
         : unit
         =
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signo in catchable flavour do
                 let signal = Signal.ofRawSignoUnder numbering signo |> ValueOption.get
@@ -350,7 +347,7 @@ module TestPthreadKill =
     [<Test>]
     let ``a signal a thread raises while blocking it waits for that thread, whoever else could take it`` () : unit =
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signo in catchable flavour do
                 let signal = Signal.ofRawSignoUnder numbering signo |> ValueOption.get
@@ -436,7 +433,7 @@ module TestPthreadKill =
     [<Test>]
     let ``a signal sent to the process and one sent to a thread are held as the probe measured, or refused`` () : unit =
         for flavour in flavours do
-            let numbering = numberingOf flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             for signo in catchable flavour do
                 let signal = Signal.ofRawSignoUnder numbering signo |> ValueOption.get
@@ -497,7 +494,7 @@ module TestPthreadKill =
         // SIGTERM pending on the process, at its default disposition, with the
         // leader no longer blocking it: raising it at the leader kills the
         // process rather than leaving a second instance.
-        let numbering = numberingOf SimulatedUnixFlavour.Darwin
+        let numbering = HostPlatform.signalNumberingOf SimulatedUnixFlavour.Darwin
 
         let pendingOnProcess (signal : Signal) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             let signo = Signal.toRawSignoUnder numbering signal
@@ -541,7 +538,9 @@ module TestPthreadKill =
         // ignored signal is.
         for flavour in flavours do
             let system = systemOn flavour
-            let sigcont = Signal.toRawSignoUnder (numberingOf flavour) Signal.SIGCONT
+
+            let sigcont =
+                Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGCONT
 
             let sent =
                 UnixSignal.tryKill (Callers.leader system) (self system) sigcont system
@@ -561,7 +560,7 @@ module TestPthreadKill =
         let darwin = systemOn SimulatedUnixFlavour.Darwin |> blocking Signal.SIGCONT leader
 
         let sigcont =
-            Signal.toRawSignoUnder (numberingOf SimulatedUnixFlavour.Darwin) Signal.SIGCONT
+            Signal.toRawSignoUnder (HostPlatform.signalNumberingOf SimulatedUnixFlavour.Darwin) Signal.SIGCONT
 
         let sent =
             UnixSignal.tryKill (Callers.leader darwin) (self darwin) sigcont darwin
@@ -576,7 +575,7 @@ module TestPthreadKill =
         let linux = systemOn SimulatedUnixFlavour.Linux |> blocking Signal.SIGCONT leader
 
         let sigcont =
-            Signal.toRawSignoUnder (numberingOf SimulatedUnixFlavour.Linux) Signal.SIGCONT
+            Signal.toRawSignoUnder (HostPlatform.signalNumberingOf SimulatedUnixFlavour.Linux) Signal.SIGCONT
 
         let sent =
             UnixSignal.tryKill (Callers.leader linux) (self linux) sigcont linux

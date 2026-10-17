@@ -13,6 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="HostCalls.fs" />
     <Compile Include="HostPlatform.fs" />
     <Compile Include="CoverageSample.fs" />
     <Compile Include="TestOrder.fs" />

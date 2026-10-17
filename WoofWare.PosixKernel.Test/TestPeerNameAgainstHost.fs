@@ -25,9 +25,6 @@ open WoofWare.PosixKernel
 // on, which a host test beside it could bind in the meantime.
 module TestPeerNameAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
@@ -49,17 +46,8 @@ module TestPeerNameAgainstHost =
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, byte[] value, uint32& optionLength)
 
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
-    // arm64 ABI passes variadic arguments on the stack), so this goes through
-    // the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
     extern nativeint private hostMmap(
@@ -187,7 +175,7 @@ module TestPeerNameAgainstHost =
             failwith $"the host's %s{what} failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
     let private hostNew (domain : int) (kind : int) : int =
-        let fd = hostSocket (domain, kind, 0)
+        let fd = HostCalls.socket (domain, kind, 0)
         check "socket" fd
         fd
 
@@ -233,7 +221,7 @@ module TestPeerNameAgainstHost =
         let fd = hostNew AF_INET SOCK_STREAM
         hostBindTo platform fd (loopback 0us)
         let port = (hostName fd).Port
-        hostClose fd |> ignore<int>
+        HostCalls.close fd |> ignore<int>
         port
 
     let private hostTakeError (platform : SimulatedUnixPlatform) (fd : int) : unit =
@@ -294,19 +282,19 @@ module TestPeerNameAgainstHost =
             server, roles, [ client ; server ; listener ]
         | Scenario.ClientPeerClosed ->
             let listener, client, roles = connected (loopback 0us) loopback
-            hostClose (accept listener) |> ignore<int>
+            HostCalls.close (accept listener) |> ignore<int>
             Thread.Sleep 50
             client, roles, [ client ; listener ]
         | Scenario.AcceptedPeerClosed ->
             let listener, client, roles = connected (loopback 0us) loopback
             let server = accept listener
-            hostClose client |> ignore<int>
+            HostCalls.close client |> ignore<int>
             Thread.Sleep 50
             server, roles, [ server ; listener ]
         | Scenario.NonBlockingClient ->
             let listener, port = hostListener platform (loopback 0us)
             let client = hostNew AF_INET SOCK_STREAM
-            check "O_NONBLOCK" (hostSetNonBlocking (nativeint client, 1))
+            check "O_NONBLOCK" (HostCalls.setNonBlocking (nativeint client, 1))
             hostConnectTo platform client (loopback port) |> ignore<int>
             settle client
 
@@ -318,7 +306,7 @@ module TestPeerNameAgainstHost =
         | Scenario.RefusedTaken ->
             let port = hostDeadPort platform
             let client = hostNew AF_INET SOCK_STREAM
-            check "O_NONBLOCK" (hostSetNonBlocking (nativeint client, 1))
+            check "O_NONBLOCK" (HostCalls.setNonBlocking (nativeint client, 1))
             hostConnectTo platform client (loopback port) |> ignore<int>
             settle client
 
@@ -801,5 +789,5 @@ module TestPeerNameAgainstHost =
                     failwith (String.Join ("\n", disagreements))
             finally
                 for fd in owned do
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
         )

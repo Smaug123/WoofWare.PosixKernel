@@ -46,9 +46,6 @@ module LinuxRelease =
 [<RequireQualifiedAccess>]
 module HostPlatform =
 
-    [<DllImport("libc", EntryPoint = "uname", SetLastError = true)>]
-    extern int private hostUname(byte[] buffer)
-
     /// `None` on a host whose flavour the library does not model at all —
     /// Windows, or any Unix that is neither Linux nor Darwin.
     let flavour () : SimulatedUnixFlavour option =
@@ -65,6 +62,11 @@ module HostPlatform =
         match flavour with
         | SimulatedUnixFlavour.Darwin -> SimulatedUnixPlatform.macOsArm64
         | SimulatedUnixFlavour.Linux -> SimulatedUnixPlatform.linuxX64
+
+    /// The signal numbering of a flavour, as the library gives it for the
+    /// flavour's preset.
+    let signalNumberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
+        SimulatedUnixPlatform.signalNumbering (platformOf flavour)
 
     /// Run `action` against this host's flavour, or skip the test where the
     /// library models no such host. For tests that *measure* the host; a test
@@ -117,7 +119,7 @@ module HostPlatform =
     let private linuxRelease () : string =
         let buffer = Array.zeroCreate<byte> (6 * 65)
 
-        if hostUname buffer <> 0 then
+        if HostCalls.uname buffer <> 0 then
             failwith $"uname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let field = ReadOnlySpan<byte> (buffer, 2 * 65, 65)

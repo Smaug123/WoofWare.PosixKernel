@@ -597,11 +597,6 @@ module TestStepOracle =
     /// The process ID every world's process has.
     let private pid : int = ProcessId.toInt32 UnixSystem.defaultProcessId
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        match flavour with
-        | SimulatedUnixFlavour.Linux -> SignalNumbering.Linux
-        | SimulatedUnixFlavour.Darwin -> SignalNumbering.Darwin
-
     /// `system` once its leader has returned to user mode, as a client returns
     /// it after a call of the setting up.
     let private leaderReturned (system : UnixSystem<int, string>) : UnixSystem<int, string> =
@@ -702,7 +697,7 @@ module TestStepOracle =
         : UnixSystem<int, string>
         =
         let action = SignalDisposition.Catch (SignalCatch.ofHandler handler)
-        let signo = Signal.toRawSignoUnder (numberingOf flavour) signal
+        let signo = Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
 
         match UnixSignal.sigaction (Callers.leader system) signo (Some action) system with
         | Ok (_, system) -> leaderReturned system
@@ -715,7 +710,7 @@ module TestStepOracle =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        let numbering = numberingOf flavour
+        let numbering = HostPlatform.signalNumberingOf flavour
         let system = catching flavour Signal.SIGUSR1 "usr1" system
         let usr1 = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
@@ -737,7 +732,9 @@ module TestStepOracle =
         =
         let system = catching flavour Signal.SIGUSR2 "usr2" system
         let leader = Callers.leader system
-        let usr2 = Signal.toRawSignoUnder (numberingOf flavour) Signal.SIGUSR2
+
+        let usr2 =
+            Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) Signal.SIGUSR2
 
         match UnixSignal.pthreadKill leader 0 usr2 system with
         | Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system)) ->
@@ -1186,7 +1183,7 @@ module TestStepOracle =
     /// Signals of the flavour, by their numbers, and numbers that name none
     /// (Linux's 32 and 33 name signals the C library keeps).
     let private signoGen (flavour : SimulatedUnixFlavour) : Gen<int> =
-        let numbering = numberingOf flavour
+        let numbering = HostPlatform.signalNumberingOf flavour
 
         Gen.frequency
             [
@@ -1225,7 +1222,7 @@ module TestStepOracle =
             )
 
         Gen.subListOf signals
-        |> Gen.map (Set.ofList >> SignalMask.ofSignals (numberingOf flavour))
+        |> Gen.map (Set.ofList >> SignalMask.ofSignals (HostPlatform.signalNumberingOf flavour))
 
     /// A `how` of the mask calls in either flavour's numbering, and numbers
     /// naming none.

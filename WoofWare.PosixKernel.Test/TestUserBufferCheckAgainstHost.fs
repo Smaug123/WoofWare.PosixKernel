@@ -30,9 +30,6 @@ module TestUserBufferCheckAgainstHost =
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private readFd(int fd, nativeint buffer, unativeint count)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private closeFd(int fd)
-
     [<Literal>]
     let private O_RDONLY = 0
 
@@ -116,7 +113,7 @@ module TestUserBufferCheckAgainstHost =
             try
                 action fd
             finally
-                closeFd fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         finally
             File.Delete path
 

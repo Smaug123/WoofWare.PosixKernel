@@ -28,17 +28,8 @@ module TestDeviceDescriptorsAgainstHost =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
     extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
 
     [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
     extern nativeint private hostWriteAt(int fd, nativeint buffer, unativeint count)
@@ -203,7 +194,7 @@ module TestDeviceDescriptorsAgainstHost =
 
                 for count in [ 0 ; 1 ; 7 ; 4096 ; 65536 ] do
                     $"read %d{count}",
-                    hostAnswer (int64 (hostRead (host, Array.zeroCreate (max count 1), unativeint count))),
+                    hostAnswer (int64 (HostCalls.read (host, Array.zeroCreate (max count 1), unativeint count))),
                     read fd UserBuffer.Mapped (uint64 count)
 
                 for count in [ 0 ; 1 ; 100 ] do
@@ -212,12 +203,12 @@ module TestDeviceDescriptorsAgainstHost =
                     read fd (UserBuffer.Unmapped 0UL) (uint64 count)
 
                 "read through O_WRONLY",
-                hostAnswer (int64 (hostRead (hostWriteOnly, Array.zeroCreate 16, 16un))),
+                hostAnswer (int64 (HostCalls.read (hostWriteOnly, Array.zeroCreate 16, 16un))),
                 read writeOnly UserBuffer.Mapped 16UL
 
                 for count in [ 0 ; 1 ; 4096 ] do
                     $"write %d{count}",
-                    hostAnswer (int64 (hostWrite (host, Array.zeroCreate (max count 1), unativeint count))),
+                    hostAnswer (int64 (HostCalls.write (host, Array.zeroCreate (max count 1), unativeint count))),
                     admitWrite UserBuffer.Mapped (uint64 count)
 
                 for count in [ 0 ; 1 ; 16 ] do
@@ -309,7 +300,7 @@ module TestDeviceDescriptorsAgainstHost =
                      event.[0] <- 1uy
                      hostAnswer (int64 (hostEpollCtl (epoll, 1, host, event)))
                  finally
-                     hostClose epoll |> ignore<int>),
+                     HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =
                     FileDescriptorRegistry.createEpoll
                         (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
@@ -343,8 +334,8 @@ module TestDeviceDescriptorsAgainstHost =
                  | other -> failwith $"the model's first flock: %A{other}")
             ]
         finally
-            hostClose host |> ignore<int>
-            hostClose hostWriteOnly |> ignore<int>
+            HostCalls.close host |> ignore<int>
+            HostCalls.close hostWriteOnly |> ignore<int>
 
     [<Test>]
     let ``every syscall through a device's descriptor answers what the host's does`` () : unit =

@@ -15,9 +15,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSigcontGeneration =
 
-    let private numberingOf (flavour : SimulatedUnixFlavour) : SignalNumbering =
-        SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
-
     /// The probe's main thread, the process's leader: "m" in its rows.
     let private main : int = 0
 
@@ -88,7 +85,8 @@ module TestSigcontGeneration =
 
     let private nothing : Step = Ok
 
-    let private numbering (r : Replay) : SignalNumbering = numberingOf r.Flavour
+    let private numbering (r : Replay) : SignalNumbering =
+        HostPlatform.signalNumberingOf r.Flavour
 
     let private signo (r : Replay) (signal : Signal) : int32 =
         Signal.toRawSignoUnder (numbering r) signal
@@ -721,7 +719,9 @@ module TestSigcontGeneration =
                 start
             |> Result.map (fun r ->
                 UnixSignal.sigpending (Callers.thread main r.System) r.System
-                |> shouldEqual (SignalMask.ofSignals (numberingOf flavour) (Set.singleton Signal.SIGCONT))
+                |> shouldEqual (
+                    SignalMask.ofSignals (HostPlatform.signalNumberingOf flavour) (Set.singleton Signal.SIGCONT)
+                )
 
                 let pid = ProcessId.toInt32 (Lone.pid r.System)
 
