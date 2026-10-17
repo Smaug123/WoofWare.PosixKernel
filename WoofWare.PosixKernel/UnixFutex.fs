@@ -136,11 +136,15 @@ module UnixFutex =
         | SimulatedUnixFlavour.Darwin -> Error (FutexRefusal.UnmodelledFlavour SimulatedUnixFlavour.Darwin)
         | SimulatedUnixFlavour.Linux ->
 
-        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "wait-screen"
-        // and "wake-screen" rows): a wait copies and screens its timeout,
-        // then its address's alignment, then reads the word; a private wake
-        // screens the alignment and reads no memory.
+        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "wait-screen",
+        // "wake-screen" and "range" rows): a wait copies and screens its
+        // timeout, then its address's alignment, then whether the word lies
+        // in user space, then reads the word; a private wake screens the
+        // alignment and the range, and reads no memory.
         let aligned = address % 4UL = 0UL
+
+        let outsideUserSpace =
+            UserBufferCheck.faultsBeforeOperation (UnixMachineState.userBufferCheck system.Machine) address 4UL
 
         if op = FutexWaitPrivate then
             match deadlineOf system.Scheduling.NanosecondsSinceBoot timeout with
@@ -149,6 +153,8 @@ module UnixFutex =
 
             if not aligned then
                 failed UnixError.EINVAL
+            elif outsideUserSpace then
+                failed UnixError.EFAULT
             else
 
             match word with
@@ -169,6 +175,8 @@ module UnixFutex =
         elif op = FutexWakePrivate then
             if not aligned then
                 failed UnixError.EINVAL
+            elif outsideUserSpace then
+                failed UnixError.EFAULT
             else
 
             // Measured (the "count" rows): a wake of 0 or fewer wakes one.
@@ -247,7 +255,8 @@ module UnixFutex =
     /// `address`. Once the timeout and the address have passed their screens
     /// (`EFAULT` for an unreadable timeout, `EINVAL` for a malformed one, then
     /// `EINVAL` for an address that is not a multiple of 4, then `EFAULT` for
-    /// a `word` that is `Unmapped`), the call stops where the kernel reads the
+    /// a word outside user space or a `word` that is `Unmapped`), the call
+    /// stops where the kernel reads the
     /// word, and `futexWithWord` takes what it holds. The caller must read the
     /// word as it makes that call, with no store by any thread in between,
     /// since the kernel's read and its decision to sleep are one step.
@@ -256,7 +265,8 @@ module UnixFutex =
     /// `address` off its queue, in the order they began to wait, and answers
     /// how many it took. A `value` of 0 or less takes one. It reads no memory,
     /// so `word` and `timeout` are not looked at, and an address no memory
-    /// backs answers 0. A taken waiter's wait answers 0 when it is finished
+    /// backs answers 0 unless it lies outside user space (`EFAULT`), as a
+    /// misaligned one answers `EINVAL`. A taken waiter's wait answers 0 when it is finished
     /// (`UnixWait.finish`), whatever else has woken it.
     ///
     /// Throws `PlatformNotSupportedException` under the Darwin flavour, which

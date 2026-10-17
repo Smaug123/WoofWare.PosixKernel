@@ -17,12 +17,13 @@
 
 | row | Linux 6.18.5 |
 | --- | --- |
-| **wait-screen**: which error wins | an unreadable timespec (`EFAULT`), then a bad timespec (`tv_nsec` ∉ [0, 1e9) or `tv_sec` < 0: `EINVAL`), then a misaligned address (`EINVAL`), then an unreadable word (`EFAULT`, the null address included), then a word that differs from `val` (`EAGAIN`). So a misaligned address with an unmapped timespec is `EFAULT`; an unmapped word with a bad timespec is `EINVAL`; a mismatch with a zero timeout is `EAGAIN` |
+| **wait-screen**: which error wins | an unreadable timespec (`EFAULT`), then a bad timespec (`tv_nsec` ∉ [0, 1e9) or `tv_sec` < 0: `EINVAL`), then a misaligned address (`EINVAL`), then an address outside user space (`EFAULT`, the "range" rows), then an unreadable word (`EFAULT`, the null address included), then a word that differs from `val` (`EAGAIN`). So a misaligned address with an unmapped timespec is `EFAULT`; an unmapped word with a bad timespec is `EINVAL`; a mismatch with a zero timeout is `EAGAIN` |
 | a matching word and a 10 ms timeout | `ETIMEDOUT` at 10 ms |
-| a matching word and a zero (or 1 ns) timeout | `ETIMEDOUT`, **after sleeping**: 1000 voluntary context switches in 1000 calls, about 70 µs each (the default 50 µs timer slack). A mismatch with a zero timeout: `EAGAIN`, no switch |
+| a matching word and a zero (or 1 ns) timeout | `ETIMEDOUT`, **after sleeping**: 1000 voluntary context switches in 1000 calls (999 or 1000 for 1 ns, across runs), about 70 µs each (the default 50 µs timer slack). A mismatch with a zero timeout: `EAGAIN`, no switch |
 | a timeout too large for the clock (`tv_sec` 9223372035, 9223372036, `INT64_MAX`) | no error: the wait sleeps until a wake ends it (saturated, as `nanosleep`'s deadline is in `nanosleep-options.md`) |
 | **compare** | of 32-bit words: a word of `0xFFFFFFFF` matches `val` -1, and `0x80000000` matches `INT_MIN` |
 | **wake-screen** | a misaligned address: `EINVAL`. An unmapped address, the null address, and an address with no waiters: 0. A private wake reads no memory |
+| **range**: addresses no mapping backs, on this kernel's 48-bit user address space | a wake at 2^48 − 8 or 2^48 − 4 answers 0; at 2^48, 2^48 + 4, 2^63 or 2^64 − 4, `EFAULT`, as a wait at each answers `EFAULT`. So the four bytes at the address must lie in user space, even for a wake. A misaligned address past the limit is `EINVAL`, and a bad timespec with one is `EINVAL`: alignment and the timespec are screened first |
 | **count**: `FUTEX_WAKE n` with 0, 1 and 3 waiters | returns how many it woke. `n` of 1, 2, `INT_MAX` wake that many (or all there are). **`n` of 0, -1, -2 and `INT_MIN` each wake one**, when there is one |
 | **order**: A, B, C parked in that order (each asleep in `__futex_wait` before the next starts), `wake 1` ×3 | A, B, C, in 10 trials of 10 |
 | the same, each waiter waiting again once woken, `wake 1` ×6 | A, B, C, A, B, C in 10 of 10: a waiter that waits again goes to the back |

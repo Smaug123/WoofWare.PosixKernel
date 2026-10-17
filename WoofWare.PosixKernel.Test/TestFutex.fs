@@ -319,6 +319,55 @@ module TestFutex =
             let woken, _ = sweep pid system
             (line, count, woken) |> shouldEqual (line, ret, returned)
 
+    [<Test>]
+    let ``every range row is the model's answer, under the probe's address limit`` () : unit =
+        // The probe ran on an aarch64 kernel with a 48-bit user address space.
+        let configure (image : UnixBootImage<int, string>) : UnixBootImage<int, string> =
+            UnixBootImage.withUserAddressLimit ObservedUserAddressLimit.Arm64FortyEightBit image
+
+        let rows =
+            measured
+            |> List.choose (fun line ->
+                let row =
+                    Regex.Match (
+                        line,
+                        @"^range (wait|wake) addr=0x([0-9a-f]+)( timeout=nsec=1e9)? ret=(-?\d+) errno=(\S+)$"
+                    )
+
+                if row.Success then
+                    let op =
+                        if row.Groups.[1].Value = "wait" then
+                            UnixFutex.FutexWaitPrivate
+                        else
+                            UnixFutex.FutexWakePrivate
+
+                    let timeout =
+                        if row.Groups.[3].Success then
+                            seconds 0L 1_000_000_000L
+                        else
+                            seconds 0L 10_000_000L
+
+                    let expected =
+                        match row.Groups.[5].Value with
+                        | "0" -> SyscallAnswer.Completed (int64 row.Groups.[4].Value)
+                        | errno -> SyscallAnswer.Failed (errorOf errno)
+
+                    Some (line, op, Convert.ToUInt64 (row.Groups.[2].Value, 16), timeout, expected)
+                else
+                    None
+            )
+
+        rows |> List.length |> shouldEqual 15
+
+        for line, op, at, timeout, expected in rows do
+            match Machines.withThreadsOn configure SimulatedUnixPlatform.linuxArm64 1 1 with
+            | [ pid ], system ->
+                // Nothing maps these addresses.
+                match futex pid 0 at op 0 (CopiedArgument.Unmapped at) timeout system with
+                | SyscallOutcome.Answered answer, _ -> (line, answer) |> shouldEqual (line, expected)
+                | other, _ -> failwith $"%s{line}: answered %A{other}"
+            | pids, _ -> failwith $"expected one process, got %A{pids}"
+
     // ------------------------- The transcribed rows ------------------------ //
 
     [<Test>]

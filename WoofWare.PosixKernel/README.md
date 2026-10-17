@@ -536,6 +536,7 @@ Linux's `futex(2)`, for the two operations a private lock or semaphore is built 
 A process's waiters on one address form one queue, in the order they began to wait, which no other process reaches.
 The kernel holds no word: the word is the caller's memory.
 A wait screens its timeout, a relative time on the monotonic clock, and then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping; a timeout of zero sleeps too, as Linux's does.
+Both screen the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`).
 A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
 A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout with `EINTR`.
 A restarted wait reads its word again, so the client makes the call again; a wait with a timeout whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`.
