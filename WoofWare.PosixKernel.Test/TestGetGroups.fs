@@ -291,12 +291,6 @@ module TestGetGroupsAgainstHost =
     [<DllImport("libc", EntryPoint = "getgroups", SetLastError = true)>]
     extern int private getgroups(int size, nativeint list)
 
-    [<DllImport("libc", EntryPoint = "getegid")>]
-    extern uint32 private getegid()
-
-    [<DllImport("libc", EntryPoint = "geteuid")>]
-    extern uint32 private geteuid()
-
     let private context : string = "TestGetGroupsAgainstHost"
 
     /// What the host answers, in the model's vocabulary. `buffer` must have
@@ -354,8 +348,8 @@ module TestGetGroupsAgainstHost =
                     |> (Launched.bootWith
                             (Launched.credentials (
                                 Credentials.ofIds
-                                    (UserId.parseOrFail context (geteuid ()))
-                                    (GroupId.parseOrFail context (getegid ()))
+                                    (UserId.parseOrFail context (HostCalls.getEUid ()))
+                                    (GroupId.parseOrFail context (HostCalls.getEGid ()))
                                     listed
                             ))
                             UnixSystem.pipedStandardStreams

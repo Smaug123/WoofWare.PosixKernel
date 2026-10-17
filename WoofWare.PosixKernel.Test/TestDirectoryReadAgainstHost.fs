@@ -53,24 +53,6 @@ module TestDirectoryReadAgainstHost =
     [<DllImport("libSystem.Native", EntryPoint = "SystemNative_LStat", SetLastError = true)>]
     extern int private hostLStat(string path, byte[] output)
 
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(string path, uint32 mode)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(string path)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(string path)
-
     let private hostSucceeded (what : string) (result : int) : unit =
         if result < 0 then
             failwith $"host %s{what} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -177,7 +159,7 @@ module TestDirectoryReadAgainstHost =
             None
         else
 
-        let fd = hostOpen (candidate, 0, 0)
+        let fd = HostCalls.openFile (candidate, 0, 0)
 
         if fd < 0 then
             None
@@ -296,9 +278,9 @@ module TestDirectoryReadAgainstHost =
                 let root =
                     Path.Combine (hostBase, "posixkernel-getdents-" + Guid.NewGuid().ToString "N")
 
-                hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+                HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
                 let hostD = Path.Combine (root, "d")
-                hostMkdir (hostD, 0o755u) |> hostSucceeded "mkdir d"
+                HostCalls.mkdir (hostD, 0o755u) |> hostSucceeded "mkdir d"
 
                 let mutable live : Live list = []
 
@@ -316,7 +298,7 @@ module TestDirectoryReadAgainstHost =
                         (system, entries)
                         ||> List.fold (fun system (name, isDirectory) ->
                             if isDirectory then
-                                hostMkdir (Path.Combine (hostD, name), 0o755u)
+                                HostCalls.mkdir (Path.Combine (hostD, name), 0o755u)
                                 |> hostSucceeded $"mkdir %s{name}"
 
                                 Answered.mkdir
@@ -376,7 +358,7 @@ module TestDirectoryReadAgainstHost =
                                 $"description %d{description}: the host yielded %A{host} before end-of-directory, not every entry once"
 
                     let openBoth (system : UnixSystem<int, string>) =
-                        let hostFd = hostOpen (hostD, 0, 0)
+                        let hostFd = HostCalls.openFile (hostD, 0, 0)
                         hostSucceeded "open d" hostFd
 
                         let modelFd, system =
@@ -406,7 +388,7 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    let hostFd = hostDup target.HostFd
+                                    let hostFd = HostCalls.dup target.HostFd
                                     hostSucceeded "dup" hostFd
 
                                     let modelFd, system =
@@ -426,7 +408,7 @@ module TestDirectoryReadAgainstHost =
                                 match pick which with
                                 | None -> system
                                 | Some target ->
-                                    hostLSeek (target.HostFd, 0L, 0) |> shouldEqual 0L
+                                    HostCalls.lseek (target.HostFd, 0L, 0) |> shouldEqual 0L
 
                                     let answer, system =
                                         match
@@ -530,11 +512,12 @@ module TestDirectoryReadAgainstHost =
                         // on Darwin, whatever each had read.
                         for name, isDirectory in entries do
                             if isDirectory then
-                                hostRmdir (Path.Combine (hostD, name)) |> hostSucceeded $"rmdir %s{name}"
+                                HostCalls.rmdir (Path.Combine (hostD, name)) |> hostSucceeded $"rmdir %s{name}"
                             else
-                                hostUnlink (Path.Combine (hostD, name)) |> hostSucceeded $"unlink %s{name}"
+                                HostCalls.unlink (Path.Combine (hostD, name))
+                                |> hostSucceeded $"unlink %s{name}"
 
-                        hostRmdir hostD |> hostSucceeded "rmdir d"
+                        HostCalls.rmdir hostD |> hostSucceeded "rmdir d"
 
                         let system =
                             (system, entries)
@@ -590,7 +573,7 @@ module TestDirectoryReadAgainstHost =
             let root =
                 Path.Combine (hostBase, "posixkernel-getdents-" + Guid.NewGuid().ToString "N")
 
-            hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+            HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
             let hostFile = Path.Combine (root, "f")
             File.Create(hostFile).Dispose ()
 
@@ -602,9 +585,9 @@ module TestDirectoryReadAgainstHost =
             // AF_UNIX and SOCK_STREAM, 1 and 1 on both kernels.
             let hostSocket = HostCalls.socket (1, 1, 0)
             hostSucceeded "socket" hostSocket
-            let hostReadable = hostOpen (hostFile, 0, 0)
+            let hostReadable = HostCalls.openFile (hostFile, 0, 0)
             hostSucceeded "open f O_RDONLY" hostReadable
-            let hostWriteOnly = hostOpen (hostFile, 1, 0)
+            let hostWriteOnly = HostCalls.openFile (hostFile, 1, 0)
             hostSucceeded "open f O_WRONLY" hostWriteOnly
 
             try

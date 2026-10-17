@@ -504,21 +504,6 @@ module TestLinkCount =
 
     // ------------------------------------------------------------ the host
 
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(string path, uint32 mode)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(string path)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(string path)
-
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(string source, string destination)
-
     let private hostSucceeded (what : string) (result : int) : unit =
         if result <> 0 then
             failwith $"host %s{what} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -534,23 +519,24 @@ module TestLinkCount =
 
         match step with
         | LinkCountStep.MakeDirectory path ->
-            hostMkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
+            HostCalls.mkdir (under path, 0o755u) |> hostSucceeded $"mkdir %s{path}"
             held
         | LinkCountStep.Create path ->
             File.Create(under path).Dispose ()
             held
         | LinkCountStep.Unlink path ->
-            hostUnlink (under path) |> hostSucceeded $"unlink %s{path}"
+            HostCalls.unlink (under path) |> hostSucceeded $"unlink %s{path}"
             held
         | LinkCountStep.RemoveDirectory path ->
-            hostRmdir (under path) |> hostSucceeded $"rmdir %s{path}"
+            HostCalls.rmdir (under path) |> hostSucceeded $"rmdir %s{path}"
             held
         | LinkCountStep.Rename (source, destination) ->
-            hostRename (under source, under destination)
+            HostCalls.rename (under source, under destination)
             |> hostSucceeded $"rename %s{source} %s{destination}"
 
             held
-        | LinkCountStep.Hold path -> Map.add path (hostOpen (under path, 0, 0) |> hostOpened $"open %s{path}") held
+        | LinkCountStep.Hold path ->
+            Map.add path (HostCalls.openFile (under path, 0, 0) |> hostOpened $"open %s{path}") held
 
     [<Test>]
     let ``every scenario agrees with this host's kernel`` () : unit =
@@ -570,7 +556,7 @@ module TestLinkCount =
                 let unique = Guid.NewGuid().ToString "N"
                 let root = Path.Combine (hostBase, $"posixkernel-nlink-%s{unique}")
 
-                hostMkdir (root, 0o755u) |> hostSucceeded "mkdir root"
+                HostCalls.mkdir (root, 0o755u) |> hostSucceeded "mkdir root"
                 let mutable hostHeld = Map.empty
 
                 try

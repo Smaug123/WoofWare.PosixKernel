@@ -130,9 +130,6 @@ module TestEpollCreate1 =
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 200, Prop.forAll (Arb.fromGen flagsGen) property)
 
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
     [<Test>]
     let ``the flag screen is this Linux host's`` () : unit =
         HostPlatform.onUnixHostPreset (fun platform ->
@@ -145,7 +142,7 @@ module TestEpollCreate1 =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             for flags, _ in measured do
-                let fd = hostEpollCreate1 flags
+                let fd = HostCalls.epollCreate1 flags
 
                 let hostCreated =
                     if fd >= 0 then

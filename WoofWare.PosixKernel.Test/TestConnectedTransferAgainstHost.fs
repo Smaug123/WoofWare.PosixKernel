@@ -213,35 +213,11 @@ module TestConnectedTransferAgainstHost =
 
     // The host the suite runs on
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
-    extern int private hostSetSockOpt(int fd, int level, int optionName, byte[] value, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
-
     [<DllImport("libc", EntryPoint = "recv", SetLastError = true)>]
     extern nativeint private hostRecv(int fd, byte[] buffer, unativeint count, int flags)
 
     [<DllImport("libc", EntryPoint = "send", SetLastError = true)>]
     extern nativeint private hostSend(int fd, byte[] buffer, unativeint count, int flags)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
 
     [<Literal>]
     let private AF_INET = 2
@@ -286,7 +262,7 @@ module TestConnectedTransferAgainstHost =
         // struct pollfd { int fd; short events; short revents; }, little-endian.
         let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (everyEvent flavour)) <<< 32) |]
 
-        if hostPoll (entry, 1un, 0) < 0 then
+        if HostCalls.pollPacked (entry, 1un, 0) < 0 then
             failwith $"poll failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let mutable available = 0
@@ -312,15 +288,15 @@ module TestConnectedTransferAgainstHost =
         let address =
             SimulatedUnixPlatform.encodeInternetSockaddr platform (Ipv4Endpoint.ofParts Ipv4Address.loopback 0us)
 
-        check "bind" (hostBind (listener, address, uint32 address.Length))
-        check "listen" (hostListen (listener, 8))
+        check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+        check "listen" (HostCalls.listen (listener, 8))
         let name = Array.zeroCreate<byte> address.Length
         let mutable length = uint32 name.Length
-        check "getsockname" (hostGetSockName (listener, name, &length))
+        check "getsockname" (HostCalls.getSockName (listener, name, &length))
         let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
         check "socket" client
-        check "connect" (hostConnect (client, name, length))
-        let server = hostAccept (listener, 0n, 0n)
+        check "connect" (HostCalls.connect (client, name, length))
+        let server = HostCalls.accept (listener, 0n, 0n)
         check "accept" server
         HostCalls.close listener |> ignore<int>
 
@@ -390,7 +366,7 @@ module TestConnectedTransferAgainstHost =
                 let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
                 if
-                    hostSetSockOpt (
+                    HostCalls.setSockOpt (
                         p,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         lingerOption flavour,
@@ -437,7 +413,7 @@ module TestConnectedTransferAgainstHost =
             let mutable length = 4u
 
             if
-                hostGetSockOpt (
+                HostCalls.getSockOptInt (
                     s,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     SimulatedUnixPlatform.socketErrorOption platform,

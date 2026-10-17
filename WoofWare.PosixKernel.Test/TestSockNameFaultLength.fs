@@ -283,21 +283,8 @@ module TestSockNameFaultLength =
 [<Parallelizable(ParallelScope.All)>]
 module TestSockNameFaultLengthAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
     [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
     extern int private hostGetSockName(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private hostMmap(
-        nativeint address,
-        unativeint length,
-        int protection,
-        int flags,
-        int fd,
-        int64 offset
-    )
 
     [<Literal>]
     let private AF_INET = 2
@@ -321,7 +308,14 @@ module TestSockNameFaultLengthAgainstHost =
             | None -> failwith "TestSockNameFaultLengthAgainstHost: no Unix host, so nothing to reserve"
             | Some flavour ->
                 let page =
-                    hostMmap (0n, unativeint Environment.SystemPageSize, PROT_NONE, mapPrivateAnonymous flavour, -1, 0L)
+                    HostCalls.mmap (
+                        0n,
+                        unativeint Environment.SystemPageSize,
+                        PROT_NONE,
+                        mapPrivateAnonymous flavour,
+                        -1,
+                        0L
+                    )
 
                 if page = -1n then
                     failwith
@@ -403,7 +397,7 @@ module TestSockNameFaultLengthAgainstHost =
             try
                 let address = loopbackAnyPort platform
 
-                if hostBind (fd, address, 16u) <> 0 then
+                if HostCalls.bind (fd, address, 16u) <> 0 then
                     failwith $"bind failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                 let system =

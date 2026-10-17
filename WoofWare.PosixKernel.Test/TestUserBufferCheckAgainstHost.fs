@@ -27,9 +27,6 @@ module TestUserBufferCheckAgainstHost =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private openFile(string path, int flags)
 
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private readFd(int fd, nativeint buffer, unativeint count)
-
     [<Literal>]
     let private O_RDONLY = 0
 
@@ -53,7 +50,9 @@ module TestUserBufferCheckAgainstHost =
     /// hard failure rather than a probe result.
     let private faultsAt (fd : int) (address : uint64) (length : uint64) : bool =
         Marshal.SetLastPInvokeError 0
-        let transferred = readFd (fd, nativeint (int64 address), unativeint length)
+
+        let transferred =
+            HostCalls.readPointer (fd, nativeint (int64 address), unativeint length)
 
         if transferred > 0n then
             failwith
