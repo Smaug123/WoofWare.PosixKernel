@@ -19,32 +19,11 @@ module TestDeviceDescriptorsAgainstHost =
 
     let private context : string = "TestDeviceDescriptorsAgainstHost"
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(string path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWriteAt(int fd, nativeint buffer, unativeint count)
-
     [<DllImport("libc", EntryPoint = "pread", SetLastError = true)>]
     extern nativeint private hostPRead(int fd, byte[] buffer, unativeint count, int64 offset)
 
     [<DllImport("libc", EntryPoint = "pwrite", SetLastError = true)>]
     extern nativeint private hostPWrite(int fd, byte[] buffer, unativeint count, int64 offset)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)>]
-    extern int private hostFTruncate(int fd, int64 length)
 
     /// Returns the errno rather than setting it.
     [<DllImport("libc", EntryPoint = "posix_fadvise")>]
@@ -55,15 +34,6 @@ module TestDeviceDescriptorsAgainstHost =
 
     [<DllImport("libc", EntryPoint = "tcgetattr", SetLastError = true)>]
     extern int private hostTcGetAttr(int fd, byte[] termios)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
-    [<DllImport("libc", EntryPoint = "epoll_ctl", SetLastError = true)>]
-    extern int private hostEpollCtl(int epfd, int op, int fd, byte[] event)
 
     [<DllImport("libc", EntryPoint = "flock", SetLastError = true)>]
     extern int private hostFlock(int fd, int operation)
@@ -97,12 +67,12 @@ module TestDeviceDescriptorsAgainstHost =
         hostAnswer (int64 (hostIoctlInt (fd, fionread, &available)))
 
     let private hostPollOnce (fd : int) (events : int16) : Answer =
-        let mutable entry = PollFd ()
+        let mutable entry = HostCalls.PollFd ()
         entry.Fd <- fd
         entry.Events <- events
         let entries = [| entry |]
 
-        hostAnswer (int64 (hostPoll (entries, 1un, 0)))
+        hostAnswer (int64 (HostCalls.poll (entries, 1un, 0)))
         |> Result.map (fun _ -> int64 entries.[0].Revents)
 
     let private rdwr : int = 2
@@ -157,8 +127,8 @@ module TestDeviceDescriptorsAgainstHost =
     /// Every row, as (description, the host's answer, the model's answer), for
     /// the device at `path`.
     let private rows (flavour : SimulatedUnixFlavour) (path : string) : (string * Answer * Answer) list =
-        let host = hostOpen (path, rdwr, 0)
-        let hostWriteOnly = hostOpen (path, wronly, 0)
+        let host = HostCalls.openFile (path, rdwr, 0)
+        let hostWriteOnly = HostCalls.openFile (path, wronly, 0)
 
         if host < 0 || hostWriteOnly < 0 then
             failwith $"opening the host's %s{path} failed: errno %d{Marshal.GetLastPInvokeError ()}"
@@ -187,7 +157,7 @@ module TestDeviceDescriptorsAgainstHost =
                 for whence in -1 .. 6 do
                     for offset in [ 0L ; -5L ; System.Int64.MaxValue ] do
                         $"lseek %d{offset} %d{whence}",
-                        hostAnswer (hostLSeek (host, offset, whence)),
+                        hostAnswer (HostCalls.lseek (host, offset, whence)),
                         (match UnixDescriptor.tryLseek (Callers.leader system) fd offset whence system with
                          | Ok (answer, _) -> ofSyscall answer
                          | Error refusal -> failwith $"the model's lseek: %A{refusal}")
@@ -199,7 +169,7 @@ module TestDeviceDescriptorsAgainstHost =
 
                 for count in [ 0 ; 1 ; 100 ] do
                     $"read NULL %d{count}",
-                    hostAnswer (int64 (hostReadAt (host, 0n, unativeint count))),
+                    hostAnswer (int64 (HostCalls.readPointer (host, 0n, unativeint count))),
                     read fd (UserBuffer.Unmapped 0UL) (uint64 count)
 
                 "read through O_WRONLY",
@@ -213,7 +183,7 @@ module TestDeviceDescriptorsAgainstHost =
 
                 for count in [ 0 ; 1 ; 16 ] do
                     $"write NULL %d{count}",
-                    hostAnswer (int64 (hostWriteAt (host, 0n, unativeint count))),
+                    hostAnswer (int64 (HostCalls.writePointer (host, 0n, unativeint count))),
                     admitWrite (UserBuffer.Unmapped 0UL) (uint64 count)
 
                 for offset in [ 0L ; 1L <<< 40 ; -1L ; System.Int64.MaxValue ] do
@@ -242,7 +212,7 @@ module TestDeviceDescriptorsAgainstHost =
 
                 for length in [ 0L ; 10L ; -1L ] do
                     $"ftruncate %d{length}",
-                    hostAnswer (int64 (hostFTruncate (host, length))),
+                    hostAnswer (int64 (HostCalls.ftruncate (host, length))),
                     (match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
                      | Ok (answer, _) -> ofSyscall answer
                      | Error refusal -> failwith $"the model's ftruncate: %A{refusal}")
@@ -291,14 +261,14 @@ module TestDeviceDescriptorsAgainstHost =
                      | other -> failwith $"the model's poll: %A{other}")
 
                 "epoll_ctl ADD",
-                (let epoll = hostEpollCreate1 0
+                (let epoll = HostCalls.epollCreate1 0
 
                  try
                      // struct epoll_event, EPOLLIN, laid out wide enough for either
                      // architecture's packing.
                      let event = Array.zeroCreate<byte> 16
                      event.[0] <- 1uy
-                     hostAnswer (int64 (hostEpollCtl (epoll, 1, host, event)))
+                     hostAnswer (int64 (HostCalls.epollCtl (epoll, 1, host, event)))
                  finally
                      HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =

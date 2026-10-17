@@ -90,12 +90,6 @@ module TestEntropyAgainstHost =
     [<DllImport("libc", EntryPoint = "memfd_create", SetLastError = true)>]
     extern int private linuxMemfdCreate(string name, uint32 flags)
 
-    [<DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)>]
-    extern int private linuxFtruncate(int fd, int64 length)
-
-    [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
-    extern nativeint private linuxMmap(nativeint address, unativeint length, int prot, int flags, int fd, int64 offset)
-
     [<DllImport("libc", EntryPoint = "munmap", SetLastError = true)>]
     extern int private linuxMunmap(nativeint address, unativeint length)
 
@@ -131,13 +125,13 @@ module TestEntropyAgainstHost =
             fail "memfd_create"
 
         try
-            if linuxFtruncate (fd, int64 chunk) <> 0 then
+            if HostCalls.ftruncate (fd, int64 chunk) <> 0 then
                 fail "ftruncate"
 
             // Reserve the whole range first, so that the chunks can then be
             // placed over it without landing on anything else's mapping.
             let reserved =
-                linuxMmap (0n, unativeint size, PROT_NONE, MAP_PRIVATE ||| MAP_ANONYMOUS ||| MAP_NORESERVE, -1, 0L)
+                HostCalls.mmap (0n, unativeint size, PROT_NONE, MAP_PRIVATE ||| MAP_ANONYMOUS ||| MAP_NORESERVE, -1, 0L)
 
             if reserved = -1n then
                 fail "reserving the range"
@@ -146,7 +140,7 @@ module TestEntropyAgainstHost =
                 let at = reserved + nativeint (i * chunk)
 
                 if
-                    linuxMmap (at, unativeint chunk, PROT_READ_WRITE, MAP_SHARED ||| MAP_FIXED, fd, 0L)
+                    HostCalls.mmap (at, unativeint chunk, PROT_READ_WRITE, MAP_SHARED ||| MAP_FIXED, fd, 0L)
                     <> at
                 then
                     linuxMunmap (reserved, unativeint size) |> ignore<int>

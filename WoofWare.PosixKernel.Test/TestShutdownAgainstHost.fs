@@ -42,53 +42,14 @@ module TestShutdownAgainstHost =
     // The host
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
-    extern int private hostBind(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
-    extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
-    extern int private hostGetSockName(int fd, byte[] address, uint32& length)
-
     [<DllImport("libc", EntryPoint = "getpeername", SetLastError = true)>]
     extern int private hostGetPeerName(int fd, byte[] address, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "connect", SetLastError = true)>]
-    extern int private hostConnect(int fd, byte[] address, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "accept", SetLastError = true)>]
-    extern int private hostAccept(int fd, nativeint address, nativeint length)
 
     [<DllImport("libc", EntryPoint = "shutdown", SetLastError = true)>]
     extern int private hostShutdown(int fd, int how)
 
-    [<DllImport("libc", EntryPoint = "setsockopt", SetLastError = true)>]
-    extern int private hostSetSockOpt(int fd, int level, int optionName, byte[] value, uint32 length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOptBytes(int fd, int level, int optionName, byte[] value, uint32& length)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
-    extern int private hostEpollCreate1(int flags)
-
-    [<DllImport("libc", EntryPoint = "epoll_ctl", SetLastError = true)>]
-    extern int private hostEpollCtl(int epfd, int op, int fd, byte[] event)
-
     [<DllImport("libc", EntryPoint = "epoll_wait", SetLastError = true)>]
     extern int private hostEpollWait(int epfd, byte[] events, int maxEvents, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "kqueue", SetLastError = true)>]
-    extern int private hostKqueue()
 
     [<DllImport("libc", EntryPoint = "kevent", SetLastError = true)>]
     extern int private hostKevent(int kq, byte[] changes, int nchanges, byte[] events, int nevents, int64[] timeout)
@@ -147,7 +108,7 @@ module TestShutdownAgainstHost =
         let mutable length = uint32 info.Length
 
         // IPPROTO_TCP, TCP_CONNECTION_INFO
-        if hostGetSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
+        if HostCalls.getSockOptBytes (fd, 6, 0x106, info, &length) < 0 then
             failwith $"getsockopt(TCP_CONNECTION_INFO) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         if length <> uint32 info.Length then
@@ -316,7 +277,7 @@ module TestShutdownAgainstHost =
                 SimulatedUnixPlatform.encodeInternetSockaddr platform (Ipv4Endpoint.ofParts address (uint16 port))
 
             Marshal.SetLastPInvokeError 0
-            let bound = hostBind (fd, sockaddr, uint32 sockaddr.Length)
+            let bound = HostCalls.bind (fd, sockaddr, uint32 sockaddr.Length)
             let bindErrno = Marshal.GetLastPInvokeError ()
             HostCalls.close fd |> ignore<int>
 
@@ -348,14 +309,14 @@ module TestShutdownAgainstHost =
         let portOf (fd : int) : int =
             let name = Array.zeroCreate<byte> 16
             let mutable length = 16u
-            check "getsockname" (hostGetSockName (fd, name, &length))
+            check "getsockname" (HostCalls.getSockName (fd, name, &length))
             (int name.[2] <<< 8) ||| int name.[3]
 
         let freePort () : int =
             let t = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" t
             let address = loopbackAt 0
-            check "bind" (hostBind (t, address, uint32 address.Length))
+            check "bind" (HostCalls.bind (t, address, uint32 address.Length))
             let port = portOf t
             HostCalls.close t |> ignore<int>
             port
@@ -385,7 +346,7 @@ module TestShutdownAgainstHost =
                 let entry = [| int64 (uint32 fd) ||| (int64 pollIn <<< 32) |]
                 let remaining = max 0L (deadline - Environment.TickCount64)
                 Marshal.SetLastPInvokeError 0
-                let ready = hostPoll (entry, 1un, int remaining)
+                let ready = HostCalls.pollPacked (entry, 1un, int remaining)
 
                 if ready > 0 then
                     true
@@ -406,7 +367,7 @@ module TestShutdownAgainstHost =
         let setReuseAddress (fd : int) : unit =
             check
                 "setsockopt(SO_REUSEADDR)"
-                (hostSetSockOpt (
+                (HostCalls.setSockOpt (
                     fd,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     SimulatedUnixPlatform.reuseAddressOption platform,
@@ -435,7 +396,7 @@ module TestShutdownAgainstHost =
 
             check
                 "getsockopt(SO_RCVBUF)"
-                (hostGetSockOpt (
+                (HostCalls.getSockOptInt (
                     fd,
                     SimulatedUnixPlatform.socketOptionLevel platform,
                     darwinReceiveBufferOption,
@@ -570,8 +531,8 @@ module TestShutdownAgainstHost =
             | ShutdownPairShape.ListenerLocked
             | ShutdownPairShape.ClientReuseAddress -> ()
 
-            check "bind" (hostBind (listener, address, uint32 address.Length))
-            check "listen" (hostListen (listener, 4))
+            check "bind" (HostCalls.bind (listener, address, uint32 address.Length))
+            check "listen" (HostCalls.listen (listener, 4))
             let destination = loopbackAt (portOf listener)
             let client = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
             check "socket" client
@@ -579,15 +540,15 @@ module TestShutdownAgainstHost =
             match shape with
             | ShutdownPairShape.ClientLocked ->
                 let own = loopbackAt (freePort ())
-                check "bind" (hostBind (client, own, uint32 own.Length))
+                check "bind" (HostCalls.bind (client, own, uint32 own.Length))
             | ShutdownPairShape.ClientReuseAddress -> setReuseAddress client
             | ShutdownPairShape.Plain
             | ShutdownPairShape.ListenerLocked
             | ShutdownPairShape.ListenerReuseAddress -> ()
 
-            check "connect" (hostConnect (client, destination, uint32 destination.Length))
+            check "connect" (HostCalls.connect (client, destination, uint32 destination.Length))
             settle ()
-            let server = hostAccept (listener, 0n, 0n)
+            let server = HostCalls.accept (listener, 0n, 0n)
             check "accept" server
             HostCalls.close listener |> ignore<int>
 
@@ -646,7 +607,13 @@ module TestShutdownAgainstHost =
             let linger = Array.append (BitConverter.GetBytes 1) (BitConverter.GetBytes 0)
 
             for fd in Map.values fds do
-                hostSetSockOpt (fd, SimulatedUnixPlatform.socketOptionLevel platform, lingerOption flavour, linger, 8u)
+                HostCalls.setSockOpt (
+                    fd,
+                    SimulatedUnixPlatform.socketOptionLevel platform,
+                    lingerOption flavour,
+                    linger,
+                    8u
+                )
                 |> ignore<int>
 
                 HostCalls.close fd |> ignore<int>
@@ -666,7 +633,7 @@ module TestShutdownAgainstHost =
 
                 check
                     "getsockopt(SO_ERROR)"
-                    (hostGetSockOpt (
+                    (HostCalls.getSockOptInt (
                         this.Fd e,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         SimulatedUnixPlatform.socketErrorOption platform,
@@ -706,7 +673,7 @@ module TestShutdownAgainstHost =
                 let result, errno =
                     call (fun () ->
                         int64 (
-                            hostSetSockOpt (
+                            HostCalls.setSockOpt (
                                 this.Fd e,
                                 SimulatedUnixPlatform.socketOptionLevel platform,
                                 lingerOption flavour,
@@ -733,18 +700,18 @@ module TestShutdownAgainstHost =
             member this.Rdy e =
                 let fd = this.Fd e
                 let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (rdyEvents flavour)) <<< 32) |]
-                check "poll" (hostPoll (entry, 1un, 0))
+                check "poll" (HostCalls.pollPacked (entry, 1un, 0))
                 let revents = int (uint16 (entry.[0] >>> 48))
 
                 let waiters =
                     match flavour with
                     | SimulatedUnixFlavour.Linux ->
-                        let ep = hostEpollCreate1 0
+                        let ep = HostCalls.epollCreate1 0
                         check "epoll_create1" ep
 
                         check
                             "epoll_ctl"
-                            (hostEpollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+                            (HostCalls.epollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
 
                         let out = Array.zeroCreate<byte> epollEventSize
                         let n = hostEpollWait (ep, out, 1, 0)
@@ -752,7 +719,7 @@ module TestShutdownAgainstHost =
                         let events = if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u
                         $"epoll=0x%x{events}"
                     | SimulatedUnixFlavour.Darwin ->
-                        let kq = hostKqueue ()
+                        let kq = HostCalls.kqueue ()
                         check "kqueue" kq
 
                         let changes =
@@ -858,16 +825,16 @@ module TestShutdownAgainstHost =
             member this.RegisterEdges ends =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    let ep = hostEpollCreate1 0
+                    let ep = HostCalls.epollCreate1 0
                     check "epoll_create1" ep
 
                     for e in ends do
                         let fd = this.Fd e
-                        check "epoll_ctl" (hostEpollCtl (ep, 1, fd, epollEvent 0x80002005u (uint64 fd)))
+                        check "epoll_ctl" (HostCalls.epollCtl (ep, 1, fd, epollEvent 0x80002005u (uint64 fd)))
 
                     edgePort <- Some ep
                 | SimulatedUnixFlavour.Darwin ->
-                    let kq = hostKqueue ()
+                    let kq = HostCalls.kqueue ()
                     check "kqueue" kq
                     let flags = KeventFlags.Add ||| KeventFlags.Clear
 
@@ -936,7 +903,7 @@ module TestShutdownAgainstHost =
                 let address = loopbackAt port
 
                 let result, errno =
-                    call (fun () -> int64 (hostBind (n, address, uint32 address.Length)))
+                    call (fun () -> int64 (HostCalls.bind (n, address, uint32 address.Length)))
 
                 if result < 0L && errorName errno = "EADDRINUSE" then
                     noteRefusal false port
@@ -960,7 +927,7 @@ module TestShutdownAgainstHost =
                         (Ipv4Endpoint.ofParts (if wildcard then Ipv4Address.any else Ipv4Address.loopback) (uint16 port))
 
                 let bound, bindErrno =
-                    call (fun () -> int64 (hostBind (n, address, uint32 address.Length)))
+                    call (fun () -> int64 (HostCalls.bind (n, address, uint32 address.Length)))
 
                 if bound < 0L && errorName bindErrno = "EADDRINUSE" then
                     noteRefusal wildcard port
@@ -969,7 +936,7 @@ module TestShutdownAgainstHost =
                     if bound < 0L then
                         $"bind-%s{errorName bindErrno}"
                     else
-                        let listened, listenErrno = call (fun () -> int64 (hostListen (n, 4)))
+                        let listened, listenErrno = call (fun () -> int64 (HostCalls.listen (n, 4)))
 
                         if listened < 0L then
                             $"bind-ok listen-%s{errorName listenErrno}"
@@ -985,7 +952,7 @@ module TestShutdownAgainstHost =
 
                 check
                     "getsockopt(SO_REUSEADDR)"
-                    (hostGetSockOpt (
+                    (HostCalls.getSockOptInt (
                         this.Fd e,
                         SimulatedUnixPlatform.socketOptionLevel platform,
                         SimulatedUnixPlatform.reuseAddressOption platform,
@@ -1274,7 +1241,10 @@ module TestShutdownAgainstHost =
                             (HostPlatform.platformOf flavour)
                             (Ipv4Endpoint.ofParts foreignAt (uint16 port))
 
-                    if hostBind (fd, address, uint32 address.Length) <> 0 || hostListen (fd, 4) <> 0 then
+                    if
+                        HostCalls.bind (fd, address, uint32 address.Length) <> 0
+                        || HostCalls.listen (fd, 4) <> 0
+                    then
                         HostCalls.close fd |> ignore<int>
                         raise (PortAlreadyHeld port)
 
@@ -1420,7 +1390,10 @@ module TestShutdownAgainstHost =
                     let mutable value = 0
                     let mutable length = 4u
 
-                    if hostGetSockOpt (fd, level, darwinReceiveBufferOption, &value, &length) <> 0 then
+                    if
+                        HostCalls.getSockOptInt (fd, level, darwinReceiveBufferOption, &value, &length)
+                        <> 0
+                    then
                         failwith $"getsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                     value
@@ -1428,7 +1401,7 @@ module TestShutdownAgainstHost =
                 let before = sizeOf ()
                 let doubled = BitConverter.GetBytes (2 * before)
 
-                if hostSetSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
+                if HostCalls.setSockOpt (fd, level, darwinReceiveBufferOption, doubled, 4u) <> 0 then
                     failwith $"setsockopt(SO_RCVBUF) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
                 sizeOf () |> shouldBeGreaterThan before
@@ -1718,30 +1691,34 @@ module TestShutdownAgainstHost =
         let listening () : int * byte[] =
             let l = stream ()
             let any = loopbackAt 0
-            check "bind" (hostBind (l, any, 16u))
-            check "listen" (hostListen (l, 4))
+            check "bind" (HostCalls.bind (l, any, 16u))
+            check "listen" (HostCalls.listen (l, 4))
             let name = Array.zeroCreate<byte> 16
             let mutable length = 16u
-            check "getsockname" (hostGetSockName (l, name, &length))
+            check "getsockname" (HostCalls.getSockName (l, name, &length))
             l, name
 
         let rdy (fd : int) : string =
             let entry = [| int64 (uint32 fd) ||| (int64 (uint16 (rdyEvents flavour)) <<< 32) |]
-            check "poll" (hostPoll (entry, 1un, 0))
+            check "poll" (HostCalls.pollPacked (entry, 1un, 0))
             let revents = int (uint16 (entry.[0] >>> 48))
 
             let waiters =
                 match flavour with
                 | SimulatedUnixFlavour.Linux ->
-                    let ep = hostEpollCreate1 0
+                    let ep = HostCalls.epollCreate1 0
                     check "epoll_create1" ep
-                    check "epoll_ctl" (hostEpollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+
+                    check
+                        "epoll_ctl"
+                        (HostCalls.epollCtl (ep, 1, fd, epollEvent (uint32 (rdyEvents flavour)) (uint64 fd)))
+
                     let out = Array.zeroCreate<byte> epollEventSize
                     let n = hostEpollWait (ep, out, 1, 0)
                     HostCalls.close ep |> ignore<int>
                     $"epoll=0x%x{(if n > 0 then BitConverter.ToUInt32 (out, 0) else 0u)}"
                 | SimulatedUnixFlavour.Darwin ->
-                    let kq = hostKqueue ()
+                    let kq = HostCalls.kqueue ()
                     check "kqueue" kq
 
                     let changes =
@@ -1793,7 +1770,7 @@ module TestShutdownAgainstHost =
             BindAny =
                 fun fd ->
                     let any = loopbackAt 0
-                    check "bind" (hostBind (fd, any, 16u))
+                    check "bind" (HostCalls.bind (fd, any, 16u))
             Shutdown = fun fd how -> ShutdownLine.Line (shutdownOf fd how)
             Close = fun fd -> HostCalls.close fd |> ignore<int>
             Refused =
@@ -1801,20 +1778,20 @@ module TestShutdownAgainstHost =
                     let l, name = listening ()
                     HostCalls.close l |> ignore<int>
                     let f = stream ()
-                    f, call (fun () -> hostConnect (f, name, 16u))
+                    f, call (fun () -> HostCalls.connect (f, name, 16u))
             Unreported =
                 fun how ->
                     let l, name = listening ()
                     let f = stream ()
                     HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
-                    let first = call (fun () -> hostConnect (f, name, 16u))
+                    let first = call (fun () -> HostCalls.connect (f, name, 16u))
 
                     let sh =
                         match how with
                         | None -> "-"
                         | Some how -> shutdownOf f how
 
-                    let again = call (fun () -> hostConnect (f, name, 16u))
+                    let again = call (fun () -> HostCalls.connect (f, name, 16u))
                     HostCalls.close f |> ignore<int>
                     HostCalls.close l |> ignore<int>
 
@@ -1834,9 +1811,9 @@ module TestShutdownAgainstHost =
                     let sh = shutdownOf f how
                     let after = rdy f
                     HostCalls.setNonBlocking (nativeint f, 0) |> ignore<int>
-                    let connected = call (fun () -> hostConnect (f, name, 16u))
+                    let connected = call (fun () -> HostCalls.connect (f, name, 16u))
                     HostCalls.setNonBlocking (nativeint f, 1) |> ignore<int>
-                    let peer = hostAccept (l, 0n, 0n)
+                    let peer = HostCalls.accept (l, 0n, 0n)
                     check "accept" peer
                     let written = call (fun () -> int (HostCalls.write (f, hostBuffer, 1un)))
                     HostCalls.write (peer, hostBuffer, 1un) |> ignore<nativeint>
@@ -1899,7 +1876,7 @@ module TestShutdownAgainstHost =
                 let mutable copy = -1
 
                 while copy < closed do
-                    copy <- hostDup own.[0]
+                    copy <- HostCalls.dup own.[0]
 
                     if copy < 0 then
                         failwith $"dup failed with errno %d{Marshal.GetLastPInvokeError ()}"

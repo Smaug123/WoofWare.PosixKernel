@@ -30,41 +30,11 @@ open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 [<Parallelizable(ParallelScope.All)>]
 module TestInotifyDeliveryAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "inotify_init1", SetLastError = true)>]
-    extern int private hostInit1(int flags)
-
-    [<DllImport("libc", EntryPoint = "inotify_add_watch", SetLastError = true)>]
-    extern int private hostAddWatch(int fd, byte[] path, uint32 mask)
-
-    [<DllImport("libc", EntryPoint = "inotify_rm_watch", SetLastError = true)>]
-    extern int private hostRmWatch(int fd, int wd)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "close", SetLastError = true)>]
-    extern int private hostClose(int fd)
-
-    [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
-    extern int private hostOpen(byte[] path, int flags, int mode)
-
-    [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
-    extern int private hostMkdir(byte[] path, int mode)
-
-    [<DllImport("libc", EntryPoint = "rmdir", SetLastError = true)>]
-    extern int private hostRmdir(byte[] path)
-
-    [<DllImport("libc", EntryPoint = "unlink", SetLastError = true)>]
-    extern int private hostUnlink(byte[] path)
-
     [<DllImport("libc", EntryPoint = "link", SetLastError = true)>]
     extern int private hostLink(byte[] existing, byte[] path)
 
     [<DllImport("libc", EntryPoint = "symlink", SetLastError = true)>]
     extern int private hostSymlink(byte[] target, byte[] path)
-
-    [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
-    extern int private hostRename(byte[] source, byte[] destination)
 
     [<DllImport("libc", EntryPoint = "chmod", SetLastError = true)>]
     extern int private hostChmod(byte[] path, int mode)
@@ -76,20 +46,8 @@ module TestInotifyDeliveryAgainstHost =
     [<DllImport("libc", EntryPoint = "utimensat", SetLastError = true)>]
     extern int private hostUtimensat(int dirfd, byte[] path, int64[] times, int flags)
 
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "ftruncate", SetLastError = true)>]
-    extern int private hostFtruncate(int fd, int64 length)
-
     [<DllImport("libc", EntryPoint = "fchmod", SetLastError = true)>]
     extern int private hostFchmod(int fd, int mode)
-
-    [<DllImport("libc", EntryPoint = "geteuid")>]
-    extern uint32 private hostGetEUid()
-
-    [<DllImport("libc", EntryPoint = "getegid")>]
-    extern uint32 private hostGetEGid()
 
     let private context : string = "TestInotifyDeliveryAgainstHost"
 
@@ -156,13 +114,14 @@ module TestInotifyDeliveryAgainstHost =
                 Error (Marshal.GetLastPInvokeError ())
 
         match syscall with
-        | Syscall.Open (path, flags, mode) -> returned (int64 (hostOpen (under path, flags, mode)))
-        | Syscall.MkDir (path, mode) -> returned (int64 (hostMkdir (under path, mode)))
-        | Syscall.RmDir path -> returned (int64 (hostRmdir (under path)))
-        | Syscall.Unlink path -> returned (int64 (hostUnlink (under path)))
+        | Syscall.Open (path, flags, mode) -> returned (int64 (HostCalls.openFileBytes (under path, flags, mode)))
+        | Syscall.MkDir (path, mode) -> returned (int64 (HostCalls.mkdirBytes (under path, uint32 mode)))
+        | Syscall.RmDir path -> returned (int64 (HostCalls.rmdirBytes (under path)))
+        | Syscall.Unlink path -> returned (int64 (HostCalls.unlinkBytes (under path)))
         | Syscall.Link (existing, path) -> returned (int64 (hostLink (under existing, under path)))
         | Syscall.Symlink (target, path) -> returned (int64 (hostSymlink (terminated target, under path)))
-        | Syscall.Rename (source, destination) -> returned (int64 (hostRename (under source, under destination)))
+        | Syscall.Rename (source, destination) ->
+            returned (int64 (HostCalls.renameBytes (under source, under destination)))
         | Syscall.ChMod (path, mode) -> returned (int64 (hostChmod (under path, mode)))
         | Syscall.ChOwn (path, user, group) ->
             let user = user |> Option.map UserId.toUInt32 |> Option.defaultValue UInt32.MaxValue
@@ -184,13 +143,14 @@ module TestInotifyDeliveryAgainstHost =
                 |]
 
             returned (int64 (hostUtimensat (dirfd, under path, times, flags)))
-        | Syscall.InotifyAddWatch (fd, path, mask) -> returned (int64 (hostAddWatch (hostFd fd, under path, mask)))
-        | Syscall.InotifyRmWatch (fd, wd) -> returned (int64 (hostRmWatch (hostFd fd, wd)))
+        | Syscall.InotifyAddWatch (fd, path, mask) ->
+            returned (int64 (HostCalls.inotifyAddWatch (hostFd fd, under path, mask)))
+        | Syscall.InotifyRmWatch (fd, wd) -> returned (int64 (HostCalls.inotifyRmWatch (hostFd fd, wd)))
         | Syscall.Write (fd, CopiedArgument.Readable bytes, count) ->
-            returned (int64 (hostWrite (hostFd fd, Seq.toArray bytes, unativeint count)))
-        | Syscall.FTruncate (fd, length) -> returned (int64 (hostFtruncate (hostFd fd, length)))
+            returned (int64 (HostCalls.write (hostFd fd, Seq.toArray bytes, unativeint count)))
+        | Syscall.FTruncate (fd, length) -> returned (int64 (HostCalls.ftruncate (hostFd fd, length)))
         | Syscall.FChMod (fd, mode) -> returned (int64 (hostFchmod (hostFd fd, mode)))
-        | Syscall.Close fd -> returned (int64 (hostClose (hostFd fd)))
+        | Syscall.Close fd -> returned (int64 (HostCalls.close (hostFd fd)))
         | other -> failwith $"the operations make no %A{other}"
 
     [<Test>]
@@ -200,8 +160,8 @@ module TestInotifyDeliveryAgainstHost =
 
             let owner : InodeOwner =
                 {
-                    User = UserId.parseOrFail context (hostGetEUid ())
-                    Group = GroupId.parseOrFail context (hostGetEGid ())
+                    User = UserId.parseOrFail context (HostCalls.getEUid ())
+                    Group = GroupId.parseOrFail context (HostCalls.getEGid ())
                 }
 
             let tree =
@@ -230,7 +190,7 @@ module TestInotifyDeliveryAgainstHost =
                 Directory.CreateDirectory root |> ignore<DirectoryInfo>
                 materialise root tree
 
-                let hostFds = [| hostInit1 0x800 ; hostInit1 0x800 |]
+                let hostFds = [| HostCalls.inotifyInit1 0x800 ; HostCalls.inotifyInit1 0x800 |]
 
                 if hostFds |> Array.exists (fun fd -> fd < 0) then
                     failwith "inotify_init1 failed on the host"
@@ -262,7 +222,7 @@ module TestInotifyDeliveryAgainstHost =
                         // The descriptor a creating open answers is closed at
                         // once, as `answer` closes the model's.
                         | (Op.Create _ | Op.OpenTruncate _), Ok fd ->
-                            hostClose (int fd) |> ignore<int>
+                            HostCalls.close (int fd) |> ignore<int>
                             Ok 0L
                         | _, host -> host
 
@@ -282,7 +242,7 @@ module TestInotifyDeliveryAgainstHost =
                     | _ ->
 
                     match op, host with
-                    | Op.Open _, Ok hostOpened -> hostClose (int hostOpened) |> ignore<int>
+                    | Op.Open _, Ok hostOpened -> HostCalls.close (int hostOpened) |> ignore<int>
                     | Op.Close slot, _ -> kept.RemoveAt (slotIndex slot kept.Count)
                     | _ -> ()
 
@@ -308,7 +268,7 @@ module TestInotifyDeliveryAgainstHost =
                             let buffer = Array.zeroCreate<byte> 65536
 
                             let rec drainHost (acc : ReadRecord list) =
-                                let n = hostRead (hostFds.[instance], buffer, unativeint buffer.Length)
+                                let n = HostCalls.read (hostFds.[instance], buffer, unativeint buffer.Length)
 
                                 if n < 0n then
                                     acc
@@ -330,10 +290,10 @@ module TestInotifyDeliveryAgainstHost =
                                     cover (Label.Record label)
                 finally
                     for fd in hostFds do
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
 
                     for keptHostFd, _ in kept do
-                        hostClose keptHostFd |> ignore<int>
+                        HostCalls.close keptHostFd |> ignore<int>
 
                     Directory.Delete (root, true)
 

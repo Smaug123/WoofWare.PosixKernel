@@ -18,12 +18,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketSyscallAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
-    extern int private hostGetSockOpt(int fd, int level, int optionName, int& value, int& optionLength)
-
-    [<DllImport("libc", EntryPoint = "fcntl", SetLastError = true)>]
-    extern int private hostFcntl(int fd, int command, int argument)
-
     [<Literal>]
     let private F_GETFL = 3
 
@@ -46,12 +40,12 @@ module TestSocketSyscallAgainstHost =
         else
             try
                 let mutable value = 0
-                let mutable length = 4
+                let mutable length = 4u
 
-                if hostGetSockOpt (fd, solSocket, soType, &value, &length) <> 0 then
+                if HostCalls.getSockOptInt (fd, solSocket, soType, &value, &length) <> 0 then
                     failwith $"getsockopt(SO_TYPE) failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-                let flags = hostFcntl (fd, F_GETFL, 0)
+                let flags = HostCalls.fcntl (fd, F_GETFL, 0)
 
                 if flags < 0 then
                     failwith $"fcntl(F_GETFL) failed with errno %d{Marshal.GetLastPInvokeError ()}"

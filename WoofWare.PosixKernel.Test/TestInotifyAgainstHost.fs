@@ -26,39 +26,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestInotifyAgainstHost =
 
-    [<Struct ; StructLayout(LayoutKind.Sequential)>]
-    type private PollFd =
-        val mutable Fd : int
-        val mutable Events : int16
-        val mutable Revents : int16
-
-    [<DllImport("libc", EntryPoint = "inotify_init1", SetLastError = true)>]
-    extern int private hostInit1(int flags)
-
-    [<DllImport("libc", EntryPoint = "inotify_add_watch", SetLastError = true)>]
-    extern int private hostAddWatch(int fd, byte[] path, uint32 mask)
-
-    [<DllImport("libc", EntryPoint = "inotify_rm_watch", SetLastError = true)>]
-    extern int private hostRmWatch(int fd, int wd)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostReadAt(int fd, nativeint buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
-    extern int private hostPoll([<In ; Out>] PollFd[] fds, unativeint count, int timeout)
-
-    [<DllImport("libc", EntryPoint = "dup", SetLastError = true)>]
-    extern int private hostDup(int fd)
-
-    [<DllImport("libc", EntryPoint = "lseek", SetLastError = true)>]
-    extern int64 private hostLSeek(int fd, int64 offset, int whence)
-
-    [<DllImport("libc", EntryPoint = "geteuid")>]
-    extern uint32 private hostGetEUid()
-
-    [<DllImport("libc", EntryPoint = "getegid")>]
-    extern uint32 private hostGetEGid()
-
     let private context : string = "TestInotifyAgainstHost"
 
     let private onLinux (action : SimulatedUnixPlatform -> unit) : unit =
@@ -193,8 +160,8 @@ module TestInotifyAgainstHost =
     let ``a real inotify and the model answer every call alike, byte for byte`` () : unit =
         onLinux (fun platform ->
             let numbering = SimulatedUnixPlatform.rawErrnoNumbering platform
-            let uid = hostGetEUid ()
-            let gid = hostGetEGid ()
+            let uid = HostCalls.getEUid ()
+            let gid = HostCalls.getEGid ()
 
             let owner =
                 Credentials.ofIds (UserId.parseOrFail context uid) (GroupId.parseOrFail context gid) []
@@ -257,7 +224,7 @@ module TestInotifyAgainstHost =
                                 | None -> ()
                                 | Some free ->
                                     let flags = nonBlock ||| (if cloexecFlag then cloexec else 0)
-                                    let host = hostAnswer numbering (nativeint (hostInit1 flags))
+                                    let host = hostAnswer numbering (nativeint (HostCalls.inotifyInit1 flags))
 
                                     let model =
                                         match UnixInotify.tryInotifyInit1 (Callers.leader system) flags system with
@@ -275,7 +242,11 @@ module TestInotifyAgainstHost =
                                 let hostPath = if relative = "" then "" else Path.Combine (root, relative)
                                 let hostBytes = Array.append (Encoding.UTF8.GetBytes hostPath) [| 0uy |]
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostAddWatch (hostFd, hostBytes, mask)))
+
+                                let host =
+                                    hostAnswer
+                                        numbering
+                                        (nativeint (HostCalls.inotifyAddWatch (hostFd, hostBytes, mask)))
 
                                 let model =
                                     match Eager.tryInotifyAddWatch modelFd (PathArg.ofText relative) mask system with
@@ -288,7 +259,7 @@ module TestInotifyAgainstHost =
                                 compare op host model
                             | Op.RmWatch (slot, wd) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostRmWatch (hostFd, wd)))
+                                let host = hostAnswer numbering (nativeint (HostCalls.inotifyRmWatch (hostFd, wd)))
 
                                 let model =
                                     match UnixInotify.tryInotifyRmWatch (Callers.leader system) modelFd wd system with
@@ -306,7 +277,7 @@ module TestInotifyAgainstHost =
                                     if mapped then
                                         hostAnswer numbering (HostCalls.read (hostFd, buffer, unativeint count))
                                     else
-                                        hostAnswer numbering (hostReadAt (hostFd, 0n, unativeint count))
+                                        hostAnswer numbering (HostCalls.readPointer (hostFd, 0n, unativeint count))
 
                                 let model =
                                     match
@@ -350,8 +321,8 @@ module TestInotifyAgainstHost =
                                 compare op host model
                             | Op.Poll (slot, events) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let fds = [| PollFd (Fd = hostFd, Events = events, Revents = 0s) |]
-                                let hostCount = hostPoll (fds, 1un, 0)
+                                let fds = [| HostCalls.PollFd (Fd = hostFd, Events = events, Revents = 0s) |]
+                                let hostCount = HostCalls.poll (fds, 1un, 0)
 
                                 match
                                     UnixPoll.tryPoll
@@ -401,7 +372,7 @@ module TestInotifyAgainstHost =
                             | Op.Dup slot ->
                                 match slots.[slot], Array.tryFindIndex Option.isNone slots with
                                 | Some (hostFd, modelFd), Some free ->
-                                    let hostCopy = hostDup hostFd
+                                    let hostCopy = HostCalls.dup hostFd
 
                                     if hostCopy < 0 then
                                         failwith $"%A{op}: dup failed on the host"
@@ -414,7 +385,9 @@ module TestInotifyAgainstHost =
                                 | _ -> ()
                             | Op.LSeek (slot, offset, whence) ->
                                 let hostFd, modelFd = slots.[slot] |> Option.defaultValue (999, 999)
-                                let host = hostAnswer numbering (nativeint (hostLSeek (hostFd, offset, whence)))
+
+                                let host =
+                                    hostAnswer numbering (nativeint (HostCalls.lseek (hostFd, offset, whence)))
 
                                 let model =
                                     match
@@ -513,7 +486,7 @@ module TestInotifyAgainstHost =
                 ]
 
             for flags in flags do
-                let fd = hostInit1 flags
+                let fd = HostCalls.inotifyInit1 flags
                 let host = hostAnswer numbering (nativeint fd)
 
                 if fd >= 0 then
