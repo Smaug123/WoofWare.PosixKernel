@@ -50,8 +50,9 @@
 //                  timeout; a handler that stores 1 to the word (does a
 //                  restarted wait read it again?); SIG_IGN; URG at its default
 //                  (ignore); the signal blocked by the waiter.
-//   stop         - the row's process P stops a child C with SIGSTOP 100 ms
-//                  into C's wait, optionally stores 1 to the (shared) word,
+//   stop         - once C reports its waiter asleep (`ready-at`), the row's
+//                  process P stops the child C with SIGSTOP 100 ms into C's
+//                  wait (`stop-at`), optionally stores 1 to the (shared) word,
 //                  and continues C 100 ms later; no handler runs. C's own main
 //                  thread wakes the word at 600 ms. Untimed and with a 300 ms
 //                  timeout: does the wait restart, does it read the word
@@ -69,8 +70,9 @@
 //                  taken by one wake is skipped by the next. `ran-early`
 //                  counts waiters that returned before the sender slept: the
 //                  control, which must be 0.
-//   xproc        - a child waits on a MAP_SHARED word; its parent wakes it,
-//                  privately and not. A private key is the address space's.
+//   xproc        - a child waits on a MAP_SHARED word; its parent, once the
+//                  child is asleep (`child-asleep`, by `asleep-by` ms), wakes
+//                  it 100 ms in, privately and not. A private key is the address space's.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <limits.h>
@@ -237,10 +239,9 @@ static void *waiter_main(void *p)
     return NULL;
 }
 
-static char thread_state(int tid)
+static char state_at(const char *path)
 {
-    char path[64], buf[512];
-    snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
+    char buf[512];
     FILE *f = fopen(path, "r");
     if (!f)
         return '?';
@@ -249,6 +250,21 @@ static char thread_state(int tid)
     buf[n] = 0;
     char *close = strrchr(buf, ')');
     return close && close[1] == ' ' ? close[2] : '?';
+}
+
+static char thread_state(int tid)
+{
+    char path[64];
+    snprintf(path, sizeof path, "/proc/self/task/%d/stat", tid);
+    return state_at(path);
+}
+
+// The state of `pid`'s main thread.
+static char process_state(pid_t pid)
+{
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%d/stat", (int)pid);
+    return state_at(path);
 }
 
 static void thread_wchan(int tid, char *out_buf, size_t size)
@@ -689,7 +705,23 @@ struct stop_shared {
     long long at;
     long woke;
     int done;
+    // Set by the child: 1 once its waiter is asleep in its wait (or, for
+    // `xproc`, as it makes the call), -1 if it never got there.
+    atomic_int ready;
+    long long ready_at;
 };
+
+// Wait, up to 2 s, for the child to say it is ready.
+static int await_ready(struct stop_shared *sh)
+{
+    for (int i = 0; i < 2000; i++) {
+        int ready = atomic_load(&sh->ready);
+        if (ready != 0)
+            return ready == 1;
+        sleep_ms(1);
+    }
+    return 0;
+}
 
 static void row_stop(const void *arg)
 {
@@ -701,7 +733,9 @@ static void row_stop(const void *arg)
         struct timespec ts = { s->timeout_ms / 1000, (long)(s->timeout_ms % 1000) * 1000000 };
         struct waiter w = { .addr = &sh->word, .val = 0, .timeout = s->timeout_ms ? &ts : NULL, .name = 'W' };
         start_waiter(&w);
-        wait_asleep(&w);
+        int asleep = wait_asleep(&w);
+        sh->ready_at = ms_since_start(now_ns());
+        atomic_store(&sh->ready, asleep ? 1 : -1);
         sleep_until_ms(600);
         sh->woke = futex(&sh->word, FUTEX_WAKE_PRIVATE, 1, NULL);
         sleep_ms(20);
@@ -715,11 +749,20 @@ static void row_stop(const void *arg)
         sh->done = 1;
         _exit(0);
     }
-    sleep_until_ms(100);
-    kill(child, SIGSTOP);
     int status;
+    if (!await_ready(sh)) {
+        out("child-never-asleep");
+        kill(child, SIGKILL);
+        waitpid(child, &status, 0);
+        return;
+    }
+    // The stop and the store come after the waiter is asleep, and any late
+    // start shows here as a `ready-at` near or past 100.
+    sleep_until_ms(100);
+    long long stop_at = ms_since_start(now_ns());
+    kill(child, SIGSTOP);
     waitpid(child, &status, WUNTRACED);
-    out("stopped=%d", WIFSTOPPED(status));
+    out("ready-at=%lld stop-at=%lld stopped=%d", sh->ready_at, stop_at, WIFSTOPPED(status));
     if (s->store)
         sh->word = 1;
     sleep_until_ms(200);
@@ -895,12 +938,22 @@ static void row_xproc(const void *arg)
     pid_t child = fork();
     if (child == 0) {
         struct timespec ts = { 0, 300000000 };
+        sh->ready_at = ms_since_start(now_ns());
+        atomic_store(&sh->ready, 1);
         long r = futex(&sh->word, x->wait_op, 0, &ts);
         sh->err = r < 0 ? errno : 0;
         sh->ret = r;
         sh->at = ms_since_start(now_ns());
         _exit(0);
     }
+    int asleep = 0;
+    if (await_ready(sh))
+        for (int i = 0; i < 2000 && !asleep; i++) {
+            asleep = process_state(child) == 'S';
+            if (!asleep)
+                sleep_ms(1);
+        }
+    out("child-asleep=%d asleep-by=%lld ", asleep, (long long)ms_since_start(now_ns()));
     sleep_until_ms(100);
     long woke = futex(&sh->word, x->wake_op, 1, NULL);
     int status;
