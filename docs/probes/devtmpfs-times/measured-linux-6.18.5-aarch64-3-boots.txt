@@ -1,0 +1,66 @@
+## boot 1
+# Linux 6.18.5 aarch64
+# btime 1792243162
+# uptime at start: 0.57
+# mount: none /dev devtmpfs rw,nosuid,relatime,size=568448k,nr_inodes=142112,mode=755 0 0
+# statfs /dev: f_type=0x1021994
+# dmesg: [    0.002655] devtmpfs: initialized
+# dmesg: [    0.091390] rtc-pl031 20050000.pl031: setting system clock to 2026-10-17T13:19:22 UTC (1792243162)
+# dmesg: [    0.103133] devtmpfs: mounted
+STAT /dev ino=1 atime=0.000000000 mtime=1792243162.964000000 ctime=1792243162.964000000 birth=0.000000000
+STAT /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+STAT /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev ino=1 atime=0.000000000 mtime=1792243162.964000000 ctime=1792243162.964000000 birth=0.000000000
+AFTER-READ /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev ino=1 atime=0.000000000 mtime=1792243162.964000000 ctime=1792243162.964000000 birth=0.000000000
+AFTER-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev ino=1 atime=0.000000000 mtime=1792243162.964000000 ctime=1792243162.964000000 birth=0.000000000
+AFTER-UID1000-READ-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+# realtime at end: 1792243166.309399585
+## boot 2
+# Linux 6.18.5 aarch64
+# btime 1792243168
+# uptime at start: 0.72
+# mount: none /dev devtmpfs rw,nosuid,relatime,size=568448k,nr_inodes=142112,mode=755 0 0
+# statfs /dev: f_type=0x1021994
+# dmesg: [    0.003335] devtmpfs: initialized
+# dmesg: [    0.080032] rtc-pl031 20050000.pl031: setting system clock to 2026-10-17T13:19:28 UTC (1792243168)
+# dmesg: [    0.090746] devtmpfs: mounted
+STAT /dev ino=1 atime=0.000000000 mtime=1792243169.128000000 ctime=1792243169.128000000 birth=0.000000000
+STAT /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+STAT /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev ino=1 atime=0.000000000 mtime=1792243169.128000000 ctime=1792243169.128000000 birth=0.000000000
+AFTER-READ /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev ino=1 atime=0.000000000 mtime=1792243169.128000000 ctime=1792243169.128000000 birth=0.000000000
+AFTER-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev ino=1 atime=0.000000000 mtime=1792243169.128000000 ctime=1792243169.128000000 birth=0.000000000
+AFTER-UID1000-READ-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+# realtime at end: 1792243172.481077210
+## boot 3
+# Linux 6.18.5 aarch64
+# btime 1792243174
+# uptime at start: 0.48
+# mount: none /dev devtmpfs rw,nosuid,relatime,size=568448k,nr_inodes=142112,mode=755 0 0
+# statfs /dev: f_type=0x1021994
+# dmesg: [    0.003558] devtmpfs: initialized
+# dmesg: [    0.083213] rtc-pl031 20050000.pl031: setting system clock to 2026-10-17T13:19:34 UTC (1792243174)
+# dmesg: [    0.095409] devtmpfs: mounted
+STAT /dev ino=1 atime=0.000000000 mtime=1792243174.888000000 ctime=1792243174.888000000 birth=0.000000000
+STAT /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+STAT /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev ino=1 atime=0.000000000 mtime=1792243174.888000000 ctime=1792243174.888000000 birth=0.000000000
+AFTER-READ /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-READ /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev ino=1 atime=0.000000000 mtime=1792243174.888000000 ctime=1792243174.888000000 birth=0.000000000
+AFTER-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev ino=1 atime=0.000000000 mtime=1792243174.888000000 ctime=1792243174.888000000 birth=0.000000000
+AFTER-UID1000-READ-WRITE /dev/null ino=2 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+AFTER-UID1000-READ-WRITE /dev/urandom ino=6 atime=0.004000000 mtime=0.004000000 ctime=0.004000000 birth=0.004000000
+# realtime at end: 1792243178.241993085
