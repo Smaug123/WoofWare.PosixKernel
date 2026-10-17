@@ -1,24 +1,25 @@
 namespace WoofWare.PosixKernel.Test
 
-open System.Collections.Generic
 open FsCheck
 open FsCheck.FSharp
 open FsUnitTyped
 open NUnit.Framework
 open WoofWare.PosixKernel
 open WoofWare.PosixKernel.Test.InotifyReplay
+open WoofWare.PosixKernel.Test.InotifyDeliveryOps
 
 /// Which records each filesystem change queues on the inotify instances
 /// watching it, against a reference that states them by operation, as
 /// docs/plans/2026-10-11-inotify's tables do (3.3, and `inotify-delivery-probe.c`).
 ///
-/// Random sequences of path syscalls (creating, truncating, linking,
-/// unlinking, renaming, changing modes, owners and times, through plain paths,
-/// "/." and "/", symbolic links and hard links), of descriptors opened, written
-/// through, truncated, `fchmod`ed and closed, and of watches added and
-/// removed, some with `IN_EXCL_UNLINK`, on two instances, run against the
-/// model; after each, both instances are drained, and their records must be
-/// those the reference expects, cookies compared by which records share one.
+/// Random sequences (`InotifyDeliveryOps`) of path syscalls (creating,
+/// truncating, linking, unlinking, renaming, changing modes, owners and times,
+/// through plain paths, "/." and "/", symbolic links and hard links), of
+/// descriptors opened, written through, truncated, `fchmod`ed and closed, and
+/// of watches added and removed, some with `IN_EXCL_UNLINK` or
+/// `IN_DONT_FOLLOW`, on two instances, run against the model; after each,
+/// both instances are drained, and their records must be those the reference
+/// expects, cookies compared by which records share one.
 /// The reference keeps its own tree of paths, and the name each descriptor
 /// was opened through, and asks the model only whether a call succeeded.
 ///
@@ -62,249 +63,26 @@ open WoofWare.PosixKernel.Test.InotifyReplay
 [<Parallelizable(ParallelScope.All)>]
 module TestInotifyDelivery =
 
-    let private dirs : string list = [ "/" ; "/a" ; "/a/s" ; "/b" ]
-    let private names : string list = [ "x" ; "y" ; "s" ; "a" ]
-
     let private join (dir : string) (entry : string) : string =
         if dir = "/" then $"/%s{entry}" else $"%s{dir}/%s{entry}"
 
-    /// Every path an operation names: each directory of the pool, and each
-    /// name in each of them.
-    let private paths : string list =
-        dirs
-        @ [
-            for dir in dirs do
-                for entry in names -> join dir entry
-        ]
-        |> List.distinct
+    /// The name the reference keeps for `path`, one of `paths`: its path
+    /// from the root.
+    let private absolute (path : string) : string =
+        if path = "." then "/" else $"/%s{path}"
 
-    /// How a path names its final component.
-    [<RequireQualifiedAccess>]
-    type private Form =
-        | Plain
-        /// The path with "/." appended.
-        | Dot
-        /// The path with "/" appended.
-        | Slash
+    /// The path `paths.[i]`, as the reference names it.
+    let private named (i : int) : string = absolute paths.[i]
 
-    [<RequireQualifiedAccess>]
-    type private Times =
-        | Both
-        | AccessOnly
-        | ModificationOnly
-
-    [<RequireQualifiedAccess>]
-    type private Op =
-        | Create of path : int * exclusive : bool
-        | OpenTruncate of path : int
-        | MkDir of path : int
-        | RmDir of path : int
-        | Unlink of path : int
-        | Link of existing : int * path : int
-        | Symlink of target : int * path : int
-        | Rename of source : int * destination : int
-        | Chmod of path : int * form : Form * mode : int
-        /// `chown` to root, or to neither ID.
-        | Chown of path : int * neither : bool
-        | Utimes of path : int * times : Times
-        | AddWatch of instance : int * path : int * mask : uint32 * dontFollow : bool
-        | RmWatch of instance : int * wd : int
-        /// `open(2)` of the path, kept: read-only, or for reading and writing.
-        | Open of path : int * readOnly : bool
-        /// Through the kept descriptor `slot` (0 the newest, and back from
-        /// there, modulo how many are kept): a write of `count` bytes.
-        | Write of slot : int * count : int
-        | Ftruncate of slot : int
-        | Fchmod of slot : int * mode : int
-        | Close of slot : int
-
-    let private eventBits : uint32 list =
-        [ modify ; attrib ; movedFrom ; movedTo ; create ; delete ; 0x400u ; 0x800u ]
-
-    let private exclUnlink : uint32 = 0x04000000u
-    let private moveSelf : uint32 = 0x800u
-
-    let private opGen : Gen<Op> =
-        let path = Gen.choose (0, paths.Length - 1)
-
-        let mask =
-            gen {
-                let! events =
-                    Gen.subListOf eventBits
-                    |> Gen.map (List.fold (|||) 0u)
-                    |> Gen.filter (fun mask -> mask <> 0u)
-
-                let! excl = Gen.elements [ false ; true ]
-                return events ||| (if excl then exclUnlink else 0u)
-            }
-
-        let slot = Gen.choose (0, 7)
-
-        Gen.frequency
-            [
-                4, Gen.map2 (fun p e -> Op.Create (p, e)) path (Gen.elements [ true ; false ])
-                2, Gen.map Op.OpenTruncate path
-                3, Gen.map Op.MkDir path
-                2, Gen.map Op.RmDir path
-                3, Gen.map Op.Unlink path
-                2, Gen.map2 (fun e p -> Op.Link (e, p)) path path
-                1, Gen.map2 (fun t p -> Op.Symlink (t, p)) path path
-                4, Gen.map2 (fun s d -> Op.Rename (s, d)) path path
-                4,
-                Gen.map3
-                    (fun p f m -> Op.Chmod (p, f, m))
-                    path
-                    (Gen.elements [ Form.Plain ; Form.Plain ; Form.Dot ; Form.Slash ])
-                    (Gen.elements [ 0o755 ; 0o700 ])
-                2, Gen.map2 (fun p n -> Op.Chown (p, n)) path (Gen.elements [ false ; false ; true ])
-                2,
-                Gen.map2
-                    (fun p t -> Op.Utimes (p, t))
-                    path
-                    (Gen.elements [ Times.Both ; Times.AccessOnly ; Times.ModificationOnly ])
-                5,
-                gen {
-                    let! instance = Gen.choose (0, 1)
-                    let! p = path
-                    let! m = mask
-                    let! dontFollow = Gen.elements [ false ; false ; false ; true ]
-                    return Op.AddWatch (instance, p, m, dontFollow)
-                }
-                1, Gen.map2 (fun i w -> Op.RmWatch (i, w)) (Gen.choose (0, 1)) (Gen.choose (1, 6))
-                4, Gen.map2 (fun p r -> Op.Open (p, r)) path (Gen.elements [ false ; false ; true ])
-                5, Gen.map2 (fun s c -> Op.Write (s, c)) slot (Gen.elements [ 0 ; 1 ; 1 ; 3 ])
-                2, Gen.map Op.Ftruncate slot
-                2, Gen.map2 (fun s m -> Op.Fchmod (s, m)) slot (Gen.elements [ 0o755 ; 0o700 ])
-                2, Gen.map Op.Close slot
-            ]
-
-    /// A descriptor opened through a name that something then happens to,
-    /// and a change through it: the name unlinked, renamed away, renamed over,
-    /// given again by a link or a fresh file, its directory removed, or left
-    /// alone. A slot of 0 is the newest kept descriptor, which this opened if
-    /// the open succeeded.
-    let private episodeGen : Gen<Op list> =
-        gen {
-            let path = Gen.choose (0, paths.Length - 1)
-            let! p = path
-            let! q = path
-            let! readOnly = Gen.elements [ false ; false ; true ]
-
-            let! meanwhile =
-                Gen.elements
-                    [
-                        [ Op.Unlink p ]
-                        [ Op.Rename (p, q) ]
-                        [ Op.Rename (q, p) ]
-                        [ Op.Unlink p ; Op.Link (q, p) ]
-                        [ Op.Unlink p ; Op.Create (p, false) ]
-                        [ Op.RmDir p ]
-                        []
-                    ]
-
-            let! change = Gen.elements [ Op.Write (0, 1) ; Op.Ftruncate 0 ; Op.Fchmod (0, 0o700) ]
-            return [ Op.Create (p, false) ; Op.Open (p, readOnly) ] @ meanwhile @ [ change ]
-        }
-
-    /// A file with two names, watched itself, opened through one or both or
-    /// one twice, then its names unlinked or renamed over in some order and
-    /// its descriptors closed: when it goes for inotify depends on which
-    /// names the descriptors hold. Or a directory, watched, opened, removed
-    /// and closed.
-    let private selfEpisodeGen : Gen<Op list> =
-        gen {
-            let path = Gen.choose (0, paths.Length - 1)
-            let! p = path
-            let! q = path
-            let! other = path
-            let! instance = Gen.choose (0, 1)
-            let! events = Gen.elements [ 0xC00u ; 0x400u ; 0x4u ; List.fold (|||) 0u eventBits ]
-
-            let! opens =
-                Gen.elements [ [] ; [ p ] ; [ q ] ; [ p ; q ] ; [ p ; p ] ; [ q ; p ; q ] ]
-                |> Gen.map (List.map (fun opened -> Op.Open (opened, false)))
-
-            let! removals =
-                Gen.elements
-                    [
-                        [ Op.Unlink p ; Op.Unlink q ]
-                        [ Op.Unlink q ; Op.Unlink p ]
-                        [ Op.Unlink p ; Op.Rename (other, q) ]
-                        [
-                            Op.Unlink q
-                            Op.Link (p, q)
-                            Op.Open (q, false)
-                            Op.Unlink p
-                            Op.Unlink q
-                        ]
-                    ]
-
-            let! closes = Gen.listOfLength 4 (Gen.map Op.Close (Gen.choose (0, 3)))
-            let! directory = Gen.frequency [ 3, Gen.constant false ; 1, Gen.constant true ]
-
-            if directory then
-                return
-                    [
-                        Op.MkDir p
-                        Op.AddWatch (instance, p, events, false)
-                        Op.Open (p, true)
-                        Op.RmDir p
-                        Op.Close 0
-                    ]
-            else
-                return
-                    [
-                        Op.Create (p, false)
-                        Op.Link (p, q)
-                        Op.AddWatch (instance, p, events, false)
-                    ]
-                    @ opens
-                    @ removals
-                    @ closes
-        }
-
-    /// Half the sequences open by watching every directory of the pool, on
-    /// both instances, for every event, half of those with `IN_EXCL_UNLINK`,
-    /// so that most changes reach a watch.
-    let private caseGen : Gen<Op list> =
-        gen {
-            let! opening = Gen.elements [ true ; false ]
-            let! excl = Gen.elements [ 0u ; exclUnlink ]
-            let! length = Gen.choose (10, 40)
-
-            let! ops =
-                Gen.listOfLength
-                    length
-                    (Gen.frequency [ 6, Gen.map List.singleton opGen ; 2, episodeGen ; 1, selfEpisodeGen ])
-                |> Gen.map List.concat
-
-            let watchAll =
-                [
-                    for instance in 0..1 do
-                        for dir in dirs do
-                            Op.AddWatch (
-                                instance,
-                                List.findIndex ((=) dir) paths,
-                                List.fold (|||) 0u eventBits ||| excl,
-                                false
-                            )
-                ]
-
-            return (if opening then watchAll else []) @ ops
-        }
+    /// Every path of the pool, from the root, as the target of a symbolic
+    /// link: the reference resolves a link's target from the root.
+    let private targets : string list = paths |> List.map absolute
 
     // ------------------------------------------------------------ the reference
 
     [<RequireQualifiedAccess>]
     type private Label =
-        | Create
-        | Delete
-        | Moved
-        | AttribNamed
-        | AttribSelf
-        | Modify
-        | Directory
-        | Ignored
+        | Record of RecordLabel
         | Call
         /// A record of a change through a kept descriptor.
         | ThroughDescriptor
@@ -317,13 +95,13 @@ module TestInotifyDelivery =
         /// A record of a change through a kept descriptor whose name a rename
         /// moved.
         | ThroughMoved
-        | DeleteSelf
-        | MoveSelf
         /// A watched inode's going.
         | Gone
         /// A watched file's going while a descriptor still holds it, through
         /// another name.
         | GoneWhileOpen
+        /// A watch added with `IN_DONT_FOLLOW` on a symbolic link itself.
+        | WatchesLink
 
 
     [<RequireQualifiedAccess>]
@@ -402,6 +180,7 @@ module TestInotifyDelivery =
             Orphans : Map<int, int>
         }
 
+    /// The reference's view of `seed`.
     let private initialReference : Reference =
         let tree =
             [
@@ -425,13 +204,6 @@ module TestInotifyDelivery =
             NextDentry = 0
             Orphans = Map.empty
         }
-
-    /// The model's starting tree, matching `initialReference`.
-    let private seed : (string * SeedEntry) list =
-        [
-            "a", directory 0o755 [ "s", directory 0o755 [] ; "x", file "x" ]
-            "b", directory 0o755 [ "y", file "y" ]
-        ]
 
     /// Where `path` resolves to: the path, with every symbolic link the walk
     /// follows replaced by its target, of the name it ends at, and what that
@@ -733,28 +505,31 @@ module TestInotifyDelivery =
 
         match op with
         | Op.Create (path, _) ->
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | _, Some _ -> reference, None
             | created, None ->
                 let id, reference = fresh reference
                 let node = Node.File id
                 bind created node reference |> notifyParent created create node 0u, None
         | Op.OpenTruncate path ->
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | resolved, Some (Node.File _ as node) -> notifyPath resolved modify node reference, None
-            | other -> failwith $"O_TRUNC of %s{paths.[path]} succeeded on %A{other}"
+            | other -> failwith $"O_TRUNC of %s{named path} succeeded on %A{other}"
         | Op.MkDir path ->
-            let created, _ = lookup paths.[path] false
+            let created, _ = lookup (named path) false
             let id, reference = fresh reference
             let node = Node.Directory id
             bind created node reference |> notifyParent created create node 0u, None
         | Op.Symlink (target, path) ->
-            let created, _ = lookup paths.[path] false
+            if not (target.StartsWith "/") then
+                failwith $"the reference resolves a link's target from the root, but %s{target} is relative"
+
+            let created, _ = lookup (named path) false
             let id, reference = fresh reference
-            let node = Node.Symlink (paths.[target], id)
+            let node = Node.Symlink (target, id)
             bind created node reference |> notifyParent created create node 0u, None
         | Op.RmDir path ->
-            match lookup paths.[path] false with
+            match lookup (named path) false with
             | removed, Some node ->
                 let parent = idOf (Map.find (parentOf removed) tree)
 
@@ -765,9 +540,9 @@ module TestInotifyDelivery =
                 |> nameRemoved cover parent node false
                 |> notifyParent removed delete node 0u,
                 None
-            | other -> failwith $"rmdir of %s{paths.[path]} succeeded on %A{other}"
+            | other -> failwith $"rmdir of %s{named path} succeeded on %A{other}"
         | Op.Unlink path ->
-            match lookup paths.[path] false with
+            match lookup (named path) false with
             | removed, Some node ->
                 let parent = idOf (Map.find (parentOf removed) tree)
                 let held = nameHeld parent (entryOf removed) (idOf node) reference
@@ -781,9 +556,9 @@ module TestInotifyDelivery =
                 |> nameRemoved cover parent node held
                 |> notifyParent removed delete node 0u,
                 None
-            | other -> failwith $"unlink of %s{paths.[path]} succeeded on %A{other}"
+            | other -> failwith $"unlink of %s{named path} succeeded on %A{other}"
         | Op.Link (existing, path) ->
-            match lookup paths.[existing] false, lookup paths.[path] false with
+            match lookup (named existing) false, lookup (named path) false with
             | (_, Some node), (created, None) ->
                 notifySelf attrib node reference
                 |> bind created node
@@ -791,7 +566,7 @@ module TestInotifyDelivery =
                 None
             | other -> failwith $"link succeeded on %A{other}"
         | Op.Rename (source, destination) ->
-            match lookup paths.[source] false, lookup paths.[destination] false with
+            match lookup (named source) false, lookup (named destination) false with
             | (_, Some moved), (_, Some displaced) when idOf moved = idOf displaced -> reference, None
             | (from, Some moved), (towards, displaced) ->
                 let cookie = reference.NextCookie
@@ -871,12 +646,12 @@ module TestInotifyDelivery =
                 reference, None
             | other -> failwith $"rename succeeded on %A{other}"
         | Op.Chmod (path, _, _) ->
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | resolved, Some node -> notifyPath resolved attrib node reference, None
             | other -> failwith $"chmod succeeded on %A{other}"
         | Op.Chown (_, true) -> reference, None
         | Op.Chown (path, false) ->
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | resolved, Some node -> notifyPath resolved attrib node reference, None
             | other -> failwith $"chown succeeded on %A{other}"
         | Op.Utimes (path, times) ->
@@ -886,12 +661,17 @@ module TestInotifyDelivery =
                 | Times.ModificationOnly -> modify
                 | Times.AccessOnly -> 0x1u
 
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | resolved, Some node -> notifyPath resolved events node reference, None
             | other -> failwith $"utimensat succeeded on %A{other}"
         | Op.AddWatch (instance, path, mask, dontFollow) ->
-            match lookup paths.[path] (not dontFollow) with
+            match lookup (named path) (not dontFollow) with
             | _, Some node ->
+                match node with
+                | Node.Symlink _ -> cover Label.WatchesLink
+                | Node.File _
+                | Node.Directory _ -> ()
+
                 let watches = reference.Watches.[instance]
 
                 let wd, reference =
@@ -911,7 +691,7 @@ module TestInotifyDelivery =
                 Some wd
             | other -> failwith $"inotify_add_watch succeeded on %A{other}"
         | Op.Open (path, readOnly) ->
-            match lookup paths.[path] true with
+            match lookup (named path) true with
             | opened, Some node ->
                 let parent = idOf (Map.find (parentOf opened) tree)
 
@@ -964,7 +744,7 @@ module TestInotifyDelivery =
                         ]
                 },
                 None
-            | other -> failwith $"open of %s{paths.[path]} succeeded on %A{other}"
+            | other -> failwith $"open of %s{named path} succeeded on %A{other}"
         | Op.Write (slot, count) ->
             match keptAt slot reference with
             | Some (_, kept) when count > 0 -> notifyKept kept modify true reference, None
@@ -1029,226 +809,8 @@ module TestInotifyDelivery =
 
     // ---------------------------------------------------------------- the model
 
-    let private linuxAtFdCwd : int = -100
-
-    /// The syscall `op` makes on `platform`, whose inotify instances are `fds`
-    /// and whose kept descriptors are `kept`, oldest first; `None` for a call
-    /// through a kept descriptor when none is kept, which is not made. A
-    /// `Create` or an `OpenTruncate` is this open, and then a close of the
-    /// descriptor it answers.
-    let private syscallOf
-        (platform : SimulatedUnixPlatform)
-        (fds : int list)
-        (kept : int list)
-        (op : Op)
-        : Syscall<int, string> option
-        =
-        let path (i : int) = PathArg.ofText paths.[i]
-        let word (flags : OpenFlags) : int = OpenFlagWords.encode platform flags
-
-        match op with
-        | Op.Create (i, exclusive) ->
-            Some (Syscall.Open (path i, word (openFlags FileAccessMode.WriteOnly true exclusive false), 0o644))
-        | Op.OpenTruncate i ->
-            Some (Syscall.Open (path i, word (openFlags FileAccessMode.WriteOnly false false true), 0o644))
-        | Op.MkDir i -> Some (Syscall.MkDir (path i, 0o755))
-        | Op.RmDir i -> Some (Syscall.RmDir (path i))
-        | Op.Unlink i -> Some (Syscall.Unlink (path i))
-        | Op.Link (existing, i) -> Some (Syscall.Link (path existing, path i))
-        | Op.Symlink (target, i) -> Some (Syscall.Symlink (path target, path i))
-        | Op.Rename (source, destination) -> Some (Syscall.Rename (path source, path destination))
-        | Op.Chmod (i, form, mode) ->
-            let text =
-                match form with
-                | Form.Plain -> paths.[i]
-                | Form.Dot -> paths.[i] + "/."
-                | Form.Slash -> paths.[i] + "/"
-
-            Some (Syscall.ChMod (PathArg.ofText text, mode))
-        | Op.Chown (i, neither) ->
-            let id = if neither then None else Some UserId.root
-            let gid = if neither then None else Some (group 0u)
-            Some (Syscall.ChOwn (path i, id, gid))
-        | Op.Utimes (i, times) ->
-            let access, modification =
-                match times with
-                | Times.Both -> timespec 1L 0L, timespec 2L 0L
-                | Times.AccessOnly -> timespec 1L 0L, timespec 0L utimeOmit
-                | Times.ModificationOnly -> timespec 0L utimeOmit, timespec 2L 0L
-
-            Some (
-                Syscall.UTimensAt (
-                    linuxAtFdCwd,
-                    NullablePathArgument.NotNull (path i),
-                    TimesArgument.Fields (access, modification),
-                    0
-                )
-            )
-        | Op.AddWatch (instance, i, mask, dontFollow) ->
-            Some (Syscall.InotifyAddWatch (fds.[instance], path i, mask ||| (if dontFollow then 0x02000000u else 0u)))
-        | Op.RmWatch (instance, wd) -> Some (Syscall.InotifyRmWatch (fds.[instance], wd))
-        | Op.Open (i, readOnly) ->
-            let access =
-                if readOnly then
-                    FileAccessMode.ReadOnly
-                else
-                    FileAccessMode.ReadWrite
-
-            Some (Syscall.Open (path i, word (openFlags access false false false), 0))
-        | Op.Write _
-        | Op.Ftruncate _
-        | Op.Fchmod _
-        | Op.Close _ ->
-
-        match kept with
-        | [] -> None
-        | kept ->
-
-        let slotOf (slot : int) = kept.[slotIndex slot kept.Length]
-
-        match op with
-        | Op.Write (slot, count) ->
-            let bytes =
-                System.Collections.Immutable.ImmutableArray.CreateRange (Array.create count (byte 'w'))
-
-            Some (Syscall.Write (slotOf slot, CopiedArgument.Readable bytes, uint64 count))
-        | Op.Ftruncate slot -> Some (Syscall.FTruncate (slotOf slot, 0L))
-        | Op.Fchmod (slot, mode) -> Some (Syscall.FChMod (slotOf slot, mode))
-        | Op.Close slot -> Some (Syscall.Close (slotOf slot))
-        | other -> failwith $"%A{other} is not a call through a kept descriptor"
-
-    /// The `SyscallAnswer` the call `stepped` answers, and the system after it.
-    /// An open must return, and a write must return and raise no signal.
-    let private answerOf
-        (syscall : Syscall<int, string>)
-        (stepped : SteppedCall<int, string>)
-        : SyscallAnswer * UnixSystem<int, string>
-        =
-        if UnionCaseName.ofValue stepped <> UnionCaseName.ofValue syscall then
-            failwith $"Syscall.%s{UnionCaseName.ofValue syscall} answered SteppedCall.%s{UnionCaseName.ofValue stepped}"
-
-        match stepped with
-        | SteppedCall.MkDir (answer, after)
-        | SteppedCall.RmDir (answer, after)
-        | SteppedCall.Unlink (answer, after)
-        | SteppedCall.Link (answer, after)
-        | SteppedCall.Symlink (answer, after)
-        | SteppedCall.Rename (answer, after)
-        | SteppedCall.ChMod (answer, after)
-        | SteppedCall.ChOwn (answer, after)
-        | SteppedCall.UTimensAt (answer, after)
-        | SteppedCall.InotifyAddWatch (answer, after)
-        | SteppedCall.InotifyRmWatch (answer, after)
-        | SteppedCall.FTruncate (answer, after)
-        | SteppedCall.FChMod (answer, after)
-        | SteppedCall.Close (answer, after) -> answer, after
-        | SteppedCall.Open (SyscallOutcome.Answered answer, after) -> answer, after
-        | SteppedCall.Open (outcome, _) -> failwith $"expected an open that returns, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Completed written), after)) ->
-            SyscallAnswer.Completed written, after
-        | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed error), after)) ->
-            SyscallAnswer.Failed error, after
-        | SteppedCall.Write (ProcessFate.Continues (outcome, _)) ->
-            failwith $"expected a write that returns and raises no signal, got %A{outcome}"
-        | SteppedCall.Write (ProcessFate.ProcessEnded (ended, _)) ->
-            failwith $"expected a write that returns and raises no signal, but it ended the process: %A{ended}"
-        | other -> failwith $"SteppedCall.%s{UnionCaseName.ofValue other} answers no call the property makes"
-
-    /// Fails the test unless `stepped`, what `UnixSystem.tryStep` answered for
-    /// the `write(2)` of `bytes` through `fd` in `system`, is what the same
-    /// write answers through the call's own functions, held to it made a step
-    /// at a time (`WriteOutcomes.admitThenWrite`), leaving the same system.
-    let private requireWrittenAlike
-        (fd : int)
-        (bytes : System.Collections.Immutable.ImmutableArray<byte>)
-        (stepped : SteppedCall<int, string>)
-        (system : UnixSystem<int, string>)
-        : unit
-        =
-        let throughSteps =
-            WriteOutcomes.admitThenWrite 0 fd UserBuffer.Mapped bytes system
-            |> Result.map (fun step ->
-                match step with
-                | WriteStep.Returns (answer, after) -> ProcessFate.Continues (WriteOutcome.Returns answer, after)
-                | WriteStep.ReturnsRaising (answer, signal, after) ->
-                    ProcessFate.Continues (WriteOutcome.ReturnsRaising (answer, signal), after)
-                | WriteStep.ProcessEnded (ended, after) -> ProcessFate.ProcessEnded (ended, after)
-                | WriteStep.WouldBlock (condition, after) ->
-                    ProcessFate.Continues (WriteOutcome.WouldBlock condition, after)
-                | WriteStep.Interrupted after -> ProcessFate.Continues (WriteOutcome.Interrupted, after)
-            )
-
-        match stepped, throughSteps with
-        | SteppedCall.Write fate, Ok steps when fate = steps -> ()
-        | _ ->
-            let answered (fate : ProcessFate<WriteOutcome<int>, int, string>) : string =
-                match fate with
-                | ProcessFate.Continues (outcome, _) -> $"%A{outcome}"
-                | ProcessFate.ProcessEnded (ended, _) -> $"%A{ended}"
-
-            let viaStep =
-                match stepped with
-                | SteppedCall.Write fate -> answered fate
-                | other -> $"SteppedCall.%s{UnionCaseName.ofValue other}"
-
-            failwith
-                $"write(%d{fd}): UnixSystem.tryStep answered %s{viaStep}, and the call's own functions %A{Result.map answered throughSteps}, or left another system"
-
-    /// What the model's call answered, and the system after it: `None` for a
-    /// refusal of a path syscall or of a watch, which changes nothing, or for
-    /// a call through a kept descriptor when none is kept, which is not made.
-    /// `kept` is the descriptors the model keeps, oldest first. An `Open`, and
-    /// a call through a kept descriptor, must not be refused.
-    let private call
-        (fds : int list)
-        (kept : int list)
-        (op : Op)
-        (system : UnixSystem<int, string>)
-        : (SyscallAnswer * UnixSystem<int, string>) option
-        =
-        match syscallOf system.Machine.UnixPlatform fds kept op with
-        | None -> None
-        | Some syscall ->
-
-        match UnixSystem.tryStep (Callers.leader system) syscall system, op with
-        | Error refusal, Op.Open _
-        | Error refusal, Op.Write _
-        | Error refusal, Op.Ftruncate _
-        | Error refusal, Op.Fchmod _
-        | Error refusal, Op.Close _ -> failwith $"%A{op}: refused: %s{SyscallRefusal.describe refusal}"
-        | Error _, _ -> None
-        | Ok stepped, (Op.Create _ | Op.OpenTruncate _) ->
-            match answerOf syscall stepped with
-            | SyscallAnswer.Completed fd, after ->
-                let close = Syscall.Close (int fd)
-
-                match UnixSystem.tryStep (Callers.leader after) close after with
-                | Ok (SteppedCall.Close (SyscallAnswer.Completed 0L, after)) -> Some (SyscallAnswer.Completed 0L, after)
-                | Ok other -> failwith $"close(%d{fd}) answered %A{answerOf close other |> fst}"
-                | Error refusal -> failwith $"close(%d{fd}) was refused: %s{SyscallRefusal.describe refusal}"
-            | answered -> Some answered
-        | Ok stepped, Op.Write _ ->
-            match syscall with
-            | Syscall.Write (fd, CopiedArgument.Readable bytes, _) -> requireWrittenAlike fd bytes stepped system
-            | other -> failwith $"%A{op} made %A{other}, which is not a write from readable memory"
-
-            Some (answerOf syscall stepped)
-        | Ok stepped, _ -> Some (answerOf syscall stepped)
-
-    /// Numbers each cookie by the order it first appears in.
-    type private Cookies () =
-        let seen = Dictionary<uint32, uint32> ()
-
-        member _.Ordinal (cookie : uint32) : uint32 =
-            if cookie = 0u then
-                0u
-            else
-                match seen.TryGetValue cookie with
-                | true, ordinal -> ordinal
-                | false, _ ->
-                    let ordinal = uint32 seen.Count + 1u
-                    seen.[cookie] <- ordinal
-                    ordinal
+    /// Who owns the tree `boot` makes: the owner a `Chown` gives a path to.
+    let private treeOwner : InodeOwner = owner 0u
 
     let private run (cover : Label -> unit) (ops : Op list) : unit =
         let system = boot root seed
@@ -1276,20 +838,23 @@ module TestInotifyDelivery =
                 | _ -> None, false
 
             let system, reference, kept =
-                match call fds kept op system with
+                match syscallOf system.Machine.UnixPlatform treeOwner fds kept op with
                 | None -> system, reference, kept
-                | Some (SyscallAnswer.Failed _, after) -> after, reference, kept
-                | Some (SyscallAnswer.Completed answer, after) ->
+                | Some syscall ->
+
+                match answer op syscall system with
+                | SyscallAnswer.Failed _, after -> after, reference, kept
+                | SyscallAnswer.Completed answered, after ->
                     let queuedBefore = reference.Queued
                     let reference, wd = apply cover op reference
 
                     match wd with
-                    | Some wd -> answer |> shouldEqual (int64 wd)
+                    | Some wd -> answered |> shouldEqual (int64 wd)
                     | None -> ()
 
                     let kept =
                         match op with
-                        | Op.Open _ -> kept @ [ int answer ]
+                        | Op.Open _ -> kept @ [ int answered ]
                         | Op.Close slot -> kept |> List.removeAt (slotIndex slot kept.Length)
                         | _ -> kept
 
@@ -1341,35 +906,8 @@ module TestInotifyDelivery =
                             $"step %d{step}, %A{op}: instance %d{instance} queued %A{actual}, where the reference expects %A{expected}"
 
                     for _, mask, _, entry in expected do
-                        if mask &&& create <> 0u then
-                            cover Label.Create
-
-                        if mask &&& delete <> 0u then
-                            cover Label.Delete
-
-                        if mask &&& movedTo <> 0u then
-                            cover Label.Moved
-
-                        if mask &&& attrib <> 0u && entry <> "" then
-                            cover Label.AttribNamed
-
-                        if mask &&& attrib <> 0u && entry = "" then
-                            cover Label.AttribSelf
-
-                        if mask &&& modify <> 0u then
-                            cover Label.Modify
-
-                        if mask &&& 0x40000000u <> 0u then
-                            cover Label.Directory
-
-                        if mask &&& 0x8000u <> 0u then
-                            cover Label.Ignored
-
-                        if mask &&& 0x400u <> 0u then
-                            cover Label.DeleteSelf
-
-                        if mask &&& moveSelf <> 0u then
-                            cover Label.MoveSelf
+                        for label in recordLabels mask entry do
+                            cover (Label.Record label)
 
                     system
                 )
@@ -1385,21 +923,22 @@ module TestInotifyDelivery =
     [<Test>]
     let ``each path syscall queues on each watching instance the records the reference states`` () : unit =
         let coverage =
-            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen caseGen) run
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 300) (Arb.fromGen (caseGen targets)) run
 
-        coverage.Count Label.Create |> shouldBeGreaterThan 100
-        coverage.Count Label.Delete |> shouldBeGreaterThan 100
-        coverage.Count Label.Moved |> shouldBeGreaterThan 100
-        coverage.Count Label.AttribNamed |> shouldBeGreaterThan 100
-        coverage.Count Label.AttribSelf |> shouldBeGreaterThan 50
-        coverage.Count Label.Modify |> shouldBeGreaterThan 50
-        coverage.Count Label.Directory |> shouldBeGreaterThan 100
-        coverage.Count Label.Ignored |> shouldBeGreaterThan 20
+        coverage.Count (Label.Record RecordLabel.Create) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.Delete) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.Moved) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.AttribNamed) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.AttribSelf) |> shouldBeGreaterThan 50
+        coverage.Count (Label.Record RecordLabel.Modify) |> shouldBeGreaterThan 50
+        coverage.Count (Label.Record RecordLabel.Directory) |> shouldBeGreaterThan 100
+        coverage.Count (Label.Record RecordLabel.Ignored) |> shouldBeGreaterThan 20
         coverage.Count Label.ThroughDescriptor |> shouldBeGreaterThan 300
         coverage.Count Label.ThroughUnlinked |> shouldBeGreaterThan 100
         coverage.Count Label.ThroughMoved |> shouldBeGreaterThan 30
         coverage.Count Label.ExcludedUnlinked |> shouldBeGreaterThan 20
-        coverage.Count Label.DeleteSelf |> shouldBeGreaterThan 20
-        coverage.Count Label.MoveSelf |> shouldBeGreaterThan 20
+        coverage.Count (Label.Record RecordLabel.DeleteSelf) |> shouldBeGreaterThan 20
+        coverage.Count (Label.Record RecordLabel.MoveSelf) |> shouldBeGreaterThan 20
         coverage.Count Label.Gone |> shouldBeGreaterThan 50
         coverage.Count Label.GoneWhileOpen |> shouldBeGreaterThan 5
+        coverage.Count Label.WatchesLink |> shouldBeGreaterThan 20
