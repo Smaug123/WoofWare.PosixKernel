@@ -28,6 +28,11 @@
 //                  -1, tv_sec -1, an unmapped timespec): which answer wins.
 //   wake-screen  - FUTEX_WAKE_PRIVATE of 1 on an address with no waiters,
 //                  misaligned, unmapped, unmapped and misaligned, and null.
+//   range        - a wait and a wake at addresses no mapping backs, around
+//                  the user address limit (2^48 on this aarch64 kernel) and
+//                  in the kernel's half: does a wake, which reads no memory,
+//                  screen the address's range? And a misaligned address, and a
+//                  bad timespec, past the limit: which screen comes first?
 //   compare      - the comparison is of 32-bit words: a word of 0xFFFFFFFF
 //                  against val -1.
 //   switches     - voluntary context switches over 1000 waits with a zero
@@ -433,6 +438,46 @@ static void section_wake_screen(void)
         snprintf(label, sizeof label, "wake-screen addr=%s n=1", names[i]);
         run_row(label, row_wake_screen, &kinds[i], 2);
     }
+}
+
+// ---------------------------------------------------------------- range
+
+struct range_row {
+    uint64_t address;
+    int op;
+    int timeout_bad;
+};
+
+static void row_range(const void *arg)
+{
+    const struct range_row *r = arg;
+    struct timespec ten_ms = { 0, 10000000 };
+    struct timespec bad = { 0, 1000000000 };
+    long ret = futex((void *)(uintptr_t)r->address, r->op, 0, r->timeout_bad ? &bad : &ten_ms);
+    int e = ret < 0 ? errno : 0;
+    out("ret=%ld errno=%s", ret, errname(e));
+}
+
+static void section_range(void)
+{
+    uint64_t addresses[] = {
+        0x0000fffffffffff8ULL, 0x0000fffffffffffcULL, 0x0001000000000000ULL, 0x0001000000000004ULL,
+        0x8000000000000000ULL, 0xfffffffffffffffcULL,
+    };
+    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; i++) {
+        for (int w = 0; w < 2; w++) {
+            struct range_row r = { addresses[i], w ? FUTEX_WAKE_PRIVATE : FUTEX_WAIT_PRIVATE, 0 };
+            char label[96];
+            snprintf(label, sizeof label, "range %s addr=0x%016llx", w ? "wake" : "wait", (unsigned long long)addresses[i]);
+            run_row(label, row_range, &r, 2);
+        }
+    }
+    struct range_row misaligned = { 0x0001000000000002ULL, FUTEX_WAKE_PRIVATE, 0 };
+    run_row("range wake addr=0x0001000000000002", row_range, &misaligned, 2);
+    misaligned.op = FUTEX_WAIT_PRIVATE;
+    run_row("range wait addr=0x0001000000000002", row_range, &misaligned, 2);
+    struct range_row timespec = { 0x0001000000000000ULL, FUTEX_WAIT_PRIVATE, 1 };
+    run_row("range wait addr=0x0001000000000000 timeout=nsec=1e9", row_range, &timespec, 2);
 }
 
 // ---------------------------------------------------------------- compare
@@ -986,6 +1031,7 @@ int main(void)
 
     section_wait_screen();
     section_wake_screen();
+    section_range();
     run_row("compare word=0xFFFFFFFF val=-1", row_compare, NULL, 2);
 
     const char *switch_labels[] = { "switches zero-timeout x1000", "switches 1ns-timeout x1000", "switches mismatch zero-timeout x1000" };

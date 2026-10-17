@@ -31,8 +31,9 @@ type InterruptedCall =
 type internal UnhandledInterruption =
     /// The call ends so.
     | Ends of InterruptedCall
-    /// The call is a Linux `poll` with a timeout, which restarts with what is
-    /// left of its timeout (`restart_syscall`): not the call as first made.
+    /// The call is a Linux `poll` or futex wait with a timeout, which restarts
+    /// with what is left of its timeout (`restart_syscall`): not the call as
+    /// first made.
     | RestartsWithRemainingTime
     /// What the call does is unmeasured: no flavour parks a thread in it yet,
     /// or this flavour does not.

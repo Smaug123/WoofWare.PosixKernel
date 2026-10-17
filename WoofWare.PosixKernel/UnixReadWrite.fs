@@ -3585,6 +3585,7 @@ module UnixReadWrite =
         | Some (ParkedSyscall.DatagramReceive _)
         | Some (ParkedSyscall.DatagramSend _)
         | Some (ParkedSyscall.Connect _)
+        | Some (ParkedSyscall.Futex _)
         | None -> None
 
     /// The write `thread` is asleep in.

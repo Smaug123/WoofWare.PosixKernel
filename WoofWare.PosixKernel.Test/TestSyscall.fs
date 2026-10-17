@@ -126,6 +126,7 @@ module TestSyscall =
             "UnixThreadLifecycle.exitThread", "ExitThread"
             "UnixThreadLifecycle.exitGroup", "ExitGroup"
             "UnixScheduling.getcpu", "GetCpu"
+            "UnixFutex.futex", "Futex"
         ]
 
     /// The public functions whose first argument is a `Caller` but which are
@@ -145,6 +146,7 @@ module TestSyscall =
             "UnixReadWrite.finishRead", finisher
             "UnixReadWrite.finishWrite", finisher
             "UnixSignal.finishSigsuspend", finisher
+            "UnixFutex.finishFutexWait", finisher
             "UnixSignal.onReturnToUser", "the return to user mode, which ends a call rather than making one"
             "UnixSignal.owesReturn", "a query about the thread, not a call it makes"
             "UnixScheduling.dispatch", "the client's report of which processor runs a thread, which no thread makes"
@@ -281,6 +283,7 @@ module TestSyscall =
             "ExitThread"
             "ExitGroup"
             "GetCpu"
+            "Futex"
         ]
 
     let private allCases : BindingFlags = BindingFlags.Public ||| BindingFlags.NonPublic
@@ -350,7 +353,7 @@ module TestSyscall =
         let cases = caseOfFunction |> List.map snd
 
         cases |> List.distinct |> shouldEqual cases
-        List.length cases |> shouldEqual 105
+        List.length cases |> shouldEqual 106
         List.length reserved |> shouldEqual 11
 
         Set.intersect (Set.ofList cases) (Set.ofList reserved) |> shouldEqual Set.empty
@@ -358,7 +361,7 @@ module TestSyscall =
         Set.union (Set.ofList cases) (Set.ofList reserved)
         |> shouldEqual (Set.ofList syscallCaseNames)
 
-        List.length syscallCaseNames |> shouldEqual 116
+        List.length syscallCaseNames |> shouldEqual 117
 
     [<Test>]
     let ``SteppedCall's cases are Syscall's, in the same order`` () : unit =

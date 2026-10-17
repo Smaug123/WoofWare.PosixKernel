@@ -41,7 +41,8 @@ module internal FinishOracle =
         | FinishedCall.PipeRead (_, system)
         | FinishedCall.ConnectionRead (_, system)
         | FinishedCall.SigSuspend (_, system)
-        | FinishedCall.InotifyRead (_, system) -> Some system
+        | FinishedCall.InotifyRead (_, system)
+        | FinishedCall.Futex (_, system) -> Some system
         | FinishedCall.PipeWrite (CallProgress.Answered (ProcessFate.Continues (_, system)))
         | FinishedCall.ConnectionWrite (CallProgress.Answered (ProcessFate.Continues (_, system))) -> Some system
         | FinishedCall.PipeWrite _
@@ -332,6 +333,24 @@ module internal FinishOracle =
                         | _ -> None
                     )
                     (UnixReadWrite.tryFinishRead caller system)
+                    sameOutcome
+                    (fst >> UnionCaseName.ofValue)
+            | ParkedSyscall.Futex _ ->
+                held
+                    caller
+                    kind
+                    finished
+                    (fun finished ->
+                        match finished with
+                        | FinishedCall.Futex (outcome, system) -> Some (outcome, system)
+                        | _ -> None
+                    )
+                    (fun refusal ->
+                        match refusal with
+                        | FinishRefusal.Futex refusal -> Some refusal
+                        | _ -> None
+                    )
+                    (UnixFutex.tryFinishFutexWait caller system)
                     sameOutcome
                     (fst >> UnionCaseName.ofValue)
             | ParkedSyscall.PipeWrite _ ->

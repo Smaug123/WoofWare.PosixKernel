@@ -530,6 +530,23 @@ Darwin has no inotify, and every call throws `PlatformNotSupportedException`.
 | `inotify_add_watch(2)`, given the path | `UnixInotify.inotifyAddWatchWithPath (path : PathArgumentBytes) (paused : PausedInotifyAddWatch)` | `SyscallAnswer * UnixSystem` |
 | `inotify_rm_watch(2)` | `UnixInotify.inotifyRmWatch (caller : Caller) (fd : int) (wd : int)` | `SyscallAnswer * UnixSystem` |
 
+#### Futexes
+
+Linux's `futex(2)`, for the two operations a private lock or semaphore is built on: `FUTEX_WAIT_PRIVATE` (128) and `FUTEX_WAKE_PRIVATE` (129), which `op` takes raw.
+A process's waiters on one address form one queue, in the order they began to wait, which no other process reaches.
+The kernel holds no word: the word is the caller's memory.
+A wait screens its timeout, a relative time on the monotonic clock, and then its address, and stops where the kernel reads the word (`UnixFutex.futexWithWord`), answering `EAGAIN` if it does not hold `value` and otherwise sleeping; a timeout of zero sleeps too, as Linux's does.
+Both screen the address: `EINVAL` if it is not a multiple of 4, and then `EFAULT` if its four bytes do not lie in user space (`UnixBootImage.withUserAddressLimit`).
+A wake takes up to `value` waiters off the queue, one if `value` is 0 or less, and answers how many it took; a waiter something else has woken keeps its place until its wait is finished, and a taken waiter's wait answers 0 whatever else woke it.
+A timeout beats a signal; a signal ends a wait with no timeout with `EINTR`, or restarts it under `SA_RESTART`, and one with a timeout with `EINTR`.
+A restarted wait reads its word again, so the client makes the call again; a wait with a timeout whose waking signal has gone by the time it is finished, which Linux would restart with its first deadline, throws `UnmodelledException`.
+Every other operation throws `UnmodelledException`, and Darwin, which has no `futex`, throws `PlatformNotSupportedException`.
+
+| Call | Function | Answers |
+| --- | --- | --- |
+| Linux's `futex(2)` | `UnixFutex.futex (caller : Caller) (address : uint64) (op : int) (value : int) (word : UserBuffer) (timeout : TimespecArgument)` | `CallProgress<PausedFutexWait, SyscallOutcome * UnixSystem>` |
+| `futex(2)`'s wait, given the word | `UnixFutex.futexWithWord (word : uint32) (paused : PausedFutexWait)` | `SyscallOutcome * UnixSystem` |
+
 #### Signals
 
 | Call | Function | Answers |
@@ -580,7 +597,7 @@ A signal number is raw, under the process's own numbering: `Signal.toRawSignoUnd
 
 #### What is not modelled
 
-These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendto`, `recvfrom`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex`, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
+These calls have no function, and a client should refuse them rather than guess: `getppid`, `nanosleep` and `clock_nanosleep` (a client can sleep a thread as a `poll` of nothing with a timeout), `select`, `pselect` and `ppoll`, `readv` and `writev`, `sendto`, `recvfrom`, `sendmsg` and `recvmsg`, `socketpair`, `truncate`, `fsync` and `fdatasync`, `getrlimit` and `setrlimit`, `sched_yield`, `futex` operations other than a private wait and wake, Darwin's `__ulock` and `__psynch` calls, `mmap` and its kin, `fork`, `exec` and `wait`, `sigaltstack`, and the timers (`alarm`, `setitimer`, `timer_create`).
 "What the kernel leaves to the client" says which of those are the client's by design.
 
 #### Calls that copy in from the caller's memory
@@ -593,6 +610,7 @@ A `getsockopt` stops where the kernel reads the caller's length cell instead, an
 Nothing else can be done to the system in between, since the paused call holds it.
 
 A call whose pathname is copied in after something observable stops there too, and takes that pathname in its resume function: `rename` and `renameat` stop before the destination (`UnixNamespace.renameWithDestination`), `link` and `linkat` before the new path (`UnixNamespace.linkWithDestination`), `symlink` and `symlinkat` before the link's own path (`UnixNamespace.symlinkWithPath`), `access` and `faccessat` before the path (`UnixPathResolution.accessWithPath`), since Linux answers a bad mode or flag word without reading it, and `inotify_add_watch` before the path (`UnixInotify.inotifyAddWatchWithPath`), since Linux answers a bad mask or descriptor without reading it.
+A futex wait stops where the kernel reads its word, once its timeout and address have passed their screens, and `UnixFutex.futexWithWord` takes what the word holds, read as that is called.
 `clonefile` stops twice: before the source (`UnixNamespace.cloneFileWithSource`) and before the destination (`UnixNamespace.cloneFileWithDestination`).
 A client that holds every argument already, such as a replayer, makes the call through `UnixSystem.step`, whose `Syscall` case holds what each copy reads (see "One entry point"), or resumes each paused call as soon as it is answered.
 
@@ -779,6 +797,7 @@ A client that wants a family's own answer type calls its finishing function inst
 | `ParkedSyscall.PipeRead`, `ParkedSyscall.ConnectionRead`, `ParkedSyscall.InotifyRead` (a `read` or `recv`) | `UnixReadWrite.finishRead (caller : Caller)` |
 | `ParkedSyscall.PipeWrite`, `ParkedSyscall.ConnectionWrite` (a `write` or `send`) | `UnixReadWrite.finishWrite (caller : Caller)`, then, if it stops at the copy, `UnixReadWrite.writeWithBytes (bytes : ImmutableArray<byte>) (paused : PausedWrite)` |
 | `ParkedSyscall.SigSuspend` (a `sigsuspend`, `rt_sigsuspend` or `pause`) | `UnixSignal.finishSigsuspend (caller : Caller)` |
+| `ParkedSyscall.Futex` (a `futex` wait) | `UnixFutex.finishFutexWait (caller : Caller)` |
 
 Each answers what the call that parked answered, as in the tables above, and `UnixWait.finish` holds that answer in the `FinishedCall` case of the same name.
 
@@ -787,7 +806,7 @@ The payloads of the datagram parks and the connect park have internal representa
 So are the primitives a FIFO open, a signal wait and a Unix-domain connect wait for, `WakePrimitive.FifoPartnerOpened`, `WakePrimitive.AwaitedSignalPending` and `WakePrimitive.AcceptQueueHasRoom`, which no condition contains yet.
 The cases exist so that a client's matches already handle them when sleeps, FIFOs, `select`, signal waits, datagram transfers and sleeping connects arrive.
 
-A call that waits with a timeout (`poll`, `epoll_wait`, `kevent`) wakes once its deadline passes.
+A call that waits with a timeout (`poll`, `epoll_wait`, `kevent`, a `futex` wait) wakes once its deadline passes.
 With nothing runnable, the client asks `UnixWait.deadlines`, which answers each sleeping call's deadline as an instant, in nanoseconds since boot.
 The earliest is when the first of those calls times out: the client advances the clock by it less `UnixSystem.nanosecondsSinceBoot`, and asks `UnixWait.wake` again.
 
@@ -1200,12 +1219,11 @@ Nothing here maps a file.
 
 ### Blocks inside the process
 
-**What.** A thread that waits without asking the kernel to watch a descriptor or a clock: Linux's `futex`, Darwin's `__psynch_*` and `__ulock_*` calls, and the mutexes, condition variables and timed waits that the C library builds on them.
+**What.** A thread that waits without asking the kernel to watch a descriptor or a clock: Darwin's `__psynch_*` and `__ulock_*` calls, Linux's `futex` operations other than a private wait and wake, and the mutexes, condition variables and timed waits that the C library builds on them.
 
-**Why the client's, for now.** A `futex` wait is keyed by a user address and compares a word of user memory, which is the client's (see above).
-So today the client keeps these blocks itself.
-The long-term plan is to model `futex` and `__psynch` in the kernel, so that every block happens there and the client has no blocked threads of its own (see [the tracking issue](https://github.com/Smaug123/WoofWare.PawPrint/issues/1726)).
-That is larger work, separate from the rest, and not yet scheduled.
+**Why the client's, for now.** Each is keyed by a user address and reads or writes user memory, which is the client's (see above).
+Linux's private `futex` wait and wake are the kernel's (see "Futexes"): the client hands over the word it reads, as it hands over any bytes a call copies in.
+The rest the client keeps itself for now; the long-term plan is to model them in the kernel too, so that every block happens there and the client has no blocked threads of its own (see [the tracking issue](https://github.com/Smaug123/WoofWare.PawPrint/issues/1726)).
 
 **Where they meet.** A thread the client holds blocked is parked in no call this library knows of, so as far as the library knows it could run.
 The client removes such threads from the set this library would call runnable (see the next part).

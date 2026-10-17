@@ -150,6 +150,9 @@ type FinishedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
     | DatagramSend of finished : FinishedDatagramSend<'Thread, 'Handler>
     /// A blocking `connect(2)`. Reserved: see `FinishedConnect`.
     | Connect of finished : FinishedConnect<'Thread, 'Handler>
+    /// A Linux `futex(2)` `FUTEX_WAIT_PRIVATE`, as `UnixFutex.finishFutexWait`
+    /// answers it.
+    | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
 
 /// What a woken call's finishing body answered, before `Entry` makes a kernel
 /// of its views: a `FinishedCall` of a modelled park whose systems are
@@ -169,6 +172,7 @@ type internal ViewFinishedCall<'View, 'Thread, 'Handler when 'Thread : compariso
     | ConnectionWrite of progress : CallProgress<PausedWrite<'Thread, 'Handler>, ViewFate<WriteOutcome<'Thread>, 'View>>
     | SigSuspend of outcome : SigsuspendOutcome * view : 'View
     | InotifyRead of outcome : ReadOutcome * view : 'View
+    | Futex of outcome : SyscallOutcome * view : 'View
 
 /// Why this library will not finish a woken call (`UnixWait.finish`): the
 /// refusal of the finishing function of the call's family, or a reserved park,
@@ -183,6 +187,7 @@ type internal FinishRefusal =
     | Read of ReadRefusal
     | Write of WriteRefusal
     | Sigsuspend of SigsuspendRefusal
+    | Futex of FutexRefusal
     /// The thread is parked in `parked`, a reserved park: nothing parks a
     /// thread in one yet, and no finishing function finishes one.
     | Reserved of parked : ParkedSyscall
@@ -201,6 +206,7 @@ module internal FinishRefusal =
         | FinishRefusal.Read refusal -> ReadRefusal.describe refusal
         | FinishRefusal.Write refusal -> WriteRefusal.describe refusal
         | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.describe refusal
+        | FinishRefusal.Futex refusal -> FutexRefusal.describe refusal
         | FinishRefusal.Reserved parked ->
             $"the thread is parked in %A{parked}, a call this library parks no thread in yet, and has no finishing function for."
 
@@ -215,6 +221,7 @@ module internal FinishRefusal =
         | FinishRefusal.Read refusal -> ReadRefusal.kind refusal
         | FinishRefusal.Write refusal -> WriteRefusal.kind refusal
         | FinishRefusal.Sigsuspend refusal -> SigsuspendRefusal.kind refusal
+        | FinishRefusal.Futex refusal -> FutexRefusal.kind refusal
         | FinishRefusal.Reserved _ -> RefusalKind.Unmodelled
 
 /// Deciding which parked threads a system wakes, and finishing a woken
@@ -587,6 +594,7 @@ module UnixWait =
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.SigSuspend
         | ViewFinishedCall.InotifyRead (outcome, view) ->
             shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.InotifyRead
+        | ViewFinishedCall.Futex (outcome, view) -> shapes.Map Shape.withSystem (outcome, view) |> FinishedCall.Futex
 
     /// `tryFinish` once `Entry` has admitted its caller: the call `thread` is
     /// parked in, finished by the finishing body of its family.
@@ -646,6 +654,10 @@ module UnixWait =
             UnixReadWrite.tryFinishReadIn thread system
             |> Result.map ViewFinishedCall.InotifyRead
             |> Result.mapError FinishRefusal.Read
+        | ParkedSyscall.Futex _ ->
+            UnixFutex.tryFinishFutexWaitIn thread system
+            |> Result.map ViewFinishedCall.Futex
+            |> Result.mapError FinishRefusal.Futex
         | ParkedSyscall.Sleep _
         | ParkedSyscall.FifoOpen _
         | ParkedSyscall.Select _

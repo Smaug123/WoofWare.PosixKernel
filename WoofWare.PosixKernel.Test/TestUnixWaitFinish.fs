@@ -569,6 +569,7 @@ module TestUnixWaitFinish =
         | Ok (FinishedCall.InotifyRead (outcome, after)) ->
             answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.SigSuspend (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
+        | Ok (FinishedCall.Futex (outcome, after)) -> answered (UnionCaseName.ofValue outcome = "WouldBlock") after
         | Ok (FinishedCall.Sleep _)
         | Ok (FinishedCall.FifoOpen _)
         | Ok (FinishedCall.Select _)

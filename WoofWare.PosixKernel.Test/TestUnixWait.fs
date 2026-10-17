@@ -532,7 +532,8 @@ module TestUnixWait =
         | ParkedSyscall.Select _
         | ParkedSyscall.DatagramReceive _
         | ParkedSyscall.DatagramSend _
-        | ParkedSyscall.Connect _ -> []
+        | ParkedSyscall.Connect _
+        | ParkedSyscall.Futex _ -> []
 
     /// A park of every kind, waiting on `description` wherever a park waits on
     /// one, with and without a deadline where it may have one, and each call a
@@ -587,6 +588,14 @@ module TestUnixWait =
                         Deadline = deadline
                         Destination = None
                     }
+
+                for taken in [ false ; true ] do
+                    ParkedSyscall.Futex
+                        {
+                            FutexAddress = 0x1000UL
+                            FutexDeadline = deadline
+                            TakenByWake = taken
+                        }
 
             for mode in [ FlockMode.Shared ; FlockMode.Exclusive ] do
                 ParkedSyscall.Flock

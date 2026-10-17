@@ -487,6 +487,11 @@ module TestStepOracle =
             UnixScheduling.tryGetcpu caller system
             |> Result.map SteppedCall.GetCpu
             |> Result.mapError SyscallRefusal.GetCpu
+        | Syscall.Futex (address, op, value, word, timeout) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+            |> CallProgress.resumeWith (fun paused -> UnixFutex.tryFutexWithWord (cell word) paused)
+            |> Result.map SteppedCall.Futex
+            |> Result.mapError SyscallRefusal.Futex
         | other -> failwith $"%s{UnionCaseName.ofValue other} is a reserved case, whose call no function makes"
 
     /// What a call answered, as values to compare: the `SteppedCall`'s case
@@ -1760,6 +1765,34 @@ module TestStepOracle =
             "ExitThread", Gen.elements [ 0 ; 1 ; 255 ; 256 ; -1 ] |> Gen.map Syscall.ExitThread
             "ExitGroup", Gen.elements [ 0 ; 1 ; 255 ; 256 ; -1 ] |> Gen.map Syscall.ExitGroup
             "GetCpu", Gen.constant Syscall.GetCpu
+            "Futex",
+            gen {
+                let! address = Gen.elements [ 0x1000UL ; 0x1000UL ; 0x1001UL ; 0UL ]
+
+                let! op =
+                    Gen.frequency
+                        [
+                            4, Gen.constant UnixFutex.FutexWaitPrivate
+                            3, Gen.constant UnixFutex.FutexWakePrivate
+                            1, Gen.elements [ 0 ; 9 ; 384 ]
+                        ]
+
+                let! value = Gen.elements [ 0 ; 0 ; 1 ; -1 ]
+                let! word = copiedGen (Gen.elements [ 0u ; 1u ])
+
+                let! timeout =
+                    Gen.elements
+                        [
+                            TimespecArgument.Null
+                            TimespecArgument.Null
+                            TimespecArgument.Readable (0L, 0L)
+                            TimespecArgument.Readable (0L, 10_000_000L)
+                            TimespecArgument.Readable (0L, 1_000_000_000L)
+                            TimespecArgument.Unreadable
+                        ]
+
+                return Syscall.Futex (address, op, value, word, timeout)
+            }
         ]
 
     [<Test>]
@@ -1805,6 +1838,9 @@ module TestStepOracle =
         | Syscall.GetSockOpt (fd, level, optionName, value, length) ->
             UnixSocket.tryGetsockopt caller fd level optionName value (bufferOf length) system
             |> stopped
+        | Syscall.Futex (address, op, value, word, timeout) ->
+            UnixFutex.tryFutex caller address op value (bufferOf word) timeout system
+            |> stopped
         | other -> failwith $"%s{UnionCaseName.ofValue other} copies no buffer in"
 
     /// The cases whose call copies a buffer or a cell in from the caller's
@@ -1818,6 +1854,7 @@ module TestStepOracle =
             "Connect"
             "SetSockOpt"
             "GetSockOpt"
+            "Futex"
         ]
 
     /// The cases whose call can end the process, each of which some sample

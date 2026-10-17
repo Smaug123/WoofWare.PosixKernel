@@ -193,3 +193,11 @@ type WakePrimitive =
     /// Reserved: nothing parks a thread in a connect yet, so no condition this
     /// library hands out contains it.
     | AcceptQueueHasRoom of listener : SocketId
+    /// A `FUTEX_WAKE_PRIVATE` has taken the waiting thread off the queue of the
+    /// address its `FUTEX_WAIT_PRIVATE` waits on (`ParkedFutex.TakenByWake`).
+    ///
+    /// Names no kernel object, as `SignalDeliverable` names none: what it asks
+    /// about is the waiter's own park, which the wake marks. A wake chooses its
+    /// waiters as it is made, so once this holds it holds until the wait
+    /// returns.
+    | FutexWakeTaken

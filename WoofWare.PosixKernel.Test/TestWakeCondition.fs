@@ -274,7 +274,8 @@ module TestWakeCondition =
         | WakePrimitive.FifoPartnerOpened _
         | WakePrimitive.InotifyRecordQueued _
         | WakePrimitive.AwaitedSignalPending _
-        | WakePrimitive.AcceptQueueHasRoom _ ->
+        | WakePrimitive.AcceptQueueHasRoom _
+        | WakePrimitive.FutexWakeTaken ->
             match List.tryFind (fun (p, _) -> p = primitive) fixedTruths with
             | Some (_, truth) -> truth
             | None -> failwith $"the oracle's truth table has no row for %O{primitive}"
@@ -504,6 +505,7 @@ module TestWakeCondition =
                         | WakePrimitive.InotifyRecordQueued _
                         | WakePrimitive.AwaitedSignalPending _
                         | WakePrimitive.AcceptQueueHasRoom _
+                        | WakePrimitive.FutexWakeTaken
                         | WakePrimitive.SignalDeliverable -> None
                     )
                 )

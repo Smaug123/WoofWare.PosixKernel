@@ -1630,6 +1630,11 @@ module TestMultiProcessFuzz =
             | _ -> ()
 
             made
+        | Some (ParkedSyscall.Futex _) ->
+            match UnixFutex.tryFinishFutexWait (Caller.make pid thread) view |> logged log with
+            | Ok (SyscallOutcome.WouldBlock _, after) -> Made.Sleeps after
+            | Ok (_, after) -> Made.Answered after
+            | Error _ -> Made.Refused
         | Some ParkedSyscall.SigSuspend ->
             match UnixSignal.tryFinishSigsuspend (Caller.make pid thread) view |> logged log with
             | Ok (SigsuspendOutcome.WouldBlock _, after) -> Made.Sleeps after

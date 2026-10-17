@@ -21,6 +21,12 @@ type internal SyscallInterruptionRefusal =
     /// user mode: another thread has discarded the signal, or the thread
     /// blocks it. Whether the syscall then ends or sleeps on is unmeasured.
     | WakingSignalGone
+    /// A signal woke the thread asleep in a futex wait with a timeout, and by
+    /// the time the call is finished the thread would take no signal as it
+    /// returned to user mode. The wait then restarts with its first deadline,
+    /// reading the word at its address again, which only the caller can read;
+    /// and a caller making the call again gives it a later deadline.
+    | FutexRestartKeepsDeadline
 
 [<RequireQualifiedAccess>]
 module internal SyscallInterruptionRefusal =
@@ -36,6 +42,8 @@ module internal SyscallInterruptionRefusal =
             $"a thread asleep in a syscall has both the syscall's own answer and a signal with a handler waiting for it. Under the %O{flavour} flavour the kernel answers whichever of the two reached the sleeping thread first, and this kernel does not record which did."
         | SyscallInterruptionRefusal.WakingSignalGone ->
             "a signal woke a thread asleep in a syscall, and by the time the syscall was finished the thread would take no signal as it returned to user mode: another thread had discarded the signal, or the thread blocked it. Whether the syscall then ends with EINTR or sleeps on is unmeasured."
+        | SyscallInterruptionRefusal.FutexRestartKeepsDeadline ->
+            "a signal woke a thread asleep in a futex wait with a timeout, and by the time the call was finished the thread would take no signal as it returned to user mode. Linux restarts such a wait with its first deadline, reading the word at its address again; only the caller can read that word, and a caller making the call again with its own arguments gives the wait a later deadline."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SyscallInterruptionRefusal) : RefusalKind =
@@ -44,6 +52,7 @@ module internal SyscallInterruptionRefusal =
         | SyscallInterruptionRefusal.DefaultAction _ -> RefusalKind.Unmodelled
         | SyscallInterruptionRefusal.SignalBesideCompletion _ -> RefusalKind.Unmodelled
         | SyscallInterruptionRefusal.WakingSignalGone -> RefusalKind.Unmodelled
+        | SyscallInterruptionRefusal.FutexRestartKeepsDeadline -> RefusalKind.Unmodelled
 
 /// Why this library will not answer a `sigsuspend(2)` or `pause(2)`, or the
 /// finishing of one: something it does not model, rather than an error a
@@ -181,6 +190,13 @@ module SyscallInterruption =
         // EINTR without SA_RESTART and went on sleeping with it. A Darwin
         // connect never sleeps.
         | ParkedSyscall.Connect _ -> SignalRestartRule.RestartsUnderSaRestart
+        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "signal" rows): a
+        // wait with no timeout returned EINTR without SA_RESTART and went on
+        // sleeping with it; one with a timeout returned EINTR either way.
+        | ParkedSyscall.Futex wait ->
+            match wait.FutexDeadline with
+            | None -> SignalRestartRule.RestartsUnderSaRestart
+            | Some _ -> SignalRestartRule.FailsWithEintr
 
     /// What a thread in `sigsuspend` does now, its temporary mask in force.
     [<RequireQualifiedAccess>]
@@ -412,6 +428,13 @@ module SyscallInterruption =
             measuredWithoutTimeout poll.Deadline InterruptedCall.FailsWithEintr
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.Kevent wait ->
             measuredWithoutTimeout wait.Deadline InterruptedCall.FailsWithEintr
+        // Measured on Linux 6.18.5 (`docs/probes/futex`, the "stop" rows): a
+        // wait stopped and continued, no handler run, went on sleeping, and
+        // one with a timeout still timed out at its first deadline.
+        | SimulatedUnixFlavour.Linux, ParkedSyscall.Futex wait ->
+            match wait.FutexDeadline with
+            | None -> UnhandledInterruption.Ends InterruptedCall.Restarts
+            | Some _ -> UnhandledInterruption.RestartsWithRemainingTime
         // A park the flavour never makes, and the reserved parks.
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.InotifyRead _
         | SimulatedUnixFlavour.Darwin, ParkedSyscall.Poll _
@@ -424,7 +447,40 @@ module SyscallInterruption =
         | _, ParkedSyscall.SignalWait _
         | _, ParkedSyscall.DatagramReceive _
         | _, ParkedSyscall.DatagramSend _
-        | _, ParkedSyscall.Connect _ -> UnhandledInterruption.Unmeasured
+        | _, ParkedSyscall.Connect _
+        | SimulatedUnixFlavour.Darwin, ParkedSyscall.Futex _ -> UnhandledInterruption.Unmeasured
+
+    /// Whether the syscall `parked` records, restarted, reads the caller's
+    /// memory again, so that only the caller can restart it: a restart this
+    /// kernel makes by putting the thread back to sleep would answer from
+    /// what the memory held when the call was first made.
+    ///
+    /// A futex wait reads the word at its address again (measured on Linux
+    /// 6.18.5, `docs/probes/futex`: a word changed while the wait slept made
+    /// its restart answer `EAGAIN`, after a handler under `SA_RESTART` and
+    /// after a stop alike).
+    let private restartRereadsCallerMemory (parked : ParkedSyscall) : bool =
+        match parked with
+        | ParkedSyscall.Futex _ -> true
+        | ParkedSyscall.EpollWait _
+        | ParkedSyscall.Kevent _
+        | ParkedSyscall.Flock _
+        | ParkedSyscall.Poll _
+        | ParkedSyscall.KqueuePoll _
+        | ParkedSyscall.Accept _
+        | ParkedSyscall.PipeRead _
+        | ParkedSyscall.PipeWrite _
+        | ParkedSyscall.ConnectionRead _
+        | ParkedSyscall.ConnectionWrite _
+        | ParkedSyscall.SigSuspend
+        | ParkedSyscall.Sleep _
+        | ParkedSyscall.FifoOpen _
+        | ParkedSyscall.InotifyRead _
+        | ParkedSyscall.Select _
+        | ParkedSyscall.SignalWait _
+        | ParkedSyscall.DatagramReceive _
+        | ParkedSyscall.DatagramSend _
+        | ParkedSyscall.Connect _ -> false
 
     /// How the handlers of `frames`, innermost first, end a syscall whose rule
     /// is `rule`: `Error` of the signals whose handlers were installed with
@@ -552,17 +608,28 @@ module SyscallInterruption =
             // what is left of it (`RestartsWithRemainingTime`). Where the end
             // is unmeasured (a wait with a timeout), so is whether the call
             // sleeps on.
+            //
+            // A call whose restart reads the caller's memory again cannot sleep
+            // on here, since only the caller can read it: it is interrupted
+            // instead, and restarts as its thread returns to user mode, where
+            // the caller makes it again. Where that restart would keep a
+            // deadline the caller's call cannot, it is refused.
+            let interrupted (ending : InterruptedCall) : Interruption option =
+                Some
+                    {
+                        Signal = None
+                        Rule = ruleOf flavour park.Syscall
+                        Unhandled = UnhandledInterruption.Ends ending
+                        AtInterruption = Some ending
+                    }
+
             match withoutHandler flavour park.Syscall with
             | UnhandledInterruption.Ends InterruptedCall.FailsWithEintr ->
-                Ok (
-                    Some
-                        {
-                            Signal = None
-                            Rule = ruleOf flavour park.Syscall
-                            Unhandled = UnhandledInterruption.Ends InterruptedCall.FailsWithEintr
-                            AtInterruption = Some InterruptedCall.FailsWithEintr
-                        }
-                )
+                Ok (interrupted InterruptedCall.FailsWithEintr)
+            | UnhandledInterruption.Ends InterruptedCall.Restarts when restartRereadsCallerMemory park.Syscall ->
+                Ok (interrupted InterruptedCall.Restarts)
+            | UnhandledInterruption.RestartsWithRemainingTime when restartRereadsCallerMemory park.Syscall ->
+                Error SyscallInterruptionRefusal.FutexRestartKeepsDeadline
             | UnhandledInterruption.Ends InterruptedCall.Restarts
             | UnhandledInterruption.RestartsWithRemainingTime -> Ok None
             | UnhandledInterruption.Unmeasured -> Error SyscallInterruptionRefusal.WakingSignalGone

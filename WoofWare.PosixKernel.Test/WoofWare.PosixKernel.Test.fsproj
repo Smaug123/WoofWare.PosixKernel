@@ -175,6 +175,7 @@
     <Compile Include="TestSigprocmask.fs" />
     <Compile Include="TestSigsuspend.fs" />
     <Compile Include="TestSleepPark.fs" />
+    <Compile Include="TestFutex.fs" />
     <Compile Include="TestFifoOpenPark.fs" />
     <Compile Include="TestSelectPark.fs" />
     <Compile Include="TestSignalWaitPark.fs" />
@@ -337,6 +338,8 @@
     <!-- docs/probes/disposition-before-return. `TestDispositionBeforeReturn` replays every held row. -->
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\disposition-before-return\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.disposition-before-return.darwin.txt" />
+    <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
+    <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
   </ItemGroup>
 
   <ItemGroup>
