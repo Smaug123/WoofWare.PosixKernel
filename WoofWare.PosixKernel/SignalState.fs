@@ -240,6 +240,15 @@ type internal SignalReceiverRefusal =
     /// library answers. This library keeps the process's set apart from each
     /// thread's.
     | PendingForProcessAndLeader of signal : Signal
+    /// Under Linux's numbering, `signal`, caught, is sent to the process as a
+    /// whole while its leader, which does not block it, is not running and
+    /// already has a signal to take, and another thread does not block it.
+    /// Linux then wakes that other thread, and whichever of the two returns to
+    /// user mode first takes the process's signals, lowest first: the other
+    /// thread may run every handler and the leader's call restart, or each may
+    /// take some. Which returns first is scheduling, and this library delivers
+    /// a process's own signals to its leader only.
+    | LeaderAlreadySignalled of signal : Signal
 
 [<RequireQualifiedAccess>]
 module internal SignalReceiverRefusal =
@@ -254,6 +263,8 @@ module internal SignalReceiverRefusal =
             $"returning to user mode, a thread would take %O{signal}, whose default stops or continues the process, after handler frames were pushed for other signals at the same return. What a stopped process does with frames already pushed has not been measured."
         | SignalReceiverRefusal.PendingForProcessAndLeader signal ->
             $"under Darwin, %O{signal} would be left pending on the process as a whole while an instance of it is pending on the leader alone, or the other way round. Darwin holds the two as one instance, and this kernel keeps the process's pending set apart from each thread's."
+        | SignalReceiverRefusal.LeaderAlreadySignalled signal ->
+            $"under Linux, %O{signal} is sent to the process as a whole while its leader, which does not block it, is not running and already has a signal to take, and another thread does not block it. Linux then wakes that other thread, and whichever of the two returns to user mode first takes the process's signals, lowest first, so the other thread may run every handler and the leader's call restart, or each may take some. Which returns first is scheduling, and this kernel delivers a process's own signals to its leader only."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : SignalReceiverRefusal) : RefusalKind =
@@ -261,6 +272,7 @@ module internal SignalReceiverRefusal =
         | SignalReceiverRefusal.LeaderBlocks _ -> RefusalKind.Unmodelled
         | SignalReceiverRefusal.DefaultBehindHandlers _ -> RefusalKind.Unmodelled
         | SignalReceiverRefusal.PendingForProcessAndLeader _ -> RefusalKind.Unmodelled
+        | SignalReceiverRefusal.LeaderAlreadySignalled _ -> RefusalKind.Unmodelled
 
 [<RequireQualifiedAccess>]
 module SignalState =
@@ -837,6 +849,49 @@ module SignalState =
         | CoreDumps.Suppressed -> false
         | CoreDumps.Written -> Signal.dumpsCoreUnder numbering signal
 
+    /// A pending signal that is deliverable to `thread`: one its mask lets
+    /// through, in a set it takes from as it returns to user mode. That is its
+    /// own set; the process's, if it is the process's `leader`; and, under
+    /// Linux's numbering, the process's where the leader blocks the signal,
+    /// since any of Linux's threads takes from the process's set. The first
+    /// such in `pending`'s order, or `ValueNone` where there is none.
+    ///
+    /// Reads no disposition: the thread takes such a signal as it returns,
+    /// whether that runs a handler, applies a default or discards it, and
+    /// whether or not `takeOnReturn` refuses to say which.
+    let internal deliverable
+        (numbering : SignalNumbering)
+        (leader : 'Thread)
+        (thread : 'Thread)
+        (state : SignalState<'Thread, 'Handler>)
+        : Signal voption
+        =
+        // Every call that may make a signal deliverable asks this of a
+        // thread, so nothing pending answers without reading a mask.
+        if List.isEmpty state.Pending then
+            ValueNone
+        else
+
+        let mask = maskOf thread state
+
+        let takesFrom (entry : PendingSignal<'Thread>) : bool =
+            match entry.Target with
+            | ValueSome target -> target = thread
+            | ValueNone ->
+                thread = leader
+                || (
+                    match numbering with
+                    | SignalNumbering.Linux -> SignalMask.contains entry.Signal (maskOf leader state)
+                    | SignalNumbering.Darwin -> false
+                )
+
+        match
+            state.Pending
+            |> List.tryFind (fun entry -> takesFrom entry && not (SignalMask.contains entry.Signal mask))
+        with
+        | Some entry -> ValueSome entry.Signal
+        | None -> ValueNone
+
     /// Generate `entry`: decide what it does to the process at once, and queue
     /// it (see `enqueue`) if its effect, if any, comes later.
     ///
@@ -847,6 +902,8 @@ module SignalState =
     ///
     /// What the signal does, and what is refused, are as `UnixSignal.kill`
     /// states; a termination's core flag is as `coreDumps` decides.
+    /// `leaderRunning` says whether the leader is running on a processor, out
+    /// of any sleep, as Linux's `task_curr` does.
     ///
     /// Fails loudly unless `leader` is among `threads`, and on a signal aimed at a
     /// thread that is not.
@@ -854,6 +911,7 @@ module SignalState =
         (numbering : SignalNumbering)
         (coreDumps : CoreDumps)
         (leader : 'Thread)
+        (leaderRunning : bool)
         (threads : Set<'Thread>)
         (entry : PendingSignal<'Thread>)
         (state : SignalState<'Thread, 'Handler>)
@@ -911,9 +969,41 @@ module SignalState =
 
         let receiver = receiverFor leader threads entry state
 
+        // Linux's `complete_signal` hands a signal sent to the process to the
+        // leader only while the leader wants it (`wants_signal`): it is running,
+        // or it has no signal to take already (`TIF_SIGPENDING`). Otherwise it
+        // wakes the next thread that wants it, and the threads it has woken take
+        // from the process's set, lowest first, in whichever order they return
+        // to user mode. Measured by `docs/probes/process-signal-pair` on Linux
+        // 6.18.5: with the leader asleep in poll and two signals sent by a second
+        // thread, the sender, or a third thread where the sender blocked both,
+        // ran both handlers and the leader's poll restarted, or the leader ran
+        // both, or each ran one; a running leader took both, and a standard
+        // signal already pending was coalesced and woke nobody. Darwin gave both
+        // to the leader.
+        let wokenBeyondLeader () : bool =
+            match numbering, entry.Target with
+            | SignalNumbering.Darwin, _
+            | SignalNumbering.Linux, ValueSome _ -> false
+            | SignalNumbering.Linux, ValueNone ->
+                let coalesced =
+                    not (Signal.isRealTimeUnder numbering entry.Signal)
+                    && state.Pending
+                       |> List.exists (fun pending -> pending.Signal = entry.Signal && pending.Target.IsNone)
+
+                not leaderRunning
+                && not coalesced
+                && (deliverable numbering leader leader state).IsSome
+                && threads
+                   |> Set.exists (fun thread ->
+                       thread <> leader && not (SignalMask.contains entry.Signal (maskOf thread state))
+                   )
+
         match receiver, effectOf numbering (disposition numbering entry.Signal state) entry.Signal with
         | Receiver.Nobody, _ -> leftPending ()
         | Receiver.BeyondLeader, Effect.Caught -> Error (SignalReceiverRefusal.LeaderBlocks entry.Signal)
+        | Receiver.Thread _, Effect.Caught when wokenBeyondLeader () ->
+            Error (SignalReceiverRefusal.LeaderAlreadySignalled entry.Signal)
         | Receiver.Thread _, Effect.Caught -> leftPending ()
         // Discarded without ever being pending, on both kernels, SIGCONT at
         // its default included: Linux decides by the mask of the thread the
@@ -985,49 +1075,6 @@ module SignalState =
         // process's; nothing measured decides between the two, and no other
         // signal can fall between them.
         | SignalNumbering.Darwin -> own @ shared |> List.sortBy (fun entry -> pickRank numbering entry.Signal)
-
-    /// A pending signal that is deliverable to `thread`: one its mask lets
-    /// through, in a set it takes from as it returns to user mode. That is its
-    /// own set; the process's, if it is the process's `leader`; and, under
-    /// Linux's numbering, the process's where the leader blocks the signal,
-    /// since any of Linux's threads takes from the process's set. The first
-    /// such in `pending`'s order, or `ValueNone` where there is none.
-    ///
-    /// Reads no disposition: the thread takes such a signal as it returns,
-    /// whether that runs a handler, applies a default or discards it, and
-    /// whether or not `takeOnReturn` refuses to say which.
-    let internal deliverable
-        (numbering : SignalNumbering)
-        (leader : 'Thread)
-        (thread : 'Thread)
-        (state : SignalState<'Thread, 'Handler>)
-        : Signal voption
-        =
-        // Every call that may make a signal deliverable asks this of a
-        // thread, so nothing pending answers without reading a mask.
-        if List.isEmpty state.Pending then
-            ValueNone
-        else
-
-        let mask = maskOf thread state
-
-        let takesFrom (entry : PendingSignal<'Thread>) : bool =
-            match entry.Target with
-            | ValueSome target -> target = thread
-            | ValueNone ->
-                thread = leader
-                || (
-                    match numbering with
-                    | SignalNumbering.Linux -> SignalMask.contains entry.Signal (maskOf leader state)
-                    | SignalNumbering.Darwin -> false
-                )
-
-        match
-            state.Pending
-            |> List.tryFind (fun entry -> takesFrom entry && not (SignalMask.contains entry.Signal mask))
-        with
-        | Some entry -> ValueSome entry.Signal
-        | None -> ValueNone
 
     /// What `sigpending(2)` answers for `thread`: the signals pending that it
     /// would see and that its mask blocks. It sees its own set, and the

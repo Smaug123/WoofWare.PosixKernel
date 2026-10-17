@@ -1,0 +1,172 @@
+# ldd (Debian GLIBC 2.41-12+deb13u4) 2.41, gcc:14 container
+# Linux 6.18.5 aarch64, uid 0, 5 cpus online
+# flavour linux USR1=10 USR2=12 W=SIGWINCH=28 RTMIN=34
+leader=poll gap=none others=T cpus=free A=USR1 B=USR2 count=199/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=free A=USR1 B=USR2 count=1/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=USR1 B=USR2 count=200/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=USR1 B=USR2 count=200/200 outcome: L:USR2,L:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=USR1 B=USR2 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=134/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=11/200 outcome: U:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=40/200 outcome: L:USR1,U:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=9/200 outcome: U:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=3/200 outcome: U:USR2,U:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=2/200 outcome: L:USR2,L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR2 count=1/200 outcome: L:USR2,U:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=free A=USR2 B=USR1 count=200/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=USR2 B=USR1 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=USR2 B=USR1 count=198/200 outcome: L:USR2,L:USR1 lsw=0
+leader=spin gap=none others=T cpus=free A=USR2 B=USR1 count=2/200 outcome: L:USR1,L:USR2 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=USR2 B=USR1 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=9/200 outcome: U:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=130/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=46/200 outcome: L:USR1,U:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=4/200 outcome: U:USR2,U:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=5/200 outcome: U:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=3/200 outcome: L:USR2,L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=1/200 outcome: L:USR1,L:USR2 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=1/200 outcome: L:USR2,U:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR2 B=USR1 count=1/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=free A=USR1 B=USR1 count=199/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=free A=USR1 B=USR1 count=1/200 outcome: L:USR1,T:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=USR1 B=USR1 count=200/200 outcome: L:USR1,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=USR1 B=USR1 count=198/200 outcome: L:USR1 lsw=0
+leader=spin gap=none others=T cpus=free A=USR1 B=USR1 count=2/200 outcome: L:USR1,T:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR1 count=199/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=USR1 B=USR1 count=1/200 outcome: L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=180/200 outcome: T:RTMIN+0,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=20/200 outcome: T:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=188/200 outcome: L:RTMIN+0,L:RTMIN+0 lsw=0
+leader=spin gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=11/200 outcome: L:RTMIN+0,T:RTMIN+0 lsw=0
+leader=spin gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+0 count=1/200 outcome: T:RTMIN+0,L:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+0 count=133/200 outcome: L:RTMIN+0,U:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+0 count=15/200 outcome: U:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+0 count=50/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+0 count=2/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+1 count=198/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+1 count=1/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+1 count=1/200 outcome: T:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=RTMIN+0 B=RTMIN+1 count=199/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=free A=RTMIN+0 B=RTMIN+1 count=1/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=126/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=54/200 outcome: L:RTMIN+0,U:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=13/200 outcome: U:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=4/200 outcome: U:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=2/200 outcome: U:RTMIN+1,U:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+0 B=RTMIN+1 count=1/200 outcome: L:RTMIN+1,U:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=free A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=free A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=free A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=free A=RTMIN+1 B=RTMIN+0 count=199/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=free A=RTMIN+1 B=RTMIN+0 count=1/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=118/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=46/200 outcome: L:RTMIN+0,U:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=11/200 outcome: U:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=14/200 outcome: U:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=3/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=7/200 outcome: U:RTMIN+1,U:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=free A=RTMIN+1 B=RTMIN+0 count=1/200 outcome: L:RTMIN+1,U:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=same A=USR1 B=USR2 count=200/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=USR1 B=USR2 count=200/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=USR1 B=USR2 count=200/200 outcome: T:USR2,T:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=USR1 B=USR2 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=USR1 B=USR2 count=198/200 outcome: L:USR2,L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=USR1 B=USR2 count=1/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T-blocks+U cpus=same A=USR1 B=USR2 count=1/200 outcome: U:USR2,U:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=same A=USR2 B=USR1 count=200/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=USR2 B=USR1 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=USR2 B=USR1 count=200/200 outcome: T:USR2,T:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=USR2 B=USR1 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=USR2 B=USR1 count=199/200 outcome: L:USR2,L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=USR2 B=USR1 count=1/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T cpus=same A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=USR1 B=USR1 count=200/200 outcome: L:USR1,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=USR1 B=USR1 count=200/200 outcome: L:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=same A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: T:RTMIN+0,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: T:RTMIN+0,T:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=RTMIN+0 B=RTMIN+0 count=199/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=same A=RTMIN+0 B=RTMIN+0 count=1/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T-blocks+U cpus=same A=RTMIN+0 B=RTMIN+0 count=1/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T-blocks+U cpus=same A=RTMIN+0 B=RTMIN+0 count=199/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=same A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=same A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=same A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=same A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=same A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=same A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr lsw=1
+leader=poll gap=none others=T cpus=apart A=USR1 B=USR2 count=200/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=USR1 B=USR2 count=200/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=USR1 B=USR2 count=200/200 outcome: L:USR2,L:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=USR1 B=USR2 count=199/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=apart A=USR1 B=USR2 count=1/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=131/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=47/200 outcome: L:USR1,U:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=5/200 outcome: U:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=13/200 outcome: U:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=2/200 outcome: U:USR2,U:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=1/200 outcome: L:USR2,U:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR2 count=1/200 outcome: L:USR1,L:USR2 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T cpus=apart A=USR2 B=USR1 count=198/200 outcome: T:USR2,T:USR1 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=apart A=USR2 B=USR1 count=2/200 outcome: T:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=USR2 B=USR1 count=200/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=USR2 B=USR1 count=195/200 outcome: L:USR2,L:USR1 lsw=0
+leader=spin gap=none others=T cpus=apart A=USR2 B=USR1 count=5/200 outcome: L:USR1,L:USR2 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=USR2 B=USR1 count=199/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=apart A=USR2 B=USR1 count=1/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=143/200 outcome: L:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=38/200 outcome: L:USR1,U:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=10/200 outcome: U:USR1,L:USR2 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=2/200 outcome: L:USR2,U:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=6/200 outcome: U:USR2,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR2 B=USR1 count=1/200 outcome: U:USR2,L:USR1 poll1=eintr poll2=woken lsw=2
+leader=poll gap=none others=T cpus=apart A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=USR1 B=USR1 count=200/200 outcome: L:USR1,L:USR1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=USR1 B=USR1 count=196/200 outcome: L:USR1 lsw=0
+leader=spin gap=none others=T cpus=apart A=USR1 B=USR1 count=2/200 outcome: L:USR1,L:USR1 lsw=0
+leader=spin gap=none others=T cpus=apart A=USR1 B=USR1 count=2/200 outcome: L:USR1,T:USR1 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=USR1 B=USR1 count=199/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=apart A=USR1 B=USR1 count=1/200 outcome: L:USR1,L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=USR1 B=USR1 count=200/200 outcome: L:USR1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+0 count=169/200 outcome: T:RTMIN+0,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+0 count=31/200 outcome: T:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+0 count=188/200 outcome: L:RTMIN+0,L:RTMIN+0 lsw=0
+leader=spin gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+0 count=12/200 outcome: L:RTMIN+0,T:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=RTMIN+0 B=RTMIN+0 count=200/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+0 count=52/200 outcome: L:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+0 count=136/200 outcome: L:RTMIN+0,U:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+0 count=11/200 outcome: U:RTMIN+0,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+0 count=1/200 outcome: L:RTMIN+0,U:RTMIN+0 poll1=eintr poll2=woken lsw=2
+leader=poll gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=RTMIN+0 B=RTMIN+1 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+1 count=158/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+1 count=11/200 outcome: U:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+1 count=2/200 outcome: U:RTMIN+1,U:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+1 count=22/200 outcome: L:RTMIN+0,U:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+0 B=RTMIN+1 count=7/200 outcome: U:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T cpus=apart A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: T:RTMIN+1,T:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=ran others=T cpus=apart A=RTMIN+1 B=RTMIN+0 count=200/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2
+leader=spin gap=none others=T cpus=apart A=RTMIN+1 B=RTMIN+0 count=198/200 outcome: L:RTMIN+1,L:RTMIN+0 lsw=0
+leader=spin gap=none others=T cpus=apart A=RTMIN+1 B=RTMIN+0 count=2/200 outcome: L:RTMIN+0,L:RTMIN+1 lsw=0
+leader=poll gap=none others=T-blocks cpus=apart A=RTMIN+1 B=RTMIN+0 count=199/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks cpus=apart A=RTMIN+1 B=RTMIN+0 count=1/200 outcome: L:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=145/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=5/200 outcome: U:RTMIN+0,L:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=7/200 outcome: U:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=40/200 outcome: L:RTMIN+0,U:RTMIN+1 poll1=eintr poll2=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=2/200 outcome: U:RTMIN+1,U:RTMIN+0 poll1=woken lsw=1
+leader=poll gap=none others=T-blocks+U cpus=apart A=RTMIN+1 B=RTMIN+0 count=1/200 outcome: L:RTMIN+1,L:RTMIN+0 poll1=eintr poll2=eintr poll3=woken lsw=2

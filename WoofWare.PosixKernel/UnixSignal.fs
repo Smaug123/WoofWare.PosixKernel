@@ -418,7 +418,12 @@ module UnixSignal =
     ///
     /// Refuses a signal sent to the process that only
     /// a thread other than the leader could receive, where it is caught, or,
-    /// under Linux's numbering, ignored; and, under
+    /// under Linux's numbering, ignored; under Linux's numbering, a caught one
+    /// sent while the leader is not running (it is asleep in a call, or
+    /// `UnixScheduling.runningOn` answers `None`) and already has a signal to
+    /// take, where another
+    /// thread does not block it and it is not a standard signal already
+    /// pending on the process, which Linux would wake that thread for too; and, under
     /// Darwin's numbering, a standard signal it would leave pending on the
     /// process while an instance is pending on the leader alone, or the other
     /// way round, which Darwin holds as one instance where this library holds
