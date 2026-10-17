@@ -36,6 +36,11 @@
 // declares no setresuid, setresgid, getresuid or getresgid. Its rows are the
 // same size and buffer arguments as Linux's, from the process's own
 // credentials, since uid 501 cannot take any other.
+// On Linux the probe makes two files, in $TMPDIR if that is set and in /tmp
+// otherwise: a directory every user may write to, which this probe's
+// children create a file in. Each is unlinked first and created with
+// O_EXCL|O_NOFOLLOW, so a link planted at the name is never followed.
+//
 // docs/probes/darwin-root/run.sh runs the same rows as Darwin's root
 // (setresid.darwin-*-root.txt); docs/probes/darwin-root/credentials.c
 // measures what a privileged setgroups leaves the process holding.
@@ -128,7 +133,9 @@ static void wait_child(pid_t pid) {
 }
 
 #ifdef __linux__
-static const char *secret = "/tmp/setresid-probe-secret";
+// The files this probe makes, under $TMPDIR or /tmp (see main).
+static char secret[PATH_MAX];
+static char owned[PATH_MAX];
 
 static const char *privileged(void) {
     int fd = open(secret, O_RDONLY);
@@ -341,13 +348,13 @@ static void fs_owner_row(void) {
     pid_t pid = fork();
     if (pid == 0) {
         alarm(10);
-        const char *path = "/tmp/setresid-probe-owned";
+        const char *path = owned;
         unlink(path);
         if (setresgid(1000, 1001, 1002) != 0 || setresuid(1003, 1004, 0) != 0) {
             printf("SETUP-FAILED\tfsowner\t%s\n", en(errno));
             _exit(1);
         }
-        int fd = open(path, O_CREAT | O_WRONLY | O_EXCL, 0600);
+        int fd = open(path, O_CREAT | O_WRONLY | O_EXCL | O_NOFOLLOW, 0600);
         if (fd < 0) {
             printf("FSOWNER\tcreate\t%s\n", en(errno));
             _exit(0);
@@ -381,9 +388,16 @@ int main(void) {
         fclose(f);
     }
     printf("SUID_DUMPABLE\t%d\n", suid_dumpable);
-    int fd = open(secret, O_CREAT | O_WRONLY | O_TRUNC, 0600);
-    if (fd >= 0) close(fd);
-    chmod(secret, 0600);
+    const char *tmp = getenv("TMPDIR");
+    if (tmp == NULL || tmp[0] == '\0') tmp = "/tmp";
+    snprintf(secret, sizeof secret, "%s/setresid-probe-secret", tmp);
+    snprintf(owned, sizeof owned, "%s/setresid-probe-owned", tmp);
+    unlink(secret);
+    int fd = open(secret, O_CREAT | O_WRONLY | O_EXCL | O_NOFOLLOW, 0600);
+    if (fd >= 0) {
+        fchmod(fd, 0600);
+        close(fd);
+    }
 
     for (int a = 0; a < 3; a++)
         for (int b = 0; b < 3; b++)

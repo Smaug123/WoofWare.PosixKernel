@@ -211,7 +211,13 @@ run port-range "$OUT_ROOT/port-range.darwin-$DARWIN-$SUFFIX.txt"
 run faulting-file-write "$OUT_FW/darwin-$RELEASE-$ARCH-apfs-$SUFFIX.txt" "$WORK/fw"
 run poll-entry-count "$POLL_OUT"
 run privileged-port "$OUT_PP/measured-darwin-$DARWIN-$SUFFIX.txt"
+# setresid makes its files (on Linux; Darwin's rows make none) in $TMPDIR,
+# which must be writable by everyone, as /tmp is.
+mkdir -m 0700 "$WORK/sr" && chmod 01777 "$WORK/sr"
+TMPDIR="$WORK/sr"
+export TMPDIR
 run setresid "$OUT_SR/setresid.darwin-$DARWIN-$SUFFIX.txt"
+unset TMPDIR
 
 # 4 and 5: put the sysctls back (cleanup does it too) and say what they are.
 cleanup
