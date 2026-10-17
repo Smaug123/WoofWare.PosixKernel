@@ -570,7 +570,7 @@ module TestFutex =
             let pid, system = boot 2
             let system = install pid (usr1 system) (handler false) system
 
-            let numbering = SimulatedUnixPlatform.signalNumbering linux
+            let numbering = HostPlatform.signalNumberingOf SimulatedUnixFlavour.Linux
             let mask = SignalMask.ofSignals numbering (Set.singleton Signal.SIGUSR1)
 
             match UnixSignal.pthreadSigmask (Caller.make pid 1) (MaskHow.block numbering) (Some mask) system with
