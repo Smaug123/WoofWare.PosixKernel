@@ -752,6 +752,24 @@ module SimulatedUnixPlatform =
         | SimulatedUnixFlavour.Linux -> SetGroupIdOnWrite.StripWhenGroupExecutableOrWriterOutsideGroup
         | SimulatedUnixFlavour.Darwin -> SetGroupIdOnWrite.StripAlways
 
+    /// What a `write(2)` or `pwrite(2)` to a regular file has already done to
+    /// it when its copy from the caller's buffer faults; see `FaultedWriteRule`.
+    let internal faultedWriteRule (platform : SimulatedUnixPlatform) : FaultedWriteRule =
+        // Measured by docs/probes/faulting-file-write, through NULL and a
+        // PROT_NONE page, on Linux 6.18.5 (tmpfs and ext4 alike, by the owner
+        // in and out of the file's group, a non-owner in and out of it, and
+        // root) and Darwin 27.0 (APFS, uid 501 owning the file, in and out of
+        // its group). On both, the call answers EFAULT having stripped the
+        // set-ID bits a successful write strips and grown the file to the
+        // write's offset, leaving the descriptor's offset where it was. Linux
+        // runs `file_remove_privs` and `file_update_time` before the copy, so
+        // its times move for every such write; Darwin's move only for one that
+        // reaches past the end of the file, even when it stripped a bit, over
+        // lengths, offsets and counts either side of 4 KiB and 16 KiB.
+        match flavour platform with
+        | SimulatedUnixFlavour.Linux -> FaultedWriteRule.TimesAlwaysMove
+        | SimulatedUnixFlavour.Darwin -> FaultedWriteRule.TimesMoveWhenReachingPastEnd
+
     /// How this platform's `*at` syscalls find the directory a path starts
     /// from; see `StartingPointRules`.
     ///

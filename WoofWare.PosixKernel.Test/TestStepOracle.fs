@@ -2227,8 +2227,19 @@ module TestStepOracle =
                 for call, direct in calls do
                     UnixSystem.tryStep leader call system |> Stepped.resultShouldBe (direct ())
 
-                // Not vacuous: a write through it faults, having written nothing.
-                match UnixSystem.step leader (fst calls.[0]) system with
-                | SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EFAULT),
-                                                            after)) -> after |> shouldEqual system
-                | other -> failwith $"write through %O{unmapped}: %A{Stepped.view other}"
+                // Not vacuous: a write through it faults, or, on Darwin, where
+                // what a faulting write by this world's root does to the file is
+                // unmeasured, is refused. What the file's write did before the
+                // copy is `TestFaultingFileWrite`'s.
+                match UnixSystem.tryStep leader (fst calls.[0]) system with
+                | Ok (SteppedCall.Write (ProcessFate.Continues (WriteOutcome.Returns (WriteAnswer.Failed UnixError.EFAULT),
+                                                                _))) when
+                    SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
+                    ->
+                    ()
+                | Error (SyscallRefusal.Write (WriteRefusal.UnmeasuredFaultedWrite _)) when
+                    SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                    ->
+                    ()
+                | Ok other -> failwith $"write through %O{unmapped}: %A{Stepped.view other}"
+                | Error refusal -> failwith $"write through %O{unmapped} was refused: %A{refusal}"

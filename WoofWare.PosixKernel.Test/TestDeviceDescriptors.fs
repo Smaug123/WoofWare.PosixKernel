@@ -584,6 +584,7 @@ module TestDeviceDescriptors =
                 match Lone.UnixReadWrite.tryAdmitPWrite fd UserBuffer.Mapped (uint64 count) 0L returned with
                 | Ok (PWriteAdmission.Transfer (transfer, _)) -> transfer |> shouldEqual count
                 | Ok (PWriteAdmission.Answered answer) -> answer |> shouldEqual (WriteAnswer.Completed 0L)
+                | Ok (PWriteAdmission.Faults _ as faults) -> failwith $"a mapped buffer faulted: %A{faults}"
                 | Error other -> failwith $"admitPWrite: %A{other}"
             else
                 match Lone.UnixReadWrite.tryAdmitWrite thread fd UserBuffer.Mapped (uint64 count) returned with
@@ -918,6 +919,8 @@ module TestDeviceDescriptors =
                     answer |> shouldEqual (WriteAnswer.Completed (int64 transfer))
                     after |> shouldEqual system
                 | Error refusal -> failwith $"pwrite refused: %A{refusal}"
+            | CharacterDevice.URandom, (PWriteAdmission.Faults _ as faults) ->
+                failwith $"a mapped buffer faulted: %A{faults}"
 
         let offsetGen =
             Gen.oneof

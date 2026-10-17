@@ -68,6 +68,12 @@ type internal ChangeNotice =
     /// `pwrite(2)` or `copy_file_range(2)`, of one regular file, which every
     /// change it holds is of: its contents, and the set-ID bits it cleared.
     | Written of through : ReachedThrough
+    /// A `write(2)` or `pwrite(2)` of one regular file, through a descriptor
+    /// opened `through` a name, whose copy from the caller's buffer faulted
+    /// before it moved a byte: the set-ID bits it cleared, and the timestamps
+    /// and length it moved before the copy, which every change it holds is
+    /// of. It may hold none.
+    | FaultedWrite of through : ReachedThrough
     /// The last description holding a name of `inode`, which is no directory,
     /// since unlinked, was released (Linux's dentry going), and nothing in
     /// the graph changed (`VirtualFileSystem.unchanged`).
@@ -445,6 +451,31 @@ module internal InotifyDelivery =
                     []
 
             notified (cleared @ written), None, nextCookie
+        | ChangeNotice.FaultedWrite through ->
+            match changes with
+            | [] -> [], None, nextCookie
+            | _ ->
+
+            // Linux's `file_remove_privs` raises `IN_ATTRIB` for the set-ID
+            // bits the write clears; `file_update_time` and the length the
+            // filesystem's `write_end` sets raise nothing, and `IN_MODIFY` is
+            // raised only for a write that moved bytes (measured,
+            // `docs/probes/faulting-file-write`).
+            let inode, _, attributes = attributeChanges "a faulted write" changes
+
+            match through with
+            | ReachedThrough.Name _ -> ()
+            | ReachedThrough.Unnamed
+            | ReachedThrough.RemovedDirectory _ ->
+                failwith
+                    $"InotifyDelivery: a write to inode %O{inode} came through %A{through}, where a write is of a regular file, which a descriptor is opened onto by a name (this is a bug in this library)."
+
+            if attributes then
+                notified (fst (reached mutation through inode (Set.singleton InotifyEvent.Attrib) false)),
+                None,
+                nextCookie
+            else
+                [], None, nextCookie
 
     /// The refusal of the change that raised `unplaced`, if some watch in
     /// `openFiles` on its old parent asks for an event of it: the first such,

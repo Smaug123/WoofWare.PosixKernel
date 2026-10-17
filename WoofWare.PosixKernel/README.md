@@ -761,6 +761,7 @@ Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.P
 
 **Buffers.** Where a real kernel would check a buffer's address, the client describes the address as a `UserBuffer`, and the library decides whether and when the call answers `EFAULT`, against the limit set by `UnixBootImage.withUserAddressLimit`.
 A client with a flat address space uses `UserBuffer.Mapped` for an address whose bytes it can read or write and `UserBuffer.Unmapped address` for one it cannot.
+An `EFAULT` is not always a call that changed nothing: a `write` or `pwrite` of at least one byte to a regular file, through an unmapped address within the limit, strips the file's set-ID bits as a successful write would and grows the file to the write's offset before its copy faults, and moves the file's `mtime` and `ctime` on Linux always and on Darwin when the write reaches past the file's end. Darwin's answer is measured only for an unprivileged writer who owns the file, and any other writer's such write throws `UnmodelledException`.
 The other two cases, `UserBuffer.Opaque` and `UserBuffer.Addressless`, are for a client whose pointers are not always numbers.
 
 ## Sleeping and waking
