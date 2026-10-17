@@ -513,11 +513,11 @@ module TestConnect =
         |> shouldEqual (ConnectRefusal.UnmeasuredKind (SocketId 0L, SocketKind.SeqPacket))
 
     /// 127.0.0.2 is on both flavours' loopback route. Linux takes it as
-    /// local, and this library does not resolve a source for it; Darwin holds
-    /// no such address and drops the SYN (measured,
-    /// `docs/probes/loopback-alias-connect`), which is refused first.
+    /// local, and connects to it from 127.0.0.1, refused where nothing
+    /// listens; Darwin holds no such address and drops the SYN, which is
+    /// refused (measured, `docs/probes/loopback-alias-connect`, rows SNf).
     [<TestCaseSource(nameof platforms)>]
-    let ``an unbound connect to a local address other than 127.0.0.1 is refused``
+    let ``an unbound connect to an unheld loopback address other than 127.0.0.1``
         (platform : SimulatedUnixPlatform)
         : unit
         =
@@ -534,13 +534,42 @@ module TestConnect =
 
         let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 5000us
 
-        let expected =
-            match SimulatedUnixPlatform.flavour platform with
-            | SimulatedUnixFlavour.Linux ->
-                ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, false)
-            | SimulatedUnixFlavour.Darwin -> ConnectRefusal.UnheldDestination (SocketAddress.Inet other)
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux ->
+            let answer, system = connectTo fd 16u other system
+            answer |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
 
-        refusedBy fd other system |> shouldEqual expected
+            // The refusal reverts the address it resolved to the wildcard,
+            // and keeps the port.
+            match (UnixMachineState.socket (SocketId 0L) system.Machine).Ipv4Binding with
+            | Some binding -> binding.Endpoint.Address |> shouldEqual Ipv4Address.any
+            | None -> failwith "the refused socket holds no binding"
+        | SimulatedUnixFlavour.Darwin ->
+            refusedBy fd other system
+            |> shouldEqual (ConnectRefusal.UnheldDestination (SocketAddress.Inet other))
+
+    /// Linux's local route for an address the machine holds names that address
+    /// as its source, which is unmeasured, so a connect to a loopback address
+    /// the machine holds besides 127.0.0.1 is refused.
+    [<Test>]
+    let ``an unbound Linux connect to a held loopback address other than 127.0.0.1 is refused`` () : unit =
+        let held = Ipv4Address 0x7F000002u
+
+        let system =
+            SimulatedUnixPlatform.linuxX64
+            |> systemOnWith (
+                UnixBootImage.withLocalIpv4Addresses
+                    (UnixSystem.defaultLocalIpv4Addresses @ [ held ])
+                    UnixSystem.defaultLocalRoutes
+            )
+
+        let fd, system =
+            withSocket (SocketId 0L) (streamSocket None SocketPhase.Idle) system
+
+        let other = Ipv4Endpoint.ofParts held 5000us
+
+        refusedBy fd other system
+        |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, false))
 
     /// Linux answers EADDRNOTAVAIL, leaving the socket unbound (measured,
     /// `docs/probes/ephemeral-search`, the rows ending in Y). Darwin answers
@@ -747,9 +776,27 @@ module TestConnect =
 
     /// A socket bound to the wildcard is its own destination only where its
     /// source is known to be: towards 127.0.0.1, which it resolves to.
-    /// Towards another loopback address the connect is refused rather than
-    /// answered as a self-tuple: on Linux because this library does not
-    /// resolve the source, on Darwin because it drops the SYN.
+    /// The source measured for 127.0.0.2 is 127.0.0.1, an address the
+    /// machine held; one that does not hold it has no measured source.
+    [<Test>]
+    let ``an unbound Linux connect to 127.0.0.2 from a machine without 127.0.0.1 is refused`` () : unit =
+        let system =
+            SimulatedUnixPlatform.linuxX64
+            |> systemOnWith (
+                UnixBootImage.withLocalIpv4Addresses [ Ipv4Address 0x0A000001u ] UnixSystem.defaultLocalRoutes
+            )
+
+        let fd, system =
+            withSocket (SocketId 0L) (streamSocket None SocketPhase.Idle) system
+
+        let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 5000us
+
+        refusedBy fd other system
+        |> shouldEqual (ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, false))
+
+    /// Towards another loopback address the connect is no self-tuple: on Linux
+    /// its source is 127.0.0.1, and nothing listens, so it is refused
+    /// (ECONNREFUSED); Darwin drops the SYN, which this library refuses.
     [<TestCaseSource(nameof platforms)>]
     let ``a wildcard binding towards another loopback address is not a self-tuple``
         (platform : SimulatedUnixPlatform)
@@ -772,13 +819,14 @@ module TestConnect =
 
         let other = Ipv4Endpoint.ofParts (Ipv4Address 0x7F000002u) 40000us
 
-        let expected =
-            match SimulatedUnixPlatform.flavour platform with
-            | SimulatedUnixFlavour.Linux ->
-                ConnectRefusal.SourceForNonLoopbackDestination (SocketId 0L, SocketAddress.Inet other, true)
-            | SimulatedUnixFlavour.Darwin -> ConnectRefusal.UnheldDestination (SocketAddress.Inet other)
-
-        refusedBy fd other system |> shouldEqual expected
+        match SimulatedUnixPlatform.flavour platform with
+        | SimulatedUnixFlavour.Linux ->
+            connectTo fd 16u other system
+            |> fst
+            |> shouldEqual (SyscallAnswer.Failed UnixError.ECONNREFUSED)
+        | SimulatedUnixFlavour.Darwin ->
+            refusedBy fd other system
+            |> shouldEqual (ConnectRefusal.UnheldDestination (SocketAddress.Inet other))
 
     /// Under Linux a refused connect gives back a port no `bind(2)` chose, and
     /// the socket's next connect chooses a port as an unbound socket's does

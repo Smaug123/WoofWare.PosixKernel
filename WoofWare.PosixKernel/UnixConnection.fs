@@ -570,13 +570,35 @@ module UnixConnection =
             else
                 binding
 
+        // The source a connect from a socket with no concrete address resolves
+        // towards `destination`, where it is measured: 127.0.0.1, towards
+        // 127.0.0.1 itself or towards another address in loopback's
+        // 127.0.0.0/8 that the machine does not hold (measured on both
+        // flavours, `docs/probes/loopback-alias-connect`, the rows ending in
+        // f, w and c: towards 127.0.0.2, from a fresh socket and from one bound
+        // to 0.0.0.0:0). Towards an address the machine holds besides
+        // 127.0.0.1, and off loopback, the source is the route's preferred
+        // source, which is unmeasured.
+        let resolvedSource (destination : Ipv4Address) : Ipv4Address option =
+            let machine = system.Machine
+
+            if destination = Ipv4Address.loopback then
+                Some Ipv4Address.loopback
+            elif
+                Ipv4Prefix.contains destination Ipv4Prefix.loopbackNetwork
+                && not (List.contains destination machine.LocalIpv4Addresses)
+                && List.contains Ipv4Address.loopback machine.LocalIpv4Addresses
+            then
+                Some Ipv4Address.loopback
+            else
+                None
+
         // connect(2)'s implicit bind, when the socket has no local address
-        // yet: loopback source, and an ephemeral port by the connect search's
-        // rule (`PortHolderRules.connectSearchMeets`). The source address for a non-loopback
-        // destination is the route's preferred source, which is unmeasured,
-        // so that input is refused. `current` is the binding the source is
-        // resolved from, which is the socket's own unless the connect has
-        // already reset it.
+        // yet: the source `resolvedSource` gives, and an ephemeral port by the
+        // connect search's rule (`PortHolderRules.connectSearchMeets`). A
+        // destination it gives no source for is refused. `current` is the
+        // binding the source is resolved from, which is the socket's own
+        // unless the connect has already reset it.
         let ensureBoundFrom
             (current : Ipv4Binding option)
             (dest : Ipv4Endpoint)
@@ -593,6 +615,8 @@ module UnixConnection =
                 let address =
                     if binding.Endpoint.Address <> Ipv4Address.any then
                         Some binding.Endpoint.Address
+                    // Only towards 127.0.0.1 is the source measured for a
+                    // socket whose refusal gave its port back.
                     elif dest.Address = Ipv4Address.loopback then
                         Some Ipv4Address.loopback
                     else
@@ -669,28 +693,29 @@ module UnixConnection =
                 // rather than merely the connection's record of it. Which
                 // source a kernel picks for any other destination is
                 // unmeasured.
-                if dest.Address <> Ipv4Address.loopback then
+                match resolvedSource dest.Address with
+                | None ->
                     Error (ConnectRefusal.SourceForNonLoopbackDestination (socketId, SocketAddress.Inet dest, true))
-                else
+                | Some source ->
 
                 Ok (
                     { binding with
                         Endpoint =
                             { binding.Endpoint with
-                                Address = Ipv4Address.loopback
+                                Address = source
                             }
                     },
                     system
                 )
             | None ->
 
-            if dest.Address <> Ipv4Address.loopback then
-                Error (ConnectRefusal.SourceForNonLoopbackDestination (socketId, SocketAddress.Inet dest, false))
-            else
+            match resolvedSource dest.Address with
+            | None -> Error (ConnectRefusal.SourceForNonLoopbackDestination (socketId, SocketAddress.Inet dest, false))
+            | Some source ->
 
             let candidate (port : uint16) : Ipv4Binding =
                 {
-                    Endpoint = Ipv4Endpoint.ofParts Ipv4Address.loopback port
+                    Endpoint = Ipv4Endpoint.ofParts source port
                     // No bind(2) ran: a Linux refusal delivery reverts the
                     // address all the way to the wildcard.
                     LockedAddress = None
