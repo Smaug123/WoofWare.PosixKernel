@@ -884,11 +884,11 @@ module TestDarwinPoll =
         |> Result.map fst
         |> shouldEqual (Ok (PollOutcome.Failed UnixError.EINVAL))
 
-        for n in [ 1025 ; 10240 ] do
+        for n in [ 257 ; 1024 ; 1025 ; 10240 ] do
             pollNow (entries n) 0 system
-            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount n))
+            |> shouldEqual (Error (PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, n, 256)))
 
-        answered (entries 1024) system |> shouldEqual (List.replicate 1024 0s, 0)
+        answered (entries 256) system |> shouldEqual (List.replicate 256 0s, 0)
 
     [<Test>]
     let ``a sleeping poll whose socket filter is ready but not activated breaks the invariants`` () : unit =
