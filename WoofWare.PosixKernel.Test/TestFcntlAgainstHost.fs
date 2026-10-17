@@ -65,8 +65,7 @@ module TestFcntlAgainstHost =
         let file = Path.Combine (directory, "f")
         let dir = Path.Combine (directory, "d")
 
-        let directoryFlag =
-            OpenFlagNumbering.linuxDirectory (SimulatedUnixPlatform.architecture platform)
+        let directoryFlag = OpenFlagWords.bitOf platform OpenFlagBit.Directory
 
         let fd, extra =
             match kind with
