@@ -1,0 +1,45 @@
+# Linux 6.18.5 aarch64, uid 0, RLIMIT_NOFILE cur=1048576 max=1048576, fs.nr_open=1048576
+A soft limit set to 1024 (hard 1048576)
+A idle-buffer nfds=0 timeout=0 rv=0 errno=- revents0=-
+A unmapped-buffer nfds=0 timeout=0 rv=0 errno=- revents0=-
+A idle-buffer nfds=1 timeout=0 rv=0 errno=- revents0=0x0
+A unmapped-buffer nfds=1 timeout=0 rv=-1 errno=Bad address revents0=-
+A idle-buffer nfds=1023 timeout=0 rv=0 errno=- revents0=0x0
+A unmapped-buffer nfds=1023 timeout=0 rv=-1 errno=Bad address revents0=-
+A idle-buffer nfds=1024 timeout=0 rv=0 errno=- revents0=0x0
+A unmapped-buffer nfds=1024 timeout=0 rv=-1 errno=Bad address revents0=-
+A idle-buffer nfds=1025 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A unmapped-buffer nfds=1025 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A idle-buffer nfds=2048 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A unmapped-buffer nfds=2048 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A idle-buffer nfds=65536 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A unmapped-buffer nfds=65536 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A pipe write end fd=4, event queue fd=5, closed fd=200
+A lead=ready-pipe-POLLOUT nfds=1024 timeout=0 rv=1 errno=- revents0=0x4
+A lead=closed-fd nfds=1024 timeout=0 rv=1 errno=- revents0=0x20
+A lead=empty-epoll nfds=1024 timeout=0 rv=0 errno=- revents0=0x0
+A idle-buffer nfds=1024 timeout=-1 rv=-1 errno=Interrupted system call revents0=-
+A idle-buffer nfds=1024 timeout=-2 rv=-1 errno=Interrupted system call revents0=-
+A lead=ready-pipe-POLLOUT nfds=1025 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A lead=closed-fd nfds=1025 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A lead=empty-epoll nfds=1025 timeout=0 rv=-1 errno=Invalid argument revents0=-
+A idle-buffer nfds=1025 timeout=-1 rv=-1 errno=Invalid argument revents0=-
+A idle-buffer nfds=1025 timeout=-2 rv=-1 errno=Invalid argument revents0=-
+B soft limit set to 1048576 (hard 1048576)
+B idle-buffer nfds=1048576 timeout=0 rv=0 errno=- revents0=0x0
+B unmapped-buffer nfds=1048576 timeout=0 rv=-1 errno=Bad address revents0=-
+B idle-buffer nfds=1048577 timeout=0 rv=-1 errno=Invalid argument revents0=-
+B unmapped-buffer nfds=1048577 timeout=0 rv=-1 errno=Invalid argument revents0=-
+C write fs.nr_open=2147483585 rv=-1 errno=Invalid argument now=1048576
+C write fs.nr_open=2147483647 rv=-1 errno=Invalid argument now=1048576
+C write fs.nr_open=2147483584 rv=10 errno=- now=2147483584
+C setrlimit 2147483585 rv=-1 errno=Operation not permitted now cur=1048576 max=1048576
+C setrlimit RLIM_INFINITY rv=-1 errno=Operation not permitted now cur=1048576 max=1048576
+C setrlimit 2147483584 rv=0 errno=- now cur=2147483584 max=2147483584
+C unmapped-buffer nfds=2147483584 timeout=0 rv=-1 errno=Bad address revents0=-
+C unmapped-buffer nfds=2147483585 timeout=0 rv=-1 errno=Invalid argument revents0=-
+C unmapped-buffer nfds=4294967295 timeout=0 rv=-1 errno=Invalid argument revents0=-
+C write fs.nr_open=1048576 rv=7 errno=- now=1048576
+C setrlimit unchanged rv=-1 errno=Operation not permitted now cur=2147483584 max=2147483584
+C unmapped-buffer nfds=2147483584 timeout=0 rv=-1 errno=Bad address revents0=-
+C unmapped-buffer nfds=2147483585 timeout=0 rv=-1 errno=Invalid argument revents0=-
