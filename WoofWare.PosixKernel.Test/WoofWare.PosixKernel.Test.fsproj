@@ -74,6 +74,7 @@
     <Compile Include="TestPermissionStanding.fs" />
     <Compile Include="TestGetGroups.fs" />
     <Compile Include="TestCredentialChange.fs" />
+    <Compile Include="TestCredentialThreadsMeasured.fs" />
     <Compile Include="TestModeChange.fs" />
     <Compile Include="TestUmask.fs" />
     <Compile Include="TestAccess.fs" />
@@ -350,6 +351,9 @@
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
+    <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\setxid-threads\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.setxid-threads.darwin.txt" />
   </ItemGroup>
 
   <ItemGroup>
