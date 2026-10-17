@@ -1,0 +1,35 @@
+Linux 6.18.5 aarch64
+uid=1000
+SWf connect 127.0.0.2:P=OK local=127.0.0.1:eph peer=127.0.0.2:P SO_ERROR=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+SWb connect 127.0.0.2:P=OK local=127.0.0.1:eph peer=127.0.0.2:P SO_ERROR=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+SWw connect 127.0.0.2:P=OK local=127.0.0.1:eph peer=127.0.0.2:P SO_ERROR=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+SLf connect 127.0.0.2:P=ECONNREFUSED local=0.0.0.0:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SLb connect 127.0.0.2:P=ECONNREFUSED local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SLw connect 127.0.0.2:P=ECONNREFUSED local=0.0.0.0:eph peer=ENOTCONN SO_ERROR=OK | accept: nothing queued
+SNf connect 127.0.0.2:P=ECONNREFUSED local=0.0.0.0:eph peer=ENOTCONN SO_ERROR=OK
+SNb connect 127.0.0.2:P=ECONNREFUSED local=127.0.0.1:eph peer=ENOTCONN SO_ERROR=OK
+SNw connect 127.0.0.2:P=ECONNREFUSED local=0.0.0.0:eph peer=ENOTCONN SO_ERROR=OK
+BWf connect=EINPROGRESS poll=1/0x4 SO_ERROR=OK local=127.0.0.1:eph again=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+BWb connect=EINPROGRESS poll=1/0x4 SO_ERROR=OK local=127.0.0.1:eph again=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+BWw connect=EINPROGRESS poll=1/0x4 SO_ERROR=OK local=127.0.0.1:eph again=OK | accepted local=127.0.0.2:P peer=127.0.0.1:eph
+BLf connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103 | accept: nothing queued
+BLb connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103 | accept: nothing queued
+BLw connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103 | accept: nothing queued
+BNf connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103
+BNb connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103
+BNw connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED local=127.0.0.1:eph again=errno103
+CWf connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CWb connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CWw connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLf connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLb connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+CLw connect 127.0.0.1:P=OK local=127.0.0.1:eph peer=127.0.0.1:P SO_ERROR=OK | accepted local=127.0.0.1:P peer=127.0.0.1:eph
+DWc 127.0.0.2:P connect=OK send=OK local=127.0.0.1:eph recvfrom=OK from=127.0.0.1:eph
+DWt 127.0.0.2:P sendto=OK local=0.0.0.0:eph recvfrom=OK from=127.0.0.1:eph
+DLc 127.0.0.2:P connect=OK send=OK local=127.0.0.1:eph recvfrom=EAGAIN
+DLt 127.0.0.2:P sendto=OK local=0.0.0.0:eph recvfrom=EAGAIN
+DCWc 127.0.0.1:P connect=OK send=OK local=127.0.0.1:eph recvfrom=OK from=127.0.0.1:eph
+DCWt 127.0.0.1:P sendto=OK local=0.0.0.0:eph recvfrom=OK from=127.0.0.1:eph
+DCLc 127.0.0.1:P connect=OK send=OK local=127.0.0.1:eph recvfrom=OK from=127.0.0.1:eph
+DCLt 127.0.0.1:P sendto=OK local=0.0.0.0:eph recvfrom=OK from=127.0.0.1:eph
+TWf connect 127.0.0.2:P=OK after 0s local=127.0.0.1:eph

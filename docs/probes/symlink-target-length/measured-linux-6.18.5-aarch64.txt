@@ -1,0 +1,111 @@
+# Linux 6.18.5 aarch64, ldd (Debian GLIBC 2.41-12+deb13u4) 2.41; root, then uid 1000 via setpriv
+# mount: /dev/vdb / ext4 rw,relatime 0 0
+# mount: tmpfs /dev/shm tmpfs rw,nosuid,nodev,noexec,relatime,size=65536k 0 0
+# mount: none /mnt/tmpfs tmpfs rw,relatime 0 0
+PATH_MAX=4096 euid=0
+dir=/dev/shm f_type=0x1021994
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ok readlink=1024(same bytes) st_size=1024
+symlink   len=1025: ok readlink=1025(same bytes) st_size=1025
+symlink   len=4094: ok readlink=4094(same bytes) st_size=4094
+symlink   len=4095: ok readlink=4095(same bytes) st_size=4095
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ok readlink=1024(same bytes) st_size=1024
+symlinkat len=1025: ok readlink=1025(same bytes) st_size=1025
+symlinkat len=4094: ok readlink=4094(same bytes) st_size=4094
+symlinkat len=4095: ok readlink=4095(same bytes) st_size=4095
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG
+dir=/mnt/tmpfs f_type=0x1021994
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ok readlink=1024(same bytes) st_size=1024
+symlink   len=1025: ok readlink=1025(same bytes) st_size=1025
+symlink   len=4094: ok readlink=4094(same bytes) st_size=4094
+symlink   len=4095: ok readlink=4095(same bytes) st_size=4095
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ok readlink=1024(same bytes) st_size=1024
+symlinkat len=1025: ok readlink=1025(same bytes) st_size=1025
+symlinkat len=4094: ok readlink=4094(same bytes) st_size=4094
+symlinkat len=4095: ok readlink=4095(same bytes) st_size=4095
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG
+dir=/tmp f_type=0xef53
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ok readlink=1024(same bytes) st_size=1024
+symlink   len=1025: ok readlink=1025(same bytes) st_size=1025
+symlink   len=4094: ok readlink=4094(same bytes) st_size=4094
+symlink   len=4095: ok readlink=4095(same bytes) st_size=4095
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ok readlink=1024(same bytes) st_size=1024
+symlinkat len=1025: ok readlink=1025(same bytes) st_size=1025
+symlinkat len=4094: ok readlink=4094(same bytes) st_size=4094
+symlinkat len=4095: ok readlink=4095(same bytes) st_size=4095
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG
+PATH_MAX=4096 euid=1000
+dir=/tmp/tmp.NiIyIGCutw f_type=0xef53
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ok readlink=1024(same bytes) st_size=1024
+symlink   len=1025: ok readlink=1025(same bytes) st_size=1025
+symlink   len=4094: ok readlink=4094(same bytes) st_size=4094
+symlink   len=4095: ok readlink=4095(same bytes) st_size=4095
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ok readlink=1024(same bytes) st_size=1024
+symlinkat len=1025: ok readlink=1025(same bytes) st_size=1025
+symlinkat len=4094: ok readlink=4094(same bytes) st_size=4094
+symlinkat len=4095: ok readlink=4095(same bytes) st_size=4095
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG
+dir=/mnt/tmpfs f_type=0x1021994
+symlink   len=1: ok readlink=1(same bytes) st_size=1
+symlink   len=1022: ok readlink=1022(same bytes) st_size=1022
+symlink   len=1023: ok readlink=1023(same bytes) st_size=1023
+symlink   len=1024: ok readlink=1024(same bytes) st_size=1024
+symlink   len=1025: ok readlink=1025(same bytes) st_size=1025
+symlink   len=4094: ok readlink=4094(same bytes) st_size=4094
+symlink   len=4095: ok readlink=4095(same bytes) st_size=4095
+symlink   len=4096: ENAMETOOLONG
+symlink   len=4097: ENAMETOOLONG
+symlink   len=8000: ENAMETOOLONG
+symlinkat len=1: ok readlink=1(same bytes) st_size=1
+symlinkat len=1022: ok readlink=1022(same bytes) st_size=1022
+symlinkat len=1023: ok readlink=1023(same bytes) st_size=1023
+symlinkat len=1024: ok readlink=1024(same bytes) st_size=1024
+symlinkat len=1025: ok readlink=1025(same bytes) st_size=1025
+symlinkat len=4094: ok readlink=4094(same bytes) st_size=4094
+symlinkat len=4095: ok readlink=4095(same bytes) st_size=4095
+symlinkat len=4096: ENAMETOOLONG
+symlinkat len=4097: ENAMETOOLONG
+symlinkat len=8000: ENAMETOOLONG

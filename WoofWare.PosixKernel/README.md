@@ -148,7 +148,7 @@ A machine boots with an empty filesystem, apart from the device filesystem the k
 `UnixBootImage.withFileSystem (createdAt : UnixTimestamp) (defaultOwner : InodeOwner) (seed : Map<DirectoryEntryName, SeedEntry>)` replaces it with the tree `seed` describes, created at `createdAt`.
 A `SeedEntry` is a file, a directory or a symbolic link, each with an optional owner: an entry that names none belongs to `defaultOwner`, and so does the root.
 `SeedEntry.file` and `SeedEntry.directory` give the modes a `umask 022` process would have created; the `SeedEntry.File` and `SeedEntry.Directory` cases take a mode and an owner of their own.
-It throws `ArgumentException` for a name the flavour could never have created, and for anything at `/dev` but an empty directory.
+It throws `ArgumentException` for a name the flavour could never have created, for a symbolic link whose target is longer than the flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux, whatever the filesystem's type), and for anything at `/dev` but an empty directory.
 On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
 
 The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size` and where `lseek(2)` with `SEEK_END` lands on one.

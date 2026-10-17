@@ -232,6 +232,11 @@ type internal ConnectRefusal =
     /// The destination is not an address of this machine, and this library
     /// models no network to carry a packet anywhere else.
     | DestinationNotLocal of destination : SocketAddress * kind : SocketKind
+    /// A stream connect to an address on one of this machine's local routes
+    /// that the machine does not hold, which Darwin routes to itself and then
+    /// drops the SYN to: the connect waits on TCP's connection timer, which
+    /// this library does not model.
+    | UnheldDestination of destination : SocketAddress
     /// The listener's accept queue is at its measured capacity. Linux drops the
     /// SYN and the client retransmits it on a timer, so a blocking connect
     /// sleeps (`ParkedSyscall.Connect`, reserved); Darwin evicts a queued
@@ -299,6 +304,8 @@ module internal ConnectRefusal =
                 | SocketKind.SeqPacket -> "a packet"
 
             $"destination %s{SocketAddress.toString destination} is not a local address of this simulated machine, and this library models no network to carry %s{carried} anywhere else. Add the address to the kernel's LocalIpv4Addresses/LocalRoutes if it should be local, or connect to loopback."
+        | ConnectRefusal.UnheldDestination destination ->
+            $"destination %s{SocketAddress.toString destination} is on one of this machine's local routes but is not an address it holds. Darwin routes the SYN to itself and drops it, so the connect waits: a blocking one until TCP's connection timer gives ETIMEDOUT (measured after 170 s), a non-blocking one answering EINPROGRESS and then nothing. This library has no TCP timers to end that wait. Connect to an address the machine holds."
         | ConnectRefusal.AcceptQueueFull (listener, destination, queued) ->
             $"the accept queue of listener %O{listener} at %s{SocketAddress.toString destination} already holds %d{queued} connections, its measured capacity. Linux drops the SYN, and the client retransmits it on a timer: a blocking connect sleeps until a retransmit finds room, which this library does not model yet, and a non-blocking one is left in progress. Darwin evicts a queued connection or resets this one, by a choice nothing here decides. So this connect has no faithful answer. Accept from the listener before connecting again, or listen with a larger backlog."
         | ConnectRefusal.SelfTuple endpoint ->
@@ -327,6 +334,7 @@ module internal ConnectRefusal =
         | ConnectRefusal.SourceForNonLoopbackDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.EphemeralPortsExhausted _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DestinationNotLocal _ -> RefusalKind.Unmodelled
+        | ConnectRefusal.UnheldDestination _ -> RefusalKind.Unmodelled
         | ConnectRefusal.AcceptQueueFull _ -> RefusalKind.Unmodelled
         | ConnectRefusal.SelfTuple _ -> RefusalKind.Unmodelled
         | ConnectRefusal.DuplicateFourTuple _ -> RefusalKind.Unmodelled
@@ -792,6 +800,16 @@ module UnixConnection =
 
             if not (destinationIsLocal dest.Address) then
                 Error (ConnectRefusal.DestinationNotLocal (SocketAddress.Inet dest, SocketKind.Stream))
+            elif
+                not (
+                    SimulatedUnixPlatform.receivesStreamAt
+                        system.Machine.UnixPlatform
+                        system.Machine.LocalIpv4Addresses
+                        system.Machine.LocalRoutes
+                        dest.Address
+                )
+            then
+                Error (ConnectRefusal.UnheldDestination (SocketAddress.Inet dest))
             else
 
             let listeners =

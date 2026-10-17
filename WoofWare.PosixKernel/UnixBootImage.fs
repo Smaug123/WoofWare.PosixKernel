@@ -639,8 +639,23 @@ module UnixBootImage =
                     else
                         match entry with
                         | SeedEntry.Directory (children, _, _) -> firstImpossibleName children
-                        | SeedEntry.File _
-                        | SeedEntry.Symlink _ -> None
+                        | SeedEntry.File _ -> None
+                        | SeedEntry.Symlink (target, _) ->
+                            // `symlink(2)` copies its target in as it does a
+                            // pathname, so a target it could not copy in is
+                            // one no process made. Measured by
+                            // `docs/probes/symlink-target-length` on tmpfs,
+                            // ext4, APFS and HFS+: the limit is the flavour's
+                            // whatever the filesystem, as the mount type here
+                            // does not change it.
+                            match
+                                PathArgument.copyIn
+                                    limits
+                                    (PathArgumentBytes.Bytes (SymlinkTarget.toByteString target))
+                            with
+                            | PathArgument.Parsed _ -> None
+                            | PathArgument.Failed _ ->
+                                Some (FileSystemSeedFault.SeedSymlinkTargetTooLong (name, flavour))
                 )
 
             match ofEachName, nameMatching with
@@ -687,7 +702,10 @@ module UnixBootImage =
     /// Every name in the seed is checked against the machine's platform: its
     /// `NAME_MAX`, then its rule for which names it binds, the order a binding
     /// checks them in. A name a kernel could never have created is not one its
-    /// filesystem can hold. Also refuses a seed whose `dev` at the root is
+    /// filesystem can hold. Likewise every symbolic link's target is checked
+    /// against the longest target the platform's `symlink(2)` stores, which is
+    /// its `PATH_MAX` less the NUL, whatever `withMount` says the filesystem
+    /// is. Also refuses a seed whose `dev` at the root is
     /// anything but an empty directory, since the device filesystem is mounted
     /// there.
     ///
@@ -696,7 +714,7 @@ module UnixBootImage =
     /// holding two names that might be two such spellings: this library holds
     /// no Unicode tables to tell, and raises `UnmodelledException`.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
+    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed holds a symbolic link whose target is longer than this flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux), so no process of that flavour could have created it. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
     let withFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)
@@ -893,7 +911,11 @@ module UnixBootImage =
     /// this machine's own. The wildcard always binds. Beyond that the flavours
     /// read the lists differently: Linux binds any address inside a route's
     /// prefix, so `127.9.9.9` binds under `127.0.0.0/8`, while Darwin binds
-    /// only the addresses themselves.
+    /// only the addresses themselves. Likewise a TCP connect: Linux answers it
+    /// at any address inside a route's prefix, while Darwin answers it only at
+    /// the addresses themselves and drops the SYN to any other address on a
+    /// route, a wait `connect(2)` refuses to model. A datagram connect needs
+    /// only the route, on both.
     ///
     /// Admits any lists, stored as given. An empty list is a machine with
     /// nothing in it: with no addresses, only the wildcard binds. Entries may
