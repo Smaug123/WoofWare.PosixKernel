@@ -14,6 +14,12 @@ open WoofWare.PosixKernel
 /// built differently -- CI's, with modules this one lacked -- is exactly where an
 /// answer the library gives as the kernel's own could turn out to be that
 /// build's, so this runs the whole grid again on whichever host it finds.
+///
+/// A sandbox can refuse a socket with EPERM before the kernel reads the
+/// arguments, so a call the host refuses that way, where the sweep measured
+/// something other than EPERM, is not compared. Every other call still is, and
+/// a disagreement among them still fails the test; otherwise a host that
+/// refused any call skips the test rather than passing it.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketSyscallAgainstHost =
@@ -73,10 +79,13 @@ module TestSocketSyscallAgainstHost =
                 | SimulatedUnixFlavour.Linux -> "linux.tsv"
                 | SimulatedUnixFlavour.Darwin -> "darwin.tsv"
 
+            let eperm = UnixError.toRawErrnoUnder numbering UnixError.EPERM
+
             let mutable compared = 0
             let disagreements = ResizeArray ()
+            let refusedByHost = ResizeArray ()
 
-            for (domain, kind, protocol), _ in SocketSweep.load file do
+            for (domain, kind, protocol), measured in SocketSweep.load file do
                 let library =
                     match UnixSocket.trySocket (Callers.leader system) domain kind protocol system with
                     | Error _ -> None
@@ -98,14 +107,33 @@ module TestSocketSyscallAgainstHost =
                 match library with
                 | None -> ()
                 | Some library ->
-                    compared <- compared + 1
                     let host = hostAnswer flavour domain kind protocol
+                    let call = $"socket(%d{domain}, 0x%x{kind}, %d{protocol})"
 
-                    if host <> library then
-                        disagreements.Add
-                            $"socket(%d{domain}, 0x%x{kind}, %d{protocol}): host %A{host}, library %A{library}"
+                    // A sandbox such as Codex's (macOS seatbelt) refuses a
+                    // socket it denies with EPERM before the kernel looks at
+                    // the arguments: a bad domain is EPERM there rather than
+                    // EAFNOSUPPORT. Where the sweep measured something other
+                    // than EPERM, the host's EPERM is the sandbox's and says
+                    // nothing about the kernel; where the sweep measured
+                    // EPERM, the call is compared like any other.
+                    if
+                        host <> library
+                        && host = Error eperm
+                        && measured <> MeasuredSocketAnswer.Failed eperm
+                    then
+                        refusedByHost.Add call
+                    else
+                        compared <- compared + 1
+
+                        if host <> library then
+                            disagreements.Add $"%s{call}: host %A{host}, library %A{library}"
 
             disagreements |> List.ofSeq |> List.truncate 20 |> shouldEqual []
+
+            if refusedByHost.Count > 0 then
+                Assert.Ignore
+                    $"this host refused %d{refusedByHost.Count} of the sockets with EPERM (the first: %s{refusedByHost.[0]}), as a sandbox such as Codex's does before the kernel reads the arguments, so those calls cannot be compared with the library; the other %d{compared} agreed"
 
             // Not vacuous: most of the sweep is answered.
             compared |> shouldBeGreaterThan 240_000
