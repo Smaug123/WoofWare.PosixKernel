@@ -103,8 +103,7 @@ module TestSignalWaitPark =
         : unit
         =
         for flavour in [ SimulatedUnixFlavour.Linux ; SimulatedUnixFlavour.Darwin ] do
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let deadline = 1_000_000L
 

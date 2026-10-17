@@ -507,9 +507,6 @@ module TestLinkCount =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<DllImport("libc", EntryPoint = "mkdir", SetLastError = true)>]
     extern int private hostMkdir(string path, uint32 mode)
 
@@ -521,9 +518,6 @@ module TestLinkCount =
 
     [<DllImport("libc", EntryPoint = "rename", SetLastError = true)>]
     extern int private hostRename(string source, string destination)
-
-    [<DllImport("libc", EntryPoint = "pipe", SetLastError = true)>]
-    extern int private hostPipe(int[] fds)
 
     let private hostSucceeded (what : string) (result : int) : unit =
         if result <> 0 then
@@ -598,7 +592,7 @@ module TestLinkCount =
                                 $"%s{name}, %A{observation}: this %O{flavour} host reports %A{host}, the model %A{model}"
                 finally
                     for fd in hostHeld |> Map.values do
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
 
                     Directory.Delete (root, true)
         )
@@ -607,7 +601,7 @@ module TestLinkCount =
     let ``a pipe agrees with this host's kernel`` () : unit =
         HostStat.onMeasuredHost (fun flavour ->
             let fds = Array.zeroCreate<int> 2
-            hostPipe fds |> hostSucceeded "pipe"
+            HostCalls.pipe fds |> hostSucceeded "pipe"
 
             try
                 let system = systemOn (HostPlatform.platformOf flavour)
@@ -628,6 +622,6 @@ module TestLinkCount =
                     if host <> model then
                         failwith $"a pipe end: this %O{flavour} host reports %A{host}, the model %A{model}"
             finally
-                hostClose fds.[0] |> ignore<int>
-                hostClose fds.[1] |> ignore<int>
+                HostCalls.close fds.[0] |> ignore<int>
+                HostCalls.close fds.[1] |> ignore<int>
         )

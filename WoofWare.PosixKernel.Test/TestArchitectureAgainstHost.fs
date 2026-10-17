@@ -21,9 +21,6 @@ module TestArchitectureAgainstHost =
     [<DllImport("libc", EntryPoint = "epoll_wait", SetLastError = true)>]
     extern int private epollWait(int epfd, nativeint events, int maxevents, int timeout)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private closeFd(int fd)
-
     [<Literal>]
     let private EFAULT : int = 14
 
@@ -68,7 +65,7 @@ module TestArchitectureAgainstHost =
 
                 action platform wait
             finally
-                closeFd ep |> ignore<int>
+                HostCalls.close ep |> ignore<int>
         )
 
     /// The largest `maxevents` that is not EINVAL is the architecture's

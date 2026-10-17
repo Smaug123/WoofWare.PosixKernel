@@ -225,7 +225,7 @@ module TestProcessTermination =
     let private signalOf (flavour : SimulatedUnixFlavour) (row : Row) : Signal =
         let _, signo, _, _, _, _ = row
 
-        match Signal.ofRawSignoUnder (SimulatedUnixPlatform.signalNumbering (platformFor flavour)) signo with
+        match Signal.ofRawSignoUnder (HostPlatform.signalNumberingOf flavour) signo with
         | ValueSome signal -> signal
         | ValueNone -> failwith $"row %A{row} names a signal %O{flavour} has not got"
 

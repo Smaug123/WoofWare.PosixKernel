@@ -283,17 +283,11 @@ module TestSockNameFaultLength =
 [<Parallelizable(ParallelScope.All)>]
 module TestSockNameFaultLengthAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
     [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
     extern int private hostGetSockName(int fd, nativeint address, nativeint length)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
     extern nativeint private hostMmap(
@@ -401,7 +395,7 @@ module TestSockNameFaultLengthAgainstHost =
             if not BitConverter.IsLittleEndian then
                 Assert.Ignore "the model's presets are little-endian machines"
 
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
             if fd < 0 then
                 failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -444,5 +438,5 @@ module TestSockNameFaultLengthAgainstHost =
                 if not disagreements.IsEmpty then
                     failwith $"on %O{platform}:\n%s{String.Join ('\n', disagreements)}"
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         )

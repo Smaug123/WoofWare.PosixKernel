@@ -133,9 +133,6 @@ module TestEpollCreate1 =
     [<DllImport("libc", EntryPoint = "epoll_create1", SetLastError = true)>]
     extern int private hostEpollCreate1(int flags)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     [<Test>]
     let ``the flag screen is this Linux host's`` () : unit =
         HostPlatform.onUnixHostPreset (fun platform ->
@@ -152,7 +149,7 @@ module TestEpollCreate1 =
 
                 let hostCreated =
                     if fd >= 0 then
-                        hostClose fd |> ignore<int>
+                        HostCalls.close fd |> ignore<int>
                         true
                     else
                         let errno = Marshal.GetLastPInvokeError ()

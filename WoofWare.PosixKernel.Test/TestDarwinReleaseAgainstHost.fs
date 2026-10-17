@@ -31,15 +31,12 @@ module TestDarwinReleaseAgainstHost =
     [<Literal>]
     let private DarwinNameLength = 256
 
-    [<DllImport("libc", EntryPoint = "uname", SetLastError = true)>]
-    extern int private hostUname(byte[] buffer)
-
     /// `uname -r` on this Darwin host. Not `RuntimeInformation.OSDescription`,
     /// which on macOS reports the product version rather than the kernel's.
     let private darwinHostRelease () : string =
         let buffer = Array.zeroCreate<byte> (5 * DarwinNameLength)
 
-        if hostUname buffer <> 0 then
+        if HostCalls.uname buffer <> 0 then
             failwith $"uname failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
         let field (index : int) : string =

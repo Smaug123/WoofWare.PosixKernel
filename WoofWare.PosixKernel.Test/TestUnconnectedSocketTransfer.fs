@@ -576,28 +576,11 @@ module TestUnconnectedSocketTransfer =
     // The host the suite runs on
     // ------------------------------------------------------------------
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
     [<DllImport("libc", EntryPoint = "listen", SetLastError = true)>]
     extern int private hostListen(int fd, int backlog)
-
-    [<DllImport("libc", EntryPoint = "read", SetLastError = true)>]
-    extern nativeint private hostRead(int fd, byte[] buffer, unativeint count)
-
-    [<DllImport("libc", EntryPoint = "write", SetLastError = true)>]
-    extern nativeint private hostWrite(int fd, byte[] buffer, unativeint count)
-
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably, so this goes
-    // through the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "getsockname", SetLastError = true)>]
     extern int private hostGetSockName(int fd, byte[] address, uint32& length)
@@ -614,11 +597,11 @@ module TestUnconnectedSocketTransfer =
                             let rawDomain, rawKind, protocol =
                                 NewSocket.arguments platform domain kind SocketProtocol.Default
 
-                            let fd = hostSocket (rawDomain, rawKind, protocol)
+                            let fd = HostCalls.socket (rawDomain, rawKind, protocol)
 
                             if fd >= 0 then
                                 try
-                                    hostWrite (fd, [| 0uy |], 1un) |> ignore<nativeint>
+                                    HostCalls.write (fd, [| 0uy |], 1un) |> ignore<nativeint>
                                     // sin_port and sin6_port are both at offset 2, in
                                     // network order, on both flavours.
                                     let name = Array.zeroCreate<byte> 128
@@ -632,7 +615,7 @@ module TestUnconnectedSocketTransfer =
                                     if bound <> UnconnectedSocketRules.writeBindsFirst flavour domain kind then
                                         yield $"%O{domain} %O{kind}: this host bound it %b{bound}"
                                 finally
-                                    hostClose fd |> ignore<int>
+                                    HostCalls.close fd |> ignore<int>
                 ]
 
             disagreeing |> shouldEqual []
@@ -645,7 +628,7 @@ module TestUnconnectedSocketTransfer =
         let domain, kind, protocol =
             NewSocket.arguments platform row.Domain row.Kind SocketProtocol.Default
 
-        let fd = hostSocket (domain, kind, protocol)
+        let fd = HostCalls.socket (domain, kind, protocol)
         let socketErrno = Marshal.GetLastPInvokeError ()
 
         let noIpv6 =
@@ -676,21 +659,21 @@ module TestUnconnectedSocketTransfer =
                 bind ()
                 listen ()
 
-            if row.NonBlocking && hostSetNonBlocking (nativeint fd, 1) <> 0 then
+            if row.NonBlocking && HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                 failwith $"the host would not set O_NONBLOCK on %A{row}"
 
             Marshal.SetLastPInvokeError 0
 
             let returned =
                 match row.Call with
-                | Call.Read count -> hostRead (fd, Array.zeroCreate (int count), unativeint count)
-                | Call.Write count -> hostWrite (fd, Array.zeroCreate (int count), unativeint count)
+                | Call.Read count -> HostCalls.read (fd, Array.zeroCreate (int count), unativeint count)
+                | Call.Write count -> HostCalls.write (fd, Array.zeroCreate (int count), unativeint count)
 
             let errno = if returned = -1n then Marshal.GetLastPInvokeError () else 0
 
             Some (int64 returned, errno)
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``this host answers every row the kernel can build as the kernel does`` () : unit =

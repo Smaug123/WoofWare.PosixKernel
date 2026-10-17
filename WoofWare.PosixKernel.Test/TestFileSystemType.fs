@@ -27,12 +27,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestFileSystemType =
 
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private pipe(int[] fds)
-
-    [<DllImport("libc", SetLastError = true)>]
-    extern int private socket(int domain, int kind, int protocol)
-
     /// Darwin's anonymous-inode object. Declared unconditionally: a `DllImport`
     /// binds on first call, so naming a symbol this host lacks costs nothing
     /// until something calls it.
@@ -42,9 +36,6 @@ module TestFileSystemType =
     /// Linux's.
     [<DllImport("libc", SetLastError = true)>]
     extern int private epoll_create1(int flags)
-
-    [<DllImport("libc")>]
-    extern int private close(int fd)
 
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
@@ -785,14 +776,14 @@ module TestFileSystemType =
 
             let ends : int[] = Array.zeroCreate 2
 
-            if pipe ends <> 0 then
+            if HostCalls.pipe ends <> 0 then
                 failwith $"pipe(2) failed: errno %d{Marshal.GetLastWin32Error ()}"
 
             // AF_INET, AF_UNIX, SOCK_STREAM and SOCK_DGRAM are 2, 1, 1 and 2 on
             // both of the Unixes modelled.
-            let inet = socket (2, 1, 0)
-            let datagram = socket (2, 2, 0)
-            let local = socket (1, 1, 0)
+            let inet = HostCalls.socket (2, 1, 0)
+            let datagram = HostCalls.socket (2, 2, 0)
+            let local = HostCalls.socket (1, 1, 0)
 
             for s in [ inet ; datagram ; local ] do
                 if s < 0 then
@@ -828,12 +819,12 @@ module TestFileSystemType =
 
                     agreeOnStatedGroups $"a %s{label} on this %O{flavour} host" hostSaid modelSaid
             finally
-                close ends.[0] |> ignore<int>
-                close ends.[1] |> ignore<int>
-                close inet |> ignore<int>
-                close datagram |> ignore<int>
-                close local |> ignore<int>
-                close eventQueue |> ignore<int>
+                HostCalls.close ends.[0] |> ignore<int>
+                HostCalls.close ends.[1] |> ignore<int>
+                HostCalls.close inet |> ignore<int>
+                HostCalls.close datagram |> ignore<int>
+                HostCalls.close local |> ignore<int>
+                HostCalls.close eventQueue |> ignore<int>
         )
 
     [<Test>]
@@ -875,7 +866,7 @@ module TestFileSystemType =
                 action fd host
             | other -> Assert.Ignore $"%s{path} is not the flavour's default filesystem: fstatfs answers %A{other}"
         finally
-            close fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     [<Test>]
     let ``a directory on this host's own filesystem reports the model's type and geometry`` () : unit =

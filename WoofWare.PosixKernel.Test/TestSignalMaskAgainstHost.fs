@@ -74,8 +74,7 @@ module TestSignalMaskAgainstHost =
     [<Test>]
     let ``isUnblockableUnder agrees with this host's pthread_sigmask about every signo`` () : unit =
         HostPlatform.onUnixHost (fun flavour ->
-            let numbering =
-                SimulatedUnixPlatform.signalNumbering (HostPlatform.platformOf flavour)
+            let numbering = HostPlatform.signalNumberingOf flavour
 
             let disagreements =
                 [ 1 .. Signal.highestSignoUnder numbering ]

@@ -22,9 +22,6 @@ open WoofWare.PosixKernel
 [<Parallelizable(ParallelScope.All)>]
 module TestSocketErrorAgainstHost =
 
-    [<DllImport("libc", EntryPoint = "socket", SetLastError = true)>]
-    extern int private hostSocket(int domain, int kind, int protocol)
-
     [<DllImport("libc", EntryPoint = "bind", SetLastError = true)>]
     extern int private hostBind(int fd, byte[] address, uint32 length)
 
@@ -40,17 +37,8 @@ module TestSocketErrorAgainstHost =
     [<DllImport("libc", EntryPoint = "getsockopt", SetLastError = true)>]
     extern int private hostGetSockOpt(int fd, int level, int optionName, nativeint value, nativeint optionLength)
 
-    // `fcntl(2)` is variadic, which a P/Invoke cannot call portably (Apple's
-    // arm64 ABI passes variadic arguments on the stack), so this goes through
-    // the fixed-arity wrapper in .NET's own `System.Native` library.
-    [<DllImport("libSystem.Native", EntryPoint = "SystemNative_FcntlSetIsNonBlocking")>]
-    extern int private hostSetNonBlocking(nativeint fd, int isNonBlocking)
-
     [<DllImport("libc", EntryPoint = "poll", SetLastError = true)>]
     extern int private hostPoll(int64[] fds, unativeint count, int timeoutMs)
-
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
 
     [<DllImport("libc", EntryPoint = "mmap", SetLastError = true)>]
     extern nativeint private hostMmap(
@@ -171,7 +159,7 @@ module TestSocketErrorAgainstHost =
 
     /// A host socket bound to an ephemeral loopback port, and that port.
     let private hostBound (platform : SimulatedUnixPlatform) : int * uint16 =
-        let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
         if fd < 0 then
             failwith $"socket failed with errno %d{Marshal.GetLastPInvokeError ()}"
@@ -192,13 +180,13 @@ module TestSocketErrorAgainstHost =
     /// Whether some other socket on the host holds `port`, which turns a
     /// connect meant to be refused into one that is not.
     let private portTaken (platform : SimulatedUnixPlatform) (port : uint16) : bool =
-        let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+        let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
         try
             let address = hostSockaddr platform port
             hostBind (fd, address, uint32 address.Length) <> 0
         finally
-            hostClose fd |> ignore<int>
+            HostCalls.close fd |> ignore<int>
 
     /// Wait until a non-blocking connect in flight on the host has an outcome,
     /// as the model's connect has one at once.
@@ -380,10 +368,10 @@ module TestSocketErrorAgainstHost =
             if hostListen (listener, 16) <> 0 then
                 failwith $"listen failed with errno %d{Marshal.GetLastPInvokeError ()}"
 
-            let fd = hostSocket (AF_INET, SOCK_STREAM, 0)
+            let fd = HostCalls.socket (AF_INET, SOCK_STREAM, 0)
 
             try
-                if nonBlocking && hostSetNonBlocking (nativeint fd, 1) <> 0 then
+                if nonBlocking && HostCalls.setNonBlocking (nativeint fd, 1) <> 0 then
                     failwith "setting O_NONBLOCK on the host's socket failed"
 
                 let modelFd, system = modelSystem platform listenerPort nonBlocking
@@ -473,9 +461,9 @@ module TestSocketErrorAgainstHost =
 
                 go 0 operations system
             finally
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
         finally
-            hostClose listener |> ignore<int>
+            HostCalls.close listener |> ignore<int>
 
     [<Test>]
     let ``SO_ERROR reads and connects answer as this kernel does`` () : unit =
@@ -489,7 +477,7 @@ module TestSocketErrorAgainstHost =
             // re-chosen whenever another socket on the host takes it.
             let freshNobody () : uint16 =
                 let fd, port = hostBound platform
-                hostClose fd |> ignore<int>
+                HostCalls.close fd |> ignore<int>
                 port
 
             let nobody = ref (freshNobody ())

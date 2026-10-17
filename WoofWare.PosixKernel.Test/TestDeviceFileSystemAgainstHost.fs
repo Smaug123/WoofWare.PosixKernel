@@ -25,9 +25,6 @@ module TestDeviceFileSystemAgainstHost =
     [<DllImport("libc", EntryPoint = "open", SetLastError = true)>]
     extern int private hostOpen(string path, int flags, int mode)
 
-    [<DllImport("libc", EntryPoint = "close")>]
-    extern int private hostClose(int fd)
-
     let private booted (flavour : SimulatedUnixFlavour) : UnixSystem<int, string> =
         UnixSystem.initial (HostPlatform.platformOf flavour)
         |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
@@ -77,7 +74,7 @@ module TestDeviceFileSystemAgainstHost =
                     HostFileSystemType.typeFieldsFor flavour fd
                     |> shouldEqual (Ok (FileSystemStatistics.typeFields statistics))
                 finally
-                    hostClose fd |> ignore<int>
+                    HostCalls.close fd |> ignore<int>
             | SimulatedUnixFlavour.Linux, other -> failwith $"statfs on Linux: expected an answer, got %A{other}"
         )
 
