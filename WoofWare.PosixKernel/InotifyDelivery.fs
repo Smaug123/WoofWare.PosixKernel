@@ -78,6 +78,12 @@ type internal ChangeNotice =
     /// since unlinked, was released (Linux's dentry going), and nothing in
     /// the graph changed (`VirtualFileSystem.unchanged`).
     | NameReleased of inode : InodeNumber
+    /// A read of `inode` moved its access time, the one change it holds
+    /// (`FsChange.AttributesChanged`). It raises nothing: Linux's
+    /// `IN_ACCESS` is the read's own, raised whether or not the time moves
+    /// (measured, `docs/probes/atime`), and this kernel refuses a watch that
+    /// asks for it.
+    | Read of inode : InodeNumber
 
 /// One event Linux's fsnotify raises at the watches on one inode: what each
 /// inotify instance watching `Watched` queues as one record, if it asks for
@@ -389,6 +395,12 @@ module internal InotifyDelivery =
                 )
 
             List.rev reversed, None, cookie
+        | ChangeNotice.Read inode ->
+            if changes <> [ FsChange.AttributesChanged inode ] then
+                failwith
+                    $"InotifyDelivery: a read of inode %O{inode} made %A{changes}, where it moves that inode's access time alone (this is a bug in this library)."
+
+            [], None, nextCookie
         | ChangeNotice.NameReleased inode ->
             if not (List.isEmpty changes) then
                 failwith

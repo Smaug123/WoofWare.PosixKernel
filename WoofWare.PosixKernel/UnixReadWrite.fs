@@ -1606,6 +1606,11 @@ module UnixReadWrite =
     ///
     /// The buffer screen has already had its say by here, so this is reached
     /// only with an address the flavour accepted.
+    ///
+    /// A read of a regular file of at least one byte moves its access time
+    /// where its filesystem's rule says (`UnixMachineState.afterRead`), even
+    /// one that answers 0 at end-of-file or EFAULT: measured,
+    /// `docs/probes/atime`. A read of no bytes moves nothing.
     let private readFileAt<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (syscall : string)
         (fd : int)
@@ -1614,7 +1619,7 @@ module UnixReadWrite =
         (buffer : UserBuffer)
         (count : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<ImmutableArray<byte>, UnixError>, BufferRefusal>
+        : Result<Result<ImmutableArray<byte>, UnixError> * ProcessView<'Thread, 'Handler>, BufferRefusal>
         =
         let entry =
             VirtualFileSystem.get "UnixReadWrite: the inode a read's descriptor names" inode system.Machine.FileSystem
@@ -1624,7 +1629,8 @@ module UnixReadWrite =
             // EISDIR on both, and behind the buffer screen rather than ahead of
             // it: measured, `read(dir, NULL, 5)` is EISDIR while
             // `read(dir, (void*)-1, 5)` is EFAULT under a screening flavour.
-            Ok (Error UnixError.EISDIR)
+            // It moves no time (measured, `docs/probes/atime`).
+            Ok (Error UnixError.EISDIR, system)
         | InodeContent.CharacterDevice _ ->
             failwith
                 $"UnixSystem.%s{syscall}: fd %d{fd} names inode %O{inode}, which is a character device, through a description of a regular file. A description of a device is OpenFileTarget.CharacterDevice, and UnixSystem.checkInvariants reports this one as DescriptionKindMismatch (this is a bug in this library)."
@@ -1641,12 +1647,24 @@ module UnixReadWrite =
 
         let transfer = VirtualFileSystem.readTransferCount offset count contents.Length
 
+        let accessed () : ProcessView<'Thread, 'Handler> =
+            if count = 0 then
+                system
+            else
+                { system with
+                    Machine =
+                        UnixMachineState.afterRead
+                            inode
+                            (UnixMachineState.realtime system.Scheduling system.Machine)
+                            system.Machine
+                }
+
         if transfer = 0 then
-            // Nothing moves, so the buffer is not consulted: measured,
+            // No byte moves, so the buffer is not consulted: measured,
             // `read(f, NULL, 5)` at end-of-file is 0 on both platforms rather
             // than EFAULT. A null pointer is an ordinary user address, so it
             // reaches here rather than being screened above.
-            Ok (Ok ImmutableArray.Empty)
+            Ok (Ok ImmutableArray.Empty, accessed ())
         else
 
         // The one point at which the buffer must actually hold bytes.
@@ -1655,14 +1673,14 @@ module UnixReadWrite =
             // Measured: an EFAULT leaves the file's contents and the caller's
             // offset alone. A kernel faults in `copy_to_user`, after deciding
             // what it would have transferred but before consuming anything.
-            Ok (Error UnixError.EFAULT)
+            Ok (Error UnixError.EFAULT, accessed ())
         | UserBuffer.Opaque -> Error BufferRefusal.OpaqueAtTransfer
         | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
         | UserBuffer.Mapped ->
 
         // A range copy rather than an enumeration: one call can move nearly two
         // gigabytes.
-        Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)))
+        Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)), accessed ())
 
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
@@ -2114,8 +2132,8 @@ module UnixReadWrite =
         // same operation, so the two share it.
         match readFileAt "read" fd inode offset buffer (oneCallsWorth platform count) system with
         | Error refusal -> Error (ReadRefusal.Buffer refusal)
-        | Ok (Error error) -> answered (ReadAnswer.Failed error) system
-        | Ok (Ok bytes) ->
+        | Ok (Error error, system) -> answered (ReadAnswer.Failed error) system
+        | Ok (Ok bytes, system) ->
 
         if bytes.IsEmpty then
             // Nothing moved, so the offset stays exactly where it was rather
@@ -2162,6 +2180,11 @@ module UnixReadWrite =
     ///
     /// The buffer is consulted at three points and *not* consulted at three
     /// others, and both sets are measured; see the comments inline.
+    ///
+    /// A read of at least one byte from a regular file moves the file's
+    /// access time as its filesystem's mount says: on Darwin's APFS, to now
+    /// when it is before the modification time, even for a read that answers
+    /// 0 at end-of-file or EFAULT; on Linux's tmpfs, mounted `noatime`, never.
     ///
     /// A socket with no peer (fresh from `socket(2)`, bound, or listening)
     /// answers without the buffer, with the errno its flavour gives its domain
@@ -2914,8 +2937,8 @@ module UnixReadWrite =
 
         match readFileAt "pread" fd inode offset buffer (oneCallsWorth platform count) system with
         | Error refusal -> Error (PReadRefusal.Buffer refusal)
-        | Ok (Error error) -> Ok (ReadAnswer.Failed error, system)
-        | Ok (Ok bytes) -> Ok (ReadAnswer.Completed bytes, system)
+        | Ok (Error error, system) -> Ok (ReadAnswer.Failed error, system)
+        | Ok (Ok bytes, system) -> Ok (ReadAnswer.Completed bytes, system)
 
     /// `pread`, with a refusal answered as the `Error` rather than raised.
     let internal tryPread<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2945,9 +2968,10 @@ module UnixReadWrite =
     /// EINVAL. Where in the order it is answered differs between the flavours,
     /// which is what makes this more than `read` with an extra argument.
     ///
-    /// It moves no file offset, and nothing in this kernel moves `atime`, so the
-    /// system that comes back is the one that arrived unless the read drew from
-    /// the entropy pool (`ReadAnswer.Drawn`).
+    /// It moves no file offset. It moves a regular file's access time as
+    /// `read` does, so the system that comes back is the one that arrived
+    /// unless the read moved that time or drew from the entropy pool
+    /// (`ReadAnswer.Drawn`).
     ///
     /// `caller` is the thread making the call, which must be one of the
     /// system's process's and not asleep in another.

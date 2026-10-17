@@ -80,6 +80,7 @@
     <Compile Include="TestStartingDirectory.fs" />
     <Compile Include="TestAttributeChangeAt.fs" />
     <Compile Include="TestUTimensAt.fs" />
+    <Compile Include="TestAccessTime.fs" />
     <Compile Include="TestMkNod.fs" />
     <Compile Include="TestSymlinkMode.fs" />
     <Compile Include="TestReadLinkMode.fs" />
@@ -561,6 +562,12 @@
          boots, measured by docs/probes/devtmpfs-times. `TestDeviceFileSystem`
          replays them. -->
     <EmbeddedResource Include="..\docs\probes\devtmpfs-times\measured-linux-6.18.5-aarch64-3-boots.txt" LogicalName="WoofWare.PosixKernel.Test.devtmpfs-times.linux.txt" />
+    <!-- docs/probes/atime. `TestAccessTime` replays the rows of the mounts the
+         model claims: a noatime tmpfs on Linux, and APFS with its default
+         options on Darwin. -->
+    <EmbeddedResource Include="..\docs\probes\atime\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.atime.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\atime\measured-darwin-27.0-apfs-data.txt" LogicalName="WoofWare.PosixKernel.Test.atime.darwin-data.txt" />
+    <EmbeddedResource Include="..\docs\probes\atime\measured-darwin-27.0-apfs-image-default.txt" LogicalName="WoofWare.PosixKernel.Test.atime.darwin-image-default.txt" />
   </ItemGroup>
 
   <ItemGroup>
