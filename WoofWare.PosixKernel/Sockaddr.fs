@@ -209,8 +209,9 @@ type BindFault =
     | Family
     /// No local interface holds the address. `EADDRNOTAVAIL`.
     | AddressNotLocal
-    /// The port is below `privilegedPortCeiling` and the process is not root.
-    /// `EACCES`.
+    /// The port is below `privilegedPortCeiling`, at an address
+    /// `privilegedPortGuards` says the limit covers, and the process is not
+    /// root. `EACCES`.
     | PrivilegedPort
     /// This socket already has a local address. `EINVAL`.
     | AlreadyBound
