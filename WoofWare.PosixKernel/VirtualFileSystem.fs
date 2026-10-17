@@ -396,6 +396,37 @@ type internal FileWriteRefusal =
     /// for this writer; see `SetIdChangeRefusal`.
     | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
 
+/// What a write to a regular file whose copy from the caller's buffer faults
+/// at its first byte has already done to the file's timestamps, and for which
+/// writers that is measured. Either way, the write has stripped the set-ID
+/// bits a successful write strips, and made the file at least as long as the
+/// write's offset, before it answers EFAULT.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteRule =
+    /// `mtime` and `ctime` move wherever the write was aimed, for every
+    /// writer.
+    | TimesAlwaysMove
+    /// `mtime` and `ctime` move only when the write reaches past the end of
+    /// the file. Measured only for an unprivileged writer who owns the file.
+    | TimesMoveWhenReachingPastEnd
+
+/// Why a write whose copy from the caller's buffer faults has no answer.
+///
+/// Separate from `FileWriteRefusal` for the reason `FileTruncationRefusal`
+/// is: such a write names a length to reach but copies nothing, and only it can
+/// meet an unmeasured writer.
+[<RequireQualifiedAccess>]
+type internal FaultedWriteRefusal =
+    /// The write's offset is past `VirtualFileSystem.maxFileLength`, which the
+    /// file would have to reach.
+    | WouldExceedMaxLength of offset : int64
+    /// What the write would do to the file's set-ID bits has not been measured
+    /// for this writer; see `SetIdChangeRefusal`.
+    | UnmeasuredSetIdChange of refusal : SetIdChangeRefusal
+    /// The rule (`FaultedWriteRule.TimesMoveWhenReachingPastEnd`) has not been
+    /// measured for a writer standing as `standing` towards the file.
+    | UnmeasuredWriter of standing : Standing
+
 /// Why a truncation has no answer.
 ///
 /// Separate from `FileWriteRefusal` rather than a case added to it: the payloads
@@ -1992,7 +2023,9 @@ module VirtualFileSystem =
 
     /// Mount `fileSystem` over the root's entry `name`, as a directory with
     /// `permissions` owned by `owner`, holding one node for each of `devices`
-    /// owned by `owner` too, all created at `now`.
+    /// owned by `owner` too, all created at `now`. The root directory's own
+    /// times do not move: a mount changes no directory of the filesystem it
+    /// covers.
     ///
     /// The root may already bind `name` to an empty directory, which the mount
     /// then covers; otherwise the mount covers a directory that held nothing,
@@ -2016,6 +2049,11 @@ module VirtualFileSystem =
             | None ->
                 failwith
                     $"VirtualFileSystem.mountAtRoot: the root, inode %O{vfs.Root}, is not a directory this filesystem holds. Run VirtualFileSystem.checkInvariants."
+
+        // Unbinding a covered directory and binding the mounted root below go
+        // through the builders every directory change goes through, which move
+        // the root's times; they are put back once the mount is made.
+        let rootTimes = vfs.Inodes.[vfs.Root].Times
 
         let covered =
             match Map.tryFind name rootContent.Entries with
@@ -2079,8 +2117,17 @@ module VirtualFileSystem =
                 )
                 (vfs, Map.add mountRoot mountRoot vfs.MountMembers)
 
+        let root = vfs.Inodes.[vfs.Root]
+
         Ok
             { vfs with
+                Inodes =
+                    Map.add
+                        vfs.Root
+                        { root with
+                            Times = rootTimes
+                        }
+                        vfs.Inodes
                 Mounts =
                     Map.add
                         mountRoot
@@ -2194,6 +2241,110 @@ module VirtualFileSystem =
                 [ FsChange.ContentChanged inode ]
             else
                 [ FsChange.AttributesChanged inode ; FsChange.ContentChanged inode ]
+
+        Ok (mutation vfs after changes)
+
+    /// What a write of `count` bytes at `offset` into the regular file at
+    /// `inode`, by a writer with `credentials`, does before it answers EFAULT
+    /// because its copy from the caller's buffer faulted at the first byte:
+    /// strips whichever set-ID bits a successful write would (`rule`), makes
+    /// the file `offset` bytes long if it was shorter, filling the gap with
+    /// zeroes, and moves `mtime` and `ctime` where `faulted` says they move.
+    /// Refused, changing nothing, for a writer `faulted` is not measured for,
+    /// and where `PermissionBits.afterContentChangingWrite` refuses.
+    ///
+    /// Partial in the inode as `writeFile` is, and `count` must be positive:
+    /// a write of no bytes reads no buffer, so cannot fault.
+    ///
+    /// Reports `FsChange.AttributesChanged` when it stripped a set-ID bit,
+    /// followed by `ContentChanged` when it moved the timestamps or the
+    /// length; nothing, and the graph it was given, when it did neither.
+    let internal writeFaulted
+        (inode : InodeNumber)
+        (offset : int64)
+        (count : int)
+        (rule : SetGroupIdOnWrite)
+        (faulted : FaultedWriteRule)
+        (credentials : Credentials)
+        (now : UnixTimestamp)
+        (vfs : VirtualFileSystem)
+        : Result<VfsMutation, FaultedWriteRefusal>
+        =
+        System.Diagnostics.Debug.Assert (count > 0, "writeFaulted: a write of no bytes cannot fault")
+        System.Diagnostics.Debug.Assert (offset >= 0L, "writeFaulted: offset must not be negative")
+
+        let entry, contents, permissions =
+            match Map.tryFind inode vfs.Inodes with
+            | Some ({
+                        Content = InodeContent.RegularFile (contents, permissions)
+                    } as entry) -> entry, contents, permissions
+            | Some entry ->
+                failwith
+                    $"VirtualFileSystem.writeFaulted: inode %O{inode} is %A{entry.Content}, not a regular file, so no descriptor naming it can reach a file's write (this is a bug in the caller)."
+            | None ->
+                failwith
+                    $"VirtualFileSystem.writeFaulted: inode %O{inode} is not in this filesystem. A descriptor outliving its inode means an unlink removed a still-open file; the open file description must keep it alive."
+
+        let standing = Standing.toward credentials entry.Owner
+
+        let measured =
+            match faulted with
+            | FaultedWriteRule.TimesAlwaysMove -> true
+            | FaultedWriteRule.TimesMoveWhenReachingPastEnd ->
+                standing.Owns && standing.Privilege = CallerPrivilege.Unprivileged
+
+        if not measured then
+            Error (FaultedWriteRefusal.UnmeasuredWriter standing)
+        else
+
+        match PermissionBits.afterContentChangingWrite rule standing permissions with
+        | Error refusal -> Error (FaultedWriteRefusal.UnmeasuredSetIdChange refusal)
+        | Ok stripped ->
+
+        let extended =
+            if offset <= int64 contents.Length then
+                Ok contents
+            else
+                match truncatedContents contents offset with
+                | Ok extended -> Ok extended
+                | Error _ -> Error (FaultedWriteRefusal.WouldExceedMaxLength offset)
+
+        match extended with
+        | Error refusal -> Error refusal
+        | Ok extended ->
+
+        let timesMove =
+            match faulted with
+            | FaultedWriteRule.TimesAlwaysMove -> true
+            | FaultedWriteRule.TimesMoveWhenReachingPastEnd -> offset + int64 count > int64 contents.Length
+
+        let changes =
+            [
+                if stripped <> permissions then
+                    FsChange.AttributesChanged inode
+                if timesMove || extended.Length <> contents.Length then
+                    FsChange.ContentChanged inode
+            ]
+
+        if List.isEmpty changes then
+            Ok (mutation vfs vfs [])
+        else
+
+        let after =
+            { vfs with
+                Inodes =
+                    Map.add
+                        inode
+                        { entry with
+                            Content = InodeContent.RegularFile (extended, stripped)
+                            Times =
+                                if timesMove then
+                                    InodeTimes.contentsChangedAt now entry.Times
+                                else
+                                    entry.Times
+                        }
+                        vfs.Inodes
+            }
 
         Ok (mutation vfs after changes)
 

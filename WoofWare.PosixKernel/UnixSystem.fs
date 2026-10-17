@@ -995,15 +995,14 @@ module internal ProcessCreationRefusal =
 module UnixSystem =
 
     /// Mount `mount` over the root's `dev`, as the kernel does at boot, with a
-    /// node for each device it has a driver for, all made at `bootTime` and
-    /// owned by root.
+    /// node for each device it has a driver for, all made at the epoch and
+    /// owned by root. The root directory's times do not move.
     ///
     /// The directory and its nodes have the modes a measured devtmpfs and devfs
     /// report: 0755 and 0555 respectively for the directory, 0666 for each
     /// node.
     let internal mountDeviceFileSystem
         (mount : DeviceFileSystemMount)
-        (bootTime : UnixTimestamp)
         (filesystem : VirtualFileSystem)
         : Result<VirtualFileSystem, MountFault>
         =
@@ -1021,13 +1020,21 @@ module UnixSystem =
                 |> List.map (fun device -> CharacterDevice.name device, device, CharacterDevice.permissions device)
             | DeviceFileSystemMount.Devfs -> PermissionBits 0o555, []
 
+        // Measured by `docs/probes/devtmpfs-times` over three boots of Linux
+        // 6.18.5 aarch64: devtmpfs makes its root and these nodes before the
+        // realtime clock is first set, so every one of their times is the
+        // uptime then, 0 to 4 ms past the epoch, whatever the clock later
+        // reads and whenever the root filesystem was made. The exact
+        // milliseconds depend on how fast the kernel booted, which nothing
+        // here states, so this is the epoch itself. An x86 kernel, which reads
+        // a CMOS clock before devtmpfs runs, has not been measured.
         VirtualFileSystem.mountAtRoot
             (DeviceFileSystemMount.mounted mount)
             (DirectoryEntryName.parseOrFail "UnixSystem.mountDeviceFileSystem" "dev")
             permissions
             root
             devices
-            bootTime
+            UnixTimestamp.epoch
             filesystem
 
     /// The first thread of the process `pid`, which it started with: its
@@ -4098,14 +4105,12 @@ module UnixSystem =
         let deviceMount = DeviceFileSystemMount.defaultFor flavour
 
         let filesystem =
-            let bootTime = UnixTimestamp.ofMillisecondsSinceEpoch 0L
-
             match
                 VirtualFileSystem.empty
                     (SimulatedUnixPlatform.entryNameMatching platform)
-                    bootTime
+                    UnixTimestamp.epoch
                     (InodeOwner.ofProcess (defaultCredentials flavour))
-                |> mountDeviceFileSystem deviceMount bootTime
+                |> mountDeviceFileSystem deviceMount
             with
             | Ok filesystem -> filesystem
             | Error fault ->

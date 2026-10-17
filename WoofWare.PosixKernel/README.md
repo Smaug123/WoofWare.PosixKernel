@@ -761,6 +761,7 @@ Every answer is a `ProcessFate<WriteOutcome>`: the process ended (`ProcessFate.P
 
 **Buffers.** Where a real kernel would check a buffer's address, the client describes the address as a `UserBuffer`, and the library decides whether and when the call answers `EFAULT`, against the limit set by `UnixBootImage.withUserAddressLimit`.
 A client with a flat address space uses `UserBuffer.Mapped` for an address whose bytes it can read or write and `UserBuffer.Unmapped address` for one it cannot.
+An `EFAULT` is not always a call that changed nothing: a `write` or `pwrite` of at least one byte to a regular file, through an unmapped address within the limit, strips the file's set-ID bits as a successful write would and grows the file to the write's offset before its copy faults, and moves the file's `mtime` and `ctime` on Linux always and on Darwin when the write reaches past the file's end. Darwin's answer is measured only for an unprivileged writer who owns the file, and any other writer's such write throws `UnmodelledException`.
 The other two cases, `UserBuffer.Opaque` and `UserBuffer.Addressless`, are for a client whose pointers are not always numbers.
 
 ## Sleeping and waking
@@ -1333,6 +1334,7 @@ The filesystem type is chosen separately (see "Giving the machine files"), from 
 The kernel mounts a device filesystem over `/dev` at boot, as a real one does.
 On Linux it is a devtmpfs holding a node for each device the kernel has a driver for (`/dev/null` and `/dev/urandom`); since a real devtmpfs holds hundreds, any other name in it is refused rather than answered ENOENT, and so are listing it and adding or removing a name in it.
 Opening a node gives a descriptor whose syscalls are the driver's: `/dev/null` reads nothing and swallows every write, and `/dev/urandom` reads from the same entropy pool `getrandom` draws on.
+Every time on `/dev` and its nodes is the epoch, whatever `withFileSystem` and `withBootTime` say: a devtmpfs makes them before the realtime clock is first set, which on a measured aarch64 machine left them within a few milliseconds of the epoch. No read or write moves them, and mounting `/dev` moves none of the root directory's times.
 `CharacterDevice.Zero`, `CharacterDevice.Random` and `CharacterDevice.Tty` exist too, so that a client's matches already handle them when their drivers arrive, but nothing produces them yet: `CharacterDevice.all` does not list them, so no node names any of them.
 On Darwin it is devfs, which is not modelled, so any path that reaches `/dev` is refused.
 

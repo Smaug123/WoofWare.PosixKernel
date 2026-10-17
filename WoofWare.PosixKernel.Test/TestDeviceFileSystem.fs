@@ -157,8 +157,8 @@ module TestDeviceFileSystem =
     [<Test>]
     let ``each device node reports the measured stat fields`` () : unit =
         let property (seconds : int64) : unit =
-            let bootTime = UnixTimestamp.ofSeconds (abs seconds % 2_000_000_000L)
-            let system = bootedAt linux bootTime
+            let createdAt = UnixTimestamp.ofSeconds (abs seconds % 2_000_000_000L)
+            let system = bootedAt linux createdAt
 
             for path, rawDevice in [ "/dev/null", 259L ; "/dev/urandom", 265L ] do
                 let status = reported path system
@@ -171,10 +171,12 @@ module TestDeviceFileSystem =
                 // devtmpfs's own device, which is not the root filesystem's.
                 status.DeviceId |> shouldEqual DevtmpfsMount.defaults.DeviceId
                 status.DeviceId |> shouldNotEqual (reported "/f" system).DeviceId
-                // Made at boot, and moved by nothing since.
-                status.AccessTime |> shouldEqual bootTime
-                status.ModificationTime |> shouldEqual bootTime
-                status.StatusChangeTime |> shouldEqual bootTime
+                // Made before the realtime clock was set, whenever the root
+                // filesystem was made, and moved by nothing since (see the
+                // timestamp tests below).
+                status.AccessTime |> shouldEqual UnixTimestamp.epoch
+                status.ModificationTime |> shouldEqual UnixTimestamp.epoch
+                status.StatusChangeTime |> shouldEqual UnixTimestamp.epoch
                 status.BirthTime |> shouldEqual None
                 status.FileFlags |> shouldEqual None
 
@@ -189,6 +191,233 @@ module TestDeviceFileSystem =
             |> shouldNotEqual (reported "/dev/urandom" system).Inode
 
         Check.One (config, Prop.forAll (Arb.fromGen (Gen.choose (0, System.Int32.MaxValue) |> Gen.map int64)) property)
+
+    // ------------------------------------------------------------ timestamps
+
+    /// Which of `withFileSystem` and `withBootTime` an image is built with, and
+    /// in which order.
+    [<RequireQualifiedAccess>]
+    type private SetterOrder =
+        | SeedThenBootTime
+        | BootTimeThenSeed
+        | SeedOnly
+        | BootTimeOnly
+        | Neither
+
+    let private setterOrderGen : Gen<SetterOrder> =
+        Gen.elements
+            [
+                SetterOrder.SeedThenBootTime
+                SetterOrder.BootTimeThenSeed
+                SetterOrder.SeedOnly
+                SetterOrder.BootTimeOnly
+                SetterOrder.Neither
+            ]
+
+    let private seeded (order : SetterOrder) : bool =
+        match order with
+        | SetterOrder.SeedThenBootTime
+        | SetterOrder.BootTimeThenSeed
+        | SetterOrder.SeedOnly -> true
+        | SetterOrder.BootTimeOnly
+        | SetterOrder.Neither -> false
+
+    /// A Linux machine booted from an image built as `order` says, with a seed
+    /// made at `createdAt` (holding an empty `dev` if `emptyDev`) and a boot
+    /// time of `bootTime`.
+    let private bootedFrom
+        (order : SetterOrder)
+        (createdAt : UnixTimestamp)
+        (bootTime : UnixTimestamp)
+        (emptyDev : bool)
+        : UnixSystem<int, string>
+        =
+        let seed =
+            [
+                yield name "f", SeedEntry.file ImmutableArray.Empty
+                if emptyDev then
+                    yield name "dev", SeedEntry.directory Map.empty
+            ]
+            |> Map.ofList
+
+        let withSeed (image : UnixBootImage<int, string>) : UnixBootImage<int, string> =
+            Launched.fileSystem createdAt rootOwner seed image
+
+        let withBootTime (image : UnixBootImage<int, string>) : UnixBootImage<int, string> =
+            UnixBootImage.tryWithBootTime bootTime image
+            |> Configured.expectOk BootTimeRefusal.describe
+
+        let image : UnixBootImage<int, string> = UnixSystem.initial linux
+
+        let image =
+            match order with
+            | SetterOrder.SeedThenBootTime -> image |> withSeed |> withBootTime
+            | SetterOrder.BootTimeThenSeed -> image |> withBootTime |> withSeed
+            | SetterOrder.SeedOnly -> withSeed image
+            | SetterOrder.BootTimeOnly -> withBootTime image
+            | SetterOrder.Neither -> image
+
+        Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
+
+    let private timesOf (inode : InodeNumber) (system : UnixSystem<int, string>) : InodeTimes =
+        match VirtualFileSystem.tryGet inode system.Machine.FileSystem with
+        | Some inode -> inode.Times
+        | None -> failwith $"inode %O{inode} is not in the filesystem"
+
+    let private deviceRoot (system : UnixSystem<int, string>) : InodeNumber =
+        match stat "/dev" system with
+        | Error (StatRefusal.DeviceFileSystemRoot root) -> root
+        | other -> failwith $"stat /dev: expected the device root's refusal, got %A{other}"
+
+    let private atEpoch : InodeTimes =
+        {
+            Access = UnixTimestamp.epoch
+            Modification = UnixTimestamp.epoch
+            StatusChange = UnixTimestamp.epoch
+            Birth = UnixTimestamp.epoch
+        }
+
+    let private timestampGen : Gen<UnixTimestamp> =
+        Gen.choose (0, System.Int32.MaxValue)
+        |> Gen.map (fun seconds -> UnixTimestamp.ofSeconds (int64 seconds))
+
+    let private buildGen (createdAtGen : Gen<UnixTimestamp>) : Gen<SetterOrder * UnixTimestamp * UnixTimestamp * bool> =
+        gen {
+            let! order = setterOrderGen
+            let! createdAt = createdAtGen
+            let! bootTime = timestampGen
+
+            let! emptyDev =
+                if seeded order then
+                    Gen.elements [ false ; true ]
+                else
+                    Gen.constant false
+
+            return order, createdAt, bootTime, emptyDev
+        }
+
+    /// Every inode of the device filesystem, its root and each node, has all
+    /// four times at the epoch, whatever the root filesystem's creation time
+    /// and the boot time are, and in whichever order they were set.
+    [<Test>]
+    let ``the device filesystem is stamped at the epoch, whatever the setters say and in any order`` () : unit =
+        let property (order : SetterOrder, createdAt : UnixTimestamp, bootTime : UnixTimestamp, emptyDev : bool) =
+            let system = bootedFrom order createdAt bootTime emptyDev
+
+            timesOf (deviceRoot system) system |> shouldEqual atEpoch
+
+            for path in [ "/dev/null" ; "/dev/urandom" ] do
+                let status = reported path system
+                timesOf status.Inode system |> shouldEqual atEpoch
+                status.AccessTime |> shouldEqual UnixTimestamp.epoch
+                status.ModificationTime |> shouldEqual UnixTimestamp.epoch
+                status.StatusChangeTime |> shouldEqual UnixTimestamp.epoch
+
+        Check.One (config, Prop.forAll (Arb.fromGen (buildGen timestampGen)) property)
+
+    /// Mounting the device filesystem over `/dev` changes nothing about the
+    /// root directory's times, as a real mount touches no directory of the
+    /// filesystem it covers: they are when the seed made the root, or the
+    /// epoch for the empty root `UnixSystem.initial` makes.
+    [<Test>]
+    let ``mounting the device filesystem leaves the root's times as the seed made them`` () : unit =
+        let property (order : SetterOrder, createdAt : UnixTimestamp, bootTime : UnixTimestamp, emptyDev : bool) =
+            let system = bootedFrom order createdAt bootTime emptyDev
+
+            let expected = if seeded order then createdAt else UnixTimestamp.epoch
+
+            let status = reported "/" system
+            status.AccessTime |> shouldEqual expected
+            status.ModificationTime |> shouldEqual expected
+            status.StatusChangeTime |> shouldEqual expected
+
+            timesOf (VirtualFileSystem.root system.Machine.FileSystem) system
+            |> shouldEqual
+                {
+                    Access = expected
+                    Modification = expected
+                    StatusChange = expected
+                    Birth = expected
+                }
+
+        // Never the epoch, so that a root restamped at the epoch shows.
+        let createdAtGen = timestampGen |> Gen.filter (fun t -> t <> UnixTimestamp.epoch)
+
+        Check.One (config, Prop.forAll (Arb.fromGen (buildGen createdAtGen)) property)
+
+    /// `docs/probes/devtmpfs-times`, three boots of Linux 6.18.5 aarch64: each
+    /// node's four times are the realtime clock when devtmpfs made it, before
+    /// the clock was first set, so within a few milliseconds of the epoch; the
+    /// device root's access and birth times likewise. No read or write moved
+    /// any of them. The model states that instant as the epoch itself.
+    [<Test>]
+    let ``the device filesystem's times are the measured ones, to within a few milliseconds`` () : unit =
+        use stream =
+            System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream
+                "WoofWare.PosixKernel.Test.devtmpfs-times.linux.txt"
+
+        if isNull stream then
+            failwith $"%s{context}: no embedded devtmpfs-times probe output"
+
+        use reader = new System.IO.StreamReader (stream)
+
+        let time (label : string) (field : string) : decimal =
+            if not (field.StartsWith (label + "=")) then
+                failwith $"%s{context}: expected %s{label}= in the probe's row, got %s{field}"
+
+            System.Decimal.Parse (field.Substring (label.Length + 1), System.Globalization.CultureInfo.InvariantCulture)
+
+        // Each row: its label, the path, and its access, modification,
+        // status-change and birth times.
+        let rows =
+            reader.ReadToEnd().Split ('\n', System.StringSplitOptions.RemoveEmptyEntries)
+            |> Array.filter (fun line -> not (line.StartsWith "#"))
+            |> Array.map (fun line -> line.Split ' ')
+            |> Array.filter (fun fields -> fields.Length = 7)
+            |> Array.map (fun fields ->
+                fields.[0],
+                fields.[1],
+                [
+                    time "atime" fields.[3]
+                    time "mtime" fields.[4]
+                    time "ctime" fields.[5]
+                    time "birth" fields.[6]
+                ]
+            )
+
+        let nearEpoch (t : decimal) : bool = t >= 0m && t < 0.01m
+
+        // Three boots, each with a row per path before anything ran, and after
+        // each round of reads and writes.
+        rows
+        |> Array.filter (fun (label, _, _) -> label = "STAT")
+        |> Array.length
+        |> shouldEqual 9
+
+        rows |> Array.length |> shouldEqual 36
+
+        for label, path, times in rows do
+            match path, times with
+            | "/dev/null", _
+            | "/dev/urandom", _ ->
+                if not (List.forall nearEpoch times) then
+                    failwith $"%s{label} %s{path}: the probe measured times far from the epoch: %A{times}"
+            | "/dev", [ atime ; _ ; _ ; birth ] ->
+                // The device root's mtime and ctime are when its entries last
+                // changed, which the container's init does after boot; this
+                // library's machine runs no such init.
+                if not (nearEpoch atime && nearEpoch birth) then
+                    failwith $"%s{label} %s{path}: the probe measured times far from the epoch: %A{times}"
+            | other, _ -> failwith $"%s{context}: the probe has no row for %s{other}"
+
+        let system = booted linux
+
+        for path in [ "/dev/null" ; "/dev/urandom" ] do
+            timesOf (reported path system).Inode system |> shouldEqual atEpoch
+
+        let rootTimes = timesOf (deviceRoot system) system
+        rootTimes.Access |> shouldEqual UnixTimestamp.epoch
+        rootTimes.Birth |> shouldEqual UnixTimestamp.epoch
 
     [<Test>]
     let ``the device filesystem's root is refused, for its size and link count`` () : unit =
