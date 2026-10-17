@@ -251,6 +251,7 @@
     <Compile Include="SocketLadder.fs" />
     <Compile Include="DualModeProbe.fs" />
     <Compile Include="TestDualModeMeasured.fs" />
+    <Compile Include="TestPrivilegedPortMeasured.fs" />
     <Compile Include="TestDualMode.fs" />
     <Compile Include="TestConnectLadderMeasured.fs" />
     <Compile Include="TestBindLadderMeasured.fs" />
@@ -434,6 +435,11 @@
          replays its connects. -->
     <EmbeddedResource Include="..\docs\probes\loopback-alias-connect\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.loopback-alias-connect.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\loopback-alias-connect\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.loopback-alias-connect.darwin.txt" />
+    <!-- Which addresses an unprivileged bind(2) to a port below 1024 was refused
+         for, measured per flavour by docs/probes/privileged-port.
+         `TestPrivilegedPortMeasured` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.darwin.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
          name another way, measured by docs/probes/name-equivalence/name-equivalence.c
          on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.

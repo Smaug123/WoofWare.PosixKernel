@@ -1302,6 +1302,20 @@ module UnixSocket =
                 || not (SimulatedUnixPlatform.bindJudgesHeldPort platform))
         )
 
+    /// Whether `bind(2)` keeps `port` from an unprivileged caller, at the
+    /// wildcard address or another (`wildcard`). Port 0 asks for an allocation
+    /// rather than a number, so no limit applies to it.
+    let private privilegedPortFault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : ProcessView<'Thread, 'Handler>)
+        (port : uint16)
+        (wildcard : bool)
+        : bool
+        =
+        port > 0us
+        && port < SimulatedUnixPlatform.privilegedPortCeiling
+        && SimulatedUnixPlatform.privilegedPortGuards system.Machine.UnixPlatform wildcard
+        && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+
     /// Whether anything else holding a port stands in the way of `socket`'s
     /// `bind(2)` of `candidate`: never for port 0, whose search is what keeps
     /// the port it picks free, nor for no address; a socket a Linux dissolve
@@ -1500,10 +1514,7 @@ module UnixSocket =
         let privilegedPortFault =
             match endpoint with
             | None -> false
-            | Some endpoint ->
-                endpoint.Port > 0us
-                && endpoint.Port < SimulatedUnixPlatform.privilegedPortCeiling
-                && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+            | Some endpoint -> privilegedPortFault system endpoint.Port (endpoint.Address = Ipv4Address.any)
 
         let inUse = addressInUse system socketId socket candidate
 
@@ -1566,12 +1577,6 @@ module UnixSocket =
             | Some (Ipv6Destination.Native _)
             | None -> None
 
-        let port =
-            match copied.Destination with
-            | Some (Ipv6Destination.V4Mapped endpoint) -> Some endpoint.Port
-            | Some (Ipv6Destination.Native endpoint) -> Some endpoint.Port
-            | None -> None
-
         let lengthFault =
             SimulatedUnixPlatform.internetV6AddressLength platform declaredLength
             <> BindLengthVerdict.Accepted
@@ -1589,11 +1594,11 @@ module UnixSocket =
                    |> Option.exists (fun endpoint -> SimulatedUnixPlatform.isBroadcastOrMulticast endpoint.Address)
 
         let privilegedPortFault =
-            match port with
-            | Some port ->
-                port > 0us
-                && port < SimulatedUnixPlatform.privilegedPortCeiling
-                && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
+            match copied.Destination with
+            | Some (Ipv6Destination.V4Mapped endpoint) ->
+                privilegedPortFault system endpoint.Port (endpoint.Address = Ipv4Address.any)
+            | Some (Ipv6Destination.Native endpoint) ->
+                privilegedPortFault system endpoint.Port (endpoint.Address = Ipv6Address.any)
             | None -> false
 
         let ipv6OnlyFault =
