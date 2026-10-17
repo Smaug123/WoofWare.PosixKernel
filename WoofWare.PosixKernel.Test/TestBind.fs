@@ -224,6 +224,35 @@ module TestBind =
         |> fst
         |> shouldEqual (BindAnswer.Bound (SocketAddress.Inet (loopback 1023us)))
 
+    /// Darwin asks for root only when the address is not the wildcard; Linux
+    /// asks whatever the address. Measured, stream and datagram alike, at
+    /// ports 1, 80 and 1023 (`docs/probes/privileged-port`).
+    [<Test>]
+    let ``only Darwin lets an unprivileged process bind the wildcard at a privileged port`` () : unit =
+        let rows =
+            [
+                SimulatedUnixPlatform.linuxX64, SocketKind.Stream, false
+                SimulatedUnixPlatform.linuxX64, SocketKind.Datagram, false
+                SimulatedUnixPlatform.macOsArm64, SocketKind.Stream, true
+                SimulatedUnixPlatform.macOsArm64, SocketKind.Datagram, true
+            ]
+
+        for platform, kind, binds in rows do
+            for port in [ 1us ; 80us ; 1023us ] do
+                let fd, system =
+                    withSocket (SocketId 0L) (socketOfKind kind SocketPhase.Idle) (systemOn platform)
+
+                let wildcard = Ipv4Endpoint.ofParts Ipv4Address.any port
+
+                match bindOrFail fd wildcard system |> fst, binds with
+                | BindAnswer.Bound (SocketAddress.Inet where), true -> where |> shouldEqual wildcard
+                | BindAnswer.Failed UnixError.EACCES, false -> ()
+                | answer, _ -> failwith $"platform %O{platform}, %O{kind}, port %d{port}: got %A{answer}"
+
+                bindOrFail fd (loopback port) system
+                |> fst
+                |> shouldEqual (BindAnswer.Failed UnixError.EACCES)
+
     /// Whether a port below the ceiling may be bound is decided by the effective
     /// user ID alone, measured on Linux (`credentials.c`): a real or saved uid of
     /// 0 grants nothing, and an effective one does whatever the other two are.
