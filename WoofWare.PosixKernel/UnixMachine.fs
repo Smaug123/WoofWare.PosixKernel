@@ -555,7 +555,9 @@ module UnixMachineState =
     /// whether some open file description on the machine names it, or the
     /// client holds it (`PipeState.heldByClient`).
     ///
-    /// Derived rather than stored, so it cannot disagree with the table: the
+    /// Read from the count of the descriptions onto each end that the table
+    /// keeps with them (`OpenFileTable.describesPipeEnd`), so it cannot
+    /// disagree with the table: the
     /// end closes when the last description onto it goes, which is when its
     /// last descriptor closes, or when a call that held it returns after that,
     /// unless the client holds it; and `dup` keeps it open.
@@ -567,8 +569,7 @@ module UnixMachineState =
         : bool
         =
         PipeState.heldByClient pipeEnd pipe
-        || OpenFileTable.toSeq machine.OpenFiles
-           |> Seq.exists (fun (_, description) -> description.Target = OpenFileTarget.Pipe (pipeId, pipeEnd))
+        || OpenFileTable.describesPipeEnd pipeId pipeEnd machine.OpenFiles
 
     /// Every inode something on the machine holds a reference to *directly*,
     /// independently of any name the filesystem binds to it: each open file

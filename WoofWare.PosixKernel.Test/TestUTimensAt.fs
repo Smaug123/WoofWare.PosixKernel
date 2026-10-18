@@ -747,8 +747,6 @@ module TestUTimensAt =
         | UTimensAtRefusal.Socket _ -> "Socket"
         | UTimensAtRefusal.LaunchedPipe _ -> "LaunchedPipe"
         | UTimensAtRefusal.UnmeasuredFileSystem _ -> "UnmeasuredFileSystem"
-        | UTimensAtRefusal.UnmeasuredPrivilegedCaller _ -> "UnmeasuredPrivilegedCaller"
-        | UTimensAtRefusal.UnmeasuredSymlinkWrite _ -> "UnmeasuredSymlinkWrite"
         | UTimensAtRefusal.UnplacedChange _ -> "UnplacedChange"
 
     /// One row, made ready to replay.
@@ -901,11 +899,182 @@ module TestUTimensAt =
             | other -> failwith $"%s{context}: a malformed CONST row %A{other}"
 
     [<Test>]
+    let ``Darwin's root-files UTIMENS rows, for root and for uid 501, end to end`` () : unit =
+        // `docs/probes/darwin-root/root-files.c`, run as root on Darwin 27.0:
+        // root, and uid 501 (groups 20 and 701), setting the times of uid
+        // 502's files, directories and links (with AT_SYMLINK_NOFOLLOW) of
+        // several modes. Each time is `same`, `now`, or `T` (the explicit time
+        // asked); ctime `moved` or `same`.
+        let darwin = SimulatedUnixPlatform.macOsArm64
+        let epoch = UnixTimestamp.ofMillisecondsSinceEpoch 0L
+
+        let explicitAccess =
+            {
+                Seconds = 1_500_000_000L
+                Nanoseconds = 123_456_789L
+            }
+
+        let explicitModification =
+            {
+                Seconds = 1_600_000_000L
+                Nanoseconds = 987_654_321L
+            }
+
+        let field (text : string) (explicit : TimespecFields) : TimespecFields =
+            match text with
+            | "now" ->
+                {
+                    Seconds = 0L
+                    Nanoseconds = TimestampChangeRules.utimeNow SimulatedUnixFlavour.Darwin
+                }
+            | "omit" ->
+                {
+                    Seconds = 0L
+                    Nanoseconds = TimestampChangeRules.utimeOmit SimulatedUnixFlavour.Darwin
+                }
+            | "T" -> explicit
+            | other -> failwith $"unexpected time %s{other}"
+
+        let timesArgument (text : string) : TimesArgument =
+            match text.Substring "times=".Length with
+            | "NULL" -> TimesArgument.Null
+            | pair ->
+                match pair.Split ',' with
+                | [| access ; modification |] ->
+                    TimesArgument.Fields (field access explicitAccess, field modification explicitModification)
+                | _ -> failwith $"unexpected times %s{text}"
+
+        let stored (fields : TimespecFields) : UnixTimestamp =
+            UnixTimestamp.createOrFail context fields.Seconds (int fields.Nanoseconds)
+
+        let render (before : UnixTimestamp) (after : UnixTimestamp) (explicit : UnixTimestamp) : string =
+            if after = before then "same"
+            elif after = explicit then "T"
+            else "now"
+
+        let rows = DarwinRootFiles.spot "UTIMENS"
+        rows |> List.length |> shouldEqual 96
+
+        for row in rows do
+            // caller, "file 502:7777 0644", call, "times=...", "-> ok", "atime=... mtime=... ctime=..."
+            let caller = DarwinRootFiles.credentialsOf row.[0]
+
+            let kind, owner, bits =
+                match row.[1].Split ' ' with
+                | [| kind ; ids ; bits |] ->
+                    let ids = ids.Split ':'
+
+                    kind,
+                    {
+                        User = UserId.parseOrFail context (uint32 ids.[0])
+                        Group = GroupId.parseOrFail context (uint32 ids.[1])
+                    },
+                    PermissionBits.parseOrFail context (Convert.ToInt32 (bits, 8))
+                | _ -> failwith $"unexpected object %s{row.[1]}"
+
+            let rootOwner : InodeOwner =
+                {
+                    User = UserId.root
+                    Group = GroupId.parseOrFail context 0u
+                }
+
+            let vfs = VirtualFileSystem.empty EntryNameMatching.Bytes epoch rootOwner
+            let root = VirtualFileSystem.root vfs
+            let objectName = DirectoryEntryName.parseOrFail context "o"
+
+            let vfs =
+                match kind with
+                | "file" -> GraphMutators.createFile root objectName bits owner epoch ImmutableArray<byte>.Empty vfs
+                | "dir" -> GraphMutators.createDirectory root objectName bits owner epoch vfs
+                | "link" ->
+                    GraphMutators.createSymlink
+                        root
+                        objectName
+                        bits
+                        owner
+                        epoch
+                        (SymlinkTarget.parseOrFail context "nx")
+                        vfs
+                | other -> failwith $"unexpected kind %s{other}"
+                |> function
+                    | Ok (inode, vfs) -> inode, vfs
+                    | Error error -> failwith $"%O{error}"
+
+            let inode, vfs = vfs
+
+            let system : UnixSystem<int, string> =
+                UnixSystem.initial darwin
+                |> Launched.bootWith (Launched.credentials caller) UnixSystem.pipedStandardStreams 0 (CpuId 0)
+
+            let system =
+                { system with
+                    Machine =
+                        { system.Machine with
+                            CommittedFileSystem = CommittedFileSystem.initial vfs
+                        }
+                    Scheduling = UnixSchedulingState.advanceClock settling system.Scheduling
+                }
+
+            let flags =
+                if row.[2].Contains "NOFOLLOW" then
+                    noFollow
+                        {
+                            Platform = darwin
+                            Credentials = caller
+                        }
+                else
+                    0
+
+            let before = (VirtualFileSystem.get context inode vfs).Times
+
+            let answered =
+                match
+                    UnixPathResolution.tryUtimensat
+                        (Callers.leader system)
+                        (AtDirectory.atFdCwd SimulatedUnixFlavour.Darwin)
+                        (NullablePathArgument.NotNull (PathArg.ofText "/o"))
+                        (timesArgument row.[3])
+                        flags
+                        system
+                with
+                | Ok (SyscallAnswer.Completed 0L, after) ->
+                    let times = (VirtualFileSystem.get context inode after.Machine.FileSystem).Times
+                    let accessed = render before.Access times.Access (stored explicitAccess)
+
+                    let modified =
+                        render before.Modification times.Modification (stored explicitModification)
+
+                    let changed =
+                        if times.StatusChange = before.StatusChange then
+                            "same"
+                        else
+                            "moved"
+
+                    "-> ok", $"atime=%s{accessed} mtime=%s{modified} ctime=%s{changed}"
+                | Ok (SyscallAnswer.Failed error, after) ->
+                    let times = (VirtualFileSystem.get context inode after.Machine.FileSystem).Times
+                    (times = before) |> shouldEqual true
+                    $"-> %O{error}", "atime=same mtime=same ctime=same"
+                | other -> $"%A{other}", ""
+
+            ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]}", fst answered, snd answered)
+            |> shouldEqual ($"%s{row.[0]} %s{row.[1]} %s{row.[2]} %s{row.[3]}", row.[4], row.[5])
+
+    [<Test>]
     let ``EFFECT: every times argument at every object of the cell answers and moves what the probe saw`` () : unit =
         replayAll
             "EFFECT"
             (fun platform _ fields ->
                 match fields with
+                // `/tmp` carries Darwin's `restricted` file flag, which
+                // answers EPERM to anyone not entitled to change it and which
+                // this library does not model; `root-files.c` measured an
+                // unflagged link of another user's (`TestUTimensAt`'s UTIMENS
+                // replay), which answers as a file does.
+                | _ :: "/tmp" :: _ :: "NOFOLLOW" :: _ when
+                    SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
+                    ->
+                    None
                 | callerField :: path :: times :: flags :: rest ->
                     let caller = callerOf platform callerField
                     let answer, moved = answerAndMoved rest
@@ -928,7 +1097,7 @@ module TestUTimensAt =
             Map.ofList
                 [
                     SimulatedUnixFlavour.Linux, 2 * 11 * 13 * 2
-                    SimulatedUnixFlavour.Darwin, 10 * 13 * 2
+                    SimulatedUnixFlavour.Darwin, 10 * 13 * 2 - 13
                 ]
         )
 
@@ -1356,7 +1525,10 @@ module TestUTimensAt =
             |> shouldEqual (Ok (SyscallAnswer.Completed 0L, system))
 
     [<Test>]
-    let ``utimensat refuses what Darwin's rules leave unmeasured, and a pipe the process was launched with`` () : unit =
+    let ``Darwin's root sets any times, a writable link takes both times now, and a launched pipe is refused``
+        ()
+        : unit
+        =
         let darwin = SimulatedUnixPlatform.macOsArm64
         let user = callerOf darwin "501"
 
@@ -1369,17 +1541,18 @@ module TestUTimensAt =
         // Darwin's root on the caller's own file, which it does not own.
         let system = boot user |> dropped rootCaller
 
-        match
+        // `root-files.c`'s UTIMENS rows: root sets any times of another
+        // user's inode.
+        for times in [ TimesArgument.Null ; timesOf rootCaller "X/X" ] do
             UnixPathResolution.tryUtimensat
                 (Callers.leader system)
                 (atFdCwd rootCaller)
                 (pathOf rootCaller "f")
-                TimesArgument.Null
+                times
                 0
                 system
-        with
-        | Error (UTimensAtRefusal.UnmeasuredPrivilegedCaller _) -> ()
-        | other -> failwith $"%s{context}: Darwin's root: %A{other}"
+            |> Result.map fst
+            |> shouldEqual (Ok (SyscallAnswer.Completed 0L))
 
         // A link root made under umask 0, so that uid 501 may write it.
         let system : UnixSystem<int, string> =
@@ -1404,19 +1577,19 @@ module TestUTimensAt =
             | Ok (SyscallAnswer.Completed _, system) -> dropped user system
             | other -> failwith $"%s{context}: symlink: %A{other}"
 
-        match
-            UnixPathResolution.tryUtimensat
-                (Callers.leader system)
-                (atFdCwd user)
-                (pathOf user "wl")
-                TimesArgument.Null
-                (noFollow user)
-                system
-        with
-        | Error (UTimensAtRefusal.UnmeasuredSymlinkWrite _) -> ()
-        | other -> failwith $"%s{context}: a writable link of root's: %A{other}"
+        // `root-files.c`'s UTIMENS rows: another user's link answers as a
+        // file does, both times now permitted to a caller who may write it.
+        UnixPathResolution.tryUtimensat
+            (Callers.leader system)
+            (atFdCwd user)
+            (pathOf user "wl")
+            TimesArgument.Null
+            (noFollow user)
+            system
+        |> Result.map fst
+        |> shouldEqual (Ok (SyscallAnswer.Completed 0L))
 
-        // Not both times now: EPERM, as for root's own link /tmp.
+        // Not both times now: EACCES, as for another user's file.
         UnixPathResolution.tryUtimensat
             (Callers.leader system)
             (atFdCwd user)
@@ -1425,7 +1598,7 @@ module TestUTimensAt =
             (noFollow user)
             system
         |> Result.map fst
-        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EPERM))
+        |> shouldEqual (Ok (SyscallAnswer.Failed UnixError.EACCES))
 
         // Linux, standard input: an end of a pipe the process was launched with.
         let linux = callerOf SimulatedUnixPlatform.linuxX64 "1000"
