@@ -62,7 +62,7 @@ module TestEpollWait =
              [ 1..6 ])
             ||> List.fold (fun system name -> withThread name system)
 
-        let socketId = system.Machine.NextSocketId
+        let socketId = (Kernel.machine system).NextSocketId
         let (SocketId raw) = socketId
 
         let socket =
@@ -97,18 +97,19 @@ module TestEpollWait =
 
         let listenerFd, registry =
             FileDescriptorRegistry.createSocket
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 socketId
                 (Lone.fileDescriptors system)
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
-                        Sockets = Map.add socketId socket system.Machine.Sockets
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Sockets = Map.add socketId socket machine.Sockets
                         NextSocketId = SocketId (raw + 1L)
                     }
-            }
+                )
+                system
             |> withRegistry registry
 
         let queueFd, system = createEpoll system
@@ -149,11 +150,11 @@ module TestEpollWait =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected the listener, got %O{other}"
 
-        let socket = UnixMachineState.socket socketId system.Machine
+        let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Sockets =
                         Map.add
                             socketId
@@ -166,9 +167,10 @@ module TestEpollWait =
                                             Drained = false
                                         }
                             }
-                            system.Machine.Sockets
+                            machine.Sockets
                 }
-        }
+            )
+            system
 
     /// A connection arrives: the listener becomes ready, and its registration is
     /// signalled onto the epoll instance's ready list.
@@ -198,9 +200,7 @@ module TestEpollWait =
         | other -> failwith $"expected the epoll instance, got %O{other}"
 
     let private after (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     /// What the one registration reports when the listener is ready: `IN`, since
     /// `RDNORM` was not asked for.
@@ -696,7 +696,7 @@ module TestEpollWait =
                                 Data = uint64 fd
                                 RegisteredAt = 0L
                             }
-                            system.Machine.OpenFiles
+                            (UnixSystem.openFiles system)
 
                     let openFiles =
                         if isPending then

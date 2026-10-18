@@ -275,7 +275,7 @@ module TestDeviceDescriptorsAgainstHost =
                      HostCalls.close epoll |> ignore<int>),
                 (let queueFd, registry =
                     FileDescriptorRegistry.createEpoll
-                        (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                         (Lone.fileDescriptors system)
 
                  let system = Lone.withFileDescriptors registry system

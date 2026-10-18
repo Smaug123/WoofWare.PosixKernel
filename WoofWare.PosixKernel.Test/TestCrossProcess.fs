@@ -1005,7 +1005,7 @@ module TestCrossProcess =
 
     /// Every delivery `machine` has made, oldest first, with each one's bytes.
     let private deliveries (machine : UnixSystem<int, string>) : (ExternalEndpoint * byte list) list =
-        DeliveryLog.toList machine.Machine.Delivered
+        DeliveryLog.toList (Kernel.machine machine).Delivered
         |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
 
     /// `pid`'s thread 0 writes `text` to its descriptor `fd`, which takes all of it.
@@ -1670,7 +1670,9 @@ module TestCrossProcess =
         Machines.assertClean machine
 
         let view = Machines.viewOf b machine
-        VirtualFileSystem.tryGet standing view.Machine.FileSystem |> shouldEqual None
+
+        VirtualFileSystem.tryGet standing (UnixSystem.fileSystem view)
+        |> shouldEqual None
 
         // The listener's port is free again.
         let _, machine = Machines.inProcess b (KeventWorld.listenerAtIn b 8080us) machine
@@ -1697,9 +1699,12 @@ module TestCrossProcess =
             | Ok (_, machine) ->
                 Machines.processIds machine |> shouldEqual Set.empty
                 Machines.checkInvariants machine |> shouldEqual []
-                OpenFileTable.descriptions machine.Machine.OpenFiles |> shouldEqual Map.empty
-                machine.Machine.Sockets |> shouldEqual Map.empty
-                machine.Machine.Connections |> shouldEqual Map.empty
+
+                OpenFileTable.descriptions (UnixSystem.openFiles machine)
+                |> shouldEqual Map.empty
+
+                (Kernel.machine machine).Sockets |> shouldEqual Map.empty
+                (Kernel.machine machine).Connections |> shouldEqual Map.empty
             | Error refusal -> failwith $"exit_group: %s{ProcessEndRefusal.describe refusal}"
 
     /// Nothing yet passes a descriptor from one process to another, so no queue
@@ -1884,9 +1889,9 @@ module TestCrossProcess =
 
         match UnixReadWrite.tryAdmitFinishWrite 1 (Proc.view a machine) with
         | Ok (WriteStep.ProcessEnded (_, dead)) ->
-            let machine = ProcessView.unfocusWithout dead
+            let machine = Proc.unviewWithout dead
             Machines.assertClean machine
-            machine.Machine.Pipes |> Map.containsKey pipe |> shouldEqual false
+            UnixSystem.pipes machine |> Map.containsKey pipe |> shouldEqual false
         | other -> failwith $"finishing the write: expected the process to end, got %A{other}"
 
     [<Test>]

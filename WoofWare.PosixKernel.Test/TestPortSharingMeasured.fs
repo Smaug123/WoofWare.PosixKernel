@@ -149,7 +149,7 @@ module TestPortSharingMeasured =
         (system : UnixSystem<int, string>)
         : int * UnixSystem<int, string>
         =
-        let platform = system.Machine.UnixPlatform
+        let platform = UnixSystem.platform system
 
         let protocol =
             match transport with
@@ -184,7 +184,7 @@ module TestPortSharingMeasured =
     let private nameOf (pid : ProcessId) (fd : int) (system : UnixSystem<int, string>) : string =
         match step pid (Syscall.GetSockName (fd, UserBuffer.Mapped, 16u)) system with
         | Ok (SteppedCall.GetSockName (GetSockNameAnswer.Reported (bytes, _))) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr system.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform system) bytes).Endpoint with
             | Some endpoint -> Ipv4Endpoint.toString endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"

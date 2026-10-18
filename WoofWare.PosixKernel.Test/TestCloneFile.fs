@@ -153,13 +153,13 @@ module TestCloneFile =
                 0
                 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -192,7 +192,7 @@ module TestCloneFile =
         | Error refusal -> $"refused: %A{refusal}"
 
     let private entryAt (system : UnixSystem<int, string>) (p : string) : Inode =
-        (VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem).Value
+        (VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system)).Value
 
     [<Test>]
     let ``clonefile answers each measured row`` () : unit =
@@ -387,7 +387,7 @@ module TestCloneFile =
             let system =
                 systemOnWith (Launched.umask (mode 0o777)) SimulatedUnixPlatform.macOsArm64 u501 vfs
 
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             match clone "src" "w/dst" 0x4 system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
@@ -463,13 +463,14 @@ module TestCloneFile =
 
                     for raw in 0..0o7777 do
                         let system =
-                            { booted with
-                                Machine =
-                                    { booted.Machine with
+                            Kernel.mapMachine
+                                (fun machine ->
+                                    { machine with
                                         CommittedFileSystem =
                                             CommittedFileSystem.initial (chmodded "/dir/s" raw baseTree)
                                     }
-                            }
+                                )
+                                booted
 
                         let modelled =
                             match clone "/dir/s" "/dir/c" flags system with
@@ -523,12 +524,13 @@ module TestCloneFile =
         let nfs =
             systemOnWith id SimulatedUnixPlatform.macOsArm64 u501 tree
             |> fun system ->
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Mount = EmulatedMount.Nfs
                         }
-                }
+                    )
+                    system
 
         clone "f" "new" 0x4 nfs
         |> Result.map fst
@@ -615,9 +617,9 @@ module TestCloneFile =
             match clone source destination 0x4 system with
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 let created =
-                    VirtualFileSystem.inodes after.Machine.FileSystem
+                    VirtualFileSystem.inodes (UnixSystem.fileSystem after)
                     |> Map.filter (fun inode _ ->
-                        not (Map.containsKey inode (VirtualFileSystem.inodes system.Machine.FileSystem))
+                        not (Map.containsKey inode (VirtualFileSystem.inodes (UnixSystem.fileSystem system)))
                     )
                     |> Map.toList
 
@@ -631,7 +633,7 @@ module TestCloneFile =
                                 (UnixPath.parseOrFail context source)
                                 system
                         with
-                        | Ok inode -> (VirtualFileSystem.tryGet inode system.Machine.FileSystem).Value
+                        | Ok inode -> (VirtualFileSystem.tryGet inode (UnixSystem.fileSystem system)).Value
                         | Error error -> failwith $"%s{source}: %O{error}"
 
                     match clone.Content, sourceEntry.Content with
@@ -642,9 +644,9 @@ module TestCloneFile =
                     // Every inode that was there before is unchanged, but for
                     // the one directory that gained the name.
                     let changed =
-                        VirtualFileSystem.inodes system.Machine.FileSystem
+                        VirtualFileSystem.inodes (UnixSystem.fileSystem system)
                         |> Map.filter (fun inode entry ->
-                            Map.find inode (VirtualFileSystem.inodes after.Machine.FileSystem) <> entry
+                            Map.find inode (VirtualFileSystem.inodes (UnixSystem.fileSystem after)) <> entry
                         )
                         |> Map.toList
 

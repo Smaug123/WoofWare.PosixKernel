@@ -458,12 +458,13 @@ module TestProtectedFiles =
             |> Configured.expectOk ProtectedFilesRefusal.describe
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem = CommittedFileSystem.initial vfs
                 }
-        }
+            )
+            system
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -510,20 +511,22 @@ module TestProtectedFiles =
     let private exists (p : string) (system : UnixSystem<int, string>) : bool =
         match
             PathWalk.resolveExisting
-                (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                 Owners.root
                 SymlinkProtection.Off
-                (VirtualFileSystem.root system.Machine.FileSystem)
+                (VirtualFileSystem.root (UnixSystem.fileSystem system))
                 SymlinkPolicy.NoFollowFinal
                 (path p)
-                system.Machine.FileSystem
+                (UnixSystem.fileSystem system)
         with
         | Ok _ -> true
         | Error (PathFailure.Errno UnixError.ENOENT) -> false
         | Error error -> failwith $"%s{p}: %O{error}"
 
     let private contentsOf (p : string) (system : UnixSystem<int, string>) : int64 =
-        match VirtualFileSystem.tryGetContent (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match
+            VirtualFileSystem.tryGetContent (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system)
+        with
         | Some (InodeContent.RegularFile (contents, _)) -> FileContents.length contents
         | other -> failwith $"%s{p} is not a regular file: %A{other}"
 
@@ -873,8 +876,8 @@ module TestProtectedFiles =
                 step (Syscall.SymlinkAt (bytes target, atFdCwd, bytes $"/a/c%d{i}")) system
             )
 
-        let stickyDirectory = inodeAt system.Machine.FileSystem "/t"
-        let protectedLink = inodeAt system.Machine.FileSystem "/t/p"
+        let stickyDirectory = inodeAt (UnixSystem.fileSystem system) "/t"
+        let protectedLink = inodeAt (UnixSystem.fileSystem system) "/t/p"
 
         let calls : (string * (string -> WalkOutcome)) list =
             [
@@ -1251,7 +1254,7 @@ module TestProtectedFiles =
 
         let system = Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
-        system.Machine.ProtectedFiles |> shouldEqual ProtectedFiles.off
+        UnixSystem.protectedFiles system |> shouldEqual ProtectedFiles.off
 
         UnixBootImage.tryWithProtectedFiles ProtectedFiles.off image
         |> Configured.expectOk ProtectedFilesRefusal.describe
@@ -1278,12 +1281,13 @@ module TestProtectedFiles =
                             )
 
                             let forged =
-                                { system with
-                                    Machine =
-                                        { system.Machine with
+                                Kernel.mapMachine
+                                    (fun machine ->
+                                        { machine with
                                             ProtectedFiles = protection
                                         }
-                                }
+                                    )
+                                    system
 
                             UnixSystem.checkInvariants forged
                             |> shouldContain (
@@ -1294,7 +1298,7 @@ module TestProtectedFiles =
     let ``a Linux machine starts with every sysctl Off and admits any setting`` () =
         let image : UnixBootImage<int, string> = UnixSystem.initial linux
 
-        (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine.ProtectedFiles
+        UnixSystem.protectedFiles (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image)
         |> shouldEqual ProtectedFiles.off
 
         for symlinks in allSymlinkProtections do
@@ -1314,5 +1318,5 @@ module TestProtectedFiles =
                             |> Configured.expectOk ProtectedFilesRefusal.describe
                             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-                        set.Machine.ProtectedFiles |> shouldEqual protection
+                        UnixSystem.protectedFiles set |> shouldEqual protection
                         UnixSystem.checkInvariants set |> shouldEqual []

@@ -147,11 +147,11 @@ module TestNonBlockingAsleepMeasured =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -365,9 +365,9 @@ module TestNonBlockingAsleepMeasured =
         | Transfer.PipeWriteNothingIn
         | Transfer.PipeWritePartlyIn
         | Transfer.PipeRead ->
-            match FileDescriptorRegistry.tryFindTarget callFd (Lone.UnixSystemState.fileDescriptors system) with
+            match FileDescriptorRegistry.tryFindTarget callFd (Lone.fileDescriptors system) with
             | Some (OpenFileTarget.Pipe (pipeId, _)) ->
-                Some (PipeBuffer.held (UnixMachineState.pipe pipeId system.Machine).Buffer)
+                Some (PipeBuffer.held (UnixMachineState.pipe pipeId (Kernel.machine system)).Buffer)
             | other -> failwith $"fd %d{callFd} names %A{other}"
         | Transfer.ConnectionWriteNothingTaken
         | Transfer.ConnectionRead -> None

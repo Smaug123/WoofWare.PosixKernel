@@ -1072,7 +1072,7 @@ module DualModeProbe =
                 { proc with
                     Signals =
                         SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering libc.System)
+                            (Kernel.signalNumbering libc.System)
                             Signal.SIGPIPE
                             SignalDisposition.Ignore
                             proc.Signals

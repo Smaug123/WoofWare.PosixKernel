@@ -32,12 +32,13 @@ module TestNonBlocking =
             UnixSystem.initial platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     LocalRoutes = []
                 }
-        }
+            )
+            system
 
 
     let private linux : UnixSystem<int, string> =
@@ -83,7 +84,7 @@ module TestNonBlocking =
             | Some (OpenFileTarget.Socket socketId) -> socketId
             | other -> failwith $"expected a socket target, got %A{other}"
 
-        let socket = UnixMachineState.socket socketId system.Machine
+        let socket = UnixMachineState.socket socketId (Kernel.machine system)
         socket.Domain |> shouldEqual SocketDomain.Inet
         socket.Kind |> shouldEqual SocketKind.Stream
         socket.Protocol |> shouldEqual SocketProtocol.Tcp
@@ -109,7 +110,7 @@ module TestNonBlocking =
             NewSocket.create SocketDomain.Inet SocketKind.Datagram SocketProtocol.Udp system
 
         first |> shouldNotEqual second
-        system.Machine.Sockets |> Map.count |> shouldEqual 2
+        (Kernel.machine system).Sockets |> Map.count |> shouldEqual 2
 
         let targetOf fd =
             FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system)
@@ -131,7 +132,7 @@ module TestNonBlocking =
         let duplicate, registry =
             match
                 FileDescriptorRegistry.dup
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                     fd
                     (Lone.fileDescriptors system)
             with
@@ -173,8 +174,8 @@ module TestNonBlocking =
 
         let fileFd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (ForgedName.ofInode system (InodeNumber 1L))
                 (InodeNumber 1L)
                 FileAccessMode.ReadOnly
@@ -222,7 +223,7 @@ module TestNonBlocking =
                 (fun registry fd ->
                     match
                         FileDescriptorRegistry.dup
-                            (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                            (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                             fd
                             registry
                     with
@@ -402,7 +403,7 @@ module TestNonBlocking =
                 | SetNonBlockingAnswer.Failed error, _ -> failwith $"could not clear the flag: %O{error}"
 
             let deliveries (system : UnixSystem<int, string>) =
-                DeliveryLog.toList system.Machine.Delivered
+                DeliveryLog.toList (Kernel.machine system).Delivered
                 |> List.map (fun delivery -> delivery.Endpoint, List.ofSeq delivery.Bytes)
 
             match WriteOutcomes.write fd bytes flagged, WriteOutcomes.write fd bytes clear with
@@ -452,7 +453,7 @@ module TestNonBlocking =
 
             match WriteOutcomes.write 1 (ImmutableArray.Create<byte> (Array.zeroCreate 65537)) flagged with
             | Ok (WriteAnswer.Completed 65536L, after) ->
-                DeliveryLog.toList after.Machine.Delivered
+                DeliveryLog.toList (Kernel.machine after).Delivered
                 |> List.map (fun delivery -> delivery.Bytes.Length)
                 |> shouldEqual [ 65536 ]
             | other -> failwith $"%O{platform}: a 65537-byte write answered %A{Result.map fst other}"
@@ -464,7 +465,7 @@ module TestNonBlocking =
     /// The flavour's event queue: an epoll instance or a kqueue, and the
     /// descriptor onto it.
     let private withEventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
-        match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+        match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
         | SimulatedUnixFlavour.Linux ->
             match UnixPoll.tryEpollCreate1 (Callers.leader system) 0 system with
             | Ok (Ok (fd, system)) -> fd, system

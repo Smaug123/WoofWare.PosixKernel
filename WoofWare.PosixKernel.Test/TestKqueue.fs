@@ -56,7 +56,7 @@ module TestKqueue =
     let private dup (fd : int) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         match
             FileDescriptorRegistry.dup
-                (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
                 fd
                 (Lone.fileDescriptors system)
         with
@@ -69,9 +69,7 @@ module TestKqueue =
         | other -> failwith $"expected the close of fd %d{fd} to succeed, got %A{other}"
 
     let private after (nanoseconds : int64) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        { system with
-            Scheduling = UnixSchedulingState.advanceClock nanoseconds system.Scheduling
-        }
+        UnixSystem.advanceClock nanoseconds system
 
     /// A wait for one event, with no changes.
     let private waits
@@ -107,11 +105,11 @@ module TestKqueue =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -182,19 +180,20 @@ module TestKqueue =
                     }
 
                 // A fresh description, not one any other descriptor shares.
-                OpenFileTable.descriptions system.Machine.OpenFiles
+                OpenFileTable.descriptions (UnixSystem.openFiles system)
                 |> Map.containsKey id
                 |> shouldEqual false
             | None -> failwith "the kqueue's descriptor names nothing"
 
             // Nothing but the descriptor table and the open file descriptions
             // changed.
-            { created with
-                Machine =
-                    { created.Machine with
-                        OpenFiles = system.Machine.OpenFiles
+            (Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        OpenFiles = UnixSystem.openFiles system
                     }
-            }
+                )
+                created)
             |> Lone.mapProc (fun _ -> Lone.proc system)
             |> shouldEqual system
 
@@ -340,27 +339,28 @@ module TestKqueue =
 
             let fd, registry =
                 FileDescriptorRegistry.createSocket
-                    (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform)
-                    system.Machine.NextSocketId
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform system))
+                    (Kernel.machine system).NextSocketId
                     (Lone.fileDescriptors system)
 
-            let (SocketId raw) = system.Machine.NextSocketId
+            let (SocketId raw) = (Kernel.machine system).NextSocketId
 
             fd,
-            { system with
-                Machine =
-                    { system.Machine with
-                        Sockets = Map.add system.Machine.NextSocketId socket system.Machine.Sockets
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        Sockets = Map.add machine.NextSocketId socket machine.Sockets
                         NextSocketId = SocketId (raw + 1L)
                     }
-            }
+                )
+                system
             |> withRegistry registry
 
         let fileFd, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -404,7 +404,7 @@ module TestKqueue =
                 with
                 | Ok (outcome, after) ->
                     try
-                        agreesWith system.Scheduling.NanosecondsSinceBoot rv errno slept outcome system after 1
+                        agreesWith (UnixSystem.nanosecondsSinceBoot system) rv errno slept outcome system after 1
                     with e ->
                         failwith $"line %A{line}: %s{e.Message}"
                 | Error refusal -> failwith $"line %A{line}: refused, %s{KeventRefusal.describe refusal}"
@@ -448,7 +448,7 @@ module TestKqueue =
                 with
                 | Ok (outcome, after) ->
                     try
-                        agreesWith system.Scheduling.NanosecondsSinceBoot rv errno slept outcome system after 2
+                        agreesWith (UnixSystem.nanosecondsSinceBoot system) rv errno slept outcome system after 2
                     with e ->
                         failwith $"line %A{line}: %s{e.Message}"
                 | Error refusal -> failwith $"line %A{line}: refused, %s{KeventRefusal.describe refusal}"
@@ -778,7 +778,7 @@ module TestKqueue =
             FileDescriptorRegistry.tryFindId k (Lone.fileDescriptors closed)
             |> shouldEqual None
 
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.tryFind kqueue
             |> Option.map _.Target
             |> shouldEqual (
@@ -802,7 +802,7 @@ module TestKqueue =
             let outcome, finished = finishes 1 closed
             outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
 
-            OpenFileTable.descriptions finished.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles finished)
             |> Map.containsKey kqueue
             |> shouldEqual false
 
@@ -911,7 +911,7 @@ module TestKqueue =
             let closed = parked |> close k |> close d
             UnixSystem.checkInvariants closed |> shouldEqual []
 
-            OpenFileTable.descriptions closed.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles closed)
             |> Map.tryFind kqueue
             |> Option.map _.Target
             |> shouldEqual (
@@ -939,14 +939,14 @@ module TestKqueue =
                     outcome |> shouldEqual (KeventOutcome.Failed UnixError.EBADF)
                     UnixSystem.checkInvariants system |> shouldEqual []
 
-                    OpenFileTable.descriptions system.Machine.OpenFiles
+                    OpenFileTable.descriptions (UnixSystem.openFiles system)
                     |> Map.containsKey kqueue
                     |> shouldEqual (thread < List.length threads)
 
                     system
                 )
 
-            OpenFileTable.descriptions finished.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles finished)
             |> Map.containsKey kqueue
             |> shouldEqual false
 
@@ -1121,7 +1121,7 @@ module TestKqueue =
     let ``checkInvariants rejects an object the flavour's kernel does not have`` () : unit =
         let fd, registry =
             FileDescriptorRegistry.createKqueue
-                (SimulatedUnixPlatform.flavour linux.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform linux))
                 (Lone.proc linux).ProcessId
                 (Lone.fileDescriptors linux)
 
@@ -1145,7 +1145,7 @@ module TestKqueue =
 
         let fd, registry =
             FileDescriptorRegistry.createEpoll
-                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform darwin))
                 (Lone.fileDescriptors darwin)
 
         let withEpoll = withRegistry registry darwin

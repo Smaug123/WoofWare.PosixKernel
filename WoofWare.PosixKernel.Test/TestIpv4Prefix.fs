@@ -213,8 +213,8 @@ module TestIpv4Prefix =
             let machine =
                 (UnixSystem.initial<int, string> platform
                  |> UnixBootImage.withLocalIpv4Addresses addresses routes
-                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0))
-                    .Machine
+                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
+                 |> Kernel.machine)
 
             machine.LocalIpv4Addresses |> shouldEqual addresses
             machine.LocalRoutes |> shouldEqual routes

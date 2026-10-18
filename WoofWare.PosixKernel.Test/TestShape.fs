@@ -145,12 +145,12 @@ module TestShape =
             {
                 Back =
                     fun view ->
-                        let kernel = ProcessView.unfocus view |> UnixSystem.advanceClock 1L
+                        let kernel = Proc.unview view |> UnixSystem.advanceClock 1L
                         given.Add ("back", view, kernel)
                         kernel
                 Without =
                     fun view ->
-                        let kernel = ProcessView.unfocusWithout view |> UnixSystem.advanceClock 2L
+                        let kernel = Proc.unviewWithout view |> UnixSystem.advanceClock 2L
                         given.Add ("without", view, kernel)
                         kernel
             }

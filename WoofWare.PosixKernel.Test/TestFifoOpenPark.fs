@@ -104,7 +104,8 @@ module TestFifoOpenPark =
                 | Ok (SyscallAnswer.Completed 0L, closed) -> closed
                 | other -> failwith $"closing fd 0 under %O{flavour}: %A{other}"
 
-            OpenFileTable.holdCount opener closed.Machine.OpenFiles |> shouldEqual (Some 1)
+            OpenFileTable.holdCount opener (UnixSystem.openFiles closed)
+            |> shouldEqual (Some 1)
 
             closed
             |> UnixSystem.checkInvariants

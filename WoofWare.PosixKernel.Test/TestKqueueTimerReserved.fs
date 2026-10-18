@@ -77,7 +77,7 @@ module TestKqueueTimerReserved =
             holdsTimer (Map.keys state.Registrations) |> shouldEqual false
             holdsTimer state.Active |> shouldEqual false
 
-        for KeyValue (_, queue) in PollQueueTable.all system.Machine.PollQueues do
+        for KeyValue (_, queue) in PollQueueTable.all (Kernel.machine system).PollQueues do
             holdsTimer (Map.keys queue.Registrations) |> shouldEqual false
             holdsTimer queue.Active |> shouldEqual false
 
@@ -250,14 +250,14 @@ module TestKqueueTimerReserved =
             | Ok (PollOutcome.WouldBlock _, parked) ->
                 slept <- slept + 1
                 noTimerAnywhere parked
-                Map.iter (fun _ queue -> queries queue) (PollQueueTable.all parked.Machine.PollQueues)
+                Map.iter (fun _ queue -> queries queue) (PollQueueTable.all (Kernel.machine parked).PollQueues)
 
                 if connect then
                     // A connection activates the listener's read filter, if the poll
                     // registered one.
                     let _, connected = KeventWorld.client 5300us parked
                     noTimerAnywhere connected
-                    Map.iter (fun _ queue -> queries queue) (PollQueueTable.all connected.Machine.PollQueues)
+                    Map.iter (fun _ queue -> queries queue) (PollQueueTable.all (Kernel.machine connected).PollQueues)
             | Ok (_, after) -> noTimerAnywhere after
             | Error _ -> ()
 
@@ -289,11 +289,16 @@ module TestKqueueTimerReserved =
                 system
         with
         | Ok (PollOutcome.WouldBlock _, parked) ->
-            let queue = Seq.exactlyOne (PollQueueTable.all parked.Machine.PollQueues).Values
+            let queue =
+                Seq.exactlyOne (PollQueueTable.all (Kernel.machine parked).PollQueues).Values
+
             PollQueue.registered queue |> shouldEqual [ listener, KqueueFilter.Read ]
             PollQueue.entry listener KqueueFilter.Read queue |> shouldEqual (Some 0)
             PollQueue.activated queue |> shouldEqual []
             let _, connected = KeventWorld.client 5300us parked
-            let queue = Seq.exactlyOne (PollQueueTable.all connected.Machine.PollQueues).Values
+
+            let queue =
+                Seq.exactlyOne (PollQueueTable.all (Kernel.machine connected).PollQueues).Values
+
             PollQueue.activated queue |> shouldEqual [ listener, KqueueFilter.Read ]
         | other -> failwith $"a poll of the idle listener did not sleep: %A{other}"

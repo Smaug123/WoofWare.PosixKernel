@@ -186,7 +186,7 @@ module TestInotifyMeasured =
     /// names, queued directly.
     let private queue (fd : int) (record : InotifyRecord) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
         Lone.mapOpenFiles
-            (OpenFileTable.enqueueInotify system.Machine.InotifyLimits.MaxQueuedEvents (idOf fd system) record)
+            (OpenFileTable.enqueueInotify (Kernel.machine system).InotifyLimits.MaxQueuedEvents (idOf fd system) record)
             system
 
     let private event (wd : int) (events : uint32) (entry : string) : InotifyRecord =
@@ -764,7 +764,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch
                             { SignalCatch.ofHandler "h" with
@@ -780,7 +780,7 @@ module TestInotifyMeasured =
             { proc with
                 Signals =
                     SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread

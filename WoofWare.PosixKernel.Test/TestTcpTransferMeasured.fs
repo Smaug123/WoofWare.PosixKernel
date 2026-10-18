@@ -202,7 +202,7 @@ module TestTcpTransferMeasured =
             UnixSystem.initial<int, string> platform
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        TcpBufferSizing.newTransfer SocketDomain.Inet system.Machine
+        TcpBufferSizing.newTransfer SocketDomain.Inet (Kernel.machine system)
 
     /// A write by `writer` of `count` bytes: what it answered, the transfer
     /// after.

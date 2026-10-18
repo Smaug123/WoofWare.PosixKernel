@@ -787,13 +787,13 @@ module TestOwnerChange =
             UnixSystem.initial platform
             |> Launched.bootWith (Launched.credentials credentials) UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        { system with
-            Machine =
-                { system.Machine with
-                    CommittedFileSystem = CommittedFileSystem.initial vfs
-                }
-            Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-        }
+        system
+        |> UnixSystem.advanceClock later
+        |> Kernel.mapMachine (fun machine ->
+            { machine with
+                CommittedFileSystem = CommittedFileSystem.initial vfs
+            }
+        )
         |> Lone.mapProc (fun proc ->
             { proc with
                 CurrentDirectoryInode = VirtualFileSystem.root vfs
@@ -802,7 +802,7 @@ module TestOwnerChange =
         |> Lone.restand
 
     let private inodeOf (p : string) (system : UnixSystem<int, string>) : Inode =
-        match VirtualFileSystem.tryGet (inodeAt system.Machine.FileSystem p) system.Machine.FileSystem with
+        match VirtualFileSystem.tryGet (inodeAt (UnixSystem.fileSystem system) p) (UnixSystem.fileSystem system) with
         | Some inode -> inode
         | None -> failwith $"%s{p} is absent"
 
@@ -813,20 +813,21 @@ module TestOwnerChange =
     /// every inode of a hand-built filesystem was stamped at `epoch`, so
     /// stamping its ctime at `epoch` again leaves it where it was.
     let private withBits (p : string) (bits : int) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
         let inode = inodeAt vfs p
 
         match VirtualFileSystem.tryGet inode vfs with
         | Some entry when entry.Times.StatusChange = epoch -> ()
         | other -> failwith $"%s{p} was not stamped at the epoch: %A{other}"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     CommittedFileSystem =
                         CommittedFileSystem.initial (GraphMutators.setPermissions inode (mode bits) epoch vfs)
                 }
-        }
+            )
+            system
 
     let private chownAnswer
         (p : string)
@@ -869,7 +870,7 @@ module TestOwnerChange =
         (system : UnixSystem<int, string>)
         : unit
         =
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
         let standing = Standing.toward credentials by
 
         for p, target in [ "/t/f", OwnerChangeTarget.NonDirectory ; "/t/d", OwnerChangeTarget.Directory ] do
@@ -1007,7 +1008,7 @@ module TestOwnerChange =
         let egid = credentials.EffectiveGroup
         let by = InodeOwner.ofProcess credentials
         let system = systemOn platform credentials (pathTree by)
-        let now = UnixMachineState.realtime system.Scheduling system.Machine
+        let now = UnixSystem.realtime system
 
         let changedOwner (p : string) (expected : InodeOwner) (after : UnixSystem<int, string>) : unit =
             let changed = inodeOf p after
@@ -1129,7 +1130,7 @@ module TestOwnerChange =
             ] do
             let by = InodeOwner.ofProcess credentials
             let system = systemOn platform credentials (pathTree by)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for p, call in [ "/p/f", chownAnswer ; "/p/d", chownAnswer ; "/p/lf", lchownAnswer ] do
                 match call p None None system with
@@ -1161,10 +1162,10 @@ module TestOwnerChange =
         =
         let fd, registry =
             FileDescriptorRegistry.openFile
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 access
                 (Lone.fileDescriptors system)
 
@@ -1173,10 +1174,10 @@ module TestOwnerChange =
     let private openedDirectory (p : string) (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
         let fd, registry =
             FileDescriptorRegistry.openDirectory
-                (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                (ForgedName.ofInode system (inodeAt system.Machine.FileSystem p))
-                (inodeAt system.Machine.FileSystem p)
+                (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                (ForgedName.ofInode system (inodeAt (UnixSystem.fileSystem system) p))
+                (inodeAt (UnixSystem.fileSystem system) p)
                 (Lone.fileDescriptors system)
 
         fd, withDescriptors registry system
@@ -1201,7 +1202,7 @@ module TestOwnerChange =
             ] do
             let by = InodeOwner.ofProcess credentials
             let system = systemOn platform credentials (pathTree by)
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for access in
                 [
@@ -1238,13 +1239,13 @@ module TestOwnerChange =
             | other -> failwith $"fchown of a directory: %A{other}"
 
             // A file whose last name has gone.
-            let inode = inodeAt system.Machine.FileSystem "/p/f"
+            let inode = inodeAt (UnixSystem.fileSystem system) "/p/f"
             let fd, withFd = opened "/p/f" FileAccessMode.ReadOnly system
             let _, unlinked = Answered.unlink (Callers.leader withFd) (path "/p/f") withFd
 
             match fchownAnswer fd None (Some memberGroup) unlinked with
             | SyscallAnswer.Completed 0L, after ->
-                match VirtualFileSystem.tryGet inode after.Machine.FileSystem with
+                match VirtualFileSystem.tryGet inode (UnixSystem.fileSystem after) with
                 | Some orphan ->
                     orphan.Owner
                     |> shouldEqual
@@ -1278,7 +1279,7 @@ module TestOwnerChange =
                     after |> shouldEqual withFd
                 else
                     (inodeOf "/p/theirs" after).Times.StatusChange
-                    |> shouldEqual (UnixMachineState.realtime system.Scheduling system.Machine)
+                    |> shouldEqual (UnixSystem.realtime system)
             | other -> failwith $"fchown(-1, -1) of someone else's file: %A{other}"
 
     [<Test>]
@@ -1305,7 +1306,7 @@ module TestOwnerChange =
         // The flavour's own event queue: an epoll instance, or a kqueue.
         let eventQueue (system : UnixSystem<int, string>) : int * UnixSystem<int, string> =
             let create =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                match SimulatedUnixPlatform.flavour (UnixSystem.platform system) with
                 | SimulatedUnixFlavour.Linux -> FileDescriptorRegistry.createEpoll SimulatedUnixFlavour.Linux
                 | SimulatedUnixFlavour.Darwin ->
                     FileDescriptorRegistry.createKqueue SimulatedUnixFlavour.Darwin (Lone.proc system).ProcessId
@@ -1418,10 +1419,7 @@ module TestOwnerChange =
 
         let fds, system = pipeOrFail system
 
-        let system =
-            { system with
-                Scheduling = UnixSchedulingState.advanceClock later system.Scheduling
-            }
+        let system = UnixSystem.advanceClock later system
 
         let system =
             if changesIds then
@@ -1438,16 +1436,16 @@ module TestOwnerChange =
             | Some (OpenFileObject.Pipe pipeId) -> pipeId
             | other -> failwith $"fd %d{fd} is not a pipe: %A{other}"
 
-        let pipe = UnixMachineState.pipe pipeId system.Machine
+        let pipe = UnixMachineState.pipe pipeId (Kernel.machine system)
 
         let status =
             match pipe.Origin with
             | PipeOrigin.Made status -> status
             | PipeOrigin.Launched _ -> failwith "a launched pipe"
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     Pipes =
                         Map.add
                             pipeId
@@ -1458,9 +1456,10 @@ module TestOwnerChange =
                                             Permissions = mode bits
                                         }
                             }
-                            system.Machine.Pipes
+                            machine.Pipes
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``Linux fchown changes a pipe's owner through either end, as the probe measured, for every standing``
@@ -1486,7 +1485,7 @@ module TestOwnerChange =
 
             let by = InodeOwner.ofProcess creator
             let standing = Standing.toward caller by
-            let now = UnixMachineState.realtime system.Scheduling system.Machine
+            let now = UnixSystem.realtime system
 
             for user, group in
                 [

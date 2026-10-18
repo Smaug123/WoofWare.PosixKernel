@@ -82,10 +82,7 @@ module TestTimeWaitMeasured =
 
     let private advance (nanoseconds : int64) (row : Row) : Row =
         { row with
-            System =
-                { row.System with
-                    Scheduling = UnixSchedulingState.advanceClock nanoseconds row.System.Scheduling
-                }
+            System = UnixSystem.advanceClock nanoseconds row.System
         }
 
     let private newSocket (reuse : bool) (row : Row) : int * Row =
@@ -98,7 +95,7 @@ module TestTimeWaitMeasured =
         }
 
     let private bind (fd : int) (endpoint : Ipv4Endpoint) (row : Row) : Result<BindAnswer * Row, BindRefusal> =
-        CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet row.System.Machine.UnixPlatform endpoint) row.System
+        CopyIn.bind fd UserBuffer.Mapped 16u (CopyIn.inet (UnixSystem.platform row.System) endpoint) row.System
         |> Result.map (fun (answer, system) ->
             answer,
             { row with
@@ -125,7 +122,7 @@ module TestTimeWaitMeasured =
             fd
             UserBuffer.Mapped
             16u
-            (CopyIn.inet row.System.Machine.UnixPlatform (loopback destination))
+            (CopyIn.inet (UnixSystem.platform row.System) (loopback destination))
             row.System
         |> Result.map (fun (answer, system) ->
             answer,
@@ -152,16 +149,16 @@ module TestTimeWaitMeasured =
         | other -> failwith $"close fd %d{fd}: %A{other}"
 
     let private boundAt (fd : int) (row : Row) : Ipv4Endpoint option =
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors row.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors row.System) with
         | Some (OpenFileTarget.Socket socketId) ->
-            (UnixMachineState.socket socketId row.System.Machine).Ipv4Binding
+            (UnixMachineState.socket socketId (Kernel.machine row.System)).Ipv4Binding
             |> Option.map (fun binding -> binding.Endpoint)
         | other -> failwith $"fd %d{fd} is %A{other}"
 
     let private connected (fd : int) (row : Row) : bool =
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.UnixSystemState.fileDescriptors row.System) with
+        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors row.System) with
         | Some (OpenFileTarget.Socket socketId) ->
-            (SocketPhase.connectionEnd (UnixMachineState.socket socketId row.System.Machine).Phase).IsSome
+            (SocketPhase.connectionEnd (UnixMachineState.socket socketId (Kernel.machine row.System)).Phase).IsSome
         | other -> failwith $"fd %d{fd} is %A{other}"
 
     /// A machine of `platform` whose ephemeral range is `range`, its clock at
@@ -208,12 +205,13 @@ module TestTimeWaitMeasured =
 
             { row with
                 System =
-                    { row.System with
-                        Machine =
-                            { row.System.Machine with
+                    Kernel.mapMachine
+                        (fun machine ->
+                            { machine with
                                 NextEphemeralPort = port
                             }
-                    }
+                        )
+                        row.System
             }
 
     /// The allocator's cursor put back on `at`, as the probe aimed its next
@@ -221,12 +219,13 @@ module TestTimeWaitMeasured =
     let private aim (at : uint16) (row : Row) : Row =
         { row with
             System =
-                { row.System with
-                    Machine =
-                        { row.System.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             NextEphemeralPort = at
                         }
-                }
+                    )
+                    row.System
         }
 
     /// A connection from a client carrying `SO_REUSEADDR` if `reuse`, its port
@@ -277,7 +276,7 @@ module TestTimeWaitMeasured =
     let private nameOf (fd : int) (row : Row) : Ipv4Endpoint =
         match UnixSocket.tryGetsockname (Callers.leader row.System) fd UserBuffer.Mapped 16u row.System with
         | Ok (GetSockNameAnswer.Reported (bytes, _)) ->
-            match (SimulatedUnixPlatform.decodeInternetSockaddr row.System.Machine.UnixPlatform bytes).Endpoint with
+            match (SimulatedUnixPlatform.decodeInternetSockaddr (UnixSystem.platform row.System) bytes).Endpoint with
             | Some endpoint -> endpoint
             | None -> failwith $"fd %d{fd}: the reported name decodes to no endpoint"
         | other -> failwith $"getsockname on fd %d{fd}: %A{other}"
@@ -438,7 +437,7 @@ module TestTimeWaitMeasured =
                 // measured to last at least, and refuses from there on.
                 let row = rowFor platform
                 let row = clientFirst false false (row.X, listenerX) row
-                let window = PortHolderRules.timeWaitWindow row.System.Machine.TcpTimeWait
+                let window = PortHolderRules.timeWaitWindow (Kernel.machine row.System).TcpTimeWait
 
                 if window > seconds lastHeld then
                     failwith
@@ -774,7 +773,7 @@ module TestTimeWaitMeasured =
     /// What `getsockopt(SO_ERROR)` reads on `fd`, in the probe's names.
     let private socketError (fd : int) (row : Row) : string * Row =
         let answer, system = KeventWorld.readSocketError fd row.System
-        let platform = row.System.Machine.UnixPlatform
+        let platform = UnixSystem.platform row.System
 
         let name =
             match OptionValue.readInt answer with

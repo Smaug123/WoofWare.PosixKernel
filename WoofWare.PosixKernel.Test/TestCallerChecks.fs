@@ -141,7 +141,7 @@ module TestCallerChecks =
             }
 
         let socketOption (system : UnixSystem<int, string>) : int * int =
-            let platform = system.Machine.UnixPlatform
+            let platform = UnixSystem.platform system
             SimulatedUnixPlatform.socketOptionLevel platform, SimulatedUnixPlatform.reuseAddressOption platform
 
         [

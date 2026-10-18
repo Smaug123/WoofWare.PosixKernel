@@ -122,7 +122,7 @@ module TestWakeMemo =
                 )
                 swept
 
-        LanguagePrimitives.PhysicalEquality signalled.Machine swept.Machine
+        LanguagePrimitives.PhysicalEquality (Kernel.machine signalled) (Kernel.machine swept)
         |> shouldEqual true
 
         LanguagePrimitives.PhysicalEquality
@@ -275,7 +275,7 @@ module TestWakeMemo =
 
         let later = UnixSystem.advanceClock 7_000_000L swept
 
-        LanguagePrimitives.PhysicalEquality later.Machine swept.Machine
+        LanguagePrimitives.PhysicalEquality (Kernel.machine later) (Kernel.machine swept)
         |> shouldEqual true
 
         remembers later |> shouldEqual true
@@ -305,8 +305,13 @@ module TestWakeMemo =
         woken |> shouldEqual []
         obj.ReferenceEquals (swept, machine) |> shouldEqual false
         swept |> shouldEqual machine
-        obj.ReferenceEquals (swept.Machine, machine.Machine) |> shouldEqual true
-        obj.ReferenceEquals (swept.Scheduling, machine.Scheduling) |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.machine swept, Kernel.machine machine)
+        |> shouldEqual true
+
+        obj.ReferenceEquals (Kernel.scheduling swept, Kernel.scheduling machine)
+        |> shouldEqual true
+
         obj.ReferenceEquals (swept.Processes, machine.Processes) |> shouldEqual true
         remembers swept |> shouldEqual true
 

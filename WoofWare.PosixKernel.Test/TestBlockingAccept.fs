@@ -84,7 +84,7 @@ module TestBlockingAccept =
     let private queueOf (fd : int) (system : UnixSystem<int, string>) : ConnectionId list =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            match (UnixMachineState.socket socketId system.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
             | SocketPhase.Listening listenState -> listenState.Queue |> List.map (fun queued -> queued.Connection)
             | phase -> failwith $"fd %d{fd} is %A{phase}, not listening"
         | other -> failwith $"fd %d{fd} names %A{other}, not a socket"
@@ -183,23 +183,24 @@ module TestBlockingAccept =
                                         Destination = destination
                                         DeclaredLength = declaredLength
                                     }
-                            Ordinal = system.Machine.NextParkOrdinal
+                            Ordinal = (Kernel.machine system).NextParkOrdinal
                             State = ParkState.Asleep
                         }
                 )
 
                 // The park holds the listener, and with that hold let go of,
                 // nothing else has changed.
-                OpenFileTable.holdCount listener parked.Machine.OpenFiles
+                OpenFileTable.holdCount listener (UnixSystem.openFiles parked)
                 |> shouldEqual (Some 1)
 
-                { parked with
-                    Machine =
-                        { parked.Machine with
-                            NextParkOrdinal = system.Machine.NextParkOrdinal
-                            OpenFiles = OpenFileTable.releaseHold listener parked.Machine.OpenFiles
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            NextParkOrdinal = (Kernel.machine system).NextParkOrdinal
+                            OpenFiles = OpenFileTable.releaseHold listener machine.OpenFiles
                         }
-                }
+                    )
+                    parked
                 |> ForgedThread.threadsAsIn (Lone.pid system) system
                 |> shouldEqual system
 
@@ -357,7 +358,7 @@ module TestBlockingAccept =
                         |> Option.map (fun syscall ->
                             {
                                 Syscall = syscall
-                                Ordinal = system.Machine.NextParkOrdinal
+                                Ordinal = (Kernel.machine system).NextParkOrdinal
                                 State = ParkState.Asleep
                             }
                         )
@@ -686,14 +687,14 @@ module TestBlockingAccept =
         awake system |> shouldEqual []
         UnixSystem.checkInvariants system |> shouldEqual []
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
         let system = connectTo 5000us system |> waking [ 1 ]
         let accepted, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual false
 
@@ -724,7 +725,7 @@ module TestBlockingAccept =
         let system = connectTo 5000us system
         let _, system = finishWithConnection 1 system
 
-        OpenFileTable.descriptions system.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles system)
         |> Map.containsKey listener
         |> shouldEqual true
 
@@ -748,7 +749,7 @@ module TestBlockingAccept =
         // No descriptor names the listener any more, so it is found by its
         // phase.
         let taken, left =
-            system.Machine.Sockets
+            (Kernel.machine system).Sockets
             |> Map.toSeq
             |> Seq.pick (fun (_, socket) ->
                 match socket.Phase with
@@ -765,7 +766,7 @@ module TestBlockingAccept =
         let resetAt (connection : ConnectionId) : bool =
             TcpTransfer.hasBeenReset
                 ConnectionEnd.Client
-                (UnixMachineState.connection connection system.Machine).Transfer
+                (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
         resetAt taken |> shouldEqual false
         resetAt left |> shouldEqual true
@@ -803,11 +804,11 @@ module TestBlockingAccept =
                 Signals =
                     proc.Signals
                     |> SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGUSR1
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                     |> SignalState.enqueue
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         {
                             Signal = Signal.SIGUSR1
                             Target = ValueSome thread
@@ -854,7 +855,7 @@ module TestBlockingAccept =
             UnixSystem.checkInvariants system |> shouldEqual []
             let system = waking parked system
 
-            OpenFileTable.descriptions system.Machine.OpenFiles
+            OpenFileTable.descriptions (UnixSystem.openFiles system)
             |> Map.containsKey listener
             |> shouldEqual keepDup
 
@@ -1158,7 +1159,7 @@ module TestBlockingAccept =
     let private clientFate (fd : int) (system : UnixSystem<int, string>) : ClientFate =
         let socket =
             match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
+            | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
             | other -> failwith $"client fd %d{fd} names %A{other}"
 
         match SocketPhase.connectionEnd socket.Phase with
@@ -1167,7 +1168,7 @@ module TestBlockingAccept =
             let towardsClient =
                 TcpTransfer.towards
                     ConnectionEnd.Client
-                    (UnixMachineState.connection connection system.Machine).Transfer
+                    (UnixMachineState.connection connection (Kernel.machine system)).Transfer
 
             match towardsClient.Receiver, towardsClient.Fin with
             | TcpEndState.Open _, TcpFin.NotSent -> ClientFate.Queued
@@ -1179,7 +1180,7 @@ module TestBlockingAccept =
     /// The clients of the connections `queue` holds, in its order.
     let private queuedClients (queue : QueuedConnection list) (system : UnixSystem<int, string>) : int list =
         let clientOf (connection : ConnectionId) : int =
-            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client system.Machine with
+            match UnixMachineState.socketHoldingEnd connection ConnectionEnd.Client (Kernel.machine system) with
             | None -> failwith $"queued connection %O{connection} has no client"
             | Some socket ->
                 FileDescriptorRegistry.fds (Lone.fileDescriptors system)
@@ -1270,7 +1271,7 @@ module TestBlockingAccept =
                         Signals =
                             proc.Signals
                             |> SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch
                                     { SignalCatch.ofHandler "h" with
@@ -1343,7 +1344,7 @@ module TestBlockingAccept =
             let dropAccepted (where : unit -> string) (client : int) (fd : int) (system : UnixSystem<int, string>) =
                 let socket =
                     match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket system.Machine
+                    | Some (OpenFileTarget.Socket socket) -> UnixMachineState.socket socket (Kernel.machine system)
                     | other -> failwith $"%s{where ()}: the accepted fd %d{fd} names %A{other}"
 
                 let held =
@@ -1574,7 +1575,7 @@ module TestBlockingAccept =
                             { proc with
                                 Signals =
                                     SignalState.enqueue
-                                        (Lone.UnixSystemState.signalNumbering system)
+                                        (Kernel.signalNumbering system)
                                         {
                                             Signal = Signal.SIGUSR1
                                             Target = ValueSome thread
@@ -1767,7 +1768,7 @@ module TestBlockingAccept =
                         failwith $"%s{where ()}: thread %d{thread} parked as %A{actual}, expected %A{expected}"
 
                 let socket =
-                    system.Machine.Sockets
+                    (Kernel.machine system).Sockets
                     |> Map.tryPick (fun _ socket ->
                         match socket.Phase with
                         | SocketPhase.Listening listenState -> Some listenState
@@ -1936,14 +1937,14 @@ module TestBlockingAccept =
     let private drainedByHand (fd : int) (system : UnixSystem<int, string>) : SocketId * UnixSystem<int, string> =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
         | Some (OpenFileTarget.Socket socketId) ->
-            let socket = UnixMachineState.socket socketId system.Machine
+            let socket = UnixMachineState.socket socketId (Kernel.machine system)
 
             match socket.Phase with
             | SocketPhase.Listening listenState ->
                 socketId,
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.add
                                     socketId
@@ -1954,9 +1955,10 @@ module TestBlockingAccept =
                                                     Drained = true
                                                 }
                                     }
-                                    system.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    system
             | phase -> failwith $"fd %d{fd} is %A{phase}"
         | other -> failwith $"fd %d{fd} names %A{other}"
 

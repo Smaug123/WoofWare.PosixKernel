@@ -21,25 +21,26 @@ module ForgedPark =
         if (Lone.parkOf thread system).IsSome then
             failwith $"ForgedPark.onAbsent: thread %O{thread} is parked already"
 
-        let (ParkOrdinal.ParkOrdinal ordinal) = system.Machine.NextParkOrdinal
+        let (ParkOrdinal.ParkOrdinal ordinal) = (Kernel.machine system).NextParkOrdinal
 
         let openFiles =
             ParkedSyscall.descriptions parked
-            |> List.filter (fun id -> (OpenFileTable.tryFind id system.Machine.OpenFiles).IsSome)
-            |> List.fold (fun openFiles id -> OpenFileTable.hold id openFiles) system.Machine.OpenFiles
+            |> List.filter (fun id -> (OpenFileTable.tryFind id (UnixSystem.openFiles system)).IsSome)
+            |> List.fold (fun openFiles id -> OpenFileTable.hold id openFiles) (UnixSystem.openFiles system)
 
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     OpenFiles = openFiles
                     NextParkOrdinal = ParkOrdinal.ParkOrdinal (ordinal + 1L)
                 }
-        }
+            )
+            system
         |> ForgedThread.parked
             (Callers.thread thread system)
             {
                 Syscall = parked
-                Ordinal = system.Machine.NextParkOrdinal
+                Ordinal = (Kernel.machine system).NextParkOrdinal
                 State = ParkState.Asleep
             }
 

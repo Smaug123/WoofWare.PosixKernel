@@ -33,12 +33,13 @@ module TestStateQueries =
     [<Test>]
     let ``platform is the one the machine was started on`` () : unit =
         for platform in platforms do
-            UnixMachineState.platform (initialOn platform).Machine |> shouldEqual platform
+            UnixMachineState.platform (Kernel.machine (initialOn platform))
+            |> shouldEqual platform
 
     [<Test>]
     let ``processorCount is the default until set, and then what was set`` () : unit =
         for platform in platforms do
-            UnixMachineState.processorCount (initialOn platform).Machine
+            UnixMachineState.processorCount (Kernel.machine (initialOn platform))
             |> shouldEqual UnixSystem.defaultProcessorCount
 
         let property (platform : SimulatedUnixPlatform, count : int) : unit =
@@ -46,7 +47,7 @@ module TestStateQueries =
             |> UnixBootImage.tryWithProcessorCount count
             |> Configured.expectOk ProcessorCountRefusal.describe
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
-            |> fun system -> UnixMachineState.processorCount system.Machine
+            |> fun system -> UnixMachineState.processorCount (Kernel.machine system)
             |> shouldEqual count
 
         Check.One (
@@ -96,7 +97,8 @@ module TestStateQueries =
         let property (platform : SimulatedUnixPlatform, writes : (int * int) list) : unit =
             let initial = initialOn platform
 
-            DeliveryLog.count (UnixMachineState.delivered initial.Machine) |> shouldEqual 0
+            DeliveryLog.count (UnixMachineState.delivered (Kernel.machine initial))
+            |> shouldEqual 0
 
             let final, expected =
                 ((initial, []), List.indexed writes)
@@ -120,7 +122,7 @@ module TestStateQueries =
                     | other -> failwith $"write(%d{fd}, %d{count} bytes) answered %A{Result.map fst other}"
                 )
 
-            DeliveryLog.toList (UnixMachineState.delivered final.Machine)
+            DeliveryLog.toList (UnixMachineState.delivered (Kernel.machine final))
             |> shouldEqual (List.rev expected)
 
         let write = Gen.zip (Gen.elements [ 1 ; 2 ]) (Gen.choose (0, 4))
@@ -234,7 +236,7 @@ module TestStateQueries =
             |> shouldEqual (UnixProcessState.signals (Lone.proc system))
 
             UnixSystem.delivered system
-            |> shouldEqual (UnixMachineState.delivered system.Machine)
+            |> shouldEqual (UnixMachineState.delivered (Kernel.machine system))
 
             // The launch table's standard streams, and a descriptor not open.
             for fd in [ 0 ; 1 ; 2 ; 3 ] do

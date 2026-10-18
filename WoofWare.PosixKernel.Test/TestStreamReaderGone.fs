@@ -46,11 +46,7 @@ module TestStreamReaderGone =
         |> Lone.mapProc (fun proc ->
             { proc with
                 Signals =
-                    SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
-                        Signal.SIGPIPE
-                        disposition
-                        proc.Signals
+                    SignalState.setDisposition (Kernel.signalNumbering system) Signal.SIGPIPE disposition proc.Signals
             }
         )
 
@@ -179,7 +175,7 @@ module TestStreamReaderGone =
                     pending <- Set.ofList (SignalState.pending (Lone.proc system).Signals)
 
                 let log =
-                    DeliveryLog.toList system.Machine.Delivered
+                    DeliveryLog.toList (Kernel.machine system).Delivered
                     |> List.map (fun delivery ->
                         let (ExternalEndpoint (launchedInto, fd)) = delivery.Endpoint
                         launchedInto |> shouldEqual (Lone.pid system)
@@ -234,7 +230,7 @@ module TestStreamReaderGone =
                     { proc with
                         Signals =
                             HandlerFrames.enter
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 "carrier"
                                 (Lone.leader system)
                                 threads
@@ -288,7 +284,7 @@ module TestStreamReaderGone =
                 | Ok (SyscallAnswer.Completed 0L, system) -> system
                 | other -> failwith $"close 1: %A{other}"
 
-            Map.containsKey pipe closed.Machine.Pipes |> shouldEqual false
+            Map.containsKey pipe (UnixSystem.pipes closed) |> shouldEqual false
             assertSound "closed" closed
 
     /// A write is made by one of the process's threads, which the signal it may

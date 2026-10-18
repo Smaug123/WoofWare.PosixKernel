@@ -63,10 +63,10 @@ module TestKeventRegistration =
         (system : UnixSystem<int, string>)
         : (int64 * bool * uint32) option
         =
-        let phase = (UnixMachineState.socket socketId system.Machine).Phase
+        let phase = (UnixMachineState.socket socketId (Kernel.machine system)).Phase
 
         let peerOpen (connection : ConnectionId) =
-            system.Machine.Sockets
+            (Kernel.machine system).Sockets
             |> Map.exists (fun other socket ->
                 other <> socketId
                 && (
@@ -438,7 +438,7 @@ module TestKeventRegistration =
         let model =
             {
                 Kqueues = kqueueStates [ kq1 ; kq2 ] system
-                NextOrdinal = system.Machine.NextEventRegistrationOrdinal
+                NextOrdinal = (Kernel.machine system).NextEventRegistrationOrdinal
             }
 
         let listenerSocket = Option.get (socketOf listener system)
@@ -453,7 +453,7 @@ module TestKeventRegistration =
 
             let system, model =
                 let queued =
-                    match (UnixMachineState.socket listenerSocket system.Machine).Phase with
+                    match (UnixMachineState.socket listenerSocket (Kernel.machine system)).Phase with
                     | SocketPhase.Listening listenState -> List.length listenState.Queue
                     | phase -> failwith $"the listener left listening: %A{phase}"
 
@@ -478,7 +478,7 @@ module TestKeventRegistration =
                     let idle =
                         open'
                         |> List.filter (fun fd ->
-                            (UnixMachineState.socket (Option.get (socketOf fd system)) system.Machine).Phase = SocketPhase.Idle
+                            (UnixMachineState.socket (Option.get (socketOf fd system)) (Kernel.machine system)).Phase = SocketPhase.Idle
                         )
 
                     match idle with
@@ -515,10 +515,10 @@ module TestKeventRegistration =
 
                         // The peer's FIN reaches the other end of an established
                         // connection when its last descriptor closes.
-                        match (UnixMachineState.socket socketId system.Machine).Phase with
+                        match (UnixMachineState.socket socketId (Kernel.machine system)).Phase with
                         | SocketPhase.Established (connection, _) when last ->
                             let survivors =
-                                after.Machine.Sockets
+                                (Kernel.machine after).Sockets
                                 |> Map.filter (fun _ socket ->
                                     match socket.Phase with
                                     | SocketPhase.Established (c, _) -> c = connection
@@ -596,7 +596,8 @@ module TestKeventRegistration =
 
             kqueueStates [ kq1 ; kq2 ] system |> shouldEqual model.Kqueues
 
-            system.Machine.NextEventRegistrationOrdinal |> shouldEqual model.NextOrdinal
+            (Kernel.machine system).NextEventRegistrationOrdinal
+            |> shouldEqual model.NextOrdinal
 
             UnixSystem.checkInvariants system |> shouldEqual []
 
@@ -722,8 +723,8 @@ module TestKeventRegistration =
         let file, system =
             let fd, registry =
                 FileDescriptorRegistry.openFile
-                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
+                    (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (ForgedName.ofInode system (InodeNumber 1L))
                     (InodeNumber 1L)
                     FileAccessMode.ReadOnly
@@ -958,10 +959,7 @@ module TestKeventRegistration =
         // event and a signal, reached the sleeper first, which a wake that
         // found both does not say.
 
-        let expired =
-            { withEvent with
-                Scheduling = UnixSchedulingState.advanceClock 5L withEvent.Scheduling
-            }
+        let expired = UnixSystem.advanceClock 5L withEvent
 
         UnixKqueue.tryFinishKevent (Callers.thread 1 expired) (Woken.thread 1 expired)
         |> shouldEqual (Error (KeventRefusal.EventsBesideDeadline kqueueId))
@@ -973,11 +971,11 @@ module TestKeventRegistration =
                     Signals =
                         proc.Signals
                         |> SignalState.setDisposition
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             Signal.SIGUSR1
                             (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         |> SignalState.enqueue
-                            (Lone.UnixSystemState.signalNumbering system)
+                            (Kernel.signalNumbering system)
                             {
                                 Signal = Signal.SIGUSR1
                                 Target = ValueSome 1
@@ -1045,7 +1043,7 @@ module TestKeventRegistration =
         let closed = parkIn 1 kq KeventTimeout.Null system |> KeventWorld.close kq
         UnixSystem.checkInvariants closed |> shouldEqual []
 
-        match Map.tryFind kqueueId (OpenFileTable.descriptions closed.Machine.OpenFiles) with
+        match Map.tryFind kqueueId (OpenFileTable.descriptions (UnixSystem.openFiles closed)) with
         | Some {
                    Target = OpenFileTarget.Kqueue state
                } ->
@@ -1069,7 +1067,7 @@ module TestKeventRegistration =
             | Ok (KeventOutcome.Failed UnixError.EBADF, finished) -> finished
             | other -> failwith $"expected EBADF, got %A{other}"
 
-        OpenFileTable.descriptions finished.Machine.OpenFiles
+        OpenFileTable.descriptions (UnixSystem.openFiles finished)
         |> Map.containsKey kqueueId
         |> shouldEqual false
 
@@ -1116,12 +1114,13 @@ module TestKeventRegistration =
         |> shouldEqual [ UnixSystemDefect.EventRegistrationOrdinalNotFresh (0L, kqueueId, 0L) ]
 
         let system =
-            { system with
-                Machine =
-                    { system.Machine with
+            Kernel.mapMachine
+                (fun machine ->
+                    { machine with
                         NextEventRegistrationOrdinal = 1L
                     }
-            }
+                )
+                system
 
         let forged (state : KqueueState) =
             Lone.mapOpenFiles (OpenFileTable.setKqueueState kqueueId state) system

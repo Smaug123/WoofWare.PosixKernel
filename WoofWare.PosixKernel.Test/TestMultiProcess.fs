@@ -389,7 +389,7 @@ module TestMultiProcess =
             answer |> shouldEqual (SyscallAnswer.Completed 0L)
 
             // No name reaches it, and it is still there: a stands in it.
-            VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
+            VirtualFileSystem.tryGet standing (UnixSystem.fileSystem (viewOf b machine))
             |> Option.isSome
             |> shouldEqual true
 
@@ -398,7 +398,7 @@ module TestMultiProcess =
             // Stepping out lets it go.
             let _, machine = inProcess a (chdir a "/") machine
 
-            VirtualFileSystem.tryGet standing (viewOf b machine).Machine.FileSystem
+            VirtualFileSystem.tryGet standing (UnixSystem.fileSystem (viewOf b machine))
             |> shouldEqual None
 
             assertClean machine
@@ -431,12 +431,12 @@ module TestMultiProcess =
         let ghost = ProcessId.parseOrFail context 77
 
         let forged =
-            { machine with
-                Machine =
-                    { machine.Machine with
-                        ProcessIds = ProcessIdTable.add ghost machine.Machine.ProcessIds
-                    }
-            }
+            machine
+            |> Kernel.mapMachine (fun kernel ->
+                { kernel with
+                    ProcessIds = ProcessIdTable.add ghost kernel.ProcessIds
+                }
+            )
 
         Machines.checkInvariants forged
         |> shouldEqual [ UnixSystemDefect.LiveProcessIdsMismatch (Set.singleton ghost, Set.empty) ]
@@ -446,12 +446,11 @@ module TestMultiProcess =
         let pids, machine = machineOf SimulatedUnixPlatform.linuxX64 2
         let root = (Proc.state pids.[0] (viewOf pids.[0] machine)).CurrentDirectoryInode
 
-        machine.Machine.CurrentDirectories |> shouldEqual (Map.ofList [ root, 2 ])
+        (Kernel.machine machine).CurrentDirectories
+        |> shouldEqual (Map.ofList [ root, 2 ])
 
         let short =
-            { machine with
-                Machine = UnixMachineState.releaseCurrentDirectory root machine.Machine
-            }
+            Kernel.mapMachine (UnixMachineState.releaseCurrentDirectory root) machine
 
         Machines.checkInvariants short
         |> shouldEqual [ UnixSystemDefect.CurrentDirectoryHoldMismatch (root, 1, 2) ]

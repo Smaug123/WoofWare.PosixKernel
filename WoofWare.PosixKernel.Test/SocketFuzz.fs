@@ -327,7 +327,7 @@ module SocketFuzz =
             // directly: bind/listen semantics are deliberately outside the
             // fuzzed vocabulary (see the plan doc's altitude option).
             let socketId = socketIdOfSlot slot state
-            let sock = UnixMachineState.socket socketId state.Kernel.Machine
+            let sock = UnixMachineState.socket socketId (Kernel.machine state.Kernel)
 
             match sock.Phase with
             | SocketPhase.Idle -> ()
@@ -336,9 +336,9 @@ module SocketFuzz =
             let port = state.NextListenerPort
 
             let kernel =
-                { state.Kernel with
-                    Machine =
-                        { state.Kernel.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Sockets =
                                 Map.add
                                     socketId
@@ -361,9 +361,10 @@ module SocketFuzz =
                                                     Drained = false
                                                 }
                                     }
-                                    state.Kernel.Machine.Sockets
+                                    machine.Sockets
                         }
-                }
+                    )
+                    state.Kernel
 
             "ok",
             { state with
@@ -375,7 +376,9 @@ module SocketFuzz =
             // slot of it, so ask the kernel at connect time — the harness
             // does the same with getsockname.
             let endpoint =
-                match (UnixMachineState.socket (socketIdOfSlot listener state) state.Kernel.Machine).Ipv4Binding with
+                match
+                    (UnixMachineState.socket (socketIdOfSlot listener state) (Kernel.machine state.Kernel)).Ipv4Binding
+                with
                 | Some binding when binding.Endpoint.Port <> 0us -> binding.Endpoint
                 | _ -> failwith $"FUZZ-DRIVER BUG: conn targets slot %d{listener}, whose socket never listened."
 
@@ -433,7 +436,7 @@ module SocketFuzz =
         | FuzzOp.Accept (listener, newSlot) ->
             let socketId = socketIdOfSlot listener state
 
-            match (UnixMachineState.socket socketId state.Kernel.Machine).Phase with
+            match (UnixMachineState.socket socketId (Kernel.machine state.Kernel)).Phase with
             | SocketPhase.Listening listenState when List.isEmpty listenState.Queue ->
                 // Nonblocking accept of an empty queue, exactly accept4's
                 // answer; `acceptConnection` requires a nonempty queue.
@@ -476,7 +479,7 @@ module SocketFuzz =
         | FuzzOp.Dup (slot, newSlot) ->
             match
                 FileDescriptorRegistry.dup
-                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform state.Kernel))
                     (slotFd slot state)
                     (Lone.fileDescriptors state.Kernel)
             with
@@ -492,7 +495,7 @@ module SocketFuzz =
         | FuzzOp.NewEpoll slot ->
             let fd, registry =
                 FileDescriptorRegistry.createEpoll
-                    (SimulatedUnixPlatform.flavour state.Kernel.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.flavour (UnixSystem.platform state.Kernel))
                     (Lone.fileDescriptors state.Kernel)
 
             "ok",

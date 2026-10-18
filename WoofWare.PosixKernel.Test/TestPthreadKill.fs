@@ -176,7 +176,7 @@ module TestPthreadKill =
                     else
                         match
                             SignalState.generate
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 coreDumps
                                 (QueueAccounts.ofLone SignalSender.ThreadKill system)
                                 leader
@@ -184,9 +184,7 @@ module TestPthreadKill =
                                 (Set.ofList [ leader ; worker ])
                                 {
                                     Signal =
-                                        match
-                                            Signal.ofRawSignoUnder (Lone.UnixSystemState.signalNumbering system) signo
-                                        with
+                                        match Signal.ofRawSignoUnder (Kernel.signalNumbering system) signo with
                                         | ValueSome signal -> signal
                                         | ValueNone -> failwith $"%d{signo} was sent, so it is a signal"
                                     Target = ValueSome target
@@ -268,7 +266,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         signal
                         (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                         proc.Signals
@@ -291,7 +289,7 @@ module TestPthreadKill =
             { proc with
                 Signals =
                     HandlerFrames.enterVia
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         carrier
                         "carrier"
                         (Lone.leader system)
@@ -517,7 +515,7 @@ module TestPthreadKill =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 signal
                                 SignalDisposition.Default
                                 proc.Signals

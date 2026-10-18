@@ -133,12 +133,12 @@ module TestDeliveryLog =
                                         Bytes = bytes
                                     }
 
-                        agree after.Machine.Delivered reference
+                        agree (Kernel.machine after).Delivered reference
                         after, reference
                     | other -> failwith $"write(%d{fd}, %d{count} bytes) answered %A{Result.map fst other}"
                 )
 
-            agree final.Machine.Delivered reference
+            agree (Kernel.machine final).Delivered reference
 
         let gen =
             Gen.zip

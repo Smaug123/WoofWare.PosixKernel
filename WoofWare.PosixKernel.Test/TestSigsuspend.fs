@@ -239,7 +239,7 @@ module TestSigsuspend =
 
                 let errno =
                     UnixError.toRawErrnoUnder
-                        (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                         error
 
                 let took = if r.AnsweredAtOnce then "<50ms" else ">=50ms"
@@ -596,7 +596,7 @@ module TestSigsuspend =
             | Ok (SigsuspendOutcome.Failed error, system) ->
                 let errno =
                     UnixError.toRawErrnoUnder
-                        (SimulatedUnixPlatform.rawErrnoNumbering system.Machine.UnixPlatform)
+                        (SimulatedUnixPlatform.rawErrnoNumbering (UnixSystem.platform system))
                         error
 
                 print
@@ -1317,11 +1317,7 @@ module TestSigsuspend =
     /// `system`'s signals once `thread` has entered `sigsuspend` with an empty
     /// mask.
     let private suspended (thread : int) (system : UnixSystem<int, string>) : SignalState<int, string> =
-        SignalState.suspend
-            (Lone.UnixSystemState.signalNumbering system)
-            thread
-            SignalMask.empty
-            (Lone.proc system).Signals
+        SignalState.suspend (Kernel.signalNumbering system) thread SignalMask.empty (Lone.proc system).Signals
 
     [<Test>]
     let ``a mask to restore for a thread the table does not hold is a defect`` () : unit =
@@ -1439,11 +1435,7 @@ module TestSigsuspend =
             // And `forgetThread` alone, on a thread whose call has ended and which has
             // not yet returned to user mode.
             let forgotten =
-                SignalState.suspend
-                    (Lone.UnixSystemState.signalNumbering blocking)
-                    helper
-                    usr1
-                    (Lone.proc blocking).Signals
+                SignalState.suspend (Kernel.signalNumbering blocking) helper usr1 (Lone.proc blocking).Signals
                 |> SignalState.forgetThread helper
 
             SignalState.maskToRestore helper forgotten |> shouldEqual None

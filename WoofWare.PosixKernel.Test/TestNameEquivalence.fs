@@ -1424,7 +1424,9 @@ module TestNameEquivalence =
                     | defects -> fail $"the system is defective: %A{defects}"
 
                     match
-                        VirtualFileSystem.checkInvariants (ObjectLifetime.pinnedInodes system) system.Machine.FileSystem
+                        VirtualFileSystem.checkInvariants
+                            (ObjectLifetime.pinnedInodes system)
+                            (UnixSystem.fileSystem system)
                     with
                     | [] -> ()
                     | defects -> fail $"the filesystem is defective: %A{defects}"

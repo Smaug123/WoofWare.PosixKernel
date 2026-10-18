@@ -1174,8 +1174,8 @@ module TestStartingDirectory =
         | Ok (SyscallAnswer.Failed error, _) -> $"%A{error}"
         | Ok (SyscallAnswer.Completed _, after) ->
 
-        let vfs = after.Machine.FileSystem
-        let existed = VirtualFileSystem.inodes before.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem after
+        let existed = VirtualFileSystem.inodes (UnixSystem.fileSystem before)
 
         let created =
             VirtualFileSystem.inodes vfs
@@ -1585,7 +1585,7 @@ module TestStartingDirectory =
     /// Every path under the cell `/c`, relative to it, as `unlinkat-rules.c`
     /// collects them: a directory's entries, never following a link.
     let private cellPaths (system : UnixSystem<int, string>) : Set<string> =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : string seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -1601,7 +1601,7 @@ module TestStartingDirectory =
         let cell =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -2072,7 +2072,7 @@ module TestStartingDirectory =
     /// names, never following a link, in byte order: each path is held one
     /// byte to a character, so that ordinal order is byte order.
     let private cellInodes (system : UnixSystem<int, string>) : (string * InodeNumber) list =
-        let vfs = system.Machine.FileSystem
+        let vfs = UnixSystem.fileSystem system
 
         let rec under (prefix : string) (inode : InodeNumber) : (string * InodeNumber) seq =
             match VirtualFileSystem.tryGetDirectory inode vfs with
@@ -2089,7 +2089,7 @@ module TestStartingDirectory =
         let cell =
             match
                 PathWalk.resolveExisting
-                    (SimulatedUnixPlatform.pathLimits system.Machine.UnixPlatform)
+                    (SimulatedUnixPlatform.pathLimits (UnixSystem.platform system))
                     Owners.root
                     SymlinkProtection.Off
                     (VirtualFileSystem.root vfs)
@@ -2679,7 +2679,7 @@ module TestStartingDirectory =
         (system : UnixSystem<int, string>)
         : string option
         =
-        let flavour = SimulatedUnixPlatform.flavour system.Machine.UnixPlatform
+        let flavour = SimulatedUnixPlatform.flavour (UnixSystem.platform system)
 
         match Lone.UnixPathResolution.copyIn path system with
         | Error error -> Some $"%A{error}"
@@ -2846,10 +2846,10 @@ module TestStartingDirectory =
                     (SimulatedUnixPlatform.pathLimits platform)
                     Owners.root
                     SymlinkProtection.Off
-                    (VirtualFileSystem.root system.Machine.FileSystem)
+                    (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     SymlinkPolicy.Follow
                     (UnixPath.parseOrFail context cwd)
-                    system.Machine.FileSystem
+                    (UnixSystem.fileSystem system)
             with
             | Ok inode -> inode
             | Error failure -> failwith $"%s{context}: %s{cwd} does not resolve: %A{failure}"
@@ -2934,8 +2934,8 @@ module TestStartingDirectory =
         let property (platform, credentials, cwd, path, policy, trailing) : unit =
             let system = walkSystem platform credentials cwd
             let limits = SimulatedUnixPlatform.pathLimits platform
-            let vfs = system.Machine.FileSystem
-            let protection = system.Machine.ProtectedFiles.Symlinks
+            let vfs = UnixSystem.fileSystem system
+            let protection = (UnixSystem.protectedFiles system).Symlinks
             let start = (Lone.proc system).CurrentDirectoryInode
 
             Lone.UnixPathResolution.resolvePathFull AtDirectory.CurrentDirectory policy trailing path system
@@ -2970,7 +2970,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3031,7 +3031,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3089,7 +3089,7 @@ module TestStartingDirectory =
                 |> Lone.mapProc (fun proc ->
                     { proc with
                         Credentials = credentials
-                        CurrentDirectoryInode = VirtualFileSystem.root held.Machine.FileSystem
+                        CurrentDirectoryInode = VirtualFileSystem.root (UnixSystem.fileSystem held)
                     }
                 )
                 |> Lone.restand
@@ -3175,12 +3175,12 @@ module TestStartingDirectory =
                 )
                 |> Lone.restand
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, OpenRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem, (Lone.fileDescriptors system))
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system, (Lone.fileDescriptors system))
                 | Error refusal -> Error refusal
 
             OpenOutcomes.openat fd argument flags 0o644 atRoot
@@ -3235,12 +3235,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, PathRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryMkdirat (Callers.leader atRoot) fd argument mode atRoot
@@ -3305,12 +3305,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, MkNodRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryMknodat (Callers.leader atRoot) fd argument mode dev atRoot
@@ -3382,12 +3382,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, UnlinkAtRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             UnixNamespace.tryUnlinkat (Callers.leader atRoot) fd argument flags atRoot
@@ -3458,12 +3458,12 @@ module TestStartingDirectory =
                     }
                 )
 
-            let atRoot = withCaller (VirtualFileSystem.root held.Machine.FileSystem)
+            let atRoot = withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held))
             let heldInCwd = withCaller (Lone.proc held).CurrentDirectoryInode
 
             let outcome (result : Result<SyscallAnswer * UnixSystem<int, string>, RenameRefusal>) =
                 match result with
-                | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+                | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
                 | Error refusal -> Error refusal
 
             // The same descriptor on both sides is rename from its directory
@@ -3488,7 +3488,7 @@ module TestStartingDirectory =
         : Result<SyscallAnswer * VirtualFileSystem, 'Refusal>
         =
         match result with
-        | Ok (answer, system) -> Ok (answer, system.Machine.FileSystem)
+        | Ok (answer, system) -> Ok (answer, UnixSystem.fileSystem system)
         | Error refusal -> Error refusal
 
     /// `walkSystem`'s tree, built by root with the process holding a
@@ -3520,7 +3520,7 @@ module TestStartingDirectory =
             )
 
         fd,
-        withCaller (VirtualFileSystem.root held.Machine.FileSystem),
+        withCaller (VirtualFileSystem.root (UnixSystem.fileSystem held)),
         withCaller (Lone.proc held).CurrentDirectoryInode
 
     [<Test>]

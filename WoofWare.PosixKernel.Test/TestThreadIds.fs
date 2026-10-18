@@ -260,12 +260,13 @@ module TestThreadIds =
             let written = UnixSystem.writePidMaxSysctl pidMax system
 
             // The write changes the counter's bound and nothing else.
-            { written with
-                Machine =
-                    { written.Machine with
-                        ThreadIds = system.Machine.ThreadIds
+            (Kernel.mapMachine
+                (fun machine ->
+                    { machine with
+                        ThreadIds = (Kernel.machine system).ThreadIds
                     }
-            }
+                )
+                written)
             |> shouldEqual system
 
             (pidMax, idOf 0 written, idOf 1 written) |> shouldEqual (pidMax, 5000UL, 5001UL)
@@ -450,7 +451,7 @@ module TestThreadIds =
         // alone. The new thread's mask was exactly its creator's, and the
         // creator's own pending signal was not pending on it.
         for system in [ linux ; darwin ] do
-            let numbering = Lone.UnixSystemState.signalNumbering system
+            let numbering = Kernel.signalNumbering system
 
             let blocking (signals : Signal list) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
                 match
@@ -514,8 +515,7 @@ module TestThreadIds =
         // for SIGUSR1 without SA_NODEFER, that holds SIGUSR1. The handler's
         // return restores its own thread's mask alone.
         for system in [ linux ; darwin ] do
-            let usr1 =
-                Signal.toRawSignoUnder (Lone.UnixSystemState.signalNumbering system) Signal.SIGUSR1
+            let usr1 = Signal.toRawSignoUnder (Kernel.signalNumbering system) Signal.SIGUSR1
 
             let system =
                 match
@@ -573,7 +573,7 @@ module TestThreadIds =
 
         // The refusal carries no system, and the one before it is as it was:
         // the leader's is still the only live ID, so the next try is refused too.
-        ThreadIdAllocator.live system.Machine.ThreadIds
+        ThreadIdAllocator.live (Kernel.machine system).ThreadIds
         |> Set.map OsThreadId.toUInt64
         |> shouldEqual (Set.singleton (System.UInt64.MaxValue - 1UL))
 
@@ -759,7 +759,7 @@ module TestThreadIds =
 
             // The machine's allocator records exactly the live threads' IDs, which
             // is what it skips.
-            ThreadIdAllocator.live system.Machine.ThreadIds
+            ThreadIdAllocator.live (Kernel.machine system).ThreadIds
             |> Set.map OsThreadId.toUInt64
             |> shouldEqual (liveIds system)
 
@@ -850,10 +850,12 @@ module TestThreadIds =
                 // machine, its descriptors closed; the counter the IDs come from
                 // is where it was.
                 EndedMachine.assertNoneLeft ended
-                ended.Machine.ThreadIds.Counter |> shouldEqual system.Machine.ThreadIds.Counter
 
-                ended.Machine.ProcessIds.Counter
-                |> shouldEqual system.Machine.ProcessIds.Counter
+                (Kernel.machine ended).ThreadIds.Counter
+                |> shouldEqual (Kernel.machine system).ThreadIds.Counter
+
+                (Kernel.machine ended).ProcessIds.Counter
+                |> shouldEqual (Kernel.machine system).ProcessIds.Counter
 
                 cover ThreadIdLabel.Groups
                 system, model, nextName, minted, last
@@ -870,12 +872,13 @@ module TestThreadIds =
 
                 // The write changes the counter's bound and nothing else: every
                 // live thread keeps its id.
-                { after with
-                    Machine =
-                        { after.Machine with
-                            ThreadIds = system.Machine.ThreadIds
+                (Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
+                            ThreadIds = (Kernel.machine system).ThreadIds
                         }
-                }
+                    )
+                    after)
                 |> shouldEqual system
 
                 check after

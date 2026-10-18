@@ -80,7 +80,7 @@ module TestInotifyInvariants =
         let fd, system = init1 0x800 linux
         let _, system = add fd "d1" 0x100u system
         let id = idOf fd system
-        system, id, OpenFileTable.inotifyState context id system.Machine.OpenFiles
+        system, id, OpenFileTable.inotifyState context id (UnixSystem.openFiles system)
 
     let private forge (state : InotifyState) : UnixSystem<int, string> =
         let system, id, _ = instance
@@ -221,12 +221,13 @@ module TestInotifyInvariants =
         (system : UnixSystem<int, string>)
         : UnixSystem<int, string>
         =
-        { system with
-            Machine =
-                { system.Machine with
+        Kernel.mapMachine
+            (fun machine ->
+                { machine with
                     InotifyLimits = limits
                 }
-        }
+            )
+            system
 
     [<Test>]
     let ``the machine's limits are held to the instances and watches each user holds`` () : unit =
@@ -237,7 +238,7 @@ module TestInotifyInvariants =
         let id = idOf fd system
         let user = (Lone.proc system).Credentials.EffectiveUser
         UnixSystem.checkInvariants system |> shouldEqual []
-        let limits = system.Machine.InotifyLimits
+        let limits = (Kernel.machine system).InotifyLimits
 
         UnixSystem.checkInvariants (
             withMachineLimits
@@ -265,7 +266,7 @@ module TestInotifyInvariants =
         UnixSystem.checkInvariants (withMachineLimits notAdmissible system)
         |> shouldEqual [ UnixSystemDefect.InotifyLimitsNotAdmissible notAdmissible ]
 
-        let state = OpenFileTable.inotifyState context id system.Machine.OpenFiles
+        let state = OpenFileTable.inotifyState context id (UnixSystem.openFiles system)
 
         let overfull =
             Lone.mapOpenFiles
@@ -317,7 +318,7 @@ module TestInotifyInvariants =
                     })
                 system
 
-        let target = (OpenFileTable.get context id parked.Machine.OpenFiles).Target
+        let target = (OpenFileTable.get context id (UnixSystem.openFiles parked)).Target
 
         UnixSystem.checkInvariants parked
         |> shouldEqual
@@ -349,7 +350,7 @@ module TestInotifyInvariants =
 
         let fd, registry =
             FileDescriptorRegistry.createInotify
-                (SimulatedUnixPlatform.flavour darwin.Machine.UnixPlatform)
+                (SimulatedUnixPlatform.flavour (UnixSystem.platform darwin))
                 UserId.root
                 false
                 (Lone.fileDescriptors darwin)
@@ -362,7 +363,7 @@ module TestInotifyInvariants =
             [
                 UnixSystemDefect.DescriptionNotOfFlavour (
                     id,
-                    (OpenFileTable.get context id forged.Machine.OpenFiles).Target,
+                    (OpenFileTable.get context id (UnixSystem.openFiles forged)).Target,
                     SimulatedUnixFlavour.Darwin
                 )
             ]
@@ -379,7 +380,7 @@ module TestInotifyInvariants =
             }
 
         UnixSystem.defaultInotifyLimits |> shouldEqual limits
-        linux.Machine.InotifyLimits |> shouldEqual limits
+        (Kernel.machine linux).InotifyLimits |> shouldEqual limits
 
         let refused (limits : InotifyLimits) =
             match UnixBootImage.tryWithInotifyLimits limits image with
@@ -441,7 +442,7 @@ module TestInotifyInvariants =
                 }
             |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
-        configured.Machine.InotifyLimits
+        (Kernel.machine configured).InotifyLimits
         |> shouldEqual
             {
                 MaxUserInstances = 2
@@ -603,7 +604,7 @@ module TestInotifyInvariants =
                     { proc with
                         Signals =
                             SignalState.setDisposition
-                                (Lone.UnixSystemState.signalNumbering system)
+                                (Kernel.signalNumbering system)
                                 Signal.SIGUSR1
                                 (SignalDisposition.Catch (SignalCatch.ofHandler "h"))
                                 proc.Signals
@@ -762,7 +763,7 @@ module TestInotifyInvariants =
                                 { proc with
                                     Signals =
                                         SignalState.enqueue
-                                            (Lone.UnixSystemState.signalNumbering system)
+                                            (Kernel.signalNumbering system)
                                             {
                                                 Signal = Signal.SIGUSR1
                                                 Target = ValueSome 1
@@ -938,7 +939,9 @@ module TestInotifyInvariants =
 
         let instance, system = init1 0x800 system
         let instanceId = idOf instance system
-        let target = (OpenFileTable.get context instanceId system.Machine.OpenFiles).Target
+
+        let target =
+            (OpenFileTable.get context instanceId (UnixSystem.openFiles system)).Target
 
         openedThroughForged instanceId (Some ReachedThrough.Unnamed) system
         |> registryDefects
@@ -986,7 +989,7 @@ module TestInotifyInvariants =
             |> InotifyReplay.unlink "d/f"
             |> InotifyReplay.link "d/h" "d/f"
 
-        OpenFileTable.openedThrough id system.Machine.OpenFiles
+        OpenFileTable.openedThrough id (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (
@@ -1019,7 +1022,7 @@ module TestInotifyInvariants =
             |> InotifyReplay.rename "d/f" "d/e/moved"
             |> InotifyReplay.rename "d/e" "d/e2"
 
-        OpenFileTable.openedThrough id system.Machine.OpenFiles
+        OpenFileTable.openedThrough id (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (
@@ -1035,7 +1038,7 @@ module TestInotifyInvariants =
         let system =
             system |> InotifyReplay.unlink "d/e2/moved" |> InotifyReplay.rmdir "d/e2"
 
-        OpenFileTable.openedThrough directoryId system.Machine.OpenFiles
+        OpenFileTable.openedThrough directoryId (UnixSystem.openFiles system)
         |> shouldEqual (
             Some (
                 ReachedThrough.Name (

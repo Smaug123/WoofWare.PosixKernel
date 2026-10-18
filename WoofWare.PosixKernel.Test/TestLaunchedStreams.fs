@@ -103,7 +103,7 @@ module TestLaunchedStreams =
             failwith $"a delivery reached %O{other}, which pipedStandardStreams does not drain for process %O{pid}"
 
     let private deliveredLog (system : UnixSystem<int, string>) : (Stream * byte list) list =
-        DeliveryLog.toList system.Machine.Delivered
+        DeliveryLog.toList (Kernel.machine system).Delivered
         |> List.map (fun delivery -> streamOf (Lone.pid system) delivery.Endpoint, List.ofSeq delivery.Bytes)
 
     /// One write as a client issues it: admitted, and then given the bytes the
@@ -278,7 +278,7 @@ module TestLaunchedStreams =
             { proc with
                 Signals =
                     SignalState.setDisposition
-                        (Lone.UnixSystemState.signalNumbering system)
+                        (Kernel.signalNumbering system)
                         Signal.SIGPIPE
                         SignalDisposition.Ignore
                         proc.Signals
@@ -623,12 +623,12 @@ module TestLaunchedStreams =
                     | other -> failwith $"close %d{fd}: %A{other}"
                 )
 
-            closed.Machine.Pipes
+            UnixSystem.pipes closed
             |> Map.keys
             |> Set.ofSeq
             |> shouldEqual (Set.ofList [ output ; error ])
 
-            Map.containsKey input closed.Machine.Pipes |> shouldEqual false
+            Map.containsKey input (UnixSystem.pipes closed) |> shouldEqual false
             UnixSystem.checkInvariants closed |> shouldEqual []
 
     [<Test>]
@@ -639,21 +639,22 @@ module TestLaunchedStreams =
                 |> Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0)
 
             let output = pipeOf 1 system
-            let pipe = UnixMachineState.pipe output system.Machine
+            let pipe = UnixMachineState.pipe output (Kernel.machine system)
 
             let forged =
-                { system with
-                    Machine =
-                        { system.Machine with
+                Kernel.mapMachine
+                    (fun machine ->
+                        { machine with
                             Pipes =
                                 Map.add
                                     output
                                     { pipe with
                                         Buffer = snd (PipeBuffer.write (payload 0 5) pipe.Buffer)
                                     }
-                                    system.Machine.Pipes
+                                    machine.Pipes
                         }
-                }
+                    )
+                    system
 
             UnixSystem.checkInvariants forged
             |> shouldEqual [ UnixSystemDefect.DrainedPipeHoldsBytes (output, 5) ]

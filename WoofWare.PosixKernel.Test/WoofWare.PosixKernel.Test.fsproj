@@ -21,6 +21,7 @@
     <Compile Include="UnionCaseName.fs" />
     <Compile Include="GraphMutators.fs" />
     <Compile Include="Configured.fs" />
+    <Compile Include="Kernel.fs" />
     <Compile Include="Proc.fs" />
     <Compile Include="Lone.fs" />
     <Compile Include="QueueAccounts.fs" />
