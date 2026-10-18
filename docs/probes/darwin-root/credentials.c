@@ -6,6 +6,8 @@
 // Darwin only. Run it as root, through run.sh beside this file:
 //   sudo sh docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/credentials credentials.c && sudo /tmp/credentials "$(mktemp -d /private/tmp/creds.XXXXXX)"
+// (it gives the base directory to root, mode 0711). It exits 1 if a child
+// process failed, which a CHILD-FAILED row after the row it was making says.
 // As an ordinary user every row needs root and prints SKIP (except INITIAL).
 //
 // Every row forks a child that starts as root with real, effective and saved
@@ -79,12 +81,19 @@ typedef struct {
 } list;
 
 static const gid_t member_probe[] = {0, 5, 6, 9, 10, 20, 701, 3000, 3015, 3016, 7777};
+// The file MEMBER opens first, which everyone may read: if that fails, the
+// child cannot reach the files at all, and the row says nothing about groups.
+#define CONTROL "control-0444"
 #define NPROBE (sizeof member_probe / sizeof member_probe[0])
 
+// How many child processes did not exit 0. Any makes the probe exit 1, so
+// that its output is not taken for a complete measurement.
+static int failures;
+
 static void wait_child(pid_t pid) {
-    int st;
-    waitpid(pid, &st, 0);
-    if (!WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        failures++;
         printf("CHILD-FAILED\tstatus=0x%x\n", st);
         fflush(stdout);
     }
@@ -114,7 +123,7 @@ static void setgroups_rows(const list *l) {
             if (setgroups(l->size, l->size ? l->g : NULL) != 0) {
                 printf("THEN\t%s\t%s\tSKIP: setgroups: %s\n", l->label, steps[k], en(errno));
                 fflush(stdout);
-                _exit(0);
+                _exit(0); // the SETGROUPS row reports this refusal
             }
             int r = k == 0 ? setgid(9) : k == 1 ? setegid(9) : setregid(9, 10);
             int e = r == 0 ? 0 : errno;
@@ -133,15 +142,24 @@ static void setgroups_rows(const list *l) {
         if (setgroups(l->size, l->size ? l->g : NULL) != 0) {
             printf("MEMBER\t%s\tSKIP: setgroups: %s\n", l->label, en(errno));
             fflush(stdout);
-            _exit(0);
+            _exit(0); // the SETGROUPS row reports this refusal
         }
         if (setuid(502) != 0) {
             printf("MEMBER\t%s\tSKIP: setuid(502): %s\n", l->label, en(errno));
             fflush(stdout);
-            _exit(0);
+            _exit(1);
         }
         state_text(s, sizeof s);
-        printf("MEMBER\t%s\tuid=%u euid=%u %s\t->", l->label, (unsigned)getuid(), (unsigned)geteuid(), s);
+        char c[PATH_MAX];
+        snprintf(c, sizeof c, "%s/" CONTROL, base);
+        int cfd = open(c, O_RDONLY);
+        if (cfd < 0) {
+            printf("MEMBER\t%s\tINVALID: the control file, mode 0444, cannot be opened: %s\n", l->label, en(errno));
+            fflush(stdout);
+            _exit(1);
+        }
+        close(cfd);
+        printf("MEMBER\t%s\tuid=%u euid=%u %s\tcontrol=ok\t->", l->label, (unsigned)getuid(), (unsigned)geteuid(), s);
         for (size_t i = 0; i < NPROBE; i++) {
             char f[PATH_MAX];
             snprintf(f, sizeof f, "%s/g%u", base, (unsigned)member_probe[i]);
@@ -177,6 +195,24 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    // The base is given to root and made 0711: no other user may change its
+    // entries, and MEMBER's children (uid 502) can reach the files by name.
+    int bfd = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (bfd < 0 || fchown(bfd, 0, 0) != 0 || fchmod(bfd, 0711) != 0) {
+        perror("base directory to root, 0711");
+        return 2;
+    }
+    close(bfd);
+    {
+        char c[PATH_MAX];
+        snprintf(c, sizeof c, "%s/" CONTROL, base);
+        int fd = open(c, O_CREAT | O_EXCL | O_WRONLY, 0600);
+        if (fd < 0 || fchown(fd, 504, 7777) != 0 || fchmod(fd, 0444) != 0) {
+            perror("control file");
+            return 2;
+        }
+        close(fd);
+    }
     // The files MEMBER opens: uid 504's, mode 0040, one in each group probed.
     for (size_t i = 0; i < NPROBE; i++) {
         char f[PATH_MAX];
@@ -224,7 +260,7 @@ int main(int argc, char **argv) {
             if (r != 0) {
                 printf("SPLIT\t%s\tSKIP: %s\n", splits[i].who, en(errno));
                 fflush(stdout);
-                _exit(0);
+                _exit(1);
             }
             gid_t g[2] = {5, 6};
             int e = setgroups(2, g) == 0 ? 0 : errno;
@@ -254,6 +290,12 @@ int main(int argc, char **argv) {
         snprintf(f, sizeof f, "%s/g%u", base, (unsigned)member_probe[i]);
         unlink(f);
     }
+    {
+        char c[PATH_MAX];
+        snprintf(c, sizeof c, "%s/" CONTROL, base);
+        unlink(c);
+    }
+    if (failures) printf("FAILURES\t%d child processes failed: see the CHILD-FAILED rows\n", failures);
     printf("DONE\n");
-    return 0;
+    return failures ? 1 : 0;
 }

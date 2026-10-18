@@ -81,6 +81,8 @@
 
 static char base[PATH_MAX - 2];
 static void *protnone;
+// How many rows' children did not exit 0; any makes the probe exit 1.
+static int failures;
 
 // The file's owner and another user, the writer's group and one it is not in,
 // as root sets them up.
@@ -258,6 +260,7 @@ static void row(const char *writer, int group_in, long size, const char *call, l
     int status;
     if (waitpid(child, &status, 0) != child) die("waitpid");
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        failures++;
         printf("writer=%s group=%s size=%ld call=%s offset=%ld buffer=%s: child ended with status 0x%x\n", writer, group,
                size, call, offset, bufname, status);
         fflush(stdout);
@@ -337,5 +340,5 @@ int main(int argc, char **argv) {
             for (size_t c = 0; c < sizeof counts / sizeof counts[0]; c++)
                 for (size_t b = 1; b <= 2; b++)
                     row(writers[0], 1, sizes[s], "pwrite", extent_offsets[o], buffers[b], counts[c], 04755);
-    return 0;
+    return failures ? 1 : 0;
 }

@@ -14,7 +14,8 @@
 // before printing anything. Every original value is restored on exit, on a
 // fatal signal, and again by run.sh, from the values it read first; each
 // restoration is read back, a sysctl that is not then what it was is named on
-// stderr (RESTORE-FAILED), and the probe then exits 3. While a
+// stderr (RESTORE-FAILED), the probe changes nothing more, and it exits 3.
+// It exits 1 if a child failed. While a
 // range is narrowed (a few milliseconds a row) another process's outgoing
 // connection or port-0 bind on the machine can fail or take one of the
 // probe's ports.
@@ -97,6 +98,10 @@ static void put_int(int v) {
 }
 
 static volatile sig_atomic_t restore_failed;
+
+// How many takes failed: a child that did not exit 0 or report, or, as root,
+// one that could not take its uid. Any makes the probe exit 1.
+static int failures;
 
 // Put back every sysctl that is not what it was, read each back, and name on
 // stderr any that is still not what it was. Returns how many such there are.
@@ -243,7 +248,14 @@ static void take(uid_t uid, enum sock_kind k, int n, int listen_port, int *out) 
     if (read(pfd[0], out, sizeof(int) * (size_t)n) != (ssize_t)(sizeof(int) * (size_t)n))
         for (int i = 0; i < n; i++) out[i] = -9999;
     close(pfd[0]);
-    waitpid(pid, NULL, 0);
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)
+        for (int i = 0; i < n; i++) out[i] = -9999;
+    for (int i = 0; i < n; i++)
+        if (out[i] == -9999 || (geteuid() == 0 && out[i] <= -100000 && out[i] > -200000)) {
+            failures++;
+            break;
+        }
 }
 
 static void answer_text(char *b, size_t cap, int v) {
@@ -262,6 +274,8 @@ typedef struct {
 } config;
 
 int main(void) {
+    int ls = -1;
+    int stopped = 0;
     struct utsname u;
     uname(&u);
     char product[64] = "?";
@@ -297,13 +311,17 @@ int main(void) {
             int e = set(names[i], values[v]);
             int back = -1;
             int ge = get(names[i], &back);
-            int re = set(names[i], orig[i]);
+            int unrestored = restore();
             int after = -1;
             get(names[i], &after);
             printf("SET\t%s\t%d\t-> %s\treadback=%d%s", names[i], values[v], en(e), back, ge ? " (read failed)" : "");
-            if (after != orig[i]) printf("\tRESTORE-FAILED %s now=%d", en(re), after);
+            if (unrestored) printf("\tRESTORE-FAILED now=%d", after);
             printf("\n");
             fflush(stdout);
+            if (unrestored) {
+                stopped = 1;
+                goto finish;
+            }
         }
 
     // A block of four ports free for TCP and UDP at the wildcard.
@@ -315,7 +333,7 @@ int main(void) {
         return 0;
     }
     // A listener for the connect rows, at a port from the unchanged range.
-    int ls = socket(AF_INET, SOCK_STREAM, 0);
+    ls = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in la = at("127.0.0.1", 0);
     socklen_t llen = sizeof la;
     if (ls < 0 || bind(ls, (struct sockaddr *)&la, sizeof la) != 0 || listen(ls, 16) != 0 || getsockname(ls, (struct sockaddr *)&la, &llen) != 0) {
@@ -347,7 +365,7 @@ int main(void) {
             int any_set = c->nset == 0 || (e[0] == 0 && e[1] == 0);
             if (any_set)
                 for (int k = 0; k < 6; k++) take(whos[w], kinds[k], (kinds[k] == TCP_LOW) ? 2 : 5, L, res[k]);
-            restore();
+            int unrestored = restore();
             // Empty the listener's queue of the connections just made.
             for (int a; (a = accept(ls, NULL, NULL)) >= 0;) close(a);
             char head[256];
@@ -357,6 +375,10 @@ int main(void) {
             else snprintf(head, sizeof head, "ALLOC\t%s\t%s", whos[w] ? "u501" : "root", c->label);
             if (!any_set) {
                 printf("%s\tSKIP: the range could not be written\n", head);
+                if (unrestored) {
+                    stopped = 1;
+                    goto finish;
+                }
                 continue;
             }
             for (int k = 0; k < 6; k++) {
@@ -369,15 +391,22 @@ int main(void) {
                 printf("\n");
             }
             fflush(stdout);
+            if (unrestored) {
+                stopped = 1;
+                goto finish;
+            }
         }
-    close(ls);
+finish:
+    if (stopped) printf("STOPPED\ta sysctl could not be put back (RESTORE-FAILED on stderr), so nothing more was changed\n");
+    if (ls >= 0) close(ls);
     restore();
     for (int i = 0; i < NNAMES; i++) {
         int v = -1;
         get(names[i], &v);
         printf("RESTORED\t%s = %d%s\n", names[i], v, v == orig[i] ? "" : "\tDIFFERS FROM THE ORIGINAL");
     }
+    if (failures) printf("FAILURES\t%d takes failed: see the probe-failure answers\n", failures);
     printf("DONE\n");
     fflush(stdout);
-    return restore_failed ? 3 : 0;
+    return restore_failed ? 3 : failures ? 1 : 0;
 }

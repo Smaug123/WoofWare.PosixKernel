@@ -123,10 +123,13 @@ static void groups_text(char *out, size_t n) {
     free(g);
 }
 
+// How many children did not exit 0; any makes the probe exit 1.
+static int failures;
+
 static void wait_child(pid_t pid) {
-    int status;
-    waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        failures++;
         printf("CHILD-FAILED\tstatus=%d\n", status);
         fflush(stdout);
     }
@@ -435,5 +438,5 @@ int main(void) {
     setgroups_rows(who, limit);
 #endif
     printf("DONE\n");
-    return 0;
+    return failures ? 1 : 0;
 }

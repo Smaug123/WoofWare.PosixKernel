@@ -7,6 +7,9 @@
 // the base directory and removes it afterwards:
 //   sudo sh docs/probes/darwin-root/run.sh
 // By hand: cc -Wall -Werror -o /tmp/root-files root-files.c && sudo /tmp/root-files "$(mktemp -d /private/tmp/rootfiles.XXXXXX)" [SECTION...]
+// (as root it gives the base directory to root, mode 0711). It exits 1 if any
+// of its child processes failed (a CHILD-FAILED row says which), so that its
+// output is not taken for a complete measurement.
 // Run as an ordinary user it measures what that user can set up alone (its
 // own inodes in its own groups) and prints a SKIP row for everything else.
 //
@@ -158,6 +161,20 @@ static int wanted(const char *name) {
     return 0;
 }
 
+// How many child processes failed: one that did not exit 0, or, as root, one
+// that could not take the credentials its row names. Any failure makes the
+// probe exit 1, so that run.sh does not publish its output as a measurement.
+static int failures;
+
+// Wait for `pid`, counting it as a failure (and saying so) unless it exited 0.
+static void wait_child(pid_t pid, const char *what) {
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) {
+        failures++;
+        p("CHILD-FAILED\t%s\tstatus=0x%x\n", what, st);
+    }
+}
+
 // ---------------------------------------------------------------- callers
 
 typedef struct {
@@ -196,38 +213,64 @@ static void groups_text(char *out, size_t n) {
 
 // ---------------------------------------------------------------- the tree
 
-// Remove `path` and everything under it, never following a link. Each
-// directory is chmod 0700 first, which clears a sticky bit and lets an
-// ordinary user descend its own mode-0 directories.
-static void rmtree_inner(const char *path) {
+// Remove the entry `name` of the directory open as `dfd`, and everything
+// under it. Every step is relative to a descriptor and never follows a link,
+// so a link put in place of a directory while this runs (by one of the
+// probe's other users, which own some of these directories) is removed, not
+// followed out of the tree. Each directory is fchmod 0700 first, which clears
+// a sticky bit and lets an ordinary user descend its own mode-0 directories.
+static void rmtree_at(int dfd, const char *name) {
     struct stat st;
-    if (lstat(path, &st) != 0) return;
+    if (fstatat(dfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) return;
     if (S_ISDIR(st.st_mode)) {
-        chmod(path, 0700);
-        DIR *d = opendir(path);
-        if (d) {
-            struct dirent *e;
-            while ((e = readdir(d)) != NULL) {
-                if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
-                char q[PATH_MAX];
-                snprintf(q, sizeof q, "%s/%s", path, e->d_name);
-                rmtree_inner(q);
-            }
-            closedir(d);
+        int fd = openat(dfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+        if (fd < 0 && errno == EACCES) {
+            // An ordinary user's own directory without its read bit: give it
+            // one first (which changes a link put in its place, not what the
+            // link names).
+            fchmodat(dfd, name, 0700, AT_SYMLINK_NOFOLLOW);
+            fd = openat(dfd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
         }
-        if (rmdir(path) != 0) p("CLEANUP-FAILED\trmdir %s\t%s\n", path, en(errno));
-    } else if (unlink(path) != 0) {
-        p("CLEANUP-FAILED\tunlink %s\t%s\n", path, en(errno));
+        if (fd >= 0) {
+            fchmod(fd, 0700);
+            DIR *d = fdopendir(fd);
+            if (d == NULL) close(fd);
+            else {
+                // Again until a pass finds nothing, since removing entries
+                // while reading a directory may skip some.
+                for (int pass = 0; pass < 4; pass++) {
+                    int found = 0;
+                    rewinddir(d);
+                    struct dirent *e;
+                    while ((e = readdir(d)) != NULL) {
+                        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+                        found = 1;
+                        rmtree_at(dirfd(d), e->d_name);
+                    }
+                    if (!found) break;
+                }
+                closedir(d);
+            }
+        }
+        if (unlinkat(dfd, name, AT_REMOVEDIR) != 0) p("CLEANUP-FAILED\trmdir %s\t%s\n", name, en(errno));
+    } else if (unlinkat(dfd, name, 0) != 0) {
+        p("CLEANUP-FAILED\tunlink %s\t%s\n", name, en(errno));
     }
 }
 
+// Remove `path`, which must be an entry directly under the base (which only
+// root, or the ordinary user running this, may change), and everything under
+// it.
 static void rmtree(const char *path) {
     size_t n = strlen(base);
-    if (strncmp(path, base, n) != 0 || path[n] != '/') {
-        fprintf(stderr, "refusing to remove %s, which is not under %s\n", path, base);
+    if (strncmp(path, base, n) != 0 || path[n] != '/' || path[n + 1] == 0 || strchr(path + n + 1, '/') != NULL) {
+        fprintf(stderr, "refusing to remove %s, which is not an entry of %s\n", path, base);
         exit(2);
     }
-    rmtree_inner(path);
+    int bfd = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (bfd < 0) die("open base");
+    rmtree_at(bfd, path + n + 1);
+    close(bfd);
 }
 
 // A fresh directory under the base, owned as asked, mode 0755.
@@ -255,24 +298,34 @@ static int make_file(const char *pth, int mode) {
         close(fd);
         return e;
     }
+    int r = fchmod(fd, mode) == 0 ? 0 : errno;
     close(fd);
-    return chmod(pth, mode) == 0 ? 0 : errno;
+    return r;
 }
 
 // Give `pth` an owner, a group and a mode, in that order (a chown may clear
-// set-ID bits, so the mode goes last). Links through lchown and lchmod. If
-// root's chmod would not set the mode in that group, root tries the mode in
-// its own group 0 and then the group; the caller reads back what stuck.
+// set-ID bits, so the mode goes last), never following a link: a file or
+// directory through a descriptor opened with O_NOFOLLOW (every caller hands
+// over an inode it has just made, which its maker may open), a link through
+// lchown and lchmod. If root's chmod would not set the mode in that group,
+// root tries the mode in its own group 0 and then the group; the caller reads
+// back what stuck.
 static int own(const char *pth, int is_link, uid_t u, gid_t g, int mode) {
-    if ((is_link ? lchown(pth, u, g) : chown(pth, u, g)) != 0) return errno;
-    if ((is_link ? fchmodat(AT_FDCWD, pth, mode, AT_SYMLINK_NOFOLLOW) : chmod(pth, mode)) != 0) return errno;
     struct stat st;
-    if (geteuid() == 0 && lstat(pth, &st) == 0 && (int)(st.st_mode & 07777) != mode) {
-        if ((is_link ? lchown(pth, u, 0) : chown(pth, u, 0)) != 0) return errno;
-        if ((is_link ? fchmodat(AT_FDCWD, pth, mode, AT_SYMLINK_NOFOLLOW) : chmod(pth, mode)) != 0) return errno;
-        if ((is_link ? lchown(pth, (uid_t)-1, g) : chown(pth, (uid_t)-1, g)) != 0) return errno;
+    if (is_link) {
+        if (lchown(pth, u, g) != 0 || fchmodat(AT_FDCWD, pth, mode, AT_SYMLINK_NOFOLLOW) != 0) return errno;
+        if (geteuid() == 0 && lstat(pth, &st) == 0 && (int)(st.st_mode & 07777) != mode)
+            if (lchown(pth, u, 0) != 0 || fchmodat(AT_FDCWD, pth, mode, AT_SYMLINK_NOFOLLOW) != 0 || lchown(pth, (uid_t)-1, g) != 0) return errno;
+        return 0;
     }
-    return 0;
+    int fd = open(pth, O_RDONLY | O_NOFOLLOW);
+    if (fd < 0) return errno;
+    int r = 0;
+    if (fchown(fd, u, g) != 0 || fchmod(fd, mode) != 0) r = errno;
+    else if (geteuid() == 0 && fstat(fd, &st) == 0 && (int)(st.st_mode & 07777) != mode)
+        if (fchown(fd, u, 0) != 0 || fchmod(fd, mode) != 0 || fchown(fd, (uid_t)-1, g) != 0) r = errno;
+    close(fd);
+    return r;
 }
 
 // ---------------------------------------------------------------- sweeps
@@ -480,6 +533,7 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
     int e = fresh_dir(dummy, sizeof dummy, "sweep", s->du, s->dg, 0755);
     snprintf(swdir, sizeof swdir, "%s", dummy);
     if (e != 0) {
+        if (geteuid() == 0) failures++;
         for (int i = 0; i < nops; i++) p("SKIP\t%s\tthe sweep directory cannot be given to %u:%u: %s\n", lab[i], (unsigned)s->du, (unsigned)s->dg, en(e));
         rmtree(swdir);
         return;
@@ -512,6 +566,7 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
         int want = s->fixed_mode >= 0 ? s->fixed_mode : m;
         r = own(pth, s->kind == K_LINK, s->ou, s->og, want);
         if (r != 0) {
+            if (geteuid() == 0) failures++;
             for (int i = 0; i < nops; i++) p("SKIP\t%s\tthe inodes cannot be given to %u:%u: %s\n", lab[i], (unsigned)s->ou, (unsigned)s->og, en(r));
             rmtree(swdir);
             return;
@@ -533,7 +588,7 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
         sh->euid = geteuid();
         sh->gid = getgid();
         sh->egid = getegid();
-        if (sh->become_err != 0) _exit(0);
+        if (sh->become_err != 0) _exit(geteuid() == 0 ? 1 : 0);
         for (int m = 0; m < NMODES; m++) {
             char pth[PATH_MAX];
             nth(pth, m);
@@ -541,21 +596,26 @@ static void sweep(const sweep_t *s, const op *ops, int nops) {
         }
         _exit(0);
     }
-    int status;
+    int status = 0;
     waitpid(pid, &status, 0);
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        for (int i = 0; i < nops; i++) p("SKIP\t%s\tthe caller's process ended with status 0x%x\n", lab[i], status);
+    if (sh->become_err != 0) {
+        if (geteuid() == 0) failures++;
+        for (int i = 0; i < nops; i++)
+            p("%s\t%s\tbecoming %s: %s%s\n", geteuid() == 0 ? "CHILD-FAILED" : "SKIP", lab[i], s->caller->name, en(sh->become_err),
+              geteuid() == 0 ? "" : " (needs root)");
         rmtree(swdir);
         return;
     }
-    if (sh->become_err != 0) {
-        for (int i = 0; i < nops; i++) p("SKIP\t%s\tbecoming %s: %s (needs root)\n", lab[i], s->caller->name, en(sh->become_err));
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        failures++;
+        for (int i = 0; i < nops; i++) p("CHILD-FAILED\t%s\tthe caller's process ended with status 0x%x\n", lab[i], status);
         rmtree(swdir);
         return;
     }
     if (sh->euid != s->caller->uid || (geteuid() == 0 && sh->egid != s->caller->gid)) {
+        failures++;
         for (int i = 0; i < nops; i++)
-            p("SKIP\t%s\tthe caller's IDs are uid=%u euid=%u gid=%u egid=%u, not the row's\n", lab[i], (unsigned)sh->uid, (unsigned)sh->euid, (unsigned)sh->gid,
+            p("CHILD-FAILED\t%s\tthe caller's IDs are uid=%u euid=%u gid=%u egid=%u, not the row's\n", lab[i], (unsigned)sh->uid, (unsigned)sh->euid, (unsigned)sh->gid,
               (unsigned)sh->egid);
         rmtree(swdir);
         return;
@@ -642,6 +702,10 @@ static void cred_section(void) {
         if (make_file(f, 0600) != 0) die("cred file");
         if (own(f, 0, 0, probe_groups[i], 0040) != 0) can_chown = 0;
     }
+    if (!can_chown && geteuid() == 0) {
+        failures++;
+        p("CHILD-FAILED\tCRED\tthe membership files could not be set up\n");
+    }
     const cred *all[] = {&ROOT, &U501, &U502, &U504};
     for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
         fflush(stdout);
@@ -650,7 +714,7 @@ static void cred_section(void) {
             int e = become(all[i]);
             if (e != 0) {
                 p("CRED\t%s\tbecome: %s (needs root)\n", all[i]->name, en(e));
-                _exit(0);
+                _exit(geteuid() == 0 ? 1 : 0);
             }
             char g[512];
             groups_text(g, sizeof g);
@@ -668,7 +732,7 @@ static void cred_section(void) {
             fflush(stdout);
             _exit(0);
         }
-        waitpid(pid, NULL, 0);
+        wait_child(pid, __func__);
     }
     rmtree(dir);
 }
@@ -902,6 +966,7 @@ static void utimens_row(const cred *c, enum kind k, uid_t ou, gid_t og, int mode
     const char *label = k == K_LINK ? "utimensat(NOFOLLOW)" : "utimensat";
     r = own(o, k == K_LINK, ou, og, mode);
     if (r != 0) {
+        if (geteuid() == 0) failures++;
         p("UTIMENS\t%s\t%s %u:%u %04o\t%s\ttimes=%s\tSKIP: the object cannot be given to %u:%u: %s\n", c->name, kind_name[k], (unsigned)ou, (unsigned)og, mode, label,
           tnames[tcase], (unsigned)ou, (unsigned)og, en(r));
         rmtree(dir);
@@ -916,13 +981,13 @@ static void utimens_row(const cred *c, enum kind k, uid_t ou, gid_t og, int mode
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
-            _exit(0);
+            _exit(geteuid() == 0 ? 1 : 0);
         }
         sh->become_err = 0;
         sh->res[0][0] = utimensat(AT_FDCWD, o, tcase == 0 ? NULL : ts, flags) == 0 ? 0 : errno;
         _exit(0);
     }
-    waitpid(pid, NULL, 0);
+    wait_child(pid, __func__);
     if (sh->become_err != 0) {
         p("UTIMENS\t%s\t%s %u:%u %04o\t%s\ttimes=%s\tSKIP: becoming %s: %s\n", c->name, kind_name[k], (unsigned)ou, (unsigned)og, mode, label, tnames[tcase], c->name,
           en(sh->become_err));
@@ -1045,6 +1110,7 @@ static void sticky_row(const cred *c, int smode, int dmode, enum st_op op, const
     if (b) snprintf(desc, sizeof desc, "%s(%s, %s)", opname, a, b);
     else snprintf(desc, sizeof desc, "%s(%s)", opname, a);
     if (r != 0) {
+        if (geteuid() == 0) failures++;
         p("STICKY\t%s\tS=%04o d=%04o\t%s\tSKIP: the tree needs root: %s\n", c->name, smode, dmode, desc, en(r));
         rmtree(st);
         return;
@@ -1055,7 +1121,7 @@ static void sticky_row(const cred *c, int smode, int dmode, enum st_op op, const
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
-            _exit(0);
+            _exit(geteuid() == 0 ? 1 : 0);
         }
         sh->become_err = 0;
         int rr;
@@ -1065,7 +1131,7 @@ static void sticky_row(const cred *c, int smode, int dmode, enum st_op op, const
         sh->res[0][0] = rr == 0 ? 0 : errno;
         _exit(0);
     }
-    waitpid(pid, NULL, 0);
+    wait_child(pid, __func__);
     if (sh->become_err != 0) {
         p("STICKY\t%s\tS=%04o d=%04o\t%s\tSKIP: becoming %s: %s\n", c->name, smode, dmode, desc, c->name, en(sh->become_err));
     } else {
@@ -1160,13 +1226,13 @@ static void mknod_section(void) {
                             int be = become(callers[ci]);
                             if (be != 0) {
                                 sh->become_err = be;
-                                _exit(0);
+                                _exit(geteuid() == 0 ? 1 : 0);
                             }
                             sh->become_err = 0;
                             sh->res[0][0] = mknod(arg, (mode_t)(types[ti] | pbits), dev) == 0 ? 0 : errno;
                             _exit(0);
                         }
-                        waitpid(pid, NULL, 0);
+                        wait_child(pid, __func__);
                         char lead[256];
                         snprintf(lead, sizeof lead, "MKNOD\t%s\ttype=%06o\tperm=%04o\tdev=%d,%d\tpath=%s", callers[ci]->name, types[ti], pbits, major(dev), minor(dev), paths[pi]);
                         if (sh->become_err != 0) {
@@ -1248,6 +1314,7 @@ static void realeff_section(void) {
     }
     for (size_t si = 0; si < sizeof splits / sizeof splits[0]; si++) {
         if (setup_err != 0) {
+            if (geteuid() == 0) failures++;
             p("REALEFF\t%s\tSKIP: the inodes need root: %s\n", splits[si].name, en(setup_err));
             continue;
         }
@@ -1260,7 +1327,7 @@ static void realeff_section(void) {
             sh->euid = geteuid();
             sh->gid = getgid();
             sh->egid = getegid();
-            if (sh->become_err != 0) _exit(0);
+            if (sh->become_err != 0) _exit(geteuid() == 0 ? 1 : 0);
             for (size_t i = 0; i < sizeof inodes / sizeof inodes[0]; i++) {
                 char q[PATH_MAX];
                 snprintf(q, sizeof q, "%s/%zu", dir, i);
@@ -1277,9 +1344,10 @@ static void realeff_section(void) {
             }
             _exit(0);
         }
-        waitpid(pid, NULL, 0);
+        wait_child(pid, __func__);
         if (sh->become_err != 0) {
-            p("REALEFF\t%s\tSKIP: %s\n", splits[si].name, en(sh->become_err));
+            if (geteuid() == 0) failures++;
+            p("REALEFF\t%s\t%s: %s\n", splits[si].name, geteuid() == 0 ? "CHILD-FAILED" : "SKIP", en(sh->become_err));
             continue;
         }
         p("REALEFF\t%s\tthe caller holds uid=%u euid=%u gid=%u egid=%u\n", splits[si].name, (unsigned)sh->uid, (unsigned)sh->euid, (unsigned)sh->gid,
@@ -1301,6 +1369,7 @@ static void ctime_row(const cred *c, uid_t ou, gid_t og, int mode, const char *w
     if (make_file(f, 0600) != 0) die("ct file");
     int r = own(f, 0, ou, og, mode);
     if (r != 0) {
+        if (geteuid() == 0) failures++;
         p("CTIME\t%s\tfile %u:%u %04o\t%s\tSKIP: the file needs root: %s\n", c->name, (unsigned)ou, (unsigned)og, mode, what, en(r));
         rmtree(dir);
         return;
@@ -1314,14 +1383,14 @@ static void ctime_row(const cred *c, uid_t ou, gid_t og, int mode, const char *w
         int e = become(c);
         if (e != 0) {
             sh->become_err = e;
-            _exit(0);
+            _exit(geteuid() == 0 ? 1 : 0);
         }
         sh->become_err = 0;
         int rr = chmod_to >= 0 ? chmod(f, chmod_to) : chown(f, ru, rg);
         sh->res[0][0] = rr == 0 ? 0 : errno;
         _exit(0);
     }
-    waitpid(pid, NULL, 0);
+    wait_child(pid, __func__);
     if (sh->become_err != 0) {
         p("CTIME\t%s\tfile %u:%u %04o\t%s\tSKIP: becoming %s: %s\n", c->name, (unsigned)ou, (unsigned)og, mode, what, c->name, en(sh->become_err));
     } else {
@@ -1364,8 +1433,15 @@ int main(int argc, char **argv) {
     snprintf(base, sizeof base, "%s", argv[1]);
     nsections = argc - 2;
     sections = argv + 2;
+    // As root, the base is given to root and made 0711: no other user may
+    // then change its entries, and the probe's other users can still reach
+    // their files in it by name.
+    int bfd = open(base, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (bfd < 0) die("base directory");
+    if (geteuid() == 0 && (fchown(bfd, 0, 0) != 0 || fchmod(bfd, 0711) != 0)) die("base directory to root, 0711");
     struct stat bs;
-    if (stat(base, &bs) != 0 || !S_ISDIR(bs.st_mode)) die("base directory");
+    if (fstat(bfd, &bs) != 0) die("base directory");
+    close(bfd);
     sh = mmap(NULL, sizeof *sh, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
     if (sh == MAP_FAILED) die("mmap");
     umask(022);
@@ -1393,6 +1469,7 @@ int main(int argc, char **argv) {
     if (wanted("MKNOD")) mknod_section();
     if (wanted("REALEFF")) realeff_section();
     if (wanted("CTIME")) ctime_section();
+    if (failures) p("FAILURES\t%d child processes failed: see the CHILD-FAILED rows\n", failures);
     p("DONE\n");
-    return 0;
+    return failures ? 1 : 0;
 }

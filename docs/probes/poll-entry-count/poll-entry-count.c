@@ -214,6 +214,9 @@ static void section_d_rows(void)
     }
 }
 
+// Whether section D's child failed; it makes the probe exit 1.
+static int section_d_failed;
+
 static void section_d(rlim_t hard)
 {
     set_soft(256, hard);
@@ -228,7 +231,12 @@ static void section_d(rlim_t hard)
         section_d_rows();
         _exit(0);
     }
-    waitpid(pid, NULL, 0);
+    int st = 0;
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)
+    {
+        printf("D CHILD-FAILED status=0x%x\n", st);
+        section_d_failed = 1;
+    }
 }
 #endif
 
@@ -331,6 +339,7 @@ int main(void)
     section_c();
 #else
     section_d(rl.rlim_max);
+    if (section_d_failed) return 1;
 #endif
     return 0;
 }

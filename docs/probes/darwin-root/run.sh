@@ -168,7 +168,12 @@ on_exit() {
         done
     fi
     case "$WORK" in
-        /private/tmp/darwin-root.*) rm -rf "$WORK" ;;
+        /private/tmp/darwin-root.*)
+            # An ordinary user cannot otherwise descend its own mode-0
+            # directories, which a probe that died may have left. (Root needs
+            # no such help, and never runs this, which could follow a link.)
+            [ "$AS_ROOT" = 0 ] && chmod -R u+rwx "$WORK" 2> /dev/null
+            rm -rf "$WORK" ;;
     esac
     case "$BIN" in
         /private/tmp/darwin-root-bin.*) rm -rf "$BIN" ;;

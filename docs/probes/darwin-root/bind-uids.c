@@ -24,6 +24,9 @@
 // A TCP holder listens only at loopback: listening at the wildcard would ask
 // the application firewall to admit the probe.
 //
+// It exits 1 if any child failed, so that its output is not taken for a
+// complete measurement.
+//
 // CRED rows ask whether the uid that counts is the socket's (fixed when
 // socket(2) made it) or the process's at bind(2): a socket made as root and
 // bound after setuid, against a holder of another uid, and the converse.
@@ -105,6 +108,14 @@ typedef struct {
     int port;
 } answer;
 
+// How many rows had a child fail: one that did not exit 0 or report, or, as
+// root, one that could not take its uid. Any makes the probe exit 1.
+static int failures;
+
+// Whether a child's answer, or its exit, is a failure of the probe rather
+// than a measurement.
+static int failed(int err) { return err == -1 || (geteuid() == 0 && err <= -100); }
+
 // What a process becoming `uid` then making a socket (or, if `socket_first`,
 // making it and then becoming `uid`) answers binding addr:port with `opts`.
 static int bind_as(uid_t uid, int socket_first, int type, const char *addr, int port, int opts) {
@@ -136,7 +147,8 @@ static int bind_as(uid_t uid, int socket_first, int type, const char *addr, int 
     answer a = {-1, 0};
     if (read(pfd[0], &a, sizeof a) != sizeof a) a.err = -1;
     close(pfd[0]);
-    waitpid(pid, NULL, 0);
+    int st = 0;
+    if (waitpid(pid, &st, 0) != pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0) a.err = -1;
     return a.err;
 }
 
@@ -191,9 +203,12 @@ static holder hold(uid_t uid, int socket_first, int type, const char *addr, int 
     return h;
 }
 
-static void release(holder *h) {
+// Let the holder go; answers -1 if it did not exit 0, and 0 otherwise.
+static int release(holder *h) {
     if (h->hold_w >= 0) close(h->hold_w);
-    if (h->pid > 0) waitpid(h->pid, NULL, 0);
+    int st = 0;
+    if (h->pid > 0 && (waitpid(h->pid, &st, 0) != h->pid || !WIFEXITED(st) || WEXITSTATUS(st) != 0)) return -1;
+    return 0;
 }
 
 static const char *result_text(int e) {
@@ -249,11 +264,14 @@ int main(void) {
                                 if (h.err != 0) {
                                     printf("%s\t-> SKIP(holder: %s)\n", lead, result_text(h.err));
                                     release(&h);
+                                    if (failed(h.err)) failures++;
                                     continue;
                                 }
                                 int e = bind_as(bu, 0, types[t], addrs[ba], h.port, bo);
-                                release(&h);
+                                int r = release(&h);
                                 int c = bind_as(bu, 0, types[t], addrs[ba], h.port, bo);
+                                if (r != 0) printf("CHILD-FAILED\tthe holder of the next row did not exit 0\n");
+                                if (failed(e) || failed(c) || r != 0) failures++;
                                 printf("%s\t-> %s\tcontrol=%s\tport=%d\n", lead, result_text(e), result_text(c), h.port);
                                 fflush(stdout);
                             }
@@ -288,14 +306,18 @@ int main(void) {
                     if (h.err != 0) {
                         printf("%s\t-> SKIP(holder: %s)\n", lead, result_text(h.err));
                         release(&h);
+                        if (failed(h.err)) failures++;
                         continue;
                     }
                     int e = bind_as(creds[i].bu, creds[i].bfirst, types[t], addrs[ba], h.port, 1);
-                    release(&h);
+                    int r = release(&h);
                     int c = bind_as(creds[i].bu, creds[i].bfirst, types[t], addrs[ba], h.port, 1);
+                    if (r != 0) printf("CHILD-FAILED\tthe holder of the next row did not exit 0\n");
+                    if (failed(e) || failed(c) || r != 0) failures++;
                     printf("%s\t-> %s\tcontrol=%s\tport=%d\n", lead, result_text(e), result_text(c), h.port);
                     fflush(stdout);
                 }
+    if (failures) printf("FAILURES\t%d rows had a child fail: see SKIP(probe failure), SKIP(become ...) and CHILD-FAILED\n", failures);
     printf("DONE\n");
-    return 0;
+    return failures ? 1 : 0;
 }
