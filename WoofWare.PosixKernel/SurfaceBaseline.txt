@@ -4319,6 +4319,7 @@ WoofWare.PosixKernel.SignalRestartRule.IsRestartsUnderSaRestart [property]: [rea
 WoofWare.PosixKernel.SignalRestartRule.RestartsUnderSaRestart [static property]: [read-only] WoofWare.PosixKernel.SignalRestartRule
 WoofWare.PosixKernel.SignalRestartRule.Tag [property]: [read-only] int
 WoofWare.PosixKernel.SignalState inherit obj
+WoofWare.PosixKernel.SignalState.disposition [static method]: WoofWare.PosixKernel.SignalNumbering -> WoofWare.PosixKernel.Signal -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> 'Handler WoofWare.PosixKernel.SignalDisposition
 WoofWare.PosixKernel.SignalState.framesOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.HandlerFrame<'Thread, 'Handler> list
 WoofWare.PosixKernel.SignalState.maskOf [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask
 WoofWare.PosixKernel.SignalState.maskToRestore [static method]: 'Thread -> WoofWare.PosixKernel.SignalState<'Thread, 'Handler> -> WoofWare.PosixKernel.SignalMask option

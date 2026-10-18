@@ -522,8 +522,11 @@ module TestSignalState =
                 Assert.Throws (fun () -> restoreDefault numbering signal s |> ignore<SignalState<_, _>>)
                 |> ignore<exn>
 
-                Assert.Throws (fun () -> SignalState.disposition numbering signal s |> ignore<SignalDisposition<_>>)
-                |> ignore<exn>
+                // A client can call this one, so its refusal is the client's mistake.
+                Assert.Throws<System.ArgumentException> (fun () ->
+                    SignalState.disposition numbering signal s |> ignore<SignalDisposition<_>>
+                )
+                |> ignore<System.ArgumentException>
 
                 Assert.Throws (fun () ->
                     SignalState.initial numbering (Set.singleton signal)

@@ -324,6 +324,17 @@ module TestSigaction =
 
                     errno |> shouldEqual UnixError.EINVAL
 
+            // And through `SignalState.disposition`, which needs no call, and reads Darwin's
+            // SIGKILL and SIGSTOP, which the syscall refuses to report, as their default.
+            let signals =
+                UnixSystem.signals (Caller.processId (Callers.leader finalSystem)) finalSystem
+
+            for signo in [ 1 .. highestSigno flavour ] do
+                let signal = Signal.ofRawSignoUnder numbering signo |> ValueOption.get
+
+                (signo, installedOf (SignalState.disposition numbering signal signals))
+                |> shouldEqual (signo, installedNow finalOracle signo)
+
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
     /// A disposition as the "tr" probe names it.
