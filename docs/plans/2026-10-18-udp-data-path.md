@@ -123,7 +123,8 @@ first) or bound to 0.0.0.0 or 127.0.0.1.
 | 100 queued, `recv` of 0 | 0, and the datagram is taken | same |
 | 100 queued, `read` of 0 | **0, and the datagram stays** | 0, and it is taken |
 | empty, non-blocking `recv` of 0 | **`EAGAIN`** | **0** |
-| 100 queued, `recv` into an unmapped buffer | `EFAULT`, and **the datagram is lost** | `EFAULT`, and **it stays** |
+| 100 queued, `recv` into an unmapped buffer (C8, C10) | `EFAULT`, and **the datagram is lost** | `EFAULT`; **the payload stays, stripped of its source address and control record** (`FIONREAD` 116 → 100), and the `recvfrom` that takes it reports no source (`addrlen` 0, nothing written) |
+| 100 queued, `recv(MSG_PEEK)` into an unmapped buffer (C10) | `EFAULT`, and it stays whole | same |
 | 100 queued, `recv` of 0 into an unmapped buffer | 0, and it is taken | same |
 | 20 and 3 queued, peeks of 10, 100, and 10 with `MSG_TRUNC` | 10, 20, **20**; both stay | 10, 20, **10**; both stay |
 | `sendto` of 0 bytes | 0; the receiver holds one empty datagram, which a `recv` takes and answers 0 | same |
@@ -314,7 +315,18 @@ with ICMP "port unreachable".
   of it (L4). Linux's `IP_RECVERR` would change that, and it is not settable.
 - **A full receiver** raises nothing (L13).
 - **When the error arrives.** Linux sets it before `sendto` returns. Darwin sets
-  it a moment later: one run's "at once" `poll` saw it, and the other's did not.
+  it a moment later: one run's "at once" `poll` saw it, and the other's did not,
+  and likewise whether L2's second send, made at once, met it.
+- **How often** (X). **Linux** raises an error for every such datagram: sends
+  15 ms apart, sends every 40 ms, and 80 sockets sending at once each got one.
+  **Darwin** raises one for a socket's datagram only if 100 ms have passed
+  since the datagram that raised its last.
+  - The boundary is sharp: a second send 98 ms after the first raised nothing
+    in 5 trials of 5, and one 100 ms after raised an error in 5 of 5.
+  - A send the window suppresses does not extend it. Sends every 40 ms raised
+    errors at 0, 120, 240 and 360 ms.
+  - It is per socket: two sockets connected to one unheld port, sending 5 ms
+    apart, both got errors, and so did 80 sockets at once.
 
 How the pending error is reported and taken:
 
@@ -549,6 +561,12 @@ of that window.
   socket's datagram finds no receiver at all.
 - **No error** when a candidate exists but its queue is full (L13), and none
   for an unconnected sender (L4).
+- **Darwin's 100 ms window** (2.8, X) is modelled by the kernel clock: a
+  Darwin receiver records when its socket's datagram last raised the error,
+  and a datagram raises it again only once the clock has moved 100 ms past
+  that. The window is per socket, and a suppressed datagram does not move
+  it. The clock moves only when the client says, so the answer is a function
+  of the history.
 - Every reader of the slot takes it, as the 2.8 table says: one function per
   flavour, tested against the table. It decides which comes first, the error
   or a queued datagram, and whether `connect` takes the error.
@@ -613,6 +631,12 @@ buffer. Each is a separate copy-in that can fault on its own, and the flags
 come back out. Their argument shape, and what the kernel does with control
 messages, are a design note of their own before their stage (section 4, stage
 U5). Section 2.12 is its measured input.
+
+**A faulting receive.** Linux's takes the datagram and answers `EFAULT` (2.2).
+Darwin's strips the datagram it leaves (2.2, C10), and what that does to the
+mbuf budget is unmeasured. So a Darwin receive into an unmapped buffer, with
+bytes to copy, is refused (`UnmodelledException`), as a faulting TCP receive
+is today. A peek that faults answers `EFAULT` on both, and changes nothing.
 
 **Flags.** Accept what section 2.14 measured, by flavour: `MSG_TRUNC` on a
 receive, and Linux's ignored `MSG_OOB` on a receive. Keep refusing every
@@ -697,6 +721,8 @@ blocking receives first can have U4 before U3.
 - **Buffer-size options**: `SO_RCVBUF` and `SO_SNDBUF` are refused, so
   capacities are the configured defaults.
 - **Unknown flags**: refused, where both kernels ignore them.
+- **A Darwin receive into an unmapped buffer** (3.6), which strips the
+  datagram it leaves: refused.
 
 ## Decisions
 

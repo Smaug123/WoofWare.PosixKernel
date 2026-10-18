@@ -27,6 +27,7 @@
 //   Q  several sockets on one port
 //   S  sleeping receivers: how many one datagram wakes
 //   W  other flags
+//   X  how often sends to a port nobody holds raise the ICMP error
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <errno.h>
@@ -54,6 +55,13 @@
 #endif
 
 #define SETTLE() usleep(5000)
+
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
 
 static const char *ename(int e)
 {
@@ -336,6 +344,8 @@ static void section_b(void)
     close(r); close(s);
 }
 
+static void hex(const unsigned char *b, int n, char *out);
+
 static void section_c(void)
 {
     char buf[200];
@@ -385,6 +395,26 @@ static void section_c(void)
     send_to(s, data, 100, p); SETTLE();
     a = take(r, (void *)1, 0, 0); ea = errno;
     printf("C9 recv of 0 into an unmapped buffer, datagram of 100 queued: %s; then %s\n", res(a, ea), drain(r));
+
+    // C10: what a faulting receive leaves of the datagram: FIONREAD, and the
+    // source a recvfrom then reports, for a take and for a peek.
+    for (int peeking = 0; peeking <= 1; peeking++) {
+        int r2 = bound(), s2 = bound();
+        send_to(s2, data, 100, portof(r2)); SETTLE();
+        int before = fionread(r2);
+        ssize_t f = take(r2, (void *)1, 10, peeking ? MSG_PEEK : 0); int ef = errno;
+        int after = fionread(r2);
+        unsigned char addr[32];
+        memset(addr, 0xaa, sizeof addr);
+        socklen_t alen = sizeof addr;
+        ssize_t g = recvfrom(r2, buf, sizeof buf, MSG_DONTWAIT, (struct sockaddr *)addr, &alen); int eg = errno;
+        char h[80];
+        hex(addr, 16, h);
+        int last = fionread(r2);
+        printf("C10 %s of 10 into an unmapped buffer, a datagram of 100 from %s queued: FIONREAD %d; %s; FIONREAD %d; then recvfrom %s, addrlen %u, address %s; FIONREAD %d\n",
+               peeking ? "recv(MSG_PEEK)" : "recv", nameof(s2), before, res(f, ef), after, res(g, eg), (unsigned)alen, h, last);
+        close(r2); close(s2);
+    }
 
     close(r); close(s);
 }
@@ -1511,6 +1541,116 @@ static void section_s(void)
     close(r); close(s);
 }
 
+// X: how often a connected socket's sends to a port nobody holds raise an
+// ICMP error: a second send after each gap, the first error taken in
+// between; sends at a steady pace; two sockets aimed at one port, and at two;
+// and a burst over many sockets.
+static void section_x(void)
+{
+#ifdef __APPLE__
+    {
+        int v = -1; size_t len = sizeof v;
+        sysctlbyname("net.inet.icmp.icmplim", &v, &len, NULL, 0);
+        printf("X0 net.inet.icmp.icmplim=%d\n", v);
+    }
+#else
+    {
+        const char *files[] = { "/proc/sys/net/ipv4/icmp_ratelimit", "/proc/sys/net/ipv4/icmp_ratemask", "/proc/sys/net/ipv4/icmp_msgs_per_sec", "/proc/sys/net/ipv4/icmp_msgs_burst" };
+        for (unsigned i = 0; i < sizeof files / sizeof *files; i++) {
+            char line[64] = "?";
+            FILE *f = fopen(files[i], "r");
+            if (f) { if (!fgets(line, sizeof line, f)) strcpy(line, "?"); fclose(f); }
+            line[strcspn(line, "\n")] = 0;
+            printf("X0 %s=%s\n", files[i], line);
+        }
+    }
+#endif
+    // X1: two sends `gap` ms apart, measured from the first, the first's
+    // error taken in between, five times each.
+    int gaps[] = { 15, 50, 85, 95, 98, 100, 102, 110, 150, 500 };
+    for (unsigned i = 0; i < sizeof gaps / sizeof *gaps; i++) {
+        int raised = 0, firsts = 0;
+        for (int trial = 0; trial < 5; trial++) {
+            usleep(300000);
+            int c = bound();
+            struct sockaddr_in to = lo(unheld_port());
+            connect(c, (struct sockaddr *)&to, sizeof to);
+            double t0 = now_ms();
+            send(c, "x", 1, 0);
+            usleep(10000);
+            if (sock_error(c) != 0) firsts++;
+            while (now_ms() - t0 < gaps[i]) usleep(100);
+            send(c, "x", 1, 0);
+            usleep(30000);
+            if (sock_error(c) != 0) raised++;
+            close(c);
+        }
+        printf("X1 a send raising an error, taken, and another %d ms after the first: the first raised one in %d of 5, the second in %d of 5\n", gaps[i], firsts, raised);
+    }
+    // X4: sends every 40 ms, each error taken before the next.
+    {
+        usleep(300000);
+        int c = bound();
+        struct sockaddr_in to = lo(unheld_port());
+        connect(c, (struct sockaddr *)&to, sizeof to);
+        double t0 = now_ms();
+        printf("X4 sends every 40 ms, SO_ERROR 15 ms after each:");
+        for (int k = 0; k < 12; k++) {
+            while (now_ms() - t0 < k * 40.0) usleep(100);
+            send(c, "x", 1, 0);
+            usleep(15000);
+            printf(" %d", sock_error(c));
+        }
+        printf("\n");
+        close(c);
+    }
+    // X5: two sockets connected to the same unheld port, sending 5 ms apart.
+    {
+        usleep(300000);
+        int c = bound(), d = bound();
+        struct sockaddr_in to = lo(unheld_port());
+        connect(c, (struct sockaddr *)&to, sizeof to);
+        connect(d, (struct sockaddr *)&to, sizeof to);
+        send(c, "x", 1, 0);
+        usleep(5000);
+        send(d, "x", 1, 0);
+        usleep(50000);
+        int ec = sock_error(c);
+        int ed = sock_error(d);
+        printf("X5 two sockets connected to one unheld port, sending 5 ms apart: SO_ERROR %d and %d\n", ec, ed);
+        close(c); close(d);
+    }
+    {
+        usleep(300000);
+        int c = bound(), d = bound();
+        struct sockaddr_in to = lo(unheld_port()), to2 = lo(unheld_port());
+        connect(c, (struct sockaddr *)&to, sizeof to);
+        connect(d, (struct sockaddr *)&to2, sizeof to2);
+        send(c, "x", 1, 0);
+        usleep(5000);
+        send(d, "x", 1, 0);
+        usleep(50000);
+        int ec = sock_error(c);
+        int ed = sock_error(d);
+        printf("X2 two sockets, each connected to its own unheld port, sending 5 ms apart: SO_ERROR %d and %d\n", ec, ed);
+        close(c); close(d);
+    }
+    {
+        usleep(300000);
+        int count = 80, errors = 0;
+        int socks[80];
+        for (int i = 0; i < count; i++) {
+            socks[i] = bound();
+            struct sockaddr_in to = lo(unheld_port());
+            connect(socks[i], (struct sockaddr *)&to, sizeof to);
+        }
+        for (int i = 0; i < count; i++) send(socks[i], "x", 1, 0);
+        usleep(100000);
+        for (int i = 0; i < count; i++) { if (sock_error(socks[i]) != 0) errors++; close(socks[i]); }
+        printf("X3 %d sockets, each connected to an unheld port, sending at once: %d errors\n", count, errors);
+    }
+}
+
 static void section_w(void)
 {
     char buf[64];
@@ -1573,5 +1713,6 @@ int main(int argc, char **argv)
     RUN('Q', section_q5);
     RUN('S', section_s);
     RUN('W', section_w);
+    RUN('X', section_x);
     return 0;
 }
