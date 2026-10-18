@@ -422,17 +422,10 @@ module UnixInotify =
                 (OpenFileTable.setInotifyState "UnixInotify.inotifyAddWatch" instance state)
                 system
 
-        // The instance's first watch on the inode, of the instances the
-        // table's index has watching it.
         let existing =
-            OpenFileTable.inotifyWatchesOn inode system.Machine.OpenFiles
-            |> List.tryPick (fun (watching, watches) ->
-                if watching = instance then
-                    let watch = List.head watches
-                    Some (watch, Map.find watch state.Watches)
-                else
-                    None
-            )
+            match OpenFileTable.inotifyWatchesOfInstanceOn instance inode system.Machine.OpenFiles with
+            | watch :: _ -> Some (watch, Map.find watch state.Watches)
+            | [] -> None
 
         match existing with
         | Some _ when word.MaskCreate -> failed UnixError.EEXIST

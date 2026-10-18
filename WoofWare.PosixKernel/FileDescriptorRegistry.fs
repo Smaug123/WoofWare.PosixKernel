@@ -2603,23 +2603,30 @@ module OpenFileTable =
             failwith
                 $"OpenFileTable: an index names open file description %d{raw}, which is not in the table (this is a bug in this library)."
 
-    /// The live descriptions onto `inode` opened through the name `name` in
-    /// `directory` while it is linked, in identity order, with the identity
-    /// of the name each holds: in time logarithmic in the number of
-    /// descriptions, and linear in the number opened through that name.
+    /// The identity of the name held by the first live description, in
+    /// identity order, onto `inode` opened through the name `name` in
+    /// `directory` while it is linked: in time logarithmic in the number of
+    /// descriptions, and linear in the number of identities that name has
+    /// and in the descriptions opened through it onto other inodes, which
+    /// `FileDescriptorRegistryDefect.OpenedThroughNameNotShared` and
+    /// `FileDescriptorRegistryDefect.OpenedThroughMismatch` rule out.
     let private holdingLinkedName
         (directory : InodeNumber)
         (name : DirectoryEntryName)
         (inode : InodeNumber)
         (table : OpenFileTable)
-        : (int64 * OpenFileDescriptionId) list
+        : OpenFileDescriptionId option
         =
         OpenFileEntries.openedThrough (ReachedThrough.ofEntry directory name) table.Entries
-        |> Seq.collect (fun (KeyValue (identity, ids)) -> ids |> Seq.map (fun raw -> raw, identity))
-        |> Seq.filter (fun (raw, _) -> inodeOf (indexed raw table).Description.Target = Some inode)
-        |> Seq.map (fun (raw, identity) -> raw, OpenFileDescriptionId identity)
+        |> Seq.choose (fun (KeyValue (identity, ids)) ->
+            ids
+            |> Seq.tryFind (fun raw -> inodeOf (indexed raw table).Description.Target = Some inode)
+            |> Option.map (fun raw -> raw, identity)
+        )
         |> List.ofSeq
         |> List.sortBy fst
+        |> List.tryHead
+        |> Option.map (fun (_, identity) -> OpenFileDescriptionId identity)
 
     /// Whether a live description onto `inode` was opened through the name
     /// `name` in `directory`, still linked: Linux's dentry, which that
@@ -2632,7 +2639,7 @@ module OpenFileTable =
         (table : OpenFileTable)
         : bool
         =
-        not (List.isEmpty (holdingLinkedName directory name inode table))
+        (holdingLinkedName directory name inode table).IsSome
 
     /// Whether a live description is onto `inode`, or was opened through a
     /// name in it, in time logarithmic in the number of inodes they hold.
@@ -2685,9 +2692,8 @@ module OpenFileTable =
         let nameIdentity =
             match openedThrough, inodeOf description.Target with
             | Some (ReachedThrough.Name (dentry, false)), Some inode ->
-                match holdingLinkedName dentry.Parent dentry.Name inode table with
-                | (_, identity) :: _ -> identity
-                | [] -> id
+                holdingLinkedName dentry.Parent dentry.Name inode table
+                |> Option.defaultValue id
             | _ -> id
 
         id,
@@ -3444,6 +3450,21 @@ module OpenFileTable =
             OpenFileDescriptionId instance, watches |> Seq.map WatchDescriptor |> List.ofSeq
         )
         |> List.ofSeq
+
+    /// The descriptors of the watches the live inotify instance `instance`
+    /// holds on `inode`, in order: in time logarithmic in the number of
+    /// watches on the machine and linear in the number answered.
+    let internal inotifyWatchesOfInstanceOn
+        (instance : OpenFileDescriptionId)
+        (inode : InodeNumber)
+        (table : OpenFileTable)
+        : WatchDescriptor list
+        =
+        let (OpenFileDescriptionId raw) = instance
+
+        match Map.tryFind raw (OpenFileEntries.watchesOn inode table.Entries) with
+        | Some watches -> watches |> Seq.map WatchDescriptor |> List.ofSeq
+        | None -> []
 
     /// How many live inotify instances `owner` owns, in every process, in
     /// time logarithmic in the number of users owning one.

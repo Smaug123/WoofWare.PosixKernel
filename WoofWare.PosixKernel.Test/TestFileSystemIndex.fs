@@ -462,6 +462,41 @@ module TestFileSystemIndex =
 
         Check.One (propertyConfig, Prop.forAll walkSeed property)
 
+    [<Test>]
+    let ``a name two identities hold gives a new description the identity of the earliest holder`` () : unit =
+        let file = InodeNumber 10L
+
+        let through (entry : string) =
+            Some (ReachedThrough.ofEntry (InodeNumber 1L) (name entry))
+
+        let first, table =
+            OpenFileTable.create (description (onto file)) (through "a") OpenFileTable.empty
+
+        let second, table =
+            OpenFileTable.create (description (onto file)) (through "a") table
+
+        let _, table = OpenFileTable.create (description (onto file)) (through "b") table
+
+        let table =
+            OpenFileTable.destroyIfUnreferenced first (OpenFileTable.release first table)
+            |> fst
+
+        // However unsoundly, as a rename onto another name of the same inode
+        // would: "b" is now held by the second description, of the first's
+        // identity, and by the third, of its own, which is later.
+        let table =
+            OpenFileTable.followChanges
+                [
+                    FsChange.EntryMoved (InodeNumber 1L, name "a", InodeNumber 1L, name "b", file, None)
+                ]
+                table
+
+        let created, table =
+            OpenFileTable.create (description (onto file)) (through "b") table
+
+        OpenFileTable.nameIdentity created table |> shouldEqual first
+        OpenFileTable.nameIdentity second table |> shouldEqual first
+
     /// `InotifyDelivery.deliver` as it was before the table indexed the
     /// watches: every instance's watches read from every description, once,
     /// and again after each end of the watches on an inode.

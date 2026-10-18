@@ -266,3 +266,70 @@ module TestFileSystemCommitCost =
         if ratio > 1.5 then
             failwith
                 $"%d{fewer} bytes a watch added beside 100 others, and %d{more} beside 400: %.2f{ratio} times as much"
+
+    /// A machine of `count` processes besides the first, each holding the
+    /// file "/shared" open through that name (`holding` "open"), or an inotify
+    /// instance watching it (`holding` "watch"); the first holds an instance
+    /// watching it too. With the first's caller and its instance.
+    let private sharing (holding : string) (count : int) : UnixSystem<int, unit> * Caller<int> * int =
+        let platform = SimulatedUnixPlatform.linuxX64
+        let booted = image platform |> UnixBootImage.boot (launch platform)
+        let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds booted)) 0
+        let system = touch leader "/shared" booted
+        let fd, system = inotify leader system
+        let system = watch leader fd "/shared" system
+
+        let system =
+            (system, [ 1..count ])
+            ||> List.fold (fun system _ ->
+                let pid, system = UnixSystem.launch (launch platform) system
+                let caller = Caller.make pid 0
+
+                match holding with
+                | "open" -> create caller "/shared" system |> snd
+                | "watch" ->
+                    let instance, system = inotify caller system
+                    watch caller instance "/shared" system
+                | holding -> failwith $"no holding %s{holding}"
+            )
+
+        let _, system = UnixWait.wake system
+        system, leader, fd
+
+    [<Test>]
+    let ``an open of a name four times as many descriptions hold allocates about as much`` () : unit =
+        let measure (count : int) : int64 =
+            let system, leader, _ = sharing "open" count
+
+            system
+            |> bytes (fun system -> create leader "/shared" system |> ignore<int * UnixSystem<int, unit>>)
+
+        let fewer = measure 100
+        let more = measure 400
+
+        // Lookups in maps four times as large give a ratio a little over 1,
+        // and visiting every description opened through the name about 4.
+        let ratio = float more / float fewer
+
+        if ratio > 1.5 then
+            failwith
+                $"%d{fewer} bytes an open beside 100 holders of the name, and %d{more} beside 400: %.2f{ratio} times as much"
+
+    [<Test>]
+    let ``a watch changed on an inode four times as many instances watch allocates about as much`` () : unit =
+        let measure (count : int) : int64 =
+            let system, leader, fd = sharing "watch" count
+
+            system
+            |> bytes (fun system -> watch leader fd "/shared" system |> ignore<UnixSystem<int, unit>>)
+
+        let fewer = measure 100
+        let more = measure 400
+
+        // Lookups in maps four times as large give a ratio a little over 1,
+        // and visiting every instance watching the inode about 4.
+        let ratio = float more / float fewer
+
+        if ratio > 1.5 then
+            failwith
+                $"%d{fewer} bytes a watch changed beside 100 others on its inode, and %d{more} beside 400: %.2f{ratio} times as much"
