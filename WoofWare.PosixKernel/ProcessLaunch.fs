@@ -85,8 +85,9 @@ module internal LaunchTableRefusal =
 [<RequireQualifiedAccess>]
 type internal CredentialsRefusal =
     /// More supplementary groups than the `limit` a process can hold on
-    /// `flavour` (`SimulatedUnixPlatform.supplementaryGroupLimit`): `setgroups(2)`
-    /// answers EINVAL above `NGROUPS_MAX`. Contradictory.
+    /// `flavour` (`SimulatedUnixPlatform.supplementaryGroupsHeld`):
+    /// `setgroups(2)` answers EINVAL above `NGROUPS_MAX`, and Darwin's list of
+    /// that many holds the effective group too. Contradictory.
     | TooManySupplementaryGroups of count : int * limit : int * flavour : SimulatedUnixFlavour
     /// On Darwin, real, effective and saved IDs that are not all the same.
     /// Which of them a Darwin kernel consults has not been measured, since that
@@ -101,7 +102,7 @@ module internal CredentialsRefusal =
     let describe (refusal : CredentialsRefusal) : string =
         match refusal with
         | CredentialsRefusal.TooManySupplementaryGroups (count, limit, flavour) ->
-            $"%d{count} supplementary groups is more than the %d{limit} a process can hold on %O{flavour} (setgroups(2) answers EINVAL above NGROUPS_MAX)."
+            $"%d{count} supplementary groups is more than the %d{limit} a process can hold on %O{flavour} (setgroups(2) answers EINVAL above NGROUPS_MAX, and on Darwin its list holds the effective group too)."
         | CredentialsRefusal.IdsDifferOnDarwin credentials ->
             $"the credentials %O{credentials} have real, effective and saved IDs that differ, which this library does not model on Darwin: which of them a Darwin kernel consults has not been measured. Give all three the same user ID and the same group ID."
 
@@ -374,7 +375,7 @@ module ProcessLaunch =
         let platform = launch.Platform
         let flavour = SimulatedUnixPlatform.flavour platform
         let count = List.length credentials.SupplementaryGroups
-        let limit = SimulatedUnixPlatform.supplementaryGroupLimit platform
+        let limit = SimulatedUnixPlatform.supplementaryGroupsHeld platform
 
         let idsAgree =
             credentials.RealUser = credentials.EffectiveUser
@@ -399,13 +400,13 @@ module ProcessLaunch =
     /// Set who the process is.
     ///
     /// Refuses more supplementary groups than the platform's
-    /// `SimulatedUnixPlatform.supplementaryGroupLimit`, which no process on it
+    /// `SimulatedUnixPlatform.supplementaryGroupsHeld`, which no process on it
     /// could hold. On Darwin it also refuses credentials whose real, effective
     /// and saved IDs are not all the same: which of them a Darwin kernel
     /// consults has not been measured, so this library does not model such a
     /// process there.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupLimit`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentException">More supplementary groups than the `limit` a process can hold on `flavour` (`SimulatedUnixPlatform.supplementaryGroupsHeld`): `setgroups(2)` answers EINVAL above `NGROUPS_MAX`, and Darwin's list of that many holds the effective group too. Contradictory.</exception>
     let withCredentials<'Thread when 'Thread : comparison>
         (credentials : Credentials)
         (launch : ProcessLaunch<'Thread>)
