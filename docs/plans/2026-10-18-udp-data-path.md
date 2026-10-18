@@ -101,7 +101,7 @@ Below, L is Linux and D is Darwin.
 
 - **Linux.** A `MSG_DONTWAIT` receive straight after `sendto` found the
   datagram in 1000 trials of 1000.
-- **Darwin.** It found it in 21, 1 and 4 of 1000 (three runs). The loopback
+- **Darwin.** It found it in between 1 and 121 of 1000, over five runs. The loopback
   interface delivers on another thread, as the TCP plan found for Darwin's send
   queue.
 - **Linux under a burst.** Linux is asynchronous too: delivery moves from the
@@ -319,14 +319,24 @@ with ICMP "port unreachable".
   and likewise whether L2's second send, made at once, met it.
 - **How often** (X). **Linux** raises an error for every such datagram: sends
   15 ms apart, sends every 40 ms, and 80 sockets sending at once each got one.
-  **Darwin** raises one for a socket's datagram only if 100 ms have passed
-  since the datagram that raised its last.
-  - The boundary is sharp: a second send 98 ms after the first raised nothing
-    in 5 trials of 5, and one 100 ms after raised an error in 5 of 5.
+  **Darwin** answers a datagram with the error only if 100 ms have passed
+  since one on the same four-tuple (local address and port, remote address and
+  port) was answered.
+  - The boundary is at 100 ms, to within Darwin's delivery jitter. A second
+    send 100 ms or more after the first always raised an error (5 of 5, in
+    every run). One 95 or 98 ms after raised one at most once in 5, and one
+    85 ms or less after, never.
   - A send the window suppresses does not extend it. Sends every 40 ms raised
     errors at 0, 120, 240 and 360 ms.
-  - It is per socket: two sockets connected to one unheld port, sending 5 ms
-    apart, both got errors, and so did 80 sockets at once.
+  - **It belongs to the four-tuple, not the socket** (X6):
+    - a socket that reconnects to another unheld port gets an error at once;
+    - one that reconnects back to the first within the window gets none;
+    - a new socket bound to the same local endpoint and connected to the same
+      peer gets none, though the first socket has closed;
+    - one bound elsewhere gets one (X5: two sockets at one port, both errors).
+  - **It counts a datagram whose error no one is told of** (X7). An unconnected
+    `sendto` an unheld port, which reports nothing, keeps a connect to that
+    port and a send 20 ms later from raising an error.
 
 How the pending error is reported and taken:
 
@@ -548,7 +558,8 @@ address over the wildcard. These are measured rules: 2.7, Q3 and Q5.
 Darwin delivers asynchronously on loopback, and so does Linux under a burst
 (2.1). **The model delivers before `sendto` returns.** That is one of each
 kernel's possible schedules: the common one on Linux, and one seen on Darwin
-(21 of 1000). So every answer the model gives is one the kernel can give.
+(up to 121 of 1000). So every answer the model gives is one the kernel can
+give.
 
 The ICMP error is likewise set before `sendto` returns, on both, which Darwin
 also showed (L1, first run). What the model never shows is the window in which
@@ -561,12 +572,17 @@ of that window.
   socket's datagram finds no receiver at all.
 - **No error** when a candidate exists but its queue is full (L13), and none
   for an unconnected sender (L4).
-- **Darwin's 100 ms window** (2.8, X) is modelled by the kernel clock: a
-  Darwin receiver records when its socket's datagram last raised the error,
-  and a datagram raises it again only once the clock has moved 100 ms past
-  that. The window is per socket, and a suppressed datagram does not move
-  it. The clock moves only when the client says, so the answer is a function
-  of the history.
+- **Darwin's 100 ms window** (2.8, X) is a machine-wide table, by the kernel
+  clock, of when each four-tuple last had a datagram answered with the error.
+  It is not in any receiver, since it outlives its socket and counts
+  unconnected senders.
+  - A datagram to no one is answered only once the clock has moved 100 ms
+    past its four-tuple's entry, and the answer moves the entry. A connected
+    sender then has the error pending.
+  - An entry older than 100 ms answers nothing, so it can be dropped, which
+    keeps the table to the four-tuples answered in the last 100 ms.
+  - The clock moves only when the client says, so the answer is a function of
+    the history.
 - Every reader of the slot takes it, as the 2.8 table says: one function per
   flavour, tested against the table. It decides which comes first, the error
   or a queued datagram, and whether `connect` takes the error.
@@ -691,16 +707,23 @@ Each stage is a PR, green on its own, with the README changed alongside the API
 it touches.
 
 - **U0. This plan and its probes.**
-- **U1. The receiver, and connected transfer through existing calls.**
-  - `DatagramReceiver` (3.1) with both flavours' accounting (3.2), as pure
-    functions, property-tested against a naive reference and against the
-    probe outputs embedded as resources.
-  - Then the calls: `write` and `send` to a peer; `read` and `recv` of a queued
-    datagram, or `EAGAIN` when non-blocking (a blocking one with nothing queued
-    stays refused); `MSG_TRUNC`; `FIONREAD`; the ICMP error and `SO_ERROR`
-    (3.5); Linux readiness and wakes (3.7); delivery by scan (3.3).
-  - `TestDatagramTransferAgainstHost` replays sections B to L against the host,
-    and a randomised sequence of sends and takes checks the capacity rules.
+- **U1. The receiver, and connected transfer through existing calls**, in
+  three PRs:
+  - **U1a.** `DatagramReceiver` (3.1) with both flavours' accounting (3.2), as
+    pure functions, property-tested against a naive reference and replayed
+    against the probe outputs embedded as resources. The machine map, made
+    with a UDP socket and released with it, and its invariant. No call's
+    answer changes.
+  - **U1b.** The calls: `write` and `send` to a peer; `read` and `recv` of a
+    queued datagram, or `EAGAIN` when non-blocking (a blocking one with nothing
+    queued stays refused); `MSG_TRUNC`; `FIONREAD`; Linux readiness and wakes
+    (3.7), including a blocking poll's refill; delivery by scan (3.3).
+    `TestDatagramTransferAgainstHost` replays sections B to K against the
+    host, and a randomised sequence of sends and takes checks the capacity
+    rules there.
+  - **U1c.** The ICMP error (3.5): the pending error, `SO_ERROR`, Darwin's
+    four-tuple window, and what `connect` does with a pending error. Section L
+    and X join the host test.
 - **U2. The port index** (3.3). No behaviour change.
 - **U3. `sendto` and `recvfrom`** (3.6): the argument and answer types, the
   destination ladder of 2.10 (sharing `connect`'s decoding and autobind), and

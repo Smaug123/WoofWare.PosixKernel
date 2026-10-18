@@ -1635,6 +1635,78 @@ static void section_x(void)
         printf("X2 two sockets, each connected to its own unheld port, sending 5 ms apart: SO_ERROR %d and %d\n", ec, ed);
         close(c); close(d);
     }
+    // X6: what the window is kept by. Each row: socket c, bound to port L,
+    // connected to unheld port P, sends and has its error taken; then the
+    // row's second send, 20 ms after the first.
+    for (int row = 0; row < 6; row++) {
+        static const char *names[] = {
+            "c sends again (control)",
+            "c reconnects to another unheld port Q and sends",
+            "c reconnects to Q, then back to P, and sends",
+            "c closes; a new socket bound to L connects to P and sends",
+            "a new socket bound elsewhere connects to P and sends",
+            "c disconnects (AF_UNSPEC), rebinds to L, reconnects to P and sends",
+        };
+        usleep(300000);
+        int c = bound();
+        uint16_t L = portof(c);
+        uint16_t P = unheld_port(), Q = unheld_port();
+        struct sockaddr_in toP = lo(P), toQ = lo(Q), atL = lo(L);
+        connect(c, (struct sockaddr *)&toP, sizeof toP);
+        double t0 = now_ms();
+        send(c, "x", 1, 0);
+        usleep(10000);
+        int first = sock_error(c);
+        int s2 = c;
+        switch (row) {
+        case 1: connect(c, (struct sockaddr *)&toQ, sizeof toQ); break;
+        case 2: connect(c, (struct sockaddr *)&toQ, sizeof toQ); connect(c, (struct sockaddr *)&toP, sizeof toP); break;
+        case 3: {
+            close(c);
+            s2 = udp();
+            int one = 1;
+            setsockopt(s2, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+            if (bind(s2, (struct sockaddr *)&atL, sizeof atL) != 0) printf("X6 (rebind to L failed: %s)\n", ename(errno));
+            connect(s2, (struct sockaddr *)&toP, sizeof toP);
+            break;
+        }
+        case 4: s2 = bound(); connect(s2, (struct sockaddr *)&toP, sizeof toP); break;
+        case 5: {
+            struct sockaddr un; memset(&un, 0, sizeof un); un.sa_family = AF_UNSPEC;
+            connect(c, &un, sizeof un);
+            bind(c, (struct sockaddr *)&atL, sizeof atL);
+            connect(c, (struct sockaddr *)&toP, sizeof toP);
+            break;
+        }
+        default: break;
+        }
+        while (now_ms() - t0 < 20) usleep(100);
+        ssize_t a2 = send(s2, "x", 1, 0); int e2 = errno;
+        usleep(30000);
+        int second = sock_error(s2);
+        printf("X6 %s: the first raised %d; the second send %s, then SO_ERROR %d; the socket is %s\n", names[row], first, res(a2, e2), second, nameof(s2));
+        close(s2);
+        if (row == 4) close(c);
+    }
+    // X7: an unconnected socket's sendto P, which reports no error, then a
+    // connect to P and a send 20 ms later.
+    {
+        usleep(300000);
+        int c = bound();
+        uint16_t P = unheld_port();
+        struct sockaddr_in toP = lo(P);
+        double t0 = now_ms();
+        sendto(c, "x", 1, 0, (struct sockaddr *)&toP, sizeof toP);
+        usleep(10000);
+        int first = sock_error(c);
+        connect(c, (struct sockaddr *)&toP, sizeof toP);
+        while (now_ms() - t0 < 20) usleep(100);
+        send(c, "x", 1, 0);
+        usleep(30000);
+        int second = sock_error(c);
+        printf("X7 an unconnected sendto an unheld port (SO_ERROR %d), then connect to it and send 20 ms later: SO_ERROR %d\n", first, second);
+        close(c);
+    }
     {
         usleep(300000);
         int count = 80, errors = 0;
