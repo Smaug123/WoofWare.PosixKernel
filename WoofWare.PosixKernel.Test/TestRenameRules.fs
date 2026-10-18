@@ -229,7 +229,6 @@ module TestRenameRules =
             sourceResolution
             destinationResolution
             vfs
-        |> Answered.unrefused
 
     let private verdict
         (platform : SimulatedUnixPlatform)

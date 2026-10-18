@@ -42,11 +42,13 @@ module TestClock =
 
     let private flavourGen : Gen<SimulatedUnixFlavour> = Gen.elements flavours
 
+    /// Whether advancing the clock with `f` succeeds: false if it refuses the
+    /// amount as out of range, and anything else it throws propagates.
     let private succeeds (f : unit -> 'a) : bool =
         try
             f () |> ignore<'a>
             true
-        with _ ->
+        with :? ArgumentOutOfRangeException as e when e.ParamName = "nanoseconds" ->
             false
 
     /// Exact nanoseconds a timestamp names, in a type that cannot overflow for any

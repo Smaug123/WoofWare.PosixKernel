@@ -382,11 +382,15 @@ module TestSignalState =
             | [ _ ; outer ] -> outer
             | frames -> failwith $"expected two frames, got %A{frames}"
 
-        Assert.Throws (fun () -> SignalState.sigreturn t0 outer.Id two |> ignore<SignalState<_, _>>)
-        |> ignore<exn>
+        Assert.Throws<System.ArgumentException> (fun () ->
+            SignalState.sigreturn t0 outer.Id two |> ignore<SignalState<_, _>>
+        )
+        |> ignore<System.ArgumentException>
 
-        Assert.Throws (fun () -> SignalState.sigreturn t1 outer.Id two |> ignore<SignalState<_, _>>)
-        |> ignore<exn>
+        Assert.Throws<System.ArgumentException> (fun () ->
+            SignalState.sigreturn t1 outer.Id two |> ignore<SignalState<_, _>>
+        )
+        |> ignore<System.ArgumentException>
 
     [<Test>]
     let ``every frame gets an id no other frame has had`` () : unit =
@@ -527,7 +531,10 @@ module TestSignalState =
                 )
                 |> ignore<exn>
 
-                Assert.Throws (fun () ->
+                // The handler's mask is made under the other numbering, or names
+                // a signal that numbering lacks too: either is the client's
+                // mistake.
+                Assert.Throws<System.ArgumentException> (fun () ->
                     SignalState.setDisposition
                         numbering
                         Signal.SIGHUP
@@ -538,7 +545,7 @@ module TestSignalState =
                         s
                     |> ignore<SignalState<_, _>>
                 )
-                |> ignore<exn>
+                |> ignore<System.ArgumentException>
 
                 Assert.Throws (fun () ->
                     SignalState.enqueue

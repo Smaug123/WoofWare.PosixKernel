@@ -56,11 +56,13 @@ module TestDeliveryLog =
                     Bytes = ImmutableArray.Create<byte> 0x41uy
                 }
 
-        Assert.Throws<exn> (fun () -> DeliveryLog.since 2 log |> ignore<Delivery list>)
-        |> ignore<exn>
+        for count in [ 2 ; -1 ] do
+            let exn =
+                Assert.Throws<System.ArgumentOutOfRangeException> (fun () ->
+                    DeliveryLog.since count log |> ignore<Delivery list>
+                )
 
-        Assert.Throws<exn> (fun () -> DeliveryLog.since -1 log |> ignore<Delivery list>)
-        |> ignore<exn>
+            exn.ParamName |> shouldEqual "count"
 
     [<Test>]
     let ``a log answers as the array appended to does, after every append`` () : unit =

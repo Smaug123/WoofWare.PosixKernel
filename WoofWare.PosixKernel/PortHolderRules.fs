@@ -247,6 +247,15 @@ module internal PortHolderRules =
             // of a connection end or of a connected datagram socket; Linux's
             // rule, an accepted socket carrying its listener's flag, needs no
             // case of its own for one.
+            //
+            // Measured on Darwin 27.0 as root (`docs/probes/darwin-root/bind-uids.c`):
+            // the rule holds between sockets of one uid, and whenever the
+            // binder is root. A binder that is not root meeting a holder made by
+            // another uid, at overlapping addresses that are not both the
+            // wildcard, is EADDRINUSE even with SO_REUSEADDR. This kernel keeps
+            // no owner for a socket, so it answers that case as if the holder
+            // were the binder's own, which is wrong (`TestBindUidsMeasured`
+            // pins the rows).
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 not (holder.ReuseAddress && candidateReuse)
