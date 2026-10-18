@@ -61,7 +61,8 @@ module TestSignalState =
         match generation with
         | SignalGeneration.ProcessContinues state -> state
         | SignalGeneration.ProcessTerminated _
-        | SignalGeneration.ProcessStopped _ -> failwith $"expected the process to carry on, got %A{generation}"
+        | SignalGeneration.ProcessStopped _
+        | SignalGeneration.QueueFull -> failwith $"expected the process to carry on, got %A{generation}"
 
     let private t0 : TestThread = TestThread 0
     let private t1 : TestThread = TestThread 1
@@ -147,7 +148,7 @@ module TestSignalState =
         (s : SignalState<TestThread, TestHandler>)
         : SignalGeneration<TestThread, TestHandler>
         =
-        match SignalState.generate numbering coreDumps t0 true (Set.ofList threads) entry s with
+        match SignalState.generate numbering coreDumps QueueAccount.Unbounded t0 true (Set.ofList threads) entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
@@ -1199,11 +1200,27 @@ module TestSignalState =
                 Target = ValueNone
             }
 
-        SignalState.generate numbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ; t2 ]) entry s
+        SignalState.generate
+            numbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ; t2 ])
+            entry
+            s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGINT))
 
         // Once every thread blocks it, it is simply pending.
-        SignalState.generate numbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry s
+        SignalState.generate
+            numbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ])
+            entry
+            s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
@@ -1232,7 +1249,7 @@ module TestSignalState =
                 (SignalMask.ofSignals linux (Set.singleton Signal.SIGCONT))
                 t0
 
-        SignalState.generate linux CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry s
+        SignalState.generate linux CoreDumps.Suppressed QueueAccount.Unbounded t0 true (Set.ofList [ t0 ; t1 ]) entry s
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGCONT))
 
         SignalState.onReturnToUser
@@ -1245,7 +1262,7 @@ module TestSignalState =
         |> shouldEqual (Error (SignalReceiverRefusal.LeaderBlocks Signal.SIGCONT))
 
         // With every thread blocking it, it is simply pending.
-        SignalState.generate linux CoreDumps.Suppressed t0 true (Set.singleton t0) entry s
+        SignalState.generate linux CoreDumps.Suppressed QueueAccount.Unbounded t0 true (Set.singleton t0) entry s
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [ entry ])
@@ -1260,7 +1277,15 @@ module TestSignalState =
                 (SignalMask.ofSignals darwinNumbering (Set.singleton Signal.SIGCONT))
                 t0
 
-        SignalState.generate darwinNumbering CoreDumps.Suppressed t0 true (Set.ofList [ t0 ; t1 ]) entry darwin
+        SignalState.generate
+            darwinNumbering
+            CoreDumps.Suppressed
+            QueueAccount.Unbounded
+            t0
+            true
+            (Set.ofList [ t0 ; t1 ])
+            entry
+            darwin
         |> Result.map continuesWith
         |> Result.map SignalState.pending
         |> shouldEqual (Ok [])
@@ -1350,6 +1375,7 @@ module TestSignalState =
             SignalState.generate
                 numbering
                 CoreDumps.Suppressed
+                QueueAccount.Unbounded
                 t2
                 true
                 threads
@@ -2240,7 +2266,15 @@ module TestSignalState =
         | Op.Enqueue e -> SignalState.enqueue numbering e s, referenceEnqueue numbering e r, threads
         | Op.Generate (coreDumps, leaderRunning, e) ->
             let actual =
-                SignalState.generate numbering coreDumps referenceLeader leaderRunning threads e s
+                SignalState.generate
+                    numbering
+                    coreDumps
+                    QueueAccount.Unbounded
+                    referenceLeader
+                    leaderRunning
+                    threads
+                    e
+                    s
 
             let expected = referenceGenerate numbering coreDumps leaderRunning threads e r
 

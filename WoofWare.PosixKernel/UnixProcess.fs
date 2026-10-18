@@ -123,6 +123,11 @@ type internal UnixProcessState<'Thread, 'Handler when 'Thread : comparison and '
             /// models no `setrlimit(2)`; a client sets it once with
             /// `ProcessLaunch.withCoreDumps`.
             CoreDumps : CoreDumps
+            /// The process's `RLIMIT_SIGPENDING` under Linux, and `ValueNone`
+            /// under Darwin, which has no such limit. Fixed for the whole run:
+            /// this library models no `setrlimit(2)`; a client sets it once with
+            /// `ProcessLaunch.withPendingSignalLimit`.
+            PendingSignalLimit : uint64 voption
         }
 
 [<RequireQualifiedAccess>]

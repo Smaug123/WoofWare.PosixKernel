@@ -1281,13 +1281,16 @@ module UnixReadWrite =
                 Target = receiver
             }
 
-        match ProcessSignal.generate entry system with
+        match ProcessSignal.generate SignalSender.Kernel entry system with
         | Error refusal -> Error (WriteRefusal.SignalReceiver (target, refusal))
-        | Ok (Error refusal) -> Error (WriteRefusal.ProcessEnd (target, refusal))
-        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessRuns, system))) ->
+        | Ok (SignalSent.EndRefused refusal) -> Error (WriteRefusal.ProcessEnd (target, refusal))
+        | Ok SignalSent.QueueFull ->
+            failwith
+                "UnixReadWrite: SIGPIPE found the queue full, which only a real-time signal sent by tgkill can (this is a bug in this library)."
+        | Ok (SignalSent.Fate (ViewFate.Continues (KillOutcome.ProcessRuns, system))) ->
             Ok (WriteStep.ReturnsRaising (answer, entry, system))
-        | Ok (Ok (ViewFate.ProcessEnded (ended, dead))) -> Ok (WriteStep.ProcessEnded (ended, dead))
-        | Ok (Ok (ViewFate.Continues (KillOutcome.ProcessStopped signal, _))) ->
+        | Ok (SignalSent.Fate (ViewFate.ProcessEnded (ended, dead))) -> Ok (WriteStep.ProcessEnded (ended, dead))
+        | Ok (SignalSent.Fate (ViewFate.Continues (KillOutcome.ProcessStopped signal, _))) ->
             failwith
                 $"UnixReadWrite: generating %O{signal} for a write into %s{BrokenWriteTarget.describe target} stopped the process, but SIGPIPE's default is to terminate on every flavour (this is a bug in this library)."
 

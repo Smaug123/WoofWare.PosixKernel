@@ -126,6 +126,7 @@ module TestBootImage =
                     "withCredentials"
                     "withCurrentDirectory"
                     "withEnvironment"
+                    "withPendingSignalLimit"
                     "withProcessPath"
                     "withUmask"
                 ]

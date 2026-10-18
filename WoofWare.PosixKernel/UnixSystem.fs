@@ -4027,6 +4027,15 @@ module UnixSystem =
     /// `ProcessLaunch.withCoreDumps`.
     let defaultCoreDumps : CoreDumps = LaunchDefaults.coreDumps
 
+    /// The `RLIMIT_SIGPENDING` a freshly-minted Linux process starts with:
+    /// 4505. Linux computes the default at boot from the machine's memory (half
+    /// its `threads-max`, so about 4000 per GiB); 4505 is what Linux 6.18.5
+    /// computed for the 1 GiB machine the library's signal probes ran on
+    /// (`docs/probes/rt-queue-limit`). A client modelling another machine
+    /// chooses its value with `ProcessLaunch.withPendingSignalLimit`. A Darwin
+    /// process has no such limit.
+    let defaultPendingSignalLimit : uint64 = LaunchDefaults.pendingSignalLimit
+
     /// Process ID a freshly-minted simulated process reports: 4242.
     ///
     /// Not 1, which is the ID of a PID namespace's init process. A kernel

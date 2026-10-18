@@ -178,6 +178,27 @@ module internal LaunchRefusal =
         | LaunchRefusal.CurrentDirectory (_, inner) -> CurrentDirectoryFault.kind inner
         | LaunchRefusal.LeaderCpuBeyondMachine _ -> RefusalKind.Contradictory "launch"
 
+/// Why `ProcessLaunch.withPendingSignalLimit` refuses a limit.
+[<RequireQualifiedAccess>]
+type internal PendingSignalLimitRefusal =
+    /// The launch is for `flavour`, which has no `RLIMIT_SIGPENDING`: Darwin
+    /// defines no such resource limit and queues no real-time signal.
+    | NoSuchLimit of flavour : SimulatedUnixFlavour
+
+[<RequireQualifiedAccess>]
+module internal PendingSignalLimitRefusal =
+    /// What this library knows about why it refused the limit, for a client
+    /// composing a diagnostic that names its own knob.
+    let describe (refusal : PendingSignalLimitRefusal) : string =
+        match refusal with
+        | PendingSignalLimitRefusal.NoSuchLimit flavour ->
+            $"%O{flavour} has no RLIMIT_SIGPENDING: it defines no such resource limit and queues no real-time signal."
+
+    /// Which exception a public entry point raises this refusal as.
+    let kind (refusal : PendingSignalLimitRefusal) : RefusalKind =
+        match refusal with
+        | PendingSignalLimitRefusal.NoSuchLimit _ -> RefusalKind.NotOnPlatform
+
 /// What a process starts with unless its launch says otherwise: the values of
 /// `UnixSystem`'s defaults of the same names, whose docstrings say why each is
 /// what it is.
@@ -212,6 +233,16 @@ module internal LaunchDefaults =
     /// `UnixSystem.defaultCoreDumps`.
     let coreDumps : CoreDumps = CoreDumps.Suppressed
 
+    /// `UnixSystem.defaultPendingSignalLimit`.
+    let pendingSignalLimit : uint64 = 4505UL
+
+    /// The `RLIMIT_SIGPENDING` a process of `flavour` starts with: Linux's
+    /// default, and none under Darwin, which has no such limit.
+    let pendingSignalLimitOf (flavour : SimulatedUnixFlavour) : uint64 voption =
+        match flavour with
+        | SimulatedUnixFlavour.Linux -> ValueSome pendingSignalLimit
+        | SimulatedUnixFlavour.Darwin -> ValueNone
+
 /// How a process starts: everything about a process that is fixed before its
 /// first instruction, as its launcher sets it up before `exec`. Both the first
 /// process on a machine (`UnixBootImage.boot`) and every later one
@@ -239,6 +270,9 @@ type ProcessLaunch<'Thread when 'Thread : comparison> =
             Environment : UnixByteString list
             ProcessPath : AbsoluteUnixPath option
             CoreDumps : CoreDumps
+            /// Under Linux the process's `RLIMIT_SIGPENDING`; `ValueNone` under
+            /// Darwin, which has no such limit.
+            PendingSignalLimit : uint64 voption
             /// The directory the process starts in, resolved against the
             /// machine's filesystem when the process is launched.
             CurrentDirectory : AbsoluteUnixPath
@@ -285,6 +319,7 @@ module ProcessLaunch =
                     Environment = []
                     ProcessPath = LaunchDefaults.processPath
                     CoreDumps = LaunchDefaults.coreDumps
+                    PendingSignalLimit = LaunchDefaults.pendingSignalLimitOf flavour
                     CurrentDirectory = LaunchDefaults.currentDirectory
                 }
 
@@ -460,6 +495,45 @@ module ProcessLaunch =
             CoreDumps = coreDumps
         }
 
+    /// `withPendingSignalLimit`, with a refusal answered as the `Error` rather than raised.
+    let internal tryWithPendingSignalLimit<'Thread when 'Thread : comparison>
+        (limit : uint64)
+        (launch : ProcessLaunch<'Thread>)
+        : Result<ProcessLaunch<'Thread>, PendingSignalLimitRefusal>
+        =
+        match SimulatedUnixPlatform.flavour launch.Platform with
+        | SimulatedUnixFlavour.Darwin -> Error (PendingSignalLimitRefusal.NoSuchLimit SimulatedUnixFlavour.Darwin)
+        | SimulatedUnixFlavour.Linux ->
+            Ok
+                { launch with
+                    PendingSignalLimit = ValueSome limit
+                }
+
+    /// Set the process's `RLIMIT_SIGPENDING`: how many signals may be queued for
+    /// its real user, in all that user's processes on the machine, before a
+    /// signal sent to it gets no queue entry. Linux only, and fixed for the life
+    /// of the process: this library models no `setrlimit(2)`. The default is
+    /// `UnixSystem.defaultPendingSignalLimit`.
+    ///
+    /// Past the limit, a real-time signal sent by `kill` is lost, or, if no
+    /// instance of it is pending in its set, pending without the information
+    /// it was sent with; one sent by `pthread_kill` fails with `EAGAIN`; and a
+    /// standard signal is pending as before. Every limit is admitted, the
+    /// largest (`RLIM_INFINITY`) included.
+    ///
+    /// Throws `PlatformNotSupportedException` for a Darwin launch: Darwin has
+    /// no `RLIMIT_SIGPENDING`.
+    let withPendingSignalLimit<'Thread when 'Thread : comparison>
+        (limit : uint64)
+        (launch : ProcessLaunch<'Thread>)
+        : ProcessLaunch<'Thread>
+        =
+        tryWithPendingSignalLimit limit launch
+        |> Refusal.orRaise
+            "ProcessLaunch.withPendingSignalLimit"
+            PendingSignalLimitRefusal.kind
+            PendingSignalLimitRefusal.describe
+
     /// Set the directory the process starts in.
     ///
     /// Resolved when the process is launched, against the filesystem of the
@@ -605,6 +679,7 @@ module ProcessLaunch =
                 ProcessId = pid
                 Signals = SignalState.initial (SimulatedUnixPlatform.signalNumbering platform) Set.empty
                 CoreDumps = launch.CoreDumps
+                PendingSignalLimit = launch.PendingSignalLimit
             }
 
         Ok (machine, proc, UnixThreadTable.add launch.Leader launch.LeaderCpu leaderThreadId Map.empty)

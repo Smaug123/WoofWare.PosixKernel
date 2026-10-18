@@ -34,6 +34,7 @@ module TestUnixProcessState =
             ProcessId = ProcessId.parseOrFail context 4242
             Signals = SignalState.initial SignalNumbering.Linux Set.empty
             CoreDumps = CoreDumps.Suppressed
+            PendingSignalLimit = ValueSome UnixSystem.defaultPendingSignalLimit
         }
 
     /// A freshly made process, for the setters, which configure one before it
