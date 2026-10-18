@@ -472,13 +472,13 @@ module internal Lone =
 
         let openPathParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
             (directory : AtDirectory)
-            (flags : OpenFlags)
             (path : UnixPath)
+            (flags : OpenFlags)
             (mode : int)
             (system : UnixSystem<'Thread, 'Handler>)
             : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
             =
-            WoofWare.PosixKernel.UnixNamespace.openPathParsed directory flags path mode (view system)
+            WoofWare.PosixKernel.UnixNamespace.openPathParsed directory path flags mode (view system)
             |> unviewed
 
         let readlinkParsed<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

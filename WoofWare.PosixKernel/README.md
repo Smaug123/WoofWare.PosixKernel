@@ -200,7 +200,7 @@ let path (text : string) : PathArgumentBytes =
 // O_RDONLY is 0 on every flavour.
 let leader = Caller.make (Seq.exactlyOne (UnixSystem.processIds system)) 0
 
-match UnixNamespace.openPath leader 0 (path "/etc/hostname") 0 system with
+match UnixNamespace.openPath leader (path "/etc/hostname") 0 0 system with
 | SyscallOutcome.Answered (SyscallAnswer.Completed fd), system ->
     match UnixReadWrite.read leader (int fd) UserBuffer.Mapped 64UL system with
     | ReadOutcome.Answered (ReadAnswer.Completed bytes), _ ->
@@ -404,7 +404,7 @@ Darwin's C library implements it with `setattrlist(2)` instead, which answers a 
 
 | Call | Function | Answers |
 | --- | --- | --- |
-| `open(2)` | `UnixNamespace.openPath (caller : Caller) (flags : int) (path : PathArgumentBytes) (mode : int)` | `SyscallOutcome * UnixSystem` |
+| `open(2)` | `UnixNamespace.openPath (caller : Caller) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
 | `openat(2)` | `UnixNamespace.openat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (flags : int) (mode : int)` | `SyscallOutcome * UnixSystem` |
 | `readlink(2)` | `UnixNamespace.readlink (caller : Caller) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |
 | `readlinkat(2)` | `UnixNamespace.readlinkat (caller : Caller) (dirfd : int) (path : PathArgumentBytes) (destination : UserBuffer) (capacity : int)` | `ReadLinkAnswer` |

@@ -1571,7 +1571,7 @@ module UnixSystem =
             |> Result.map SteppedCall.FAccessAt
             |> Result.mapError SyscallRefusal.FAccessAt
         | Syscall.Open (path, flags, mode) ->
-            UnixNamespace.tryOpenPath caller flags path mode system
+            UnixNamespace.tryOpenPath caller path flags mode system
             |> Result.map SteppedCall.Open
             |> Result.mapError SyscallRefusal.Open
         | Syscall.OpenAt (dirfd, path, flags, mode) ->

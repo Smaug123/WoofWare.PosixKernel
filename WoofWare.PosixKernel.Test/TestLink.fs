@@ -673,7 +673,7 @@ module TestLink =
                 Directory = false
             }
 
-        match Answered.openPath flags (UnixPath.parseOrFail context p) 0 system with
+        match Answered.openPath (UnixPath.parseOrFail context p) flags 0 system with
         | SyscallAnswer.Completed fd, system -> int fd, system
         | other -> failwith $"%s{context}: open(%s{p}) did not open: %O{other}"
 

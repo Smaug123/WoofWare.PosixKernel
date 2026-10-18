@@ -1036,14 +1036,14 @@ module TestPermissionStanding =
                         let triple = (bits >>> (6 - 3 * standing)) &&& 7
                         triple &&& request = request
 
-                let read, _ = Answered.openPath readOnly (path "/f") 0 system |> opened
+                let read, _ = Answered.openPath (path "/f") readOnly 0 system |> opened
 
                 let write, _ =
                     Answered.openPath
+                        (path "/f")
                         { readOnly with
                             Access = FileAccessMode.WriteOnly
                         }
-                        (path "/f")
                         0
                         system
                     |> opened
@@ -1062,15 +1062,15 @@ module TestPermissionStanding =
 
                 let listed, _ =
                     Answered.openPath
+                        (path "/d")
                         { readOnly with
                             Directory = true
                         }
-                        (path "/d")
                         0
                         system
                     |> opened
 
-                let created, _ = Answered.openPath creating (path "/d/new") 0o600 system |> opened
+                let created, _ = Answered.openPath (path "/d/new") creating 0o600 system |> opened
 
                 let expected = predicted 4, predicted 2, predicted 1, predicted 4, predicted 3
                 let actual = read, write, searched, listed, created
@@ -1115,10 +1115,10 @@ module TestPermissionStanding =
 
         let listed (p : string) : bool =
             Answered.openPath
+                (path p)
                 { readOnly with
                     Directory = true
                 }
-                (path p)
                 0
                 system
             |> opened
@@ -1130,10 +1130,10 @@ module TestPermissionStanding =
 
         let openFor (access : FileAccessMode) (p : string) : bool =
             Answered.openPath
+                (path p)
                 { readOnly with
                     Access = access
                 }
-                (path p)
                 0
                 system
             |> opened
@@ -1174,7 +1174,7 @@ module TestPermissionStanding =
                     Access = FileAccessMode.ReadWrite
                 }
 
-            match Answered.openPath readWrite (path p) 0 system with
+            match Answered.openPath (path p) readWrite 0 system with
             | SyscallAnswer.Completed fd, system -> change (int fd) system |> modeOf p
             | other -> failwith $"open %s{p}: %A{other}"
 
@@ -1199,7 +1199,7 @@ module TestPermissionStanding =
             }
 
         for p, expected in [ "/outside", 0o0666 ; "/inside", 0o2666 ] do
-            match Answered.openPath truncating (path p) 0 system with
+            match Answered.openPath (path p) truncating 0 system with
             | SyscallAnswer.Completed _, system -> modeOf p system |> shouldEqual expected
             | other -> failwith $"open O_TRUNC %s{p}: %A{other}"
 
@@ -1222,7 +1222,7 @@ module TestPermissionStanding =
             }
 
         let fd, opened =
-            match Answered.openPath readWrite (path "/f") 0 system with
+            match Answered.openPath (path "/f") readWrite 0 system with
             | SyscallAnswer.Completed fd, opened -> int fd, opened
             | other -> failwith $"open: %A{other}"
 
@@ -1246,7 +1246,7 @@ module TestPermissionStanding =
                 Truncate = true
             }
 
-        match Answered.openPath truncating (path "/f") 0 system with
+        match Answered.openPath (path "/f") truncating 0 system with
         | SyscallAnswer.Completed _, truncated -> modeOf "/f" truncated |> shouldEqual 0o6666
         | other -> failwith $"open(O_TRUNC): %A{other}"
 
@@ -1309,7 +1309,7 @@ module TestPermissionStanding =
                 // From the same system each time, which leaves `/p` holding one
                 // entry at most.
                 for requested in allModes do
-                    match Answered.openPath creating (path "/p/c") requested system with
+                    match Answered.openPath (path "/p/c") creating requested system with
                     | SyscallAnswer.Completed _, next ->
                         let expected = linuxCreated (parentBits &&& 0o2000 <> 0) standing requested umask
                         let actual = modeOf "/p/c" next
@@ -1376,15 +1376,15 @@ module TestPermissionStanding =
                 "opendir /d",
                 fun system ->
                     Answered.openPath
+                        (path "/d")
                         { readOnly with
                             Directory = true
                         }
-                        (path "/d")
                         0
                         system
                     |> succeeds
                 "open(O_CREAT) /d/new",
-                fun system -> Answered.openPath creating (path "/d/new") 0o600 system |> succeeds
+                fun system -> Answered.openPath (path "/d/new") creating 0o600 system |> succeeds
                 "mkdir /d/new",
                 fun system ->
                     Answered.mkdir (Callers.leader system) (PathArg.ofPath (path "/d/new")) 0o755 system
@@ -1433,7 +1433,7 @@ module TestPermissionStanding =
             | Error refusal -> Some $"%A{refusal}"
 
         let throughDescriptor (p : string) : string option list =
-            match OpenFlagWords.openPath readWrite (PathArg.ofPath (path p)) 0 system with
+            match OpenFlagWords.openPath (PathArg.ofPath (path p)) readWrite 0 system with
             | Ok (SyscallAnswer.Completed fd, opened) ->
                 let fd = int fd
 
@@ -1448,7 +1448,7 @@ module TestPermissionStanding =
 
         [
             for p in [ "/d/f" ; "/d/g" ] do
-                yield OpenFlagWords.openPath truncating (PathArg.ofPath (path p)) 0 system |> refused
+                yield OpenFlagWords.openPath (PathArg.ofPath (path p)) truncating 0 system |> refused
                 yield! throughDescriptor p
             for p in [ "/d/f" ; "/d/e" ] do
                 yield

@@ -133,20 +133,20 @@ module internal OpenFlagWords =
     /// for `flags` on the system's own platform.
     let openPathIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
-        (flags : OpenFlags)
         (path : PathArgumentBytes)
+        (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        OpenOutcomes.openPathIn pid (encode system.Machine.UnixPlatform flags) path mode system
+        OpenOutcomes.openPathIn pid path (encode system.Machine.UnixPlatform flags) mode system
 
     /// `openPathIn` the only process on the machine.
     let openPath<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (flags : OpenFlags)
         (path : PathArgumentBytes)
+        (flags : OpenFlags)
         (mode : int)
         (system : UnixSystem<'Thread, 'Handler>)
         : Result<SyscallAnswer * UnixSystem<'Thread, 'Handler>, OpenRefusal>
         =
-        openPathIn (Lone.pid system) flags path mode system
+        openPathIn (Lone.pid system) path flags mode system
