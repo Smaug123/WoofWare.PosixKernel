@@ -263,6 +263,8 @@
     <Compile Include="DualModeProbe.fs" />
     <Compile Include="TestDualModeMeasured.fs" />
     <Compile Include="TestPrivilegedPortMeasured.fs" />
+    <Compile Include="TestPortRangeSysctlsMeasured.fs" />
+    <Compile Include="TestBindUidsMeasured.fs" />
     <Compile Include="TestDualMode.fs" />
     <Compile Include="TestConnectLadderMeasured.fs" />
     <Compile Include="TestBindLadderMeasured.fs" />
@@ -493,6 +495,11 @@
          `TestPrivilegedPortMeasured` replays every row. -->
     <EmbeddedResource Include="..\docs\probes\privileged-port\measured-linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.linux.txt" />
     <EmbeddedResource Include="..\docs\probes\privileged-port\measured-darwin-27.0.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.darwin.txt" />
+    <EmbeddedResource Include="..\docs\probes\privileged-port\measured-darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.privileged-port.darwin-root.txt" />
+    <!-- docs/probes/darwin-root/port-range.c, as root. `TestPortRangeSysctlsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\port-range.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.port-range.txt" />
+    <!-- docs/probes/darwin-root/bind-uids.c, as root. `TestBindUidsMeasured` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\darwin-root\bind-uids.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.bind-uids.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
          name another way, measured by docs/probes/name-equivalence/name-equivalence.c
          on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.
