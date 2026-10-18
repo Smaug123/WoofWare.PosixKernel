@@ -141,9 +141,6 @@ type internal ReadLinkRefusal =
     | Buffer of BufferRefusal
     /// This kernel will not resolve the path.
     | Path of PathRefusal
-    /// Whether the caller may read the symbolic link at `inode` has not been
-    /// measured for this caller.
-    | UnmeasuredLinkRead of inode : InodeNumber * refusal : LinkReadRefusal
 
 [<RequireQualifiedAccess>]
 module internal ReadLinkRefusal =
@@ -153,15 +150,12 @@ module internal ReadLinkRefusal =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.describe refusal
         | ReadLinkRefusal.Path refusal -> PathRefusal.describe refusal
-        | ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal) ->
-            $"reading inode %O{inode}: %s{LinkReadRefusal.describe refusal}"
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : ReadLinkRefusal) : RefusalKind =
         match refusal with
         | ReadLinkRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
-        | ReadLinkRefusal.UnmeasuredLinkRead (_, inner) -> LinkReadRefusal.kind inner
 
 /// What `readlink(2)` puts in the caller's buffer and what it returns.
 [<RequireQualifiedAccess>]
@@ -307,9 +301,6 @@ type PausedRename<'Thread, 'Handler when 'Thread : comparison and 'Handler : equ
 /// Why this kernel will not answer a `rename(2)` or `renameat(2)`.
 [<RequireQualifiedAccess>]
 type internal RenameRefusal =
-    /// A sticky directory whose rule Darwin has not been measured to apply to
-    /// this caller.
-    | Sticky of refusal : StickyRefusal
     /// This kernel will not resolve one of the paths.
     | Path of refusal : PathRefusal
     /// One of the paths names `mountRoot`, the root of a mounted filesystem,
@@ -325,7 +316,6 @@ module internal RenameRefusal =
     /// entry point asked, and with which paths.
     let describe (refusal : RenameRefusal) : string =
         match refusal with
-        | RenameRefusal.Sticky refusal -> StickyRefusal.describe refusal
         | RenameRefusal.Path refusal -> PathRefusal.describe refusal
         | RenameRefusal.MountPoint mountRoot ->
             $"one of the paths names inode %O{mountRoot}, the root of a mounted filesystem. Measured on Linux, renaming it onto itself is 0, and to a free name in its own directory is EACCES without write on that directory and EBUSY with it. Any other rename involving it can depend on the covered directory's own owner and mode, which this kernel does not hold, and has not been measured."
@@ -335,7 +325,6 @@ module internal RenameRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : RenameRefusal) : RefusalKind =
         match refusal with
-        | RenameRefusal.Sticky inner -> StickyRefusal.kind inner
         | RenameRefusal.Path inner -> PathRefusal.kind inner
         | RenameRefusal.MountPoint _ -> RefusalKind.Unmodelled
         | RenameRefusal.DeviceFileSystem _ -> RefusalKind.Unmodelled
@@ -538,9 +527,6 @@ type internal OpenRefusal =
     /// A descriptor the call would make lies at or above the bound this kernel
     /// assumes the process's `RLIMIT_NOFILE` reaches.
     | DescriptorLimit of DescriptorLimitRefusal
-    /// An `O_TRUNC` open of the file at `inode`, whose effect on the file's
-    /// set-ID bits has not been measured for this caller. Nothing was changed.
-    | UnmeasuredSetIdChange of inode : InodeNumber * refusal : SetIdChangeRefusal
     /// The flag word `flags` holds bits the simulated flavour defines and this
     /// kernel does not model, named in `unmodelled` in ascending order of bit.
     /// Nothing was read or changed.
@@ -565,8 +551,6 @@ module internal OpenRefusal =
     let describe (refusal : OpenRefusal) : string =
         match refusal with
         | OpenRefusal.DescriptorLimit refusal -> DescriptorLimitRefusal.describe refusal
-        | OpenRefusal.UnmeasuredSetIdChange (inode, refusal) ->
-            $"opening inode %O{inode} with O_TRUNC: %s{SetIdChangeRefusal.describe refusal}"
         | OpenRefusal.UnmodelledFlags (flags, unmodelled) ->
             let names = unmodelled |> List.map UnmodelledOpenFlag.name |> String.concat ", "
 
@@ -581,7 +565,6 @@ module internal OpenRefusal =
     let kind (refusal : OpenRefusal) : RefusalKind =
         match refusal with
         | OpenRefusal.DescriptorLimit _ -> RefusalKind.Unmodelled
-        | OpenRefusal.UnmeasuredSetIdChange (_, inner) -> SetIdChangeRefusal.kind inner
         | OpenRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
         | OpenRefusal.IoctlOnlyAccessMode _ -> RefusalKind.Unmodelled
         | OpenRefusal.UnmodelledDirectoryOpen _ -> RefusalKind.Unmodelled
@@ -1133,8 +1116,6 @@ module UnixNamespace =
             | InodeContent.RegularFile _ when flags.Truncate ->
                 match UnixDescriptor.truncateAt through inode 0L system with
                 | Ok system -> Ok (true, system)
-                | Error (TruncationRefusal.UnmeasuredSetIdChange (inode, refusal)) ->
-                    Error (OpenRefusal.UnmeasuredSetIdChange (inode, refusal))
                 // Truncating to zero cannot exceed a length limit.
                 | Error (TruncationRefusal.ExceedsRepresentableLength _ as refusal) ->
                     failwith
@@ -1422,12 +1403,11 @@ module UnixNamespace =
         // trailing separator ("ld/", "l/") follows the link whatever its mode.
         let standing = Standing.toward system.Process.Credentials record.Owner
 
-        match
+        if
             PermissionBits.linkReadDenied (SimulatedUnixPlatform.linkReadRule system.Machine.UnixPlatform) standing bits
-        with
-        | Error refusal -> Error (ReadLinkRefusal.UnmeasuredLinkRead (inode, refusal))
-        | Ok true -> Ok (ReadLinkAnswer.Failed UnixError.EACCES)
-        | Ok false ->
+        then
+            Ok (ReadLinkAnswer.Failed UnixError.EACCES)
+        else
 
         match verdict with
         | ReadLinkCapacityVerdict.Refuse _ ->
@@ -2056,7 +2036,9 @@ module UnixNamespace =
     /// reads it: Linux answers a directory
     /// EPERM and a field naming no type it makes EINVAL, and Darwin answers
     /// any type but a FIFO EPERM to a caller without privilege, each before
-    /// the path is copied in. Then `path` is copied in (EFAULT, ENAMETOOLONG),
+    /// the path is copied in. Darwin's privileged caller is EINVAL for any
+    /// type but a FIFO or a device only once the path has been found free.
+    /// Then `path` is copied in (EFAULT, ENAMETOOLONG),
     /// a relative path starts where `dirfd` says, as every `*at` call's does,
     /// and the walk never follows a final
     /// symbolic link. A regular file (`S_IFREG`, or a type field of 0) is
@@ -2070,8 +2052,8 @@ module UnixNamespace =
     /// Refuses, once every check that would fail the call has passed, to
     /// make a FIFO, a socket or a device node, none of which this library
     /// models, but answers Linux's EPERM to a caller without privilege who
-    /// asks for a device. Refuses Darwin's FIFO, which is `mkfifo(2)`, and
-    /// Darwin's privileged caller before the path is read.
+    /// asks for a device. Refuses an unprivileged Darwin FIFO, which is
+    /// `mkfifo(2)`, before the path is read.
     let mknodat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (dirfd : int)
@@ -2121,13 +2103,12 @@ module UnixNamespace =
                 resolution
                 system.Machine.FileSystem
         with
-        | Error refusal -> Error (RemovalRefusal.Sticky refusal)
-        | Ok (UnlinkVerdict.Refuse error) -> Ok (SyscallAnswer.Failed error, system)
-        | Ok (UnlinkVerdict.Remove (directory, name)) when
+        | UnlinkVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
+        | UnlinkVerdict.Remove (directory, name) when
             (VirtualFileSystem.mountedRootOf directory system.Machine.FileSystem).IsSome
             ->
             Error (RemovalRefusal.DeviceFileSystem (directory, name))
-        | Ok (UnlinkVerdict.Remove (directory, name)) ->
+        | UnlinkVerdict.Remove (directory, name) ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -2174,9 +2155,8 @@ module UnixNamespace =
     /// `unlink(2)`: remove the name `path`, and the inode it named if nothing
     /// else holds it. It is `unlinkat` from `AT_FDCWD` with no flags.
     ///
-    /// Every outcome is a success or an errno, except where Darwin's sticky
-    /// rule has not been measured for this caller, where this kernel will not
-    /// resolve the path, and where the name is on the device filesystem. A
+    /// Every outcome is a success or an errno, except where this kernel will
+    /// not resolve the path, and where the name is on the device filesystem. A
     /// refusal changes nothing.
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
@@ -2229,13 +2209,12 @@ module UnixNamespace =
                 resolution
                 system.Machine.FileSystem
         with
-        | Error refusal -> Error (RemovalRefusal.Sticky refusal)
-        | Ok (RmDirVerdict.Refuse error) -> Ok (SyscallAnswer.Failed error, system)
-        | Ok (RmDirVerdict.Remove (directory, name)) when
+        | RmDirVerdict.Refuse error -> Ok (SyscallAnswer.Failed error, system)
+        | RmDirVerdict.Remove (directory, name) when
             (VirtualFileSystem.mountedRootOf directory system.Machine.FileSystem).IsSome
             ->
             Error (RemovalRefusal.DeviceFileSystem (directory, name))
-        | Ok (RmDirVerdict.Remove (directory, name)) ->
+        | RmDirVerdict.Remove (directory, name) ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -2280,9 +2259,8 @@ module UnixNamespace =
     /// `rmdir(2)`: remove the empty directory `path` names. It is `unlinkat`
     /// from `AT_FDCWD` with `AT_REMOVEDIR`.
     ///
-    /// Every outcome is a success or an errno, except where Darwin's sticky
-    /// rule has not been measured for this caller, where this kernel will not
-    /// resolve the path, and where the name is on the device filesystem. A
+    /// Every outcome is a success or an errno, except where this kernel will
+    /// not resolve the path, and where the name is on the device filesystem. A
     /// refusal changes nothing.
     ///
     /// `path` is the argument's bytes, copied in before anything else: EFAULT
@@ -2678,39 +2656,38 @@ module UnixNamespace =
         let verdict =
             match mountRootNamed sourceResolution, mountRootNamed destinationResolution, verdict with
             | None, None, verdict -> Ok verdict
-            | Some source, Some destination, Ok RenameVerdict.NoOp when
+            | Some source, Some destination, RenameVerdict.NoOp when
                 source = destination
                 && SimulatedUnixPlatform.flavour system.Machine.UnixPlatform = SimulatedUnixFlavour.Linux
                 ->
-                Ok (Ok RenameVerdict.NoOp)
+                Ok RenameVerdict.NoOp
             | Some mountRoot, None, verdict when not (sticky sourceResolution) && not (sticky destinationResolution) ->
                 match sourceResolution.Target, destinationResolution.Target, verdict with
                 | ResolvedTarget.Entry (sourceDirectory, _, _),
                   ResolvedTarget.Entry (destinationDirectory, _, None),
-                  Ok (RenameVerdict.Refuse UnixError.EACCES as refused) when sourceDirectory = destinationDirectory ->
-                    Ok (Ok refused)
+                  (RenameVerdict.Refuse UnixError.EACCES as refused) when sourceDirectory = destinationDirectory ->
+                    Ok refused
                 | ResolvedTarget.Entry (sourceDirectory, _, _),
                   ResolvedTarget.Entry (destinationDirectory, _, None),
-                  Ok (RenameVerdict.Move _) when sourceDirectory = destinationDirectory ->
-                    Ok (Ok (RenameVerdict.Refuse UnixError.EBUSY))
+                  RenameVerdict.Move _ when sourceDirectory = destinationDirectory ->
+                    Ok (RenameVerdict.Refuse UnixError.EBUSY)
                 | _ -> Error (RenameRefusal.MountPoint mountRoot)
             | Some mountRoot, _, _
             | None, Some mountRoot, _ -> Error (RenameRefusal.MountPoint mountRoot)
 
         match verdict with
         | Error refusal -> Error refusal
-        | Ok (Error refusal) -> Error (RenameRefusal.Sticky refusal)
-        | Ok (Ok (RenameVerdict.Move (sourceDirectory, sourceName, _, _))) when
+        | Ok (RenameVerdict.Move (sourceDirectory, sourceName, _, _)) when
             (VirtualFileSystem.mountedRootOf sourceDirectory vfs).IsSome
             ->
             Error (RenameRefusal.DeviceFileSystem (sourceDirectory, sourceName))
-        | Ok (Ok (RenameVerdict.Refuse error)) -> Ok (SyscallAnswer.Failed error, system)
+        | Ok (RenameVerdict.Refuse error) -> Ok (SyscallAnswer.Failed error, system)
         // Both paths name one inode: a success that changes nothing at all, not
         // a binding and not a timestamp. Deliberately not routed through
         // `VirtualFileSystem.rename`, which refuses it — the graph primitive
         // would have to invent a no-op stamp to express it.
-        | Ok (Ok RenameVerdict.NoOp) -> Ok (SyscallAnswer.Completed 0L, system)
-        | Ok (Ok (RenameVerdict.Move (sourceDirectory, sourceName, destinationDirectory, destinationName))) ->
+        | Ok RenameVerdict.NoOp -> Ok (SyscallAnswer.Completed 0L, system)
+        | Ok (RenameVerdict.Move (sourceDirectory, sourceName, destinationDirectory, destinationName)) ->
 
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
@@ -2771,9 +2748,8 @@ module UnixNamespace =
     /// pathname the kernel has just reached the point of copying in. A
     /// relative destination starts where the paused call's `newdirfd` says.
     ///
-    /// Every outcome is a success or an errno, except where Darwin's sticky
-    /// rule has not been measured for this caller, where this kernel will not
-    /// resolve a path, where a path names a mount point in an unmeasured way,
+    /// Every outcome is a success or an errno, except where this kernel will
+    /// not resolve a path, where a path names a mount point in an unmeasured way,
     /// and where the source is on the device filesystem. A refusal changes
     /// nothing.
     let renameWithDestination<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>

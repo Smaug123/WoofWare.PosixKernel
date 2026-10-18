@@ -35,6 +35,12 @@ module TestFaultingFileWrite =
         | Root
         /// Darwin's measuring user, uid 501 with gid 20, the file's owner.
         | DarwinOwner
+        /// Darwin's root run: uid 501 or uid 502 with gid 20 alone, writing a
+        /// file uid 501 owns.
+        | DarwinUser of uid : uint32
+        /// Darwin's root run: root writing a file uid 501 owns, or (`owns`)
+        /// one root owns.
+        | DarwinRoot of owns : bool
 
     /// One row of a probe output.
     type private Row =
@@ -58,7 +64,7 @@ module TestFaultingFileWrite =
         Regex
             @"^writer=(\S+) group=(in|out) size=(\d+) call=(write|pwrite) offset=(\d+) buffer=(\S+) count=(\d+) before=([0-7]+) -> (.*)$"
 
-    let private recorded (resource : string) : Row list =
+    let private recorded (resource : string) (rootRun : bool) : Row list =
         let logicalName = $"WoofWare.PosixKernel.Test.faulting-file-write.%s{resource}"
 
         use stream =
@@ -86,12 +92,16 @@ module TestFaultingFileWrite =
             Some
                 {
                     Writer =
-                        match m.Groups.[1].Value with
-                        | "uid1000" -> Writer.Owner
-                        | "uid1001" -> Writer.NonOwner
-                        | "root" -> Writer.Root
-                        | "self" -> Writer.DarwinOwner
-                        | other -> failwith $"%s{resource}: unexpected writer %s{other}"
+                        match rootRun, m.Groups.[1].Value with
+                        | false, "uid1000" -> Writer.Owner
+                        | false, "uid1001" -> Writer.NonOwner
+                        | false, "root" -> Writer.Root
+                        | false, "self" -> Writer.DarwinOwner
+                        | true, "uid501" -> Writer.DarwinUser 501u
+                        | true, "uid502" -> Writer.DarwinUser 502u
+                        | true, "root" -> Writer.DarwinRoot false
+                        | true, "rootowner" -> Writer.DarwinRoot true
+                        | _, other -> failwith $"%s{resource}: unexpected writer %s{other}"
                     GroupIn = m.Groups.[2].Value = "in"
                     Size = int m.Groups.[3].Value
                     Call = m.Groups.[4].Value
@@ -112,6 +122,8 @@ module TestFaultingFileWrite =
         | Writer.NonOwner -> Credentials.ofIds (user 1001u) (group 1000u) []
         | Writer.Root -> Credentials.ofIds UserId.root (group 0u) []
         | Writer.DarwinOwner -> Credentials.ofIds (user 501u) (group 20u) []
+        | Writer.DarwinUser uid -> Credentials.ofIds (user uid) (group 20u) []
+        | Writer.DarwinRoot _ -> Credentials.ofIds UserId.root (group 0u) []
 
     /// The file's owner, as the probe's setup left it.
     let private ownerOf (writer : Writer) (groupIn : bool) : InodeOwner =
@@ -120,6 +132,17 @@ module TestFaultingFileWrite =
             {
                 User = user 501u
                 Group = group (if groupIn then 20u else 0u)
+            }
+        | Writer.DarwinUser _
+        | Writer.DarwinRoot false ->
+            {
+                User = user 501u
+                Group = group (if groupIn then 20u else 7777u)
+            }
+        | Writer.DarwinRoot true ->
+            {
+                User = UserId.root
+                Group = group (if groupIn then 0u else 7777u)
             }
         | Writer.Owner
         | Writer.NonOwner
@@ -336,8 +359,8 @@ module TestFaultingFileWrite =
                 Contents = contents
             }
 
-    let private replay (resource : string) (platform : SimulatedUnixPlatform) : unit =
-        let rows = recorded resource
+    let private replay (resource : string) (rootRun : bool) (platform : SimulatedUnixPlatform) : unit =
+        let rows = recorded resource rootRun
         rows |> List.isEmpty |> shouldEqual false
 
         let mismatches =
@@ -372,15 +395,21 @@ module TestFaultingFileWrite =
 
     [<Test>]
     let ``Linux tmpfs: every measured row`` () =
-        replay "linux-6.18.5-aarch64-tmpfs.txt" SimulatedUnixPlatform.linuxArm64
+        replay "linux-6.18.5-aarch64-tmpfs.txt" false SimulatedUnixPlatform.linuxArm64
 
     [<Test>]
     let ``Linux ext4: every measured row`` () =
-        replay "linux-6.18.5-aarch64-ext4.txt" SimulatedUnixPlatform.linuxArm64
+        replay "linux-6.18.5-aarch64-ext4.txt" false SimulatedUnixPlatform.linuxArm64
 
     [<Test>]
     let ``Darwin APFS: every measured row`` () =
-        replay "darwin-27.0.0-arm64-apfs.txt" SimulatedUnixPlatform.macOsArm64
+        replay "darwin-27.0.0-arm64-apfs.txt" false SimulatedUnixPlatform.macOsArm64
+
+    [<Test>]
+    let ``Darwin APFS, as root: every measured row`` () =
+        // The owner, another user, and root writing a file it does not own
+        // and one it does.
+        replay "darwin-27.0.0-arm64-apfs-root.txt" true SimulatedUnixPlatform.macOsArm64
 
     /// A writer the property chooses among.
     type private Standing =
@@ -465,23 +494,7 @@ module TestFaultingFileWrite =
             let succeeded = go UserBuffer.Mapped
             let faulted = go (UserBuffer.Unmapped address)
 
-            let measured =
-                linux
-                || (
-                    match standing with
-                    | OwnerInGroup
-                    | OwnerOutsideGroup -> true
-                    | NonOwnerInGroup
-                    | NonOwnerOutsideGroup
-                    | Privileged
-                    | PrivilegedOwner -> false
-                )
-
             match succeeded, faulted with
-            // Darwin is measured for an unprivileged owner alone.
-            | _, Ended.Refused _ when not measured -> ()
-            | _, Ended.Observed observed when not measured ->
-                failwith $"Darwin answered an unmeasured writer's faulting write: %s{render observed}"
             | Ended.Refused _, Ended.Refused _ -> ()
             | Ended.Observed succeeded, Ended.Observed faulted ->
                 faulted.Answer |> shouldEqual (WriteAnswer.Failed UnixError.EFAULT)
@@ -516,24 +529,3 @@ module TestFaultingFileWrite =
                 failwith $"the write that succeeds ended %A{succeeded}, the faulting one %A{faulted}"
 
         Prop.forAll (Arb.fromGen gen) property |> Check.QuickThrowOnFailure
-
-    [<Test>]
-    let ``Darwin refuses a faulting write by root, which is unmeasured`` () =
-        for (owner, credentials), call in
-            List.allPairs [ standingOf Privileged ; standingOf PrivilegedOwner ] [ "write" ; "pwrite" ] do
-            match
-                run SimulatedUnixPlatform.macOsArm64 owner credentials 5 0o644 call 0L (UserBuffer.Unmapped 0UL) 5
-            with
-            | Ended.Refused _ -> ()
-            | Ended.Observed observed -> failwith $"%s{call} answered %s{render observed}"
-
-    [<Test>]
-    let ``Darwin refuses a faulting write by a non-owner, which is unmeasured`` () =
-        let owner, credentials = standingOf NonOwnerInGroup
-
-        for call in [ "write" ; "pwrite" ] do
-            match
-                run SimulatedUnixPlatform.macOsArm64 owner credentials 5 0o666 call 0L (UserBuffer.Unmapped 0UL) 5
-            with
-            | Ended.Refused _ -> ()
-            | Ended.Observed observed -> failwith $"%s{call} answered %s{render observed}"

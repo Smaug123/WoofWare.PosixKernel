@@ -53,12 +53,12 @@ module TestUnixThreadTable =
         let system = initial |> withThread 7 3
 
         let exn =
-            Assert.Throws<exn> (fun () -> withThread 7 5 system |> ignore<UnixSystem<int, string>>)
+            Assert.Throws<System.ArgumentException> (fun () -> withThread 7 5 system |> ignore<UnixSystem<int, string>>)
 
         exn.Message |> shouldContainText "already names a thread"
 
         let leader =
-            Assert.Throws<exn> (fun () -> withThread 0 5 system |> ignore<UnixSystem<int, string>>)
+            Assert.Throws<System.ArgumentException> (fun () -> withThread 0 5 system |> ignore<UnixSystem<int, string>>)
 
         leader.Message |> shouldContainText "already names a thread"
 

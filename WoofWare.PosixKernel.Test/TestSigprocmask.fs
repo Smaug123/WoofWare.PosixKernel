@@ -236,11 +236,38 @@ module TestSigprocmask =
     let ``Darwin: rt_sigprocmask is not a system call there`` () : unit =
         let darwin = systemOn SimulatedUnixFlavour.Darwin
 
-        Assert.Throws<exn> (fun () ->
+        Assert.Throws<System.PlatformNotSupportedException> (fun () ->
             UnixSignal.rtSigprocmask (Callers.thread 0 darwin) 1 None 8UL darwin
             |> ignore<Result<SignalMask * UnixSystem<int, string>, UnixError>>
         )
         |> ignore
+
+        Assert.Throws<System.PlatformNotSupportedException> (fun () ->
+            UnixSystem.step (Callers.thread 0 darwin) (Syscall.RtSigProcMask (1, None, 8UL)) darwin
+            |> ignore<SteppedCall<int, string>>
+        )
+        |> ignore
+
+    [<Test>]
+    let ``a mask made under the other flavour's numbering is the client's mistake`` () : unit =
+        for flavour in flavours do
+            let system = systemOn flavour
+            let numbering = HostPlatform.signalNumberingOf flavour
+
+            let other =
+                match numbering with
+                | SignalNumbering.Linux -> SignalNumbering.Darwin
+                | SignalNumbering.Darwin -> SignalNumbering.Linux
+
+            let foreign = SignalMask.ofSignals other (Set.singleton Signal.SIGUSR1)
+
+            for route in routesOf flavour do
+                let exn =
+                    Assert.Throws<ArgumentException> (fun () ->
+                        call route 0 (MaskHow.block numbering) (Some foreign) system |> ignore
+                    )
+
+                exn.Message |> shouldContainText "numbering"
 
     [<Test>]
     let ``Darwin's sigprocmask changes every thread's mask, and every other call the caller's alone`` () : unit =
