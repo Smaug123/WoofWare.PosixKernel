@@ -66,7 +66,7 @@ type internal EphemeralPortRangeRefusal =
     /// The low end is above the high end, so the range holds no port and no
     /// bind of port 0 could be answered. Contradictory.
     | Empty of low : uint16 * high : uint16
-    /// On Darwin, the low end is below 1024. Darwin keeps
+    /// On Darwin, an end is below 1024. Darwin keeps
     /// `net.inet.ip.portrange.first` and `last` within 1024 to 65535,
     /// whatever is written, so no Darwin machine has such a range.
     /// Contradictory.
@@ -87,7 +87,7 @@ module internal EphemeralPortRangeRefusal =
         | EphemeralPortRangeRefusal.Empty (low, high) ->
             $"the range %d{low}-%d{high} is empty, so no bind of port 0 could ever be answered."
         | EphemeralPortRangeRefusal.BelowDarwinFloor (low, high) ->
-            $"the range %d{low}-%d{high} starts below 1024, where no Darwin machine's range can: Darwin keeps net.inet.ip.portrange.first and last within 1024 to 65535 whatever is written to them. Start the range at 1024 or above."
+            $"the range %d{low}-%d{high} has an end below 1024, where no Darwin machine's range can: Darwin keeps net.inet.ip.portrange.first and last within 1024 to 65535 whatever is written to them. Keep both ends at 1024 or above."
         | EphemeralPortRangeRefusal.Descending (low, high) ->
             $"the range %d{low}-%d{high} runs downwards. Darwin takes such a pair and searches the ports between them from the high end down, which this kernel does not model; give the low end first."
 
@@ -914,7 +914,7 @@ module UnixBootImage =
         // of port 0 then take the ports between them downwards.
         if low = 0us then
             Error (EphemeralPortRangeRefusal.LowIsZero high)
-        elif flavour = SimulatedUnixFlavour.Darwin && low < 1024us then
+        elif flavour = SimulatedUnixFlavour.Darwin && (low < 1024us || high < 1024us) then
             Error (EphemeralPortRangeRefusal.BelowDarwinFloor (low, high))
         elif low > high then
             match flavour with
@@ -937,12 +937,12 @@ module UnixBootImage =
     /// Refuses a range that starts at port 0, and an empty one. On Linux,
     /// `boot` refuses a range that starts below the unprivileged port start
     /// (`withUnprivilegedPortStart`), as Linux's sysctl does. On Darwin it
-    /// refuses a range that starts below 1024, which Darwin's sysctls never
+    /// refuses a range with an end below 1024, which Darwin's sysctls never
     /// hold, and one whose low end is above its high end, which Darwin
     /// searches downwards and this kernel does not model.
     /// </summary>
     /// <exception cref="T:System.ArgumentException">On Linux, the low end is above the high end, so the range holds no port and no bind of port 0 could be answered. Contradictory.</exception>
-    /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out; or, on Darwin, below 1024, where no Darwin machine's range starts. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentOutOfRangeException">The range starts at port 0, which is how a process *asks* for an ephemeral port, so it cannot also be one handed out; or, on Darwin, has an end below 1024, where no Darwin machine's range does. Contradictory.</exception>
     let withEphemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         ((low, high) : uint16 * uint16)
         (image : UnixBootImage<'Thread, 'Handler>)

@@ -56,24 +56,42 @@ module TestPortRangeSysctlsMeasured =
         firsts.Length |> shouldEqual 14
 
         // Every value below 1024 read back as 1024, and every value from 1024
-        // to 65535 as itself: the floor the replay below holds the setter to.
-        for row in firsts do
-            let kept = row.Asked >= 1024 && row.Asked <= 65535
-            (row.ReadBack = row.Asked) |> shouldEqual kept
+        // to 65535 as itself, for first and last alike: the floor the replay
+        // below holds the setter to.
+        for row in setRows do
+            if row.Name = "net.inet.ip.portrange.first" || row.Name = "net.inet.ip.portrange.last" then
+                let kept = row.Asked >= 1024 && row.Asked <= 65535
+                (row.Name, row.Asked, row.ReadBack = row.Asked) |> shouldEqual (row.Name, row.Asked, kept)
 
     [<Test>]
-    let ``a Darwin range is admitted exactly when its low end is a value first reads back as itself`` () : unit =
-        for row in setRows do
-            if row.Name = "net.inet.ip.portrange.first" && row.Asked >= 1 && row.Asked <= 65535 then
-                let low = uint16 row.Asked
+    let ``a Darwin range is admitted exactly when each end is a value its sysctl reads back as itself`` () : unit =
+        let mutable replayed = 0
 
-                match attempt SimulatedUnixPlatform.macOsArm64 (low, 65535us), row.ReadBack = row.Asked with
-                | Ok _, true -> ()
-                | Error (EphemeralPortRangeRefusal.BelowDarwinFloor (refusedLow, refusedHigh)), false when
-                    refusedLow = low && refusedHigh = 65535us
-                    ->
-                    ()
-                | other, kept -> failwith $"first=%d{row.Asked} (read back %d{row.ReadBack}, kept %b{kept}) gave %A{other}"
+        for row in setRows do
+            if row.Asked >= 1 && row.Asked <= 65535 then
+                let asked = uint16 row.Asked
+
+                // The other end at the far side of the range, which both
+                // sysctls keep.
+                let range =
+                    match row.Name with
+                    | "net.inet.ip.portrange.first" -> Some (asked, 65535us)
+                    | "net.inet.ip.portrange.last" -> Some (1024us, asked)
+                    | _ -> None
+
+                match range with
+                | None -> ()
+                | Some range ->
+                    replayed <- replayed + 1
+
+                    match attempt SimulatedUnixPlatform.macOsArm64 range, row.ReadBack = row.Asked with
+                    | Ok _, true -> ()
+                    | Error (EphemeralPortRangeRefusal.BelowDarwinFloor (low, high)), false when (low, high) = range -> ()
+                    | other, kept ->
+                        failwith $"%s{row.Name}=%d{row.Asked} (read back %d{row.ReadBack}, kept %b{kept}) gave %A{other}"
+
+        // first and last, each at the ten values it was written from 1 to 65535.
+        replayed |> shouldEqual 20
 
     [<Test>]
     let ``Linux keeps its own floor`` () : unit =
@@ -88,6 +106,11 @@ module TestPortRangeSysctlsMeasured =
 
         attempt SimulatedUnixPlatform.linuxX64 (40003us, 40000us)
         |> shouldEqual (Error (EphemeralPortRangeRefusal.Empty (40003us, 40000us)))
+
+        // A descending pair with an end below the floor is no Darwin range at
+        // all, which `last` reads back as 1024 just as `first` does.
+        attempt SimulatedUnixPlatform.macOsArm64 (2000us, 1us)
+        |> shouldEqual (Error (EphemeralPortRangeRefusal.BelowDarwinFloor (2000us, 1us)))
 
         EphemeralPortRangeRefusal.kind (EphemeralPortRangeRefusal.Descending (40003us, 40000us))
         |> shouldEqual RefusalKind.Unmodelled
