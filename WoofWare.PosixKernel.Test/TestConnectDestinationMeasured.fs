@@ -203,16 +203,12 @@ module TestConnectDestinationMeasured =
     /// The rows this kernel refuses rather than answers, by the probe line they
     /// came from, with the refusal, on a machine booted with `routes`: a
     /// connect that would reach beyond this machine (`DestinationNotLocal`:
-    /// 8.8.8.8 always, and 127.0.0.2 without loopback's route); one to
-    /// 127.0.0.2 from a socket with no concrete source, whose source this
-    /// kernel does not resolve for a destination other than 127.0.0.1
-    /// (`SourceForNonLoopbackDestination`); a Darwin stream connect to
+    /// 8.8.8.8 always, and 127.0.0.2 without loopback's route); a Darwin stream connect to
     /// 127.0.0.2, whose SYN Darwin drops (`UnheldDestination`); and a datagram
     /// connect to a broadcast or multicast destination that would succeed
     /// (`DatagramGroupDestination`).
     let private refused (routes : Routes) (flavour : string) : (string * string) list =
         let notLocal = "refused:DestinationNotLocal"
-        let noSource = "refused:SourceForNonLoopbackDestination"
         let group = "refused:DatagramGroupDestination"
         let states = [ "fresh" ; "bound" ; "wildbound" ; "connected" ]
 
@@ -235,11 +231,7 @@ module TestConnectDestinationMeasured =
 
                         for state in states do
                             $"D dgram 127.0.0.2 %s{port} %s{state}", notLocal
-                | Routes.Initial ->
-                    for port in [ "0" ; "P" ] do
-                        for state in [ "fresh" ; "wildbound" ] do
-                            $"D stream 127.0.0.2 %s{port} %s{state}", noSource
-                            $"D dgram 127.0.0.2 %s{port} %s{state}", noSource
+                | Routes.Initial -> ()
             ]
         | _ ->
             [
@@ -261,11 +253,6 @@ module TestConnectDestinationMeasured =
                 | Routes.Initial ->
                     for state in [ "fresh" ; "bound" ; "wildbound" ] do
                         $"D stream 127.0.0.2 P %s{state}", "refused:UnheldDestination"
-
-                    // A Darwin disconnect leaves a connected socket's
-                    // address to be resolved again.
-                    for state in [ "fresh" ; "wildbound" ; "connected" ] do
-                        $"D dgram 127.0.0.2 P %s{state}", noSource
             ]
 
     let private check (routes : Routes) (flavour : string) (platform : SimulatedUnixPlatform) : unit =
