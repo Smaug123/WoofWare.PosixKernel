@@ -370,41 +370,6 @@ module internal InotifyReplay =
         | Ok (ReadOutcome.Answered (ReadAnswer.Completed _), system) -> system
         | other -> failwith $"read(%d{fd}): %A{other}"
 
-    /// The refusal of a change an inotify watch could hear of through a name
-    /// this kernel does not keep, which `result` answers: `choose` picks it out
-    /// of the call's own refusal. Fails the test for an answer, or another
-    /// refusal.
-    let unplaced
-        (call : string)
-        (choose : 'r -> UnplacedChangeRefusal option)
-        (result : Result<'a, 'r>)
-        : UnplacedChangeRefusal
-        =
-        match result with
-        | Ok answer -> failwith $"%s{call} answered %A{answer}, where it should have been refused"
-        | Error refusal ->
-            match choose refusal with
-            | Some unplaced -> unplaced
-            | None -> failwith $"%s{call} was refused, but for another reason: %A{refusal}"
-
-    /// That `refusal` is of a change through a removed directory, whose
-    /// missing input is the name it had in its old parent.
-    let throughRemovedDirectory (refusal : UnplacedChangeRefusal) : unit =
-        match refusal with
-        | UnplacedChangeRefusal.RemovedDirectoryName _ -> ()
-
-    /// The refusal of `chmod(path, mode)`, which must be of a change an
-    /// inotify watch could hear of through a name this kernel does not keep.
-    let chmodRefusal (path : string) (mode : int) (system : UnixSystem<int, string>) : UnplacedChangeRefusal =
-        UnixPathResolution.tryChmod (Callers.leader system) (PathArg.ofText path) mode system
-        |> unplaced
-            $"chmod(%s{path})"
-            (fun refusal ->
-                match refusal with
-                | ChModRefusal.UnplacedChange refusal -> Some refusal
-                | _ -> None
-            )
-
     /// The probe's `writeFile`: `open(O_WRONLY|O_CREAT|O_TRUNC, 0644)`, a
     /// write of `text`, and a close, by the process `pid`.
     let writeFileIn

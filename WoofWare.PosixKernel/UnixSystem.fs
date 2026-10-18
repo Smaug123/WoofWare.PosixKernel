@@ -845,14 +845,17 @@ type UnixSystemDefect<'Thread> =
     /// opened through no name, and `inode` is neither the root nor a mounted
     /// filesystem's root, the only inodes a walk reaches through none.
     | OpenedThroughNoNameNotRoot of description : OpenFileDescriptionId * inode : InodeNumber
-    /// The description `description`, onto `inode`, records that it was
-    /// opened through a directory removed while it was last named in
-    /// `oldParent`, and `inode` is not a directory whose ".." is `oldParent`
-    /// and which `oldParent` does not name.
-    | OpenedThroughRemovedDirectoryNamed of
+    /// The description `description`, onto the directory `inode`, records
+    /// that it was opened through the name `name` in `parent`, since
+    /// unlinked, and that is not the name the directory had when its last
+    /// name went, in the directory it was named in then
+    /// (`VirtualFileSystem.removedDirectoryName`): a directory has one name,
+    /// which a description's record follows until it goes.
+    | OpenedThroughRemovedDirectoryNameMismatch of
         description : OpenFileDescriptionId *
         inode : InodeNumber *
-        oldParent : InodeNumber
+        parent : InodeNumber *
+        name : DirectoryEntryName
     /// A socket is in a phase that nothing in this version puts a socket in,
     /// such as `SocketPhase.Connecting`: a case reserved for behaviour not yet
     /// modelled.
@@ -2121,9 +2124,27 @@ module UnixSystem =
                     | Some _
                     | None -> Some (UnixSystemDefect.OpenedThroughNameUnbound (id, inode, dentry.Parent, dentry.Name))
                 | ReachedThrough.Name (dentry, true) ->
-                    match VirtualFileSystem.tryGetDirectory dentry.Parent graph with
-                    | Some _ -> None
-                    | None -> Some (UnixSystemDefect.OpenedThroughParentGone (id, dentry.Parent))
+                    match
+                        VirtualFileSystem.tryGetDirectory dentry.Parent graph,
+                        VirtualFileSystem.tryGetDirectory inode graph
+                    with
+                    | None, _ -> Some (UnixSystemDefect.OpenedThroughParentGone (id, dentry.Parent))
+                    | Some _, None -> None
+                    | Some _, Some directory ->
+                        if
+                            directory.Parent = dentry.Parent
+                            && VirtualFileSystem.removedDirectoryName inode graph = Some dentry.Name
+                        then
+                            None
+                        else
+                            Some (
+                                UnixSystemDefect.OpenedThroughRemovedDirectoryNameMismatch (
+                                    id,
+                                    inode,
+                                    dentry.Parent,
+                                    dentry.Name
+                                )
+                            )
                 | ReachedThrough.Unnamed ->
                     if
                         inode = VirtualFileSystem.root graph
@@ -2132,16 +2153,6 @@ module UnixSystem =
                         None
                     else
                         Some (UnixSystemDefect.OpenedThroughNoNameNotRoot (id, inode))
-                | ReachedThrough.RemovedDirectory oldParent ->
-                    let named =
-                        match VirtualFileSystem.tryGetDirectory oldParent graph with
-                        | Some parent -> parent.Entries |> Map.exists (fun _ bound -> bound = inode)
-                        | None -> false
-
-                    match VirtualFileSystem.tryGetDirectory inode graph with
-                    | Some directory when directory.Parent = oldParent && not named -> None
-                    | Some _
-                    | None -> Some (UnixSystemDefect.OpenedThroughRemovedDirectoryNamed (id, inode, oldParent))
             )
             |> List.ofSeq
 
