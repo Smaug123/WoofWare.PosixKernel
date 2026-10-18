@@ -101,7 +101,7 @@ module TestAccess =
 
     let private contentOf (kind : Kind) (bits : PermissionBits) : InodeContent =
         match kind with
-        | Kind.File -> InodeContent.RegularFile (ImmutableArray.Empty, bits)
+        | Kind.File -> InodeContent.RegularFile (FileContents.empty, bits)
         | Kind.Dir ->
             InodeContent.Directory
                 {

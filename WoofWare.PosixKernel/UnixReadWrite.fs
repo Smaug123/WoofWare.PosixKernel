@@ -1655,7 +1655,8 @@ module UnixReadWrite =
                 $"UnixSystem.%s{syscall}: fd %d{fd} names inode %O{inode}, which is a FIFO. Nothing in this version makes one: InodeContent.Fifo is unreachable until FIFOs are modelled (this is a bug in this library)."
         | InodeContent.RegularFile (contents, _) ->
 
-        let transfer = VirtualFileSystem.readTransferCount offset count contents.Length
+        let transfer =
+            VirtualFileSystem.readTransferCount offset count (FileContents.length contents)
 
         let accessed () : ProcessView<'Thread, 'Handler> =
             if count = 0 then
@@ -1688,9 +1689,7 @@ module UnixReadWrite =
         | UserBuffer.Addressless -> Error BufferRefusal.AddresslessAtTransfer
         | UserBuffer.Mapped ->
 
-        // A range copy rather than an enumeration: one call can move nearly two
-        // gigabytes.
-        Ok (Ok (ImmutableArray.Create (contents, int offset, transfer)), accessed ())
+        Ok (Ok (FileContents.read offset transfer contents), accessed ())
 
     /// What a device's own write of `count` bytes, at most one call's worth,
     /// answers without the bytes, once everything ahead of the driver has
@@ -5300,10 +5299,10 @@ module UnixReadWrite =
                         $"UnixReadWrite.copyFileRange: fd %d{inFd} is a file description naming inode %O{sourceInode}, which holds %A{other} rather than a regular file (this is a bug in this library)."
 
             let remaining =
-                if sourceOffset >= int64 contents.Length then
+                if sourceOffset >= FileContents.length contents then
                     0UL
                 else
-                    uint64 (int64 contents.Length - sourceOffset)
+                    uint64 (FileContents.length contents - sourceOffset)
 
             let count = min length remaining
 
@@ -5324,7 +5323,7 @@ module UnixReadWrite =
             else
 
             let count = oneCallsWorth system.Machine.UnixPlatform count
-            let bytes = ImmutableArray.Create (contents, int sourceOffset, count)
+            let bytes = FileContents.read sourceOffset count contents
             let now = UnixMachineState.realtime system.Scheduling system.Machine
             let rule = SimulatedUnixPlatform.setGroupIdOnWrite system.Machine.UnixPlatform
 

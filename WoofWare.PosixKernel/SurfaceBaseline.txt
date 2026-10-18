@@ -1101,6 +1101,14 @@ WoofWare.PosixKernel.FileAdviceAnswer.IsCompleted [property]: [read-only] bool
 WoofWare.PosixKernel.FileAdviceAnswer.IsFailed [property]: [read-only] bool
 WoofWare.PosixKernel.FileAdviceAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.FileAdviceAnswer
 WoofWare.PosixKernel.FileAdviceAnswer.Tag [property]: [read-only] int
+WoofWare.PosixKernel.FileContents inherit obj, implements System.IComparable
+WoofWare.PosixKernel.FileContentsModule inherit obj
+WoofWare.PosixKernel.FileContentsModule.empty [static property]: [read-only] WoofWare.PosixKernel.FileContents
+WoofWare.PosixKernel.FileContentsModule.get_empty [static method]: unit -> WoofWare.PosixKernel.FileContents
+WoofWare.PosixKernel.FileContentsModule.length [static method]: WoofWare.PosixKernel.FileContents -> System.Int64
+WoofWare.PosixKernel.FileContentsModule.ofImmutableArray [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.FileContents
+WoofWare.PosixKernel.FileContentsModule.read [static method]: System.Int64 -> int -> WoofWare.PosixKernel.FileContents -> System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.FileContentsModule.toImmutableArray [static method]: WoofWare.PosixKernel.FileContents -> System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.FileDescriptorRegistry inherit obj, implements WoofWare.PosixKernel.FileDescriptorRegistry System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.FileDescriptorRegistry System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.FileDescriptorRegistry.Equals [method]: (WoofWare.PosixKernel.FileDescriptorRegistry, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.FileDescriptorRegistryModule inherit obj
@@ -1802,8 +1810,8 @@ WoofWare.PosixKernel.InodeContent+Fifo inherit WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent+Fifo.get_permissions [method]: unit -> WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.InodeContent+Fifo.permissions [property]: [read-only] WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.InodeContent+RegularFile inherit WoofWare.PosixKernel.InodeContent
-WoofWare.PosixKernel.InodeContent+RegularFile.contents [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
-WoofWare.PosixKernel.InodeContent+RegularFile.get_contents [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
+WoofWare.PosixKernel.InodeContent+RegularFile.contents [property]: [read-only] WoofWare.PosixKernel.FileContents
+WoofWare.PosixKernel.InodeContent+RegularFile.get_contents [method]: unit -> WoofWare.PosixKernel.FileContents
 WoofWare.PosixKernel.InodeContent+RegularFile.get_permissions [method]: unit -> WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.InodeContent+RegularFile.permissions [property]: [read-only] WoofWare.PosixKernel.PermissionBits
 WoofWare.PosixKernel.InodeContent+Socket inherit WoofWare.PosixKernel.InodeContent
@@ -1838,7 +1846,7 @@ WoofWare.PosixKernel.InodeContent.IsSymlink [property]: [read-only] bool
 WoofWare.PosixKernel.InodeContent.NewCharacterDevice [static method]: (WoofWare.PosixKernel.CharacterDevice, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewDirectory [static method]: WoofWare.PosixKernel.DirectoryContent -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewFifo [static method]: WoofWare.PosixKernel.PermissionBits -> WoofWare.PosixKernel.InodeContent
-WoofWare.PosixKernel.InodeContent.NewRegularFile [static method]: (System.Byte System.Collections.Immutable.ImmutableArray, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
+WoofWare.PosixKernel.InodeContent.NewRegularFile [static method]: (WoofWare.PosixKernel.FileContents, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewSocket [static method]: WoofWare.PosixKernel.PermissionBits -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.NewSymlink [static method]: (WoofWare.PosixKernel.SymlinkTarget, WoofWare.PosixKernel.PermissionBits) -> WoofWare.PosixKernel.InodeContent
 WoofWare.PosixKernel.InodeContent.Tag [property]: [read-only] int

@@ -83,7 +83,11 @@ module TestFileSystemSeed =
 
         match contentAt "/etc/hostname" SymlinkPolicy.Follow with
         | InodeContent.RegularFile (contents, permissions) ->
-            contents |> Seq.toArray |> shouldEqual (bytes "testhost" |> Seq.toArray)
+            contents
+            |> FileContents.toImmutableArray
+            |> Seq.toArray
+            |> shouldEqual (bytes "testhost" |> Seq.toArray)
+
             permissions |> shouldEqual SeedEntry.defaultPermsForRegularFile
         | other -> failwith $"expected a regular file, got %A{other}"
 

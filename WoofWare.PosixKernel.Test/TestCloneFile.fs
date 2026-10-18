@@ -272,7 +272,8 @@ module TestCloneFile =
             | Ok (SyscallAnswer.Completed 0L, after) ->
                 match (entryAt after created).Content with
                 | InodeContent.RegularFile (contents, _) ->
-                    Text.Encoding.ASCII.GetString (contents |> Seq.toArray) |> shouldEqual "hello"
+                    Text.Encoding.ASCII.GetString (contents |> FileContents.toImmutableArray |> Seq.toArray)
+                    |> shouldEqual "hello"
                 | other -> failwith $"%s{created}: %A{other}"
 
                 match (entryAt after ("/" + destination.Split('/').[0])).Content with
@@ -549,7 +550,7 @@ module TestCloneFile =
 
                     match clone.Content, sourceEntry.Content with
                     | InodeContent.RegularFile (cloned, _), InodeContent.RegularFile (original, _) ->
-                        cloned |> Seq.toArray |> shouldEqual (original |> Seq.toArray)
+                        cloned |> shouldEqual original
                     | other -> failwith $"%A{other}"
 
                     // Every inode that was there before is unchanged, but for

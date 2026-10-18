@@ -203,6 +203,7 @@
     <Compile Include="TestDeviceDescriptorsAgainstHost.fs" />
     <Compile Include="TestDirectoryReadAgainstHost.fs" />
     <Compile Include="TestPathCursor.fs" />
+    <Compile Include="TestFileContents.fs" />
     <Compile Include="TestVirtualFileSystem.fs" />
     <Compile Include="TestFsChange.fs" />
     <Compile Include="TestBindingCount.fs" />
@@ -283,6 +284,7 @@
     <Compile Include="TestInotifyAgainstHost.fs" />
     <Compile Include="TestInotifyInvariants.fs" />
     <Compile Include="TestFaultingFileWrite.fs" />
+    <Compile Include="TestFileContentsCost.fs" />
     <Compile Include="TestInotifyDeliveryMeasured.fs" />
     <Compile Include="TestInotifyDentryMeasured.fs" />
     <Compile Include="TestInotifySelfMeasured.fs" />

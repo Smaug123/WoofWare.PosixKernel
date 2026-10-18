@@ -84,7 +84,7 @@ module TestVirtualFileSystem =
         }
 
     let private regularFileInode : Inode =
-        inodeOf (InodeContent.RegularFile (noBytes, filePerms))
+        inodeOf (InodeContent.RegularFile (FileContents.empty, filePerms))
 
     let private rootOf (vfs : VirtualFileSystem) : InodeNumber = VirtualFileSystem.root vfs
 
@@ -1330,7 +1330,7 @@ module TestVirtualFileSystem =
         // ImmutableArray is a struct too, and its default wraps a null array —
         // which is not an empty file but an uninitialised one.
         let forgedContents =
-            Assert.Throws<Exception> (fun () ->
+            Assert.Throws<ArgumentException> (fun () ->
                 GraphMutators.createFile
                     (rootOf vfs)
                     (name "f")
@@ -1846,7 +1846,7 @@ module TestVirtualFileSystem =
         // no-op that happened to restamp the inode.
         match VirtualFileSystem.tryGetContent file written with
         | Some (InodeContent.RegularFile (contents, permissions)) ->
-            Seq.toList contents |> shouldEqual [ 1uy ; 2uy ]
+            Seq.toList (FileContents.toImmutableArray contents) |> shouldEqual [ 1uy ; 2uy ]
             // The mode is not collateral damage of rewriting the content.
             permissions |> shouldEqual filePerms
         | other -> failwith $"expected a regular file, got %O{other}"
@@ -1990,7 +1990,9 @@ module TestVirtualFileSystem =
         // ...and the bytes are all still there, which is what makes this a no-op
         // truncation rather than a truncation that happened to leave three bytes.
         match VirtualFileSystem.tryGetContent file truncated with
-        | Some (InodeContent.RegularFile (contents, _)) -> Seq.toList contents |> shouldEqual [ 1uy ; 2uy ; 3uy ]
+        | Some (InodeContent.RegularFile (contents, _)) ->
+            Seq.toList (FileContents.toImmutableArray contents)
+            |> shouldEqual [ 1uy ; 2uy ; 3uy ]
         | other -> failwith $"expected a regular file, got %O{other}"
 
     /// `truncateFile` applies the rule rather than merely having it in scope: a
@@ -3961,7 +3963,7 @@ module TestReadTransferCount =
     [<Test>]
     let ``agrees with naive slicing`` () : unit =
         let property (offset : int64, count : int, length : int) : bool =
-            VirtualFileSystem.readTransferCount offset count length = naive offset count length
+            VirtualFileSystem.readTransferCount offset count (int64 length) = naive offset count length
 
         Check.One (config, Prop.forAll (Arb.fromGen smallCase) property)
 
@@ -3972,7 +3974,7 @@ module TestReadTransferCount =
     [<Test>]
     let ``the result is a valid slice of the file`` () : unit =
         let property (offset : int64, count : int, length : int) : bool =
-            let result = VirtualFileSystem.readTransferCount offset count length
+            let result = VirtualFileSystem.readTransferCount offset count (int64 length)
 
             result >= 0
             && result <= count
@@ -3991,7 +3993,7 @@ module TestReadTransferCount =
     [<Test>]
     let ``a short read means the file ended`` () : unit =
         let property (offset : int64, count : int, length : int) : bool =
-            let result = VirtualFileSystem.readTransferCount offset count length
+            let result = VirtualFileSystem.readTransferCount offset count (int64 length)
             result = count || offset + int64 result >= int64 length
 
         Check.One (config, Prop.forAll (Arb.fromGen smallCase) property)
@@ -4002,25 +4004,25 @@ module TestReadTransferCount =
     [<Test>]
     let ``an offset beyond int range reads nothing`` () : unit =
         for offset in [ int64 Int32.MaxValue ; int64 Int32.MaxValue + 1L ; Int64.MaxValue ] do
-            VirtualFileSystem.readTransferCount offset 16 10 |> shouldEqual 0
+            VirtualFileSystem.readTransferCount offset 16 10L |> shouldEqual 0
 
     [<Test>]
     let ``worked examples`` () : unit =
         // The measured `pread` rows, as unit assertions: a 5-byte file.
-        VirtualFileSystem.readTransferCount 0L 5 5 |> shouldEqual 5
-        VirtualFileSystem.readTransferCount 0L 64 5 |> shouldEqual 5
-        VirtualFileSystem.readTransferCount 3L 64 5 |> shouldEqual 2
-        VirtualFileSystem.readTransferCount 5L 64 5 |> shouldEqual 0
-        VirtualFileSystem.readTransferCount 99L 64 5 |> shouldEqual 0
-        VirtualFileSystem.readTransferCount 0L 0 5 |> shouldEqual 0
+        VirtualFileSystem.readTransferCount 0L 5 5L |> shouldEqual 5
+        VirtualFileSystem.readTransferCount 0L 64 5L |> shouldEqual 5
+        VirtualFileSystem.readTransferCount 3L 64 5L |> shouldEqual 2
+        VirtualFileSystem.readTransferCount 5L 64 5L |> shouldEqual 0
+        VirtualFileSystem.readTransferCount 99L 64 5L |> shouldEqual 0
+        VirtualFileSystem.readTransferCount 0L 0 5L |> shouldEqual 0
         // ...and an empty file, where every offset is at the end.
-        VirtualFileSystem.readTransferCount 0L 16 0 |> shouldEqual 0
+        VirtualFileSystem.readTransferCount 0L 16 0L |> shouldEqual 0
 
 /// `writtenLength` and `writtenContents` decide the whole of what a write does to
 /// a regular file's bytes, once its error cases are out of the way — the read
 /// path's `readTransferCount` in the other direction, and the same class of
-/// off-by-one hides in it. As functions of two byte arrays and an offset they can
-/// be checked against naive splicing, which is what this does.
+/// off-by-one hides in it. As functions of the contents, a byte array and an
+/// offset they can be checked against naive splicing, which is what this does.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestWrittenContents =
@@ -4044,11 +4046,11 @@ module TestWrittenContents =
     let private written (contents : byte[]) (offset : int64) (bytes : byte[]) : byte[] =
         match
             VirtualFileSystem.writtenContents
-                (ImmutableArray.CreateRange contents)
+                (FileContents.ofImmutableArray (ImmutableArray.CreateRange contents))
                 offset
                 (ImmutableArray.CreateRange bytes)
         with
-        | Ok result -> Seq.toArray result
+        | Ok result -> Seq.toArray (FileContents.toImmutableArray result)
         | Error refusal -> failwith $"expected success, got %O{refusal}"
 
     /// The oracle: the file you get by actually laying the bytes out.
@@ -4127,7 +4129,7 @@ module TestWrittenContents =
         let property (contents : byte[], offset : int64, bytes : byte[]) : bool =
             let result = written contents offset bytes
 
-            VirtualFileSystem.writtenLength offset bytes.Length contents.Length = Ok result.Length
+            VirtualFileSystem.writtenLength offset bytes.Length (int64 contents.Length) = Ok (int64 result.Length)
 
         Check.One (config, Prop.forAll (Arb.fromGen smallCase) property)
 
@@ -4140,7 +4142,8 @@ module TestWrittenContents =
         let property (contents : byte[], offset : int64, bytes : byte[]) : bool =
             let result = written contents offset bytes
 
-            let transfer = VirtualFileSystem.readTransferCount offset bytes.Length result.Length
+            let transfer =
+                VirtualFileSystem.readTransferCount offset bytes.Length (int64 result.Length)
 
             transfer = bytes.Length
             && Seq.forall (fun i -> result.[int offset + i] = bytes.[i]) (seq { 0 .. bytes.Length - 1 })
@@ -4155,26 +4158,37 @@ module TestWrittenContents =
             written [| 1uy ; 2uy ; 3uy ; 4uy |] offset [||]
             |> shouldEqual [| 1uy ; 2uy ; 3uy ; 4uy |]
 
-            VirtualFileSystem.writtenLength offset 0 4 |> shouldEqual (Ok 4)
+            VirtualFileSystem.writtenLength offset 0 4L |> shouldEqual (Ok 4L)
 
-    /// Both sides of the ceiling, which is why `writtenLength` exists separately:
-    /// the accepting side would allocate two gigabytes if it had to go through
-    /// `writtenContents`.
+    /// Both sides of the ceiling, through `writtenLength` and through
+    /// `writtenContents`, which holds the write that reaches it in one page.
     [<Test>]
     let ``the length ceiling is refused from one byte past it, and not before`` () : unit =
         let ceiling = VirtualFileSystem.maxFileLength
+        let four = ImmutableArray.CreateRange [ 1uy ; 2uy ; 3uy ; 4uy ]
 
-        VirtualFileSystem.writtenLength (ceiling - 4L) 4 0
-        |> shouldEqual (Ok (int ceiling))
+        VirtualFileSystem.writtenLength (ceiling - 4L) 4 0L |> shouldEqual (Ok ceiling)
 
-        VirtualFileSystem.writtenLength (ceiling - 3L) 4 0
+        match VirtualFileSystem.writtenContents FileContents.empty (ceiling - 4L) four with
+        | Ok result ->
+            FileContents.length result |> shouldEqual ceiling
+
+            FileContents.read (ceiling - 5L) 8 result
+            |> List.ofSeq
+            |> shouldEqual [ 0uy ; 1uy ; 2uy ; 3uy ; 4uy ]
+        | Error refusal -> failwith $"expected success, got %O{refusal}"
+
+        VirtualFileSystem.writtenLength (ceiling - 3L) 4 0L
+        |> shouldEqual (Error (FileWriteRefusal.WouldExceedMaxLength (ceiling - 3L, 4)))
+
+        VirtualFileSystem.writtenContents FileContents.empty (ceiling - 3L) four
         |> shouldEqual (Error (FileWriteRefusal.WouldExceedMaxLength (ceiling - 3L, 4)))
 
         // A huge offset must be refused rather than wrapping onto a low sum that
         // the comparison would accept — which is what writing the check as
         // `offset + count > ceiling` would do.
         for offset in [ ceiling ; ceiling + 1L ; Int64.MaxValue ; Int64.MaxValue - 3L ] do
-            VirtualFileSystem.writtenLength offset 4 0
+            VirtualFileSystem.writtenLength offset 4 0L
             |> shouldEqual (Error (FileWriteRefusal.WouldExceedMaxLength (offset, 4)))
 
     [<Test>]
@@ -4236,8 +4250,12 @@ module TestTruncatedContents =
     [<Test>]
     let ``agrees with naive take-and-pad`` () : unit =
         let property (contents : byte[], length : int64) : bool =
-            match VirtualFileSystem.truncatedContents (ImmutableArray.CreateRange contents) length with
-            | Ok result -> result |> Seq.toArray = naive contents length
+            match
+                VirtualFileSystem.truncatedContents
+                    (FileContents.ofImmutableArray (ImmutableArray.CreateRange contents))
+                    length
+            with
+            | Ok result -> FileContents.toImmutableArray result |> Seq.toArray = naive contents length
             | Error refusal -> failwith $"expected success, got %O{refusal}"
 
         Check.One (config, Prop.forAll (Arb.fromGen smallCase) property)
@@ -4247,33 +4265,45 @@ module TestTruncatedContents =
     [<Test>]
     let ``the result is exactly as long as it was asked to be`` () : unit =
         let property (contents : byte[], length : int64) : bool =
-            match VirtualFileSystem.truncatedContents (ImmutableArray.CreateRange contents) length with
-            | Ok result -> int64 result.Length = length
+            match
+                VirtualFileSystem.truncatedContents
+                    (FileContents.ofImmutableArray (ImmutableArray.CreateRange contents))
+                    length
+            with
+            | Ok result -> FileContents.length result = length
             | Error refusal -> failwith $"expected success, got %O{refusal}"
 
         Check.One (config, Prop.forAll (Arb.fromGen smallCase) property)
 
     [<Test>]
     let ``a length the file already has returns it unchanged`` () : unit =
-        let contents = ImmutableArray.CreateRange [| 1uy ; 2uy ; 3uy |]
+        let contents =
+            FileContents.ofImmutableArray (ImmutableArray.CreateRange [| 1uy ; 2uy ; 3uy |])
 
         VirtualFileSystem.truncatedContents contents 3L |> shouldEqual (Ok contents)
 
     [<Test>]
     let ``a length beyond what the model can hold is refused rather than allocated`` () : unit =
-        let contents = ImmutableArray.CreateRange [| 1uy ; 2uy ; 3uy |]
+        let contents =
+            FileContents.ofImmutableArray (ImmutableArray.CreateRange [| 1uy ; 2uy ; 3uy |])
+
         let tooLong = VirtualFileSystem.maxFileLength + 1L
 
         VirtualFileSystem.truncatedContents contents tooLong
         |> shouldEqual (Error (FileTruncationRefusal.WouldExceedMaxLength tooLong))
 
-    /// Both sides of the ceiling, which only `truncatedLength` can state:
-    /// answering for the largest permitted length through `truncatedContents`
-    /// would allocate two gigabytes to do it.
+    /// Both sides of the ceiling, through `truncatedLength` and through
+    /// `truncatedContents`, whose extension to the ceiling holds no page.
     [<Test>]
     let ``the ceiling is inclusive, and refuses exactly one byte above it`` () : unit =
         VirtualFileSystem.truncatedLength VirtualFileSystem.maxFileLength
-        |> shouldEqual (Ok System.Array.MaxLength)
+        |> shouldEqual (Ok VirtualFileSystem.maxFileLength)
+
+        match VirtualFileSystem.truncatedContents FileContents.empty VirtualFileSystem.maxFileLength with
+        | Ok result ->
+            FileContents.length result |> shouldEqual VirtualFileSystem.maxFileLength
+            FileContents.heldPages result |> shouldEqual []
+        | Error refusal -> failwith $"expected success, got %O{refusal}"
 
         let tooLong = VirtualFileSystem.maxFileLength + 1L
 

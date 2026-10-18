@@ -767,7 +767,7 @@ module TestMkNod =
 
                                 let size =
                                     match madeInode.Content with
-                                    | InodeContent.RegularFile (contents, _) -> contents.Length
+                                    | InodeContent.RegularFile (contents, _) -> FileContents.length contents
                                     | other -> failwith $"%s{context}: made %A{other}"
 
                                 String.concat

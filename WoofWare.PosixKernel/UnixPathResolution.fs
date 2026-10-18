@@ -868,7 +868,7 @@ module UnixPathResolution =
         let sizeAndLinks : Result<int64 * int64, StatRefusal> =
             match entry.Content with
             | InodeContent.RegularFile (contents, _) ->
-                Ok (int64 contents.Length, int64 (VirtualFileSystem.bindingCount inode fileSystem))
+                Ok (FileContents.length contents, int64 (VirtualFileSystem.bindingCount inode fileSystem))
             // Measured 0 on both flavours, for every device.
             | InodeContent.CharacterDevice _ -> Ok (0L, int64 (VirtualFileSystem.bindingCount inode fileSystem))
             | InodeContent.Socket _ ->

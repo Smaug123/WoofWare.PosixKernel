@@ -649,28 +649,30 @@ module VirtualFileSystem =
     /// Reading at or past the end is 0 rather than an error — measured, and the
     /// same on Linux and Darwin. So is a zero-length request, which is why
     /// callers must not treat 0 as EOF-specific.
-    let internal readTransferCount (offset : int64) (count : int) (length : int) : int =
+    let internal readTransferCount (offset : int64) (count : int) (length : int64) : int =
         // The caller is responsible for rejecting a negative offset (EINVAL)
         // and refusing a negative size, so both are established before here.
         System.Diagnostics.Debug.Assert (offset >= 0L, "readTransferCount: offset must not be negative")
         System.Diagnostics.Debug.Assert (count >= 0, "readTransferCount: count must not be negative")
-        System.Diagnostics.Debug.Assert (length >= 0, "readTransferCount: length must not be negative")
+        System.Diagnostics.Debug.Assert (length >= 0L, "readTransferCount: length must not be negative")
 
-        if offset >= int64 length then
+        if offset >= length then
             // Includes an offset beyond `int` range, which no seeded file can
             // reach but a process can certainly ask for.
             0
         else
             // `length - offset` is in `(0, length]` here, so the `int` conversion
             // cannot overflow however large `offset` was.
-            min (int64 count) (int64 length - offset) |> int
+            min (int64 count) (length - offset) |> int
 
-    /// The most bytes a regular file in this model can hold: `Array.MaxLength`,
-    /// contents being an `ImmutableArray<byte>`.
+    /// The most bytes a regular file in this model can hold.
     ///
     /// Not any real filesystem's ceiling — ext4's is about 16 TiB and APFS's is
     /// vastly larger — so a write that would pass it is refused rather than
     /// answered with an errno.
+    // `Array.MaxLength`, so that `FileContents.toImmutableArray` can return any
+    // file whole. Raising it waits on measuring the length past which each
+    // filesystem answers EFBIG.
     let maxFileLength : int64 = int64 System.Array.MaxLength
 
     /// How long a regular file becomes when `count` bytes are written at
@@ -682,12 +684,12 @@ module VirtualFileSystem =
     /// on a four-byte file leaves it four bytes long. So a caller must not infer
     /// a file's new length from `offset` and the count alone.
     ///
-    /// Separate from `writtenContents` so that both sides of the ceiling can be
-    /// checked without allocating two gigabytes to do it.
-    let internal writtenLength (offset : int64) (count : int) (length : int) : Result<int, FileWriteRefusal> =
+    /// Separate from `writtenContents` so that the ceiling's arithmetic can be
+    /// checked as a function of three integers.
+    let internal writtenLength (offset : int64) (count : int) (length : int64) : Result<int64, FileWriteRefusal> =
         System.Diagnostics.Debug.Assert (offset >= 0L, "writtenLength: offset must not be negative")
         System.Diagnostics.Debug.Assert (count >= 0, "writtenLength: count must not be negative")
-        System.Diagnostics.Debug.Assert (length >= 0, "writtenLength: length must not be negative")
+        System.Diagnostics.Debug.Assert (length >= 0L, "writtenLength: length must not be negative")
 
         if count = 0 then
             Ok length
@@ -701,9 +703,7 @@ module VirtualFileSystem =
         then
             Error (FileWriteRefusal.WouldExceedMaxLength (offset, count))
         else
-            // Bounded by `maxFileLength` just above, so the `int` conversion is
-            // exact however large `offset` was.
-            Ok (max (int64 length) (offset + int64 count) |> int)
+            Ok (max length (offset + int64 count))
 
     /// The contents a regular file holds after `bytes` are written at `offset`.
     ///
@@ -713,24 +713,20 @@ module VirtualFileSystem =
     /// in place, and never truncates what follows it.
     ///
     /// Separated from `writeFile` for the reason `readTransferCount` is
-    /// separated from the syscalls that use it: as a function of a byte array, an
+    /// separated from the syscalls that use it: as a function of the contents, an
     /// offset and a byte array it is property-testable against naive splicing,
     /// where the same arithmetic inlined into a syscall is reachable only
     /// through a whole simulated system.
     let internal writtenContents
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (offset : int64)
         (bytes : ImmutableArray<byte>)
-        : Result<ImmutableArray<byte>, FileWriteRefusal>
+        : Result<FileContents, FileWriteRefusal>
         =
-        // Both are `ImmutableArray`, a struct wrapping an array, so `default`
-        // carries a null one: it would throw on the first `Length` read rather
-        // than at the point the mistake was made. Rejected rather than treated as
-        // empty for the reason `createFile` gives.
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.writtenContents: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file; pass ImmutableArray<byte>.Empty."
-
+        // `ImmutableArray` is a struct wrapping an array, so `default` carries a
+        // null one: it would throw on the first `Length` read rather than at the
+        // point the mistake was made. Rejected rather than treated as empty for
+        // the reason `FileContents.ofImmutableArray` gives.
         if bytes.IsDefault then
             failwith
                 "VirtualFileSystem.writtenContents: bytes is the default ImmutableArray, whose underlying array is null. That is not an empty write; pass ImmutableArray<byte>.Empty."
@@ -741,42 +737,29 @@ module VirtualFileSystem =
 
         if bytes.IsEmpty then
             // Not merely an optimisation: the contents must come back untouched
-            // rather than zero-extended to `offset`. See `writtenLength`.
+            // rather than extended to `offset`. See `writtenLength`.
             Ok contents
         else
 
-        match writtenLength offset bytes.Length contents.Length with
+        match writtenLength offset bytes.Length (FileContents.length contents) with
         | Error refusal -> Error refusal
-        | Ok length ->
-
-        // Zero-initialised, which is what fills the hole between the old end of
-        // the file and `offset` when there is one; where there is not, every byte
-        // is overwritten by one of the two copies below.
-        let result = Array.zeroCreate<byte> length
-        contents.CopyTo result
-        bytes.CopyTo (0, result, int offset, bytes.Length)
-
-        // Wrapped rather than copied: nothing else holds `result`, and a file can
-        // be two gigabytes long.
-        Ok (System.Runtime.InteropServices.ImmutableCollectionsMarshal.AsImmutableArray result)
+        | Ok _ -> Ok (FileContents.write offset bytes contents)
 
     /// The length a regular file becomes when truncated to `length`, or the
     /// refusal if that is more than this model can hold.
     ///
     /// Separate from `truncatedContents` for the reason `writtenLength` is
-    /// separate from `writtenContents`: it is the only way to check both sides of
-    /// the ceiling without allocating two gigabytes to do it.
+    /// separate from `writtenContents`.
     ///
     /// A negative length is the caller's to reject (EINVAL), so it is
     /// established before here.
-    let internal truncatedLength (length : int64) : Result<int, FileTruncationRefusal> =
+    let internal truncatedLength (length : int64) : Result<int64, FileTruncationRefusal> =
         System.Diagnostics.Debug.Assert (length >= 0L, "truncatedLength: length must not be negative")
 
         if length > maxFileLength then
             Error (FileTruncationRefusal.WouldExceedMaxLength length)
         else
-            // Bounded by `maxFileLength` just above, so this conversion is exact.
-            Ok (int length)
+            Ok length
 
     /// The contents a regular file holds after being truncated to `length`.
     ///
@@ -787,32 +770,17 @@ module VirtualFileSystem =
     /// timestamps and set-ID bits move regardless; see `truncateFile`.
     ///
     /// Separated from `truncateFile` for the reason `writtenContents` is
-    /// separated from `writeFile`: as a function of a byte array and a length it
+    /// separated from `writeFile`: as a function of the contents and a length it
     /// is property-testable against naive take/pad, where the same arithmetic
     /// inlined into a syscall is reachable only through a whole simulated system.
     let internal truncatedContents
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (length : int64)
-        : Result<ImmutableArray<byte>, FileTruncationRefusal>
+        : Result<FileContents, FileTruncationRefusal>
         =
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.truncatedContents: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file; pass ImmutableArray<byte>.Empty."
-
         match truncatedLength length with
         | Error refusal -> Error refusal
-        | Ok length ->
-
-        if length = contents.Length then
-            Ok contents
-        elif length < contents.Length then
-            Ok (ImmutableArray.CreateRange (Seq.truncate length contents))
-        else
-
-        // Zero-initialised, which is exactly what the extension reads as.
-        let result = Array.zeroCreate<byte> length
-        contents.CopyTo result
-        Ok (ImmutableArray.CreateRange result)
+        | Ok length -> Ok (FileContents.truncate length contents)
 
     /// Where `lseek(2)` would land, given where it is measuring from.
     ///
@@ -1178,21 +1146,10 @@ module VirtualFileSystem =
         (permissions : PermissionBits)
         (owner : InodeOwner)
         (now : UnixTimestamp)
-        (contents : ImmutableArray<byte>)
+        (contents : FileContents)
         (vfs : VirtualFileSystem)
         : Result<InodeNumber * VfsMutation, UnixError>
         =
-        // `ImmutableArray` is a struct wrapping an array, so `default` carries a
-        // null one: it stores happily, passes `checkInvariants`, and throws only
-        // when some later read touches `Length`. Rejected here for the same
-        // reason as a forged `FileName` or `SymlinkTarget`, and deliberately
-        // rejected rather than normalised to `Empty` — a caller who wrote
-        // `default` meant something, and quietly turning it into an empty file
-        // would hide the bug rather than surface it.
-        if contents.IsDefault then
-            failwith
-                "VirtualFileSystem.createFile: contents is the default ImmutableArray, whose underlying array is null. That is not an empty file — it is an uninitialised value that would pass checkInvariants and then throw on the first read. Pass ImmutableArray<byte>.Empty for an empty file."
-
         match ensureBindable directory name vfs with
         | Error error -> Error error
         | Ok () ->
@@ -2302,7 +2259,7 @@ module VirtualFileSystem =
         | Ok stripped ->
 
         let extended =
-            if offset <= int64 contents.Length then
+            if offset <= FileContents.length contents then
                 Ok contents
             else
                 match truncatedContents contents offset with
@@ -2316,13 +2273,13 @@ module VirtualFileSystem =
         let timesMove =
             match faulted with
             | FaultedWriteRule.TimesAlwaysMove -> true
-            | FaultedWriteRule.TimesMoveWhenReachingPastEnd -> offset + int64 count > int64 contents.Length
+            | FaultedWriteRule.TimesMoveWhenReachingPastEnd -> offset + int64 count > FileContents.length contents
 
         let changes =
             [
                 if stripped <> permissions then
                     FsChange.AttributesChanged inode
-                if timesMove || extended.Length <> contents.Length then
+                if timesMove || FileContents.length extended <> FileContents.length contents then
                     FsChange.ContentChanged inode
             ]
 
@@ -3069,7 +3026,16 @@ module VirtualFileSystem =
                     | SeedEntry.File (contents, permissions, owner) ->
                         let owner = owner |> Option.defaultValue defaultOwner
 
-                        match createFile directory name permissions owner createdAt contents vfs with
+                        match
+                            createFile
+                                directory
+                                name
+                                permissions
+                                owner
+                                createdAt
+                                (FileContents.ofImmutableArray contents)
+                                vfs
+                        with
                         | Ok (_, created) -> created.After
                         | Error error ->
                             failwith

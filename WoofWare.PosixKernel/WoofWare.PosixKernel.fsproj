@@ -34,6 +34,7 @@
         <Compile Include="SymlinkTarget.fs" />
         <Compile Include="PathLimits.fs" />
         <Compile Include="BindableEntryNames.fs" />
+        <Compile Include="FileContents.fs" />
         <Compile Include="Inode.fs" />
         <Compile Include="EntryNameMatching.fs" />
         <Compile Include="ProtectedFiles.fs" />

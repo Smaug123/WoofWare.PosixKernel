@@ -597,7 +597,8 @@ module TestUnixSystemStep =
 
                 match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
                 | Some (InodeContent.RegularFile (contents, _)) ->
-                    List.ofSeq contents |> shouldEqual [ 9uy ; 9uy ; 3uy ; 4uy ; 5uy ]
+                    List.ofSeq (FileContents.toImmutableArray contents)
+                    |> shouldEqual [ 9uy ; 9uy ; 3uy ; 4uy ; 5uy ]
                 | other -> failwith $"expected a regular file, got %O{other}"
             | other -> failwith $"expected a file descriptor, got %O{other}"
         | other -> failwith $"unexpected: %A{other}"
@@ -1215,7 +1216,8 @@ module TestUnixSystemStep =
 
                     match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
                     | Some (InodeContent.RegularFile (contents, _)) ->
-                        List.ofSeq contents |> shouldEqual [ 1uy ; 2uy ; 3uy ; 9uy ; 9uy ]
+                        List.ofSeq (FileContents.toImmutableArray contents)
+                        |> shouldEqual [ 1uy ; 2uy ; 3uy ; 9uy ; 9uy ]
                     | other -> failwith $"expected a regular file, got %O{other}"
                 | other -> failwith $"expected a file descriptor, got %O{other}"
             | other -> failwith $"unexpected: %A{other}"
@@ -1234,7 +1236,7 @@ module TestUnixSystemStep =
 
                 match VirtualFileSystem.tryGetContent inode after.Machine.FileSystem with
                 | Some (InodeContent.RegularFile (contents, _)) ->
-                    List.ofSeq contents
+                    List.ofSeq (FileContents.toImmutableArray contents)
                     |> shouldEqual [ 1uy ; 2uy ; 3uy ; 4uy ; 5uy ; 0uy ; 0uy ; 7uy ]
                 | other -> failwith $"expected a regular file, got %O{other}"
             | other -> failwith $"expected a file descriptor, got %O{other}"

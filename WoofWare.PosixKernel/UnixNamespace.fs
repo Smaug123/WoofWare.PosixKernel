@@ -830,7 +830,7 @@ module UnixNamespace =
                 permissions
                 (newInodeOwner operation directory system)
                 now
-                ImmutableArray<byte>.Empty
+                FileContents.empty
                 system.Machine.FileSystem
         with
         | Error error ->
