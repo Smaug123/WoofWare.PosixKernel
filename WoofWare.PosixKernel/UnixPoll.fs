@@ -50,8 +50,8 @@ type internal PollRefusal =
     /// Measured (`docs/probes/poll-entry-count`, and `poll-darwin.c` section
     /// N): a count above the soft limit fails, and one at or below it does
     /// not, under Linux for every process and under Darwin for one that is
-    /// not root. By XNU's source, Darwin fails root's only when it also
-    /// exceeds `FD_SETSIZE` (1024), which is unmeasured.
+    /// not root. Darwin fails root's only when it also exceeds `FD_SETSIZE`
+    /// (1024), so for root this is a count from 1025 to `OPEN_MAX`.
     | UnmodelledEntryCount of flavour : SimulatedUnixFlavour * count : int * assumedLimit : int
     /// Under Darwin, a sleeping call has both something to report and reached
     /// its deadline. Darwin answers whichever reached the sleeping thread first,
@@ -108,16 +108,28 @@ module internal PollEntryCount =
         // `OPEN_MAX`, which Darwin screens beside the limit.
         | SimulatedUnixFlavour.Darwin -> 10240
 
-    /// The errno a `poll(2)` of `count` entries fails with before it reads any
-    /// entry, if any; or the refusal, where that depends on the process's
-    /// `RLIMIT_NOFILE` soft limit.
-    let screen (platform : SimulatedUnixPlatform) (count : int) : Result<UnixError option, PollRefusal> =
+    /// The most entries a `poll(2)` under `flavour`, by a process with
+    /// `privilege`, passes the screen with whatever its soft limit: Darwin
+    /// screens root against the limit only past `FD_SETSIZE` (1024).
+    let private limitFree (flavour : SimulatedUnixFlavour) (privilege : CallerPrivilege) (assumedLimit : int) : int =
+        // Measured by `docs/probes/poll-entry-count` section D on Darwin
+        // 27.0.0, with the soft limit at 256: root's 257, 1023 and 1024 pass
+        // and 1025 fails, where uid 501's 257 fails.
+        match flavour, privilege with
+        | SimulatedUnixFlavour.Darwin, CallerPrivilege.Privileged -> max assumedLimit 1024
+        | SimulatedUnixFlavour.Darwin, CallerPrivilege.Unprivileged
+        | SimulatedUnixFlavour.Linux, _ -> assumedLimit
+
+    /// The errno a `poll(2)` of `count` entries, by a process with `privilege`,
+    /// fails with before it reads any entry, if any; or the refusal, where
+    /// that depends on the process's `RLIMIT_NOFILE` soft limit.
+    let screen (platform : SimulatedUnixPlatform) (privilege : CallerPrivilege) (count : int) : Result<UnixError option, PollRefusal> =
         let flavour = SimulatedUnixPlatform.flavour platform
         let assumedLimit = SimulatedUnixPlatform.descriptorBound platform
 
         if count > ceiling flavour then
             Ok (Some UnixError.EINVAL)
-        elif count > assumedLimit then
+        elif count > limitFree flavour privilege assumedLimit then
             Error (PollRefusal.UnmodelledEntryCount (flavour, count, assumedLimit))
         else
             Ok None
@@ -141,7 +153,7 @@ module internal PollRefusal =
         | PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Linux, count, assumedLimit) ->
             $"the poll has %d{count} entries, more than %d{assumedLimit} and no more than %d{PollEntryCount.ceiling SimulatedUnixFlavour.Linux}, the most fs.nr_open (and so any RLIMIT_NOFILE) can be. Linux answers EINVAL for such a count exactly when it exceeds the process's RLIMIT_NOFILE soft limit, which this kernel does not model: it assumes only that the limit is at least %d{assumedLimit}."
         | PollRefusal.UnmodelledEntryCount (SimulatedUnixFlavour.Darwin, count, assumedLimit) ->
-            $"the poll has %d{count} entries, more than %d{assumedLimit} and no more than OPEN_MAX (%d{PollEntryCount.ceiling SimulatedUnixFlavour.Darwin}). Darwin answers EINVAL for such a count exactly when it exceeds the process's RLIMIT_NOFILE soft limit (for root, the source says, only when it also exceeds FD_SETSIZE, 1024, which is unmeasured), and this kernel does not model the limit: it assumes only that it is at least %d{assumedLimit}."
+            $"the poll has %d{count} entries, more than %d{assumedLimit} (more than FD_SETSIZE, 1024, for root) and no more than OPEN_MAX (%d{PollEntryCount.ceiling SimulatedUnixFlavour.Darwin}). Darwin answers EINVAL for such a count exactly when it exceeds the process's RLIMIT_NOFILE soft limit (for root, only when it also exceeds 1024), and this kernel does not model the limit: it assumes only that it is at least %d{assumedLimit}."
         | PollRefusal.EventsBesideDeadline ->
             "a thread asleep in poll has both something to report and reached its deadline (0). Darwin answers whichever reached the sleeping thread first, and this kernel does not record which did."
         | PollRefusal.DeadlineBeyondClock (now, timeoutMilliseconds) ->
@@ -1002,7 +1014,7 @@ module UnixPoll =
         =
         // Measured (`docs/probes/poll-entry-count`, section A): ahead of the
         // scan, and of the timeout.
-        match PollEntryCount.screen system.Machine.UnixPlatform (List.length entries) with
+        match PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) (List.length entries) with
         | Error refusal -> Error refusal
         | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
         | Ok None ->
@@ -1281,7 +1293,7 @@ module UnixPoll =
 
         // Measured (`docs/probes/poll-entry-count`, and `poll-darwin.c`
         // section N): ahead of the registrations, and of the copy-in's EFAULT.
-        match PollEntryCount.screen system.Machine.UnixPlatform count with
+        match PollEntryCount.screen system.Machine.UnixPlatform (UnixProcessState.callerPrivilege system.Process) count with
         | Error refusal -> Error refusal
         | Ok (Some error) -> Ok (PollOutcome.Failed error, system)
         | Ok None ->
