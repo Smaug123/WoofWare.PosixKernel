@@ -1231,6 +1231,14 @@ module UnixSystem =
         =
         system.Machine.EntropyPool
 
+    /// The lowest port a process without privilege may bind
+    /// (`UnixBootImage.withUnprivilegedPortStart`).
+    let unprivilegedPortStart<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (system : UnixSystem<'Thread, 'Handler>)
+        : uint16
+        =
+        system.Machine.UnprivilegedPortStart
+
     /// The range a `bind(2)` of port 0 draws from, inclusive at both ends.
     let ephemeralPortRange<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : UnixSystem<'Thread, 'Handler>)
@@ -3957,6 +3965,16 @@ module UnixSystem =
         | SimulatedUnixFlavour.Linux -> 32768us, 60999us
         | SimulatedUnixFlavour.Darwin -> 49152us, 65535us
 
+    /// The lowest port a process without privilege may bind, on a machine
+    /// that has not configured it: 1024 on both flavours.
+    ///
+    /// Linux's is the sysctl `net.ipv4.ip_unprivileged_port_start`, which a
+    /// host may set (`UnixBootImage.withUnprivilegedPortStart`), and which
+    /// reads 1024 by default. Darwin's is not configurable. Measured: binding
+    /// 1023 to loopback is `EACCES` for an unprivileged caller on both, and
+    /// 1024 succeeds.
+    let defaultUnprivilegedPortStart : uint16 = 1024us
+
     /// The addresses this machine holds, as `bind(2)` decides whether an address
     /// is assignable. Loopback only: this library models no interface a process
     /// could reach, so anything else would be an address no packet could arrive on.
@@ -4154,6 +4172,7 @@ module UnixSystem =
                     NextSocketId = SocketId 0L
                     NextEphemeralPort = fst (defaultEphemeralPortRange flavour)
                     EphemeralPortRange = defaultEphemeralPortRange flavour
+                    UnprivilegedPortStart = defaultUnprivilegedPortStart
                     SoMaxConn = UnixMachineState.defaultSoMaxConn flavour
                     InotifyLimits = defaultInotifyLimits
                     TcpSendSpace = UnixMachineState.defaultTcpSendSpace flavour

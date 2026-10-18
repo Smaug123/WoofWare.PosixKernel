@@ -1303,8 +1303,10 @@ module UnixSocket =
         )
 
     /// Whether `bind(2)` keeps `port` from an unprivileged caller, at the
-    /// wildcard address or another (`wildcard`). Port 0 asks for an allocation
-    /// rather than a number, so no limit applies to it.
+    /// wildcard address or another (`wildcard`): a port below the machine's
+    /// unprivileged port start, measured on Linux at every value from 0 to
+    /// 32768 (`docs/probes/unprivileged-port-start`). Port 0 asks for an
+    /// allocation rather than a number, so no limit applies to it.
     let private privilegedPortFault<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (system : ProcessView<'Thread, 'Handler>)
         (port : uint16)
@@ -1312,7 +1314,7 @@ module UnixSocket =
         : bool
         =
         port > 0us
-        && port < SimulatedUnixPlatform.privilegedPortCeiling
+        && port < system.Machine.UnprivilegedPortStart
         && SimulatedUnixPlatform.privilegedPortGuards system.Machine.UnixPlatform wildcard
         && UnixProcessState.callerPrivilege system.Process = CallerPrivilege.Unprivileged
 

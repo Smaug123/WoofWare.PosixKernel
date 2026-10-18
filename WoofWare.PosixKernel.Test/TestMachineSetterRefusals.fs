@@ -111,34 +111,18 @@ module TestMachineSetterRefusals =
     // ------------------------------------------------ ephemeral port range
 
     [<Test>]
-    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and under Linux the privileged ports``
-        ()
-        : unit
-        =
+    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0`` () : unit =
         let property (platform : SimulatedUnixPlatform, low : uint16, high : uint16) : unit =
             let expected : Result<unit, EphemeralPortRangeRefusal> =
                 if low = 0us then
                     Error (EphemeralPortRangeRefusal.LowIsZero high)
                 elif low > high then
                     Error (EphemeralPortRangeRefusal.Empty (low, high))
-                elif
-                    SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
-                    && low < SimulatedUnixPlatform.privilegedPortCeiling
-                then
-                    Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart low)
                 else
                     Ok ()
 
             match UnixBootImage.tryWithEphemeralPortRange (low, high) (imageOn platform) with
-            | Ok image ->
-                expected |> shouldEqual (Ok ())
-
-                let machine =
-                    (Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image).Machine
-
-                machine.EphemeralPortRange |> shouldEqual (low, high)
-                // Rewound into the range, so the first ephemeral port is its low end.
-                machine.NextEphemeralPort |> shouldEqual low
+            | Ok _ -> expected |> shouldEqual (Ok ())
             | Error refusal -> Error refusal |> shouldEqual expected
 
         let gen =
@@ -156,26 +140,117 @@ module TestMachineSetterRefusals =
 
         Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
 
+    /// The range and, under Linux, the unprivileged port start constrain
+    /// each other (`docs/probes/local-port-range`): a machine boots only with
+    /// a range starting at or above the start, whichever setter ran first,
+    /// and the setters' order changes nothing else.
+    [<Test>]
+    let ``boot admits exactly a range starting at or above the unprivileged port start, in either order`` () : unit =
+        let property
+            (platform : SimulatedUnixPlatform, (low : uint16, high : uint16), start : uint16 option, rangeFirst : bool)
+            : unit
+            =
+            let withRange (image : UnixBootImage<int, string>) : Result<UnixBootImage<int, string>, string> =
+                UnixBootImage.tryWithEphemeralPortRange (low, high) image
+                |> Result.mapError (fun refusal -> $"%A{refusal}")
+
+            let withStart (image : UnixBootImage<int, string>) : Result<UnixBootImage<int, string>, string> =
+                match start with
+                | None -> Ok image
+                | Some start ->
+                    UnixBootImage.tryWithUnprivilegedPortStart start image
+                    |> Result.mapError (fun refusal -> $"%A{refusal}")
+
+            let configured =
+                if rangeFirst then
+                    imageOn platform |> withRange |> Result.bind withStart
+                else
+                    imageOn platform |> withStart |> Result.bind withRange
+
+            let effectiveStart =
+                start |> Option.defaultValue UnixSystem.defaultUnprivilegedPortStart
+
+            let booted =
+                configured
+                |> Result.bind (fun image ->
+                    UnixBootImage.tryBoot (Launched.launch platform UnixSystem.pipedStandardStreams 0 (CpuId 0)) image
+                    |> Result.mapError (fun refusal -> $"%A{refusal}")
+                )
+
+            match SimulatedUnixPlatform.flavour platform, booted with
+            | SimulatedUnixFlavour.Darwin, Error refusal when start.IsSome ->
+                refusal
+                |> shouldEqual $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}"
+            | SimulatedUnixFlavour.Darwin, Ok system ->
+                start |> shouldEqual None
+                UnixSystem.unprivilegedPortStart system |> shouldEqual 1024us
+            | SimulatedUnixFlavour.Linux, Ok system ->
+                low >= effectiveStart |> shouldEqual true
+                UnixSystem.ephemeralPortRange system |> shouldEqual (low, high)
+                UnixSystem.unprivilegedPortStart system |> shouldEqual effectiveStart
+                // Rewound into the range, so the first ephemeral port is its low end.
+                system.Machine.NextEphemeralPort |> shouldEqual low
+            | SimulatedUnixFlavour.Linux, Error refusal ->
+                refusal
+                |> shouldEqual $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (low, effectiveStart)}"
+            | _, other -> failwith $"%A{other}"
+
+        let range : Gen<uint16 * uint16> =
+            gen {
+                let! low = Gen.oneof [ anyPort ; Gen.elements [ 1023us ; 1024us ; 1025us ] ]
+                let low = if low = 0us then 1us else low
+                let! width = Gen.oneof [ Gen.choose (0, 3) ; Gen.choose (0, 65535) ]
+                return low, uint16 (min 65535 (int low + width))
+            }
+
+        let gen =
+            gen {
+                let! platform = Gen.elements platforms
+                let! low, high = range
+                // Around the range's low end, where the rule turns, as well as
+                // anywhere.
+                let! start =
+                    Gen.oneof
+                        [
+                            Gen.constant None
+                            anyPort |> Gen.map Some
+                            Gen.choose (-2, 2)
+                            |> Gen.map (fun d -> Some (uint16 (max 0 (min 65535 (int low + d)))))
+                        ]
+
+                let! rangeFirst = ArbMap.defaults |> ArbMap.generate<bool>
+                return platform, (low, high), start, rangeFirst
+            }
+
+        Check.One (propertyConfig, Prop.forAll (Arb.fromGen gen) property)
+
     [<Test>]
     let ``withEphemeralPortRange's boundaries`` () : unit =
-        let outcome (low : uint16, high : uint16) : Result<unit, EphemeralPortRangeRefusal> =
+        let outcome (low : uint16, high : uint16) : Result<unit, string> =
             UnixBootImage.tryWithEphemeralPortRange (low, high) (imageOn SimulatedUnixPlatform.linuxX64)
+            |> Result.mapError (fun refusal -> $"%A{refusal}")
+            |> Result.bind (fun image ->
+                UnixBootImage.tryBoot
+                    (Launched.launch SimulatedUnixPlatform.linuxX64 UnixSystem.pipedStandardStreams 0 (CpuId 0))
+                    image
+                |> Result.mapError (fun refusal -> $"%A{refusal}")
+            )
             |> Result.map (fun _ -> ())
 
         outcome (0us, 0us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.LowIsZero 0us))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.LowIsZero 0us}")
 
         outcome (0us, 10us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.LowIsZero 10us))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.LowIsZero 10us}")
 
         outcome (2us, 1us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.Empty (2us, 1us)))
+        |> shouldEqual (Error $"%A{EphemeralPortRangeRefusal.Empty (2us, 1us)}")
 
         outcome (1us, 1us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart 1us))
+        |> shouldEqual (Error $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (1us, 1024us)}")
 
         outcome (1023us, 2000us)
-        |> shouldEqual (Error (EphemeralPortRangeRefusal.BelowUnprivilegedPortStart 1023us))
+        |> shouldEqual (Error $"%A{BootRefusal.EphemeralPortsBelowUnprivilegedPortStart (1023us, 1024us)}")
 
         outcome (1024us, 1024us) |> shouldEqual (Ok ())
         outcome (UInt16.MaxValue, UInt16.MaxValue) |> shouldEqual (Ok ())

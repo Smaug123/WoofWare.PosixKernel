@@ -115,6 +115,11 @@ type internal UnixMachineState =
             /// Range `NextEphemeralPort` sweeps, inclusive at both ends. Host
             /// configuration; see `UnixSystem.defaultEphemeralPortRange`.
             EphemeralPortRange : uint16 * uint16
+            /// The lowest port a process without privilege may bind:
+            /// Linux's `net.ipv4.ip_unprivileged_port_start`, host
+            /// configuration (see `UnixSystem.defaultUnprivilegedPortStart`),
+            /// and on Darwin, which has no such setting, always 1024.
+            UnprivilegedPortStart : uint16
             /// The value of the `somaxconn` sysctl (`net.core.somaxconn` on
             /// Linux, `kern.ipc.somaxconn` on Darwin): the ceiling `listen(2)`
             /// clamps its backlog to before the accept-queue capacity is derived.

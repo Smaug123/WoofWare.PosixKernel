@@ -209,7 +209,8 @@ type BindFault =
     | Family
     /// No local interface holds the address. `EADDRNOTAVAIL`.
     | AddressNotLocal
-    /// The port is below `privilegedPortCeiling`, at an address
+    /// The port is below the machine's unprivileged port start
+    /// (`UnixSystem.unprivilegedPortStart`), at an address
     /// `privilegedPortGuards` says the limit covers, and the process is not
     /// root. `EACCES`.
     | PrivilegedPort
