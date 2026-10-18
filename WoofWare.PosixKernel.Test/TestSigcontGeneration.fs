@@ -171,8 +171,8 @@ module TestSigcontGeneration =
                     (Some (signals blocked r))
                     r.System
             with
-            | Ok (_, system) -> returns thread (withSystem system r)
-            | Error errno -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
+            | SignalMaskAnswer.Completed _, system -> returns thread (withSystem system r)
+            | SignalMaskAnswer.Failed errno, _ -> failwith $"pthread_sigmask by %d{thread} failed with %O{errno}"
 
     /// `sigaction` by `thread`.
     let private install (thread : int) (signal : Signal) (disposition : SignalDisposition<string>) : Step =
@@ -180,8 +180,8 @@ module TestSigcontGeneration =
             match
                 UnixSignal.sigaction (Callers.thread thread r.System) (signo r signal) (Some disposition) r.System
             with
-            | Ok (_, system) -> returns thread (withSystem system r)
-            | Error errno -> failwith $"sigaction of %O{signal} failed with %O{errno}"
+            | SigactionAnswer.Completed _, system -> returns thread (withSystem system r)
+            | SigactionAnswer.Failed errno, _ -> failwith $"sigaction of %O{signal} failed with %O{errno}"
 
     let private spawnSecond : Step =
         fun r ->
@@ -222,7 +222,8 @@ module TestSigcontGeneration =
 
             match outcome with
             | Error stop -> Error stop
-            | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> returns sender (withSystem system r)
+            | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) ->
+                returns sender (withSystem system r)
             | Ok other -> failwith $"sending %O{signal}: %A{other}"
 
     /// `sigpending` by `thread`, printed as the probe prints it.
@@ -726,7 +727,8 @@ module TestSigcontGeneration =
                 let pid = ProcessId.toInt32 (Lone.pid r.System)
 
                 match UnixSignal.tryKill (Callers.leader r.System) pid (signo r Signal.SIGSTOP) r.System with
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped Signal.SIGSTOP, system))) -> system
+                | Ok (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped Signal.SIGSTOP), system)) ->
+                    system
                 | other -> failwith $"SIGSTOP: %A{other}"
             )
 

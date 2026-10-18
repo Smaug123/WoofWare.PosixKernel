@@ -30,7 +30,7 @@ module TestSigprocmask =
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
-        : Result<SignalMask * UnixSystem<int, string>, UnixError>
+        : SignalMaskAnswer * UnixSystem<int, string>
         =
         match UnixSignal.trySigprocmask (Callers.thread thread system) how set system with
         | Ok answered -> answered
@@ -56,7 +56,7 @@ module TestSigprocmask =
         (how : int)
         (set : SignalMask option)
         (system : UnixSystem<int, string>)
-        : Result<SignalMask * UnixSystem<int, string>, UnixError>
+        : SignalMaskAnswer * UnixSystem<int, string>
         =
         match route with
         | Route.Libc -> sigprocmask thread how set system
@@ -71,10 +71,10 @@ module TestSigprocmask =
     let private wordOf (thread : int) (system : UnixSystem<int, string>) : uint64 =
         SignalState.maskOf thread (Lone.proc system).Signals |> SignalMask.toWord
 
-    let private orFail (result : Result<SignalMask * UnixSystem<int, string>, UnixError>) : UnixSystem<int, string> =
-        match result with
-        | Ok (_, system) -> system
-        | Error errno -> failwith $"the mask call failed with %O{errno}"
+    let private orFail (answer : SignalMaskAnswer * UnixSystem<int, string>) : UnixSystem<int, string> =
+        match answer with
+        | SignalMaskAnswer.Completed _, system -> system
+        | SignalMaskAnswer.Failed errno, _ -> failwith $"the mask call failed with %O{errno}"
 
     /// `thread` with exactly `word` blocked, set through `pthread_sigmask`.
     let private withMask
@@ -126,20 +126,22 @@ module TestSigprocmask =
                     let isNamed = after <> 0UL
 
                     match call route 0 how None start with
-                    | Ok (old, system) ->
+                    | SignalMaskAnswer.Completed old, system ->
                         (flavour, route, how, SignalMask.toWord old, wordOf 0 system)
                         |> shouldEqual (flavour, route, how, 0x3UL, 0x3UL)
-                    | Error errno -> failwith $"%O{flavour} %A{route} how=%d{how} NULL: %O{errno}"
+                    | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{flavour} %A{route} how=%d{how} NULL: %O{errno}"
 
                     match call route 0 how (Some (maskOfWord flavour (int' ||| term))) start with
-                    | Ok (old, system) ->
+                    | SignalMaskAnswer.Completed old, system ->
                         isNamed |> shouldEqual true
 
                         (flavour, route, how, SignalMask.toWord old, wordOf 0 system)
                         |> shouldEqual (flavour, route, how, 0x3UL, after)
-                    | Error errno ->
+                    | SignalMaskAnswer.Failed errno, system ->
                         (flavour, route, how, isNamed, errno)
                         |> shouldEqual (flavour, route, how, false, UnixError.EINVAL)
+
+                        system |> shouldEqual start
 
     [<Test>]
     let ``blocking every bit leaves the mask measured, through every route`` () : unit =
@@ -161,12 +163,12 @@ module TestSigprocmask =
             for route in routesOf flavour do
                 for how in [ MaskHow.block numbering ; MaskHow.setMask numbering ] do
                     match call route 0 how (Some (maskOfWord flavour full)) (systemOn flavour) with
-                    | Ok (old, system) ->
+                    | SignalMaskAnswer.Completed old, system ->
                         (flavour, route, how, SignalMask.toWord old, wordOf 0 system)
                         |> shouldEqual (flavour, route, how, 0UL, measured flavour route)
 
                         UnixSystem.checkInvariants system |> shouldEqual []
-                    | Error errno -> failwith $"%O{flavour} %A{route}: %O{errno}"
+                    | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{flavour} %A{route}: %O{errno}"
 
     [<Test>]
     let ``Linux: the raw call blocks 32 and 33, which glibc reads back and cannot set`` () : unit =
@@ -190,12 +192,12 @@ module TestSigprocmask =
             |> orFail
 
         match sigprocmask 0 (MaskHow.block numbering) None blocked with
-        | Ok (old, _) -> SignalMask.toWord old |> shouldEqual 0x180000001UL
-        | Error errno -> failwith $"%O{errno}"
+        | SignalMaskAnswer.Completed old, _ -> SignalMask.toWord old |> shouldEqual 0x180000001UL
+        | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{errno}"
 
         match UnixSignal.pthreadSigmask (Callers.thread 0 blocked) (MaskHow.block numbering) None blocked with
-        | Ok (old, _) -> SignalMask.toWord old |> shouldEqual 0x180000001UL
-        | Error errno -> failwith $"%O{errno}"
+        | SignalMaskAnswer.Completed old, _ -> SignalMask.toWord old |> shouldEqual 0x180000001UL
+        | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{errno}"
 
         sigprocmask 0 (MaskHow.setMask numbering) (Some (maskOfWord flavour hup)) blocked
         |> orFail
@@ -220,17 +222,16 @@ module TestSigprocmask =
         for size in [ 0UL ; 1UL ; 4UL ; 7UL ; 9UL ; 16UL ; 128UL ] do
             for how, set in [ block, set ; block, None ; 100, None ; 100, set ] do
                 UnixSignal.rtSigprocmask (Callers.thread 0 start) how set size start
-                |> Result.map fst
-                |> shouldEqual (Error UnixError.EINVAL)
+                |> shouldEqual (SignalMaskAnswer.Failed UnixError.EINVAL, start)
 
         // At 8, the rows answered as every route does.
-        UnixSignal.rtSigprocmask (Callers.thread 0 start) 100 None 8UL start
-        |> Result.map (fun (old, system) -> SignalMask.toWord old, wordOf 0 system)
-        |> shouldEqual (Ok (0x3UL, 0x3UL))
+        match UnixSignal.rtSigprocmask (Callers.thread 0 start) 100 None 8UL start with
+        | SignalMaskAnswer.Completed old, system ->
+            (SignalMask.toWord old, wordOf 0 system) |> shouldEqual (0x3UL, 0x3UL)
+        | SignalMaskAnswer.Failed errno, _ -> failwith $"rt_sigprocmask(100, NULL) failed with %O{errno}"
 
         UnixSignal.rtSigprocmask (Callers.thread 0 start) 100 set 8UL start
-        |> Result.map fst
-        |> shouldEqual (Error UnixError.EINVAL)
+        |> shouldEqual (SignalMaskAnswer.Failed UnixError.EINVAL, start)
 
     [<Test>]
     let ``Darwin: rt_sigprocmask is not a system call there`` () : unit =
@@ -238,7 +239,7 @@ module TestSigprocmask =
 
         Assert.Throws<System.PlatformNotSupportedException> (fun () ->
             UnixSignal.rtSigprocmask (Callers.thread 0 darwin) 1 None 8UL darwin
-            |> ignore<Result<SignalMask * UnixSystem<int, string>, UnixError>>
+            |> ignore<SignalMaskAnswer * UnixSystem<int, string>>
         )
         |> ignore
 
@@ -303,12 +304,12 @@ module TestSigprocmask =
             for route in routesOf flavour do
                 for how, set in sets do
                     match call route 0 how (Some (maskOfWord flavour set)) start with
-                    | Ok (old, system) ->
+                    | SignalMaskAnswer.Completed old, system ->
                         (flavour, route, how, SignalMask.toWord old, (wordOf 0 system, wordOf 1 system))
                         |> shouldEqual (flavour, route, how, hup, measured flavour route how)
 
                         UnixSystem.checkInvariants system |> shouldEqual []
-                    | Error errno -> failwith $"%O{flavour} %A{route}: %O{errno}"
+                    | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{flavour} %A{route}: %O{errno}"
 
     let private signo (flavour : SimulatedUnixFlavour) (signal : Signal) : int =
         Signal.toRawSignoUnder (HostPlatform.signalNumberingOf flavour) signal
@@ -321,15 +322,12 @@ module TestSigprocmask =
                 (Some (SignalDisposition.Catch (SignalCatch.ofHandler (string<Signal> signal))))
                 system
         with
-        | Ok (_, system) -> system
-        | Error errno -> failwith $"sigaction failed with %O{errno}"
+        | SigactionAnswer.Completed _, system -> system
+        | SigactionAnswer.Failed errno, _ -> failwith $"sigaction failed with %O{errno}"
 
-    let private sent
-        (result : Result<Result<ProcessFate<KillOutcome, int, string>, UnixError>, 'refusal>)
-        : UnixSystem<int, string>
-        =
+    let private sent (result : Result<ProcessFate<KillAnswer, int, string>, 'refusal>) : UnixSystem<int, string> =
         match result with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, system))) -> system
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, system)) -> system
         | other -> failwith $"expected the process to carry on, got %A{other}"
 
     let private self (system : UnixSystem<int, string>) : int = ProcessId.toInt32 (Lone.pid system)
@@ -471,8 +469,8 @@ module TestSigprocmask =
                     match
                         UnixSignal.sigaction (Callers.leader system) (signo flavour signal) (Some disposition) system
                     with
-                    | Ok (_, system) -> system
-                    | Error errno -> failwith $"%O{errno}"
+                    | SigactionAnswer.Completed _, system -> system
+                    | SigactionAnswer.Failed errno, _ -> failwith $"%O{errno}"
                     |> withMask flavour 0 (SignalMask.toWord mask)
 
                 let system =
@@ -535,8 +533,8 @@ module TestSigprocmask =
                         ))
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%O{errno}"
+                | SigactionAnswer.Completed _, system -> system
+                | SigactionAnswer.Failed errno, _ -> failwith $"%O{errno}"
 
             let raised =
                 UnixSignal.tryPthreadKill (Callers.leader system) 0 (signo flavour Signal.SIGUSR1) system
@@ -665,7 +663,8 @@ module TestSigprocmask =
             | SimulatedUnixFlavour.Darwin, Error refusal ->
                 refusal
                 |> shouldEqual (SigprocmaskRefusal.DarwinUnblockedForAnotherThread (1, Signal.SIGUSR1))
-            | SimulatedUnixFlavour.Linux, Ok (Ok (_, unblocked)) -> Lone.wakes unblocked |> shouldEqual []
+            | SimulatedUnixFlavour.Linux, Ok (SignalMaskAnswer.Completed _, unblocked) ->
+                Lone.wakes unblocked |> shouldEqual []
             | _, other -> failwith $"%O{flavour}: the sigprocmask answered %A{other}"
 
     /// The route a mask call of the property's sequences takes, with its
@@ -808,16 +807,16 @@ module TestSigprocmask =
 
                 let actual =
                     match UnixSystem.tryStep (Callers.thread thread system) syscall system with
-                    | Ok (SteppedCall.SigProcMask answer)
-                    | Ok (SteppedCall.PthreadSigMask answer)
-                    | Ok (SteppedCall.RtSigProcMask answer) -> answer
+                    | Ok (SteppedCall.SigProcMask (answer, after))
+                    | Ok (SteppedCall.PthreadSigMask (answer, after))
+                    | Ok (SteppedCall.RtSigProcMask (answer, after)) -> answer, after
                     | Ok other -> failwith $"%A{c}: not a mask call's answer: %A{Stepped.view other}"
                     | Error refusal -> failwith $"%A{c} was refused: %s{SyscallRefusal.describe refusal}"
 
                 let expected = referenceCall flavour masks c
 
                 match actual, expected with
-                | Ok (old, system'), Ok (expectedOld, masks') ->
+                | (SignalMaskAnswer.Completed old, system'), Ok (expectedOld, masks') ->
                     (c, SignalMask.toWord old) |> shouldEqual (c, expectedOld)
 
                     for thread in [ 0 ; 1 ] do
@@ -829,8 +828,9 @@ module TestSigprocmask =
 
                     UnixSystem.checkInvariants system' |> shouldEqual []
                     system', masks'
-                | Error a, Error b ->
+                | (SignalMaskAnswer.Failed a, system'), Error b ->
                     (c, a) |> shouldEqual (c, b)
+                    system' |> shouldEqual system
                     system, masks
                 | _ -> failwith $"%A{c}: the library answered %A{actual}, the reference %A{expected}"
             )
@@ -900,8 +900,8 @@ module TestSigprocmask =
                         ))
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%O{errno}"
+                | SigactionAnswer.Completed _, system -> system
+                | SigactionAnswer.Failed errno, _ -> failwith $"%O{errno}"
                 |> withMask flavour 0 (SignalMask.toWord (ofList before))
 
             let system =

@@ -663,7 +663,7 @@ module EndedProcess =
 /// outcome and the system it left the process in, or the process ended.
 ///
 /// `'Outcome` is what the call says besides, which never includes the process
-/// ending: a `WriteOutcome` for a write, a `KillOutcome` for `kill(2)`, a
+/// ending: a `WriteOutcome` for a write, a `KillAnswer` for `kill(2)`, a
 /// `ReturnToUserOutcome` for a return to user mode, and `unit` for a thread's
 /// exit, which says nothing more.
 [<RequireQualifiedAccess>]
@@ -702,8 +702,7 @@ type internal Unfocus<'View, 'Kernel> =
 
 /// Where the systems sit in a call's answer, built from the `Shape` module's
 /// functions, which nest as the answer's type does: `kill`'s
-/// `Result<Result<ProcessFate<_, _, _>, UnixError>, KillRefusal>` is
-/// `Shape.result (Shape.result Shape.fate)`.
+/// `Result<ProcessFate<_, _, _>, KillRefusal>` is `Shape.result Shape.fate`.
 ///
 /// `'InView` is the answer as a call's body gives it, each system in it a
 /// `'View`, and `'InKernel` is that answer with a `'Kernel` made of each of

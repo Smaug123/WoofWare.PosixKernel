@@ -336,32 +336,38 @@ module SignalFuzz =
             | SignalFuzzOp.Kill s ->
                 match UnixSignal.tryKill (Callers.leader system) self s system with
                 | Error refusal -> raise (Refusal $"kill refused: %O{refusal}")
-                | Ok (Error errno) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Failed errno, after)) ->
+                    if after <> system then
+                        failwith $"a kill failing with %O{errno} changed the system"
+
                     events.Add
                         $"f%d{UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno}"
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> system <- after
-                | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) -> system <- after
+                | Ok (ProcessFate.ProcessEnded (ended, after)) ->
                     EndedMachine.assertNoneLeft after
 
                     match EndedProcess.termination ended with
                     | ProcessTermination.Signaled (killedBy, _) -> raise (Died (signo killedBy))
                     | other -> failwith $"kill ended the process with %O{other}"
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _))) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped _), _)) ->
                     raise (Refusal "a stop signal was sent")
             | SignalFuzzOp.Raise s ->
                 match UnixSignal.tryPthreadKill (Callers.leader system) leader s system with
                 | Error refusal -> raise (Refusal $"raise refused: %O{refusal}")
-                | Ok (Error errno) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Failed errno, after)) ->
+                    if after <> system then
+                        failwith $"a kill failing with %O{errno} changed the system"
+
                     events.Add
                         $"f%d{UnixError.toRawErrnoUnder (SimulatedUnixPlatform.rawErrnoNumbering platform) errno}"
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, after))) -> system <- after
-                | Ok (Ok (ProcessFate.ProcessEnded (ended, after))) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, after)) -> system <- after
+                | Ok (ProcessFate.ProcessEnded (ended, after)) ->
                     EndedMachine.assertNoneLeft after
 
                     match EndedProcess.termination ended with
                     | ProcessTermination.Signaled (killedBy, _) -> raise (Died (signo killedBy))
                     | other -> failwith $"raise ended the process with %O{other}"
-                | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessStopped _, _))) ->
+                | Ok (ProcessFate.Continues (KillAnswer.Completed (KillOutcome.ProcessStopped _), _)) ->
                     raise (Refusal "a stop signal was raised")
 
             returnToUser ()

@@ -107,8 +107,10 @@ module TestKillTargetsMeasured =
     /// errno's name, or `None` for a refusal.
     let private modelled (world : World) (pid : int32) (signo : int32) : string option =
         match UnixSignal.tryKill world.Caller pid signo world.System with
-        | Ok (Ok (ProcessFate.Continues (KillOutcome.ProcessRuns, _))) -> Some "0"
-        | Ok (Error errno) -> Some (string<UnixError> errno)
+        | Ok (ProcessFate.Continues (KillAnswer.Completed KillOutcome.ProcessRuns, _)) -> Some "0"
+        | Ok (ProcessFate.Continues (KillAnswer.Failed errno, after)) ->
+            after |> shouldEqual world.System
+            Some (string<UnixError> errno)
         | Ok other -> failwith $"kill(%d{pid}, %d{signo}): unexpected %A{other}"
         | Error _ -> None
 

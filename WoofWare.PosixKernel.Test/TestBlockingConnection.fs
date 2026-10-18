@@ -2336,8 +2336,8 @@ module TestBlockingConnection =
                         (Some usr1)
                         system
                 with
-                | Ok (_, system) -> system
-                | Error errno -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
+                | SignalMaskAnswer.Completed _, system -> system
+                | SignalMaskAnswer.Failed errno, _ -> failwith $"%O{platform}: pthread_sigmask: %O{errno}"
 
             let client, server, system = pair (systemOn platform false)
             let system = system |> blocking 1 |> blocking 2

@@ -61,6 +61,16 @@ type private ClockDecoding =
     | Refused of ClockGettimeRefusal
     | Invalid
 
+/// What a `clock_gettime(2)` answered.
+[<RequireQualifiedAccess>]
+type ClockGettimeAnswer =
+    /// The call returned 0, having written `time` to the caller's
+    /// `struct timespec`.
+    | Completed of time : UnixTimestamp
+    /// The call returned -1, and the client stores `error` wherever its libc
+    /// keeps errno.
+    | Failed of error : UnixError
+
 [<RequireQualifiedAccess>]
 module UnixClock =
 
@@ -193,15 +203,19 @@ module UnixClock =
     let private tryClockGettimeIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (clockId : int)
         (system : ProcessView<'Thread, 'Handler>)
-        : Result<Result<UnixTimestamp, UnixError>, ClockGettimeRefusal>
+        : Result<ClockGettimeAnswer, ClockGettimeRefusal>
         =
         let machine = system.Machine
 
         match decode (SimulatedUnixPlatform.flavour machine.UnixPlatform) clockId with
-        | ClockDecoding.Invalid -> Ok (Error UnixError.EINVAL)
+        | ClockDecoding.Invalid -> Ok (ClockGettimeAnswer.Failed UnixError.EINVAL)
         | ClockDecoding.Refused refusal -> Error refusal
         | ClockDecoding.Reads (ClockSource.Realtime granularity) ->
-            Ok (Ok (truncate granularity (UnixMachineState.realtime system.Scheduling machine)))
+            Ok (
+                ClockGettimeAnswer.Completed (
+                    truncate granularity (UnixMachineState.realtime system.Scheduling machine)
+                )
+            )
         | ClockDecoding.Reads (ClockSource.SinceBoot granularity) ->
             let sinceBoot = system.Scheduling.NanosecondsSinceBoot
 
@@ -217,14 +231,14 @@ module UnixClock =
                     (sinceBoot / UnixTimestamp.nanosecondsPerSecond)
                     (int (sinceBoot % UnixTimestamp.nanosecondsPerSecond))
 
-            Ok (Ok (truncate granularity reading))
+            Ok (ClockGettimeAnswer.Completed (truncate granularity reading))
 
     /// `clockGettime`, with a refusal answered as the `Error` rather than raised.
     let internal tryClockGettime<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (clockId : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<Result<UnixTimestamp, UnixError>, ClockGettimeRefusal>
+        : Result<ClockGettimeAnswer, ClockGettimeRefusal>
         =
         Entry.call
             "UnixClock.clockGettime"
@@ -260,7 +274,7 @@ module UnixClock =
         (caller : Caller<'Thread>)
         (clockId : int)
         (system : UnixSystem<'Thread, 'Handler>)
-        : Result<UnixTimestamp, UnixError>
+        : ClockGettimeAnswer
         =
         tryClockGettime caller clockId system
         |> Refusal.orRaise "UnixClock.clockGettime" ClockGettimeRefusal.kind ClockGettimeRefusal.describe
