@@ -111,7 +111,10 @@ module TestMachineSetterRefusals =
     // ------------------------------------------------ ephemeral port range
 
     [<Test>]
-    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and on Darwin keep within 1024 to 65535`` () : unit =
+    let ``withEphemeralPortRange admits exactly the non-empty ranges that leave out port 0, and on Darwin keep within 1024 to 65535``
+        ()
+        : unit
+        =
         let property (platform : SimulatedUnixPlatform, low : uint16, high : uint16) : unit =
             let darwin = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Darwin
 
@@ -202,7 +205,9 @@ module TestMachineSetterRefusals =
 
                 let fromStart =
                     start
-                    |> Option.map (fun _ -> $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}")
+                    |> Option.map (fun _ ->
+                        $"%A{UnprivilegedPortStartRefusal.NoSuchSetting SimulatedUnixFlavour.Darwin}"
+                    )
 
                 if rangeFirst then
                     Option.orElse fromStart fromRange
@@ -365,8 +370,10 @@ module TestMachineSetterRefusals =
                 ProcessorCountRefusal.describe (ProcessorCountRefusal.NotPositive -7), "-7"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.LowIsZero 77us), "0-77"
                 EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Empty (9us, 8us)), "9-8"
-                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.BelowDarwinFloor (77us, 2000us)), "77-2000"
-                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Descending (40003us, 40000us)), "40003-40000"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.BelowDarwinFloor (77us, 2000us)),
+                "77-2000"
+                EphemeralPortRangeRefusal.describe (EphemeralPortRangeRefusal.Descending (40003us, 40000us)),
+                "40003-40000"
                 BootTimeRefusal.describe (BootTimeRefusal.BeforeEpoch timestamp), string<UnixTimestamp> timestamp
                 BootTimeRefusal.describe (BootTimeRefusal.PastMaxBootTime (timestamp, 42L)), "42"
                 BootTimeRefusal.describe (BootTimeRefusal.FinerThanMicrosecond timestamp),

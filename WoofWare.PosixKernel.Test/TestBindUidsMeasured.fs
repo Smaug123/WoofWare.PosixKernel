@@ -71,7 +71,11 @@ module TestBindUidsMeasured =
 
             {
                 Line = line
-                Kind = (if fields.["proto"] = "tcp" then SocketKind.Stream else SocketKind.Datagram)
+                Kind =
+                    (if fields.["proto"] = "tcp" then
+                         SocketKind.Stream
+                     else
+                         SocketKind.Datagram)
                 Holder = fields.["holder"]
                 HolderAddress = address fields.["haddr"]
                 HolderReuseAddress = fields.["hopts"].Contains 'A'
@@ -115,7 +119,12 @@ module TestBindUidsMeasured =
 
         let system =
             match
-                CopyIn.bind holder UserBuffer.Mapped 16u (CopyIn.inet platform (Ipv4Endpoint.ofParts row.HolderAddress port)) system
+                CopyIn.bind
+                    holder
+                    UserBuffer.Mapped
+                    16u
+                    (CopyIn.inet platform (Ipv4Endpoint.ofParts row.HolderAddress port))
+                    system
             with
             | Ok (BindAnswer.Bound _, system) -> system
             | other -> failwith $"%s{row.Line}: the holder's bind answered %A{other}"
@@ -131,7 +140,14 @@ module TestBindUidsMeasured =
         let binder, system = NewSocket.create SocketDomain.Inet row.Kind protocol system
         let system = ReuseAddress.set row.BinderReuseAddress binder system
 
-        match CopyIn.bind binder UserBuffer.Mapped 16u (CopyIn.inet platform (Ipv4Endpoint.ofParts row.BinderAddress port)) system with
+        match
+            CopyIn.bind
+                binder
+                UserBuffer.Mapped
+                16u
+                (CopyIn.inet platform (Ipv4Endpoint.ofParts row.BinderAddress port))
+                system
+        with
         | Ok (BindAnswer.Bound _, _) -> "ok"
         | Ok (BindAnswer.Failed error, _) -> $"%A{error}"
         | Error refusal -> $"REFUSED (%s{BindRefusal.describe refusal})"
@@ -166,7 +182,10 @@ module TestBindUidsMeasured =
             failwith (String.Join ("\n", mismatches))
 
     [<Test>]
-    let ``where Darwin consults the holder's owner, SO_REUSEADDR does not get a binder past another uid's holder`` () : unit =
+    let ``where Darwin consults the holder's owner, SO_REUSEADDR does not get a binder past another uid's holder``
+        ()
+        : unit
+        =
         let consulted =
             rows
             |> List.filter (fun row -> not row.HolderReusePort && not row.BinderReusePort && ownerConsulted row)
