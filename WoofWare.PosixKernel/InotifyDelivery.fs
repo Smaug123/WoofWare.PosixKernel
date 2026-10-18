@@ -213,7 +213,8 @@ module internal InotifyDelivery =
 
     /// What `mutation`, made under `notice`, does to the inotify instances, in
     /// the order Linux does it, and the next rename's cookie, `nextCookie`
-    /// being this one's. `openFiles` is the machine's open file table before the change.
+    /// being this one's. `openFiles` is the machine's open file table before
+    /// the change.
     ///
     /// Every rename takes a cookie, whatever watches it (Linux's
     /// `fsnotify_get_cookie`, measured to count every rename since boot), and
