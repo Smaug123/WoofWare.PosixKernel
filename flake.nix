@@ -108,6 +108,19 @@
             ${pkgs.python3}/bin/python3 ${./scripts/check-test-boundaries.py} ${testSources}
             touch $out
           '';
+        # CI's `build` job fails when its test steps skipped a test that
+        # `.github/expected-skips.json` does not expect skipped. The check reads the TRX files
+        # those steps write, so only its contract runs here: so that a change to the checker
+        # cannot quietly retire it.
+        skipped-tests =
+          pkgs.runCommand "skipped-tests" {
+            buildInputs = [pkgs.python3 pkgs.bash];
+          }
+          ''
+            ${pkgs.bash}/bin/bash ${./scripts/test-skipped-tests.sh} \
+              ${./scripts/check-skipped-tests.py}
+            touch $out
+          '';
         # The docstring-attachment check is the oracle a definition-moving commit is held
         # to, and it is only as good as its own contract: thirty-six shapes in a throwaway
         # repository, eighteen of which must be reported and eighteen of which must not. The
