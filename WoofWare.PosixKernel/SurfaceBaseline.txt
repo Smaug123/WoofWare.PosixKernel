@@ -4875,6 +4875,8 @@ WoofWare.PosixKernel.StartingPointRules.Equals [method]: (WoofWare.PosixKernel.S
 WoofWare.PosixKernel.StartingPointRules.get_EmptyPath [method]: unit -> WoofWare.PosixKernel.EmptyPathRule
 WoofWare.PosixKernel.StartingPointRules.get_NonDirectory [method]: unit -> WoofWare.PosixKernel.NonDirectoryDescriptorRule
 WoofWare.PosixKernel.StartingPointRules.NonDirectory [property]: [read-only] WoofWare.PosixKernel.NonDirectoryDescriptorRule
+WoofWare.PosixKernel.SteppedCall inherit obj
+WoofWare.PosixKernel.SteppedCall.system [static method]: WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler> -> WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler> -> WoofWare.PosixKernel.UnixSystem<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2 inherit obj - union type with 117 cases
 WoofWare.PosixKernel.SteppedCall`2+Accept inherit WoofWare.PosixKernel.SteppedCall<'Thread, 'Handler>
 WoofWare.PosixKernel.SteppedCall`2+Accept.get_outcome [method]: unit -> WoofWare.PosixKernel.AcceptOutcome

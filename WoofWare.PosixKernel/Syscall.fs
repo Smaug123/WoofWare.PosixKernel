@@ -955,3 +955,158 @@ type SteppedCall<'Thread, 'Handler when 'Thread : comparison and 'Handler : equa
     /// What `UnixFutex.futexWithWord` answers, or `UnixFutex.futex` where the
     /// call answers before it reads the word.
     | Futex of outcome : SyscallOutcome * system : UnixSystem<'Thread, 'Handler>
+
+[<RequireQualifiedAccess>]
+module SteppedCall =
+
+    /// The system after the call `stepped` describes, made in `madeIn`: the
+    /// system `stepped` holds, whatever became of the call (the thread asleep
+    /// in it, interrupted, or the process ended, when it is the system without
+    /// the process), and `madeIn` where `stepped` holds none, because the call
+    /// could change nothing.
+    ///
+    /// `madeIn` must be the system `UnixSystem.step` made the call in; nothing
+    /// checks that it is.
+    let system<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (madeIn : UnixSystem<'Thread, 'Handler>)
+        (stepped : SteppedCall<'Thread, 'Handler>)
+        : UnixSystem<'Thread, 'Handler>
+        =
+        let ofFate (fate : ProcessFate<'Outcome, 'Thread, 'Handler>) : UnixSystem<'Thread, 'Handler> =
+            match fate with
+            | ProcessFate.Continues (_, system)
+            | ProcessFate.ProcessEnded (_, system) -> system
+
+        let ofResult
+            (result : Result<'Answer * UnixSystem<'Thread, 'Handler>, UnixError>)
+            : UnixSystem<'Thread, 'Handler>
+            =
+            match result with
+            | Ok (_, system) -> system
+            | Error _ -> madeIn
+
+        let reserved (name : string) : UnixSystem<'Thread, 'Handler> =
+            failwith
+                $"SteppedCall.system: SteppedCall.%s{name} is reserved, and nothing in this version makes one (this is a bug in this library)."
+
+        match stepped with
+        | SteppedCall.Dup (_, system)
+        | SteppedCall.Dup2 (_, system)
+        | SteppedCall.Dup3 (_, system)
+        | SteppedCall.Fcntl (_, system)
+        | SteppedCall.LSeek (_, system)
+        | SteppedCall.FLock (_, system)
+        | SteppedCall.FTruncate (_, system)
+        | SteppedCall.Close (_, system)
+        | SteppedCall.ChMod (_, system)
+        | SteppedCall.FChMod (_, system)
+        | SteppedCall.FChModAt (_, system)
+        | SteppedCall.ChOwn (_, system)
+        | SteppedCall.LChOwn (_, system)
+        | SteppedCall.FChOwn (_, system)
+        | SteppedCall.FChOwnAt (_, system)
+        | SteppedCall.UTimensAt (_, system)
+        | SteppedCall.ChDir (_, system)
+        | SteppedCall.Open (_, system)
+        | SteppedCall.OpenAt (_, system)
+        | SteppedCall.ReadDirectoryEntry (_, system)
+        | SteppedCall.MkDir (_, system)
+        | SteppedCall.MkDirAt (_, system)
+        | SteppedCall.MkNod (_, system)
+        | SteppedCall.MkNodAt (_, system)
+        | SteppedCall.Unlink (_, system)
+        | SteppedCall.RmDir (_, system)
+        | SteppedCall.UnlinkAt (_, system)
+        | SteppedCall.Rename (_, system)
+        | SteppedCall.RenameAt (_, system)
+        | SteppedCall.CloneFile (_, system)
+        | SteppedCall.Symlink (_, system)
+        | SteppedCall.SymlinkAt (_, system)
+        | SteppedCall.Link (_, system)
+        | SteppedCall.LinkAt (_, system)
+        | SteppedCall.Read (_, system)
+        | SteppedCall.Recv (_, system)
+        | SteppedCall.PRead (_, system)
+        | SteppedCall.PWrite (_, system)
+        | SteppedCall.CopyFileRange (_, system)
+        | SteppedCall.Pipe2 (_, system)
+        | SteppedCall.Bind (_, system)
+        | SteppedCall.Connect (_, system)
+        | SteppedCall.Listen (_, system)
+        | SteppedCall.Accept (_, system)
+        | SteppedCall.Shutdown (_, system)
+        | SteppedCall.SetSockOpt (_, system)
+        | SteppedCall.GetSockOpt (_, system)
+        | SteppedCall.Poll (_, system)
+        | SteppedCall.EpollCtl (_, system)
+        | SteppedCall.EpollWait (_, system)
+        | SteppedCall.Kqueue (_, system)
+        | SteppedCall.Kevent (_, system)
+        | SteppedCall.InotifyAddWatch (_, system)
+        | SteppedCall.InotifyRmWatch (_, system)
+        | SteppedCall.SigSuspend (_, system)
+        | SteppedCall.RtSigSuspend (_, system)
+        | SteppedCall.Pause (_, system)
+        | SteppedCall.GetRandom (_, system)
+        | SteppedCall.GetEntropy (_, system)
+        | SteppedCall.UMask (_, system)
+        | SteppedCall.SetResUid (_, system)
+        | SteppedCall.SetResGid (_, system)
+        | SteppedCall.SetGroups (_, system)
+        | SteppedCall.Spawn (_, system)
+        | SteppedCall.ExitGroup (_, system)
+        | SteppedCall.Futex (_, system) -> system
+        | SteppedCall.SigReturn system -> system
+        | SteppedCall.Write (fate, _)
+        | SteppedCall.Send fate -> ofFate fate
+        | SteppedCall.ExitThread fate -> ofFate fate
+        | SteppedCall.Kill result
+        | SteppedCall.PthreadKill result ->
+            match result with
+            | Ok fate -> ofFate fate
+            | Error _ -> madeIn
+        | SteppedCall.Socket result
+        | SteppedCall.EpollCreate1 result
+        | SteppedCall.InotifyInit1 result -> ofResult result
+        | SteppedCall.SigAction result
+        | SteppedCall.SigActionSyscall result -> ofResult result
+        | SteppedCall.PthreadSigMask result
+        | SteppedCall.SigProcMask result
+        | SteppedCall.RtSigProcMask result -> ofResult result
+        | SteppedCall.PosixFAdvise _
+        | SteppedCall.BytesAvailable _
+        | SteppedCall.FileClone _
+        | SteppedCall.TerminalAttributes _
+        | SteppedCall.GetEffectiveUserId _
+        | SteppedCall.GetEffectiveGroupId _
+        | SteppedCall.GetGroups _
+        | SteppedCall.Stat _
+        | SteppedCall.FStat _
+        | SteppedCall.FStatAt _
+        | SteppedCall.StatFs _
+        | SteppedCall.FStatFs _
+        | SteppedCall.GetCwd _
+        | SteppedCall.Access _
+        | SteppedCall.FAccessAt _
+        | SteppedCall.ReadLink _
+        | SteppedCall.ReadLinkAt _
+        | SteppedCall.GetSockName _
+        | SteppedCall.GetPeerName _
+        | SteppedCall.SigPending _
+        | SteppedCall.ClockGetTime _
+        | SteppedCall.GetTimeOfDay _
+        | SteppedCall.GetProcessId _
+        | SteppedCall.GetResUid _
+        | SteppedCall.GetResGid _
+        | SteppedCall.GetCpu _ -> madeIn
+        | SteppedCall.RecvFrom _ -> reserved "RecvFrom"
+        | SteppedCall.RecvMsg _ -> reserved "RecvMsg"
+        | SteppedCall.SendTo _ -> reserved "SendTo"
+        | SteppedCall.SendMsg _ -> reserved "SendMsg"
+        | SteppedCall.Select _ -> reserved "Select"
+        | SteppedCall.PSelect _ -> reserved "PSelect"
+        | SteppedCall.SigWait _ -> reserved "SigWait"
+        | SteppedCall.SigWaitInfo _ -> reserved "SigWaitInfo"
+        | SteppedCall.SigTimedWait _ -> reserved "SigTimedWait"
+        | SteppedCall.Nanosleep _ -> reserved "Nanosleep"
+        | SteppedCall.ClockNanosleep _ -> reserved "ClockNanosleep"
