@@ -179,6 +179,7 @@ module TestPthreadKill =
                                 (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
                                 leader
+                                false
                                 (Set.ofList [ leader ; worker ])
                                 {
                                     Signal =

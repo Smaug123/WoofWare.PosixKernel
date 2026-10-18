@@ -98,10 +98,18 @@ module TestSignalDue =
 
         thrown.Message |> shouldContainText "a signal is deliverable to it"
 
-    /// A process of `count` threads, 0 its leader, on `platform`.
+    /// A process of `count` threads, 0 its leader, on `platform`, on a machine
+    /// with a processor for each thread a run may make.
     let private processOf (platform : SimulatedUnixPlatform) (count : int) : ProcessId * UnixSystem<int, string> =
-        let pids, system = Machines.withThreads platform 1 count
+        let pids, system =
+            Machines.withThreadsOn (UnixBootImage.withProcessorCount 8) platform 1 count
+
         List.exactlyOne pids, system
+
+    /// `caller`'s thread running on the processor of its own number, as a
+    /// client reports each thread it runs.
+    let private running (caller : Caller<int>) (system : UnixSystem<int, string>) : UnixSystem<int, string> =
+        UnixScheduling.dispatch caller (CpuId (Caller.thread caller)) system
 
     /// The sequence a signal's receiver could make were it not held to its
     /// return: thread 1 sends thread 0 a caught SIGUSR1; thread 0 calls
@@ -372,8 +380,12 @@ module TestSignalDue =
             // process's signals, on both flavours. SIGTERM is caught as it is
             // sent, so that it waits for the leader rather than ending the
             // process, and then reset to its default.
+            // Both threads run, so the leader, owing its return, is running
+            // when the second signal is sent, and Linux prefers it.
             let sent =
-                dispose leader Signal.SIGHUP blocksTerm system
+                running leader system
+                |> running other
+                |> dispose leader Signal.SIGHUP blocksTerm
                 |> dispose leader Signal.SIGTERM caught
                 |> kill other Signal.SIGHUP
                 |> kill other Signal.SIGTERM
@@ -887,7 +899,20 @@ module TestSignalDue =
                     | Ok (FinishedCall.SigSuspend (_, after)) -> commit "finish" thread after
                     | Ok other -> failwith $"%O{platform}: finished %A{other}, which no step parks"
 
+        // The client runs the thread a step is made by on a processor of its
+        // own, so that a thread the run has not parked is running.
+        let dispatch (thread : int) : unit =
+            if live thread && not (parked thread) then
+                system <- running (Caller.make pid thread) system
+
         let make (step : Step) : unit =
+            match step with
+            | Step.Spawn thread
+            | Step.Return thread
+            | Step.Sigreturn thread
+            | Step.Call (thread, _) -> dispatch thread
+            | Step.Finish -> ()
+
             match step with
             | Step.Finish -> finishAll ()
             | Step.Spawn parent ->

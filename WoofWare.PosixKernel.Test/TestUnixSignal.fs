@@ -203,6 +203,7 @@ module TestUnixSignal =
                                 (Lone.UnixSystemState.signalNumbering system)
                                 coreDumps
                                 0
+                                false
                                 (Set.singleton 0)
                                 {
                                     Signal =

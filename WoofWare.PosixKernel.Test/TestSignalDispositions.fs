@@ -48,7 +48,7 @@ module TestSignalDispositions =
         (s : SignalState<Thread, Handler>)
         : SignalGeneration<Thread, Handler>
         =
-        match SignalState.generate numbering CoreDumps.Suppressed t0 threads entry s with
+        match SignalState.generate numbering CoreDumps.Suppressed t0 true threads entry s with
         | Ok generation -> generation
         | Error refusal -> failwith $"generate refused: %O{refusal}"
 
