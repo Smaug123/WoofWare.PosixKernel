@@ -200,10 +200,13 @@ CI's host test (section 4, U1) is what will show it.
   - **the cheaper charge** is length + 16, without the control record. It goes
     to a datagram arriving at a socket that has never sent or received a
     datagram and is not connected (`udp-mbufs.c` section 2):
-    - a socket that has sent, received, or is connected pays 32;
+    - a socket that has received, or is connected, pays 32;
+    - so does one that has made any send call that reached it, whatever the
+      call answered: a datagram sent, or `EDESTADDRREQ`, `EMSGSIZE`, `EFAULT`,
+      `EINVAL`, `EAFNOSUPPORT` or `EHOSTUNREACH`;
     - `connect` followed by `AF_UNSPEC`, with nothing sent, restores the 16;
-    - `getsockname`, `SO_REUSEADDR`, `poll`, `FIONREAD` and an empty `recv`
-      change nothing.
+    - a failed `connect`, a send to a closed descriptor, `getsockname`,
+      `SO_REUSEADDR`, `poll`, `FIONREAD` and an empty `recv` change nothing.
 - **`sb_mbcnt`**, the mbuf memory the datagram occupies. It is measured at every
   size from 0 to 9216, with the cheaper charge and without:
 
@@ -310,9 +313,14 @@ with ICMP "port unreachable".
 
 - **Which ports count as unheld.** A port held only by a TCP socket (L11), and
   a port whose only socket is connected elsewhere (L12), both count.
-- **Which sockets learn of it.** A **connected** sender then has
-  `ECONNREFUSED` pending, on both flavours, and an unconnected one never learns
-  of it (L4). Linux's `IP_RECVERR` would change that, and it is not settable.
+- **Which socket learns of it** (L4, L16): the socket a reply from the
+  destination to the datagram's source would reach, by the rules of 3.3, and
+  only if that socket is connected. Usually that is the connected sender
+  itself, and an unconnected sender never learns of it. But with A connected
+  to the unheld port and B sharing A's local endpoint unconnected, B's
+  `sendto` leaves the error pending at A, on both flavours; with A connected
+  elsewhere, at no one. Linux's `IP_RECVERR` would change that, and it is not
+  settable.
 - **A full receiver** raises nothing (L13).
 - **When the error arrives.** Linux sets it before `sendto` returns. Darwin sets
   it a moment later: one run's "at once" `poll` saw it, and the other's did not,
@@ -584,8 +592,10 @@ of that window.
 
 ### 3.5 The pending error
 
-- **One slot per receiver**, `ECONNREFUSED option`, set when a connected
-  socket's datagram finds no receiver at all.
+- **One slot per receiver**, `ECONNREFUSED option`, set when a datagram finds
+  no receiver at all, at the socket a reply from its destination would reach
+  if that socket is connected (2.8, L16). Where that is a tie (L16, Linux's
+  two sockets connected to one peer), the send is refused.
 - **No error** when a candidate exists but its queue is full (L13), and none
   for an unconnected sender (L4).
 - **Darwin's 100 ms window** (2.8, X) is one machine-wide record: the

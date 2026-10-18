@@ -1060,6 +1060,39 @@ static void section_l(void)
         close(c);
         if (held) close(r);
     }
+    // L16: which socket the error reaches, when sockets share the sender's
+    // local endpoint (SO_REUSEADDR on each). A is bound to L and connected to
+    // P, nobody holding P; B is bound to L too; B sends to P.
+    for (int row = 0; row < 4; row++) {
+        static const char *names[] = {
+            "B unconnected, sendto P",
+            "B connected to P too, send",
+            "A connected to Q instead; B unconnected, sendto P",
+            "A unconnected; B unconnected, sendto P",
+        };
+        int one = 1;
+        int a = udp(), b = udp();
+        setsockopt(a, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        setsockopt(b, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        uint16_t P = unheld_port(), Q = unheld_port();
+        struct sockaddr_in la = lo(0), toP = lo(P), toQ = lo(Q);
+        bind(a, (struct sockaddr *)&la, sizeof la);
+        struct sockaddr_in L = lo(portof(a));
+        int ca = 0;
+        if (row == 0 || row == 1) ca = connect(a, (struct sockaddr *)&toP, sizeof toP);
+        if (row == 2) ca = connect(a, (struct sockaddr *)&toQ, sizeof toQ);
+        int bb = bind(b, (struct sockaddr *)&L, sizeof L); int eb = errno;
+        ssize_t sent;
+        if (row == 1) { connect(b, (struct sockaddr *)&toP, sizeof toP); sent = send(b, "x", 1, 0); }
+        else sent = sendto(b, "x", 1, 0, (struct sockaddr *)&toP, sizeof toP);
+        int es = errno;
+        SETTLE();
+        int errA = sock_error(a);
+        int errB = sock_error(b);
+        printf("L16 %s (A's connect %d; B's bind %s; B's send %s): SO_ERROR A %d, B %d\n", names[row], ca, res(bb, eb), res(sent, es), errA, errB);
+        close(a); close(b);
+        usleep(150000);
+    }
     // L11: a port held by a TCP listener only.
     {
         int t = socket(AF_INET, SOCK_STREAM, 0);

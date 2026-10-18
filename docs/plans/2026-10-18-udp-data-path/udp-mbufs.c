@@ -221,6 +221,10 @@ int main(int argc, char **argv)
             "the sender connected to it first", "a datagram from another sender, taken",
             "sendto another socket, then AF_UNSPEC", "a datagram taken, then AF_UNSPEC",
             "connect, send, then AF_UNSPEC", "bind only (the fresh receiver is bound)",
+            "send(2) unconnected (EDESTADDRREQ)", "write(2) unconnected (EDESTADDRREQ)", "sendto of 9217 bytes (EMSGSIZE)",
+            "sendto from an unmapped buffer (EFAULT)", "sendto with a 15-byte address (EINVAL)", "sendto to family 99 (EAFNOSUPPORT)",
+            "sendto to 0.0.0.0 (EHOSTUNREACH)", "connect to port 0 (EADDRNOTAVAIL)", "sendto to a closed descriptor (EBADF)",
+            "send of 0 bytes, connected to the sender", "recv of 0 on its empty queue",
         };
         for (unsigned row = 0; row < sizeof names / sizeof *names; row++) {
             struct pair p = fresh();
@@ -280,6 +284,26 @@ int main(int argc, char **argv)
                 connect(p.r, &un, sizeof un);
                 break;
             }
+            case 17: send(p.r, "x", 1, 0); break;
+            case 18: write(p.r, "x", 1); break;
+            case 19: sendto(p.r, payload, 9217, 0, (struct sockaddr *)&to_other, sizeof to_other); break;
+            case 20: sendto(p.r, (void *)1, 5, 0, (struct sockaddr *)&to_other, sizeof to_other); break;
+            case 21: sendto(p.r, "x", 1, 0, (struct sockaddr *)&to_other, 15); break;
+            case 22: { struct sockaddr_in bad = to_other; bad.sin_family = 99; sendto(p.r, "x", 1, 0, (struct sockaddr *)&bad, sizeof bad); break; }
+            case 23: { struct sockaddr_in any = lo(portof(other)); any.sin_addr.s_addr = htonl(INADDR_ANY); sendto(p.r, "x", 1, 0, (struct sockaddr *)&any, sizeof any); break; }
+            case 24: { struct sockaddr_in zero = lo(0); connect(p.r, (struct sockaddr *)&zero, sizeof zero); break; }
+            case 25: sendto(9999, "x", 1, 0, (struct sockaddr *)&to_other, sizeof to_other); break;
+            case 26: {
+                struct sockaddr_in sa = lo(0);
+                bind(p.s, (struct sockaddr *)&sa, sizeof sa);
+                struct sockaddr_in ts = lo(portof(p.s));
+                connect(p.r, (struct sockaddr *)&ts, sizeof ts);
+                send(p.r, "", 0, 0);
+                struct sockaddr un; memset(&un, 0, sizeof un); un.sa_family = AF_UNSPEC;
+                connect(p.r, &un, sizeof un);
+                break;
+            }
+            case 27: recv(p.r, buf, 0, MSG_DONTWAIT); break;
             default: break;
             }
             int arrived = send_from(sender, p, 4, &before, &after);
