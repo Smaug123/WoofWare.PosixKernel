@@ -348,6 +348,7 @@ module ProcessLaunch =
     /// bound (`SimulatedUnixPlatform.descriptorBound`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">The table names a negative descriptor, which no process has. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentNullException">`platform` is null, which only `Unchecked.defaultof` or C# `default` makes it.</exception>
     let create<'Thread when 'Thread : comparison>
         (platform : SimulatedUnixPlatform)
         (streams : Map<int, LaunchDescriptor>)
@@ -421,7 +422,7 @@ module ProcessLaunch =
         (launch : ProcessLaunch<'Thread>)
         : Result<ProcessLaunch<'Thread>, UmaskRefusal>
         =
-        let umask = PermissionBits.assertValid "ProcessLaunch.withUmask" umask
+        let umask = PermissionBits.assertValidFor "ProcessLaunch.withUmask" "umask" umask
         let stored = SimulatedUnixPlatform.umaskStoredBits launch.Platform
 
         if PermissionBits.toInt umask &&& ~~~(PermissionBits.toInt stored) <> 0 then
@@ -455,8 +456,8 @@ module ProcessLaunch =
     /// and none is parsed: an entry need not be `NAME=VALUE`. See
     /// `UnixSystem.environment`.
     ///
-    /// `context` prefixes the rejection a forged entry earns, and is the
-    /// client's to choose: the host that has to fix one knows it by whatever
+    /// `context` prefixes the `ArgumentException` a forged entry, such as
+    /// `Unchecked.defaultof`, earns, and is the client's to choose: the host that has to fix one knows it by whatever
     /// name the client's own configuration gives it.
     let withEnvironment<'Thread when 'Thread : comparison>
         (context : string)
@@ -465,14 +466,14 @@ module ProcessLaunch =
         : ProcessLaunch<'Thread>
         =
         { launch with
-            Environment = environment |> List.map (UnixByteString.assertValid context)
+            Environment = environment |> List.map (UnixByteString.assertValidFor context "environment")
         }
 
     /// Set the path to the executable that started the process, or `None` to
     /// report that it has none. `None` is preserved rather than defaulted; see
     /// `UnixSystem.processPath`.
     ///
-    /// `context` prefixes the rejection a forged path earns; see
+    /// `context` prefixes the `ArgumentException` a forged path earns; see
     /// `withEnvironment`.
     let withProcessPath<'Thread when 'Thread : comparison>
         (context : string)
@@ -546,13 +547,17 @@ module ProcessLaunch =
     /// resolved, because after it the process holds the *directory* rather than
     /// the name, so the path `getcwd` reports is the physical one with every
     /// symlink resolved away.
+    ///
+    /// A forged `directory`, such as `Unchecked.defaultof`, throws
+    /// `ArgumentException`.
     let withCurrentDirectory<'Thread when 'Thread : comparison>
         (directory : AbsoluteUnixPath)
         (launch : ProcessLaunch<'Thread>)
         : ProcessLaunch<'Thread>
         =
         { launch with
-            CurrentDirectory = AbsoluteUnixPath.assertValid "ProcessLaunch.withCurrentDirectory" directory
+            CurrentDirectory =
+                AbsoluteUnixPath.assertValidFor "ProcessLaunch.withCurrentDirectory" "directory" directory
         }
 
     /// The directory `directory` names in `machine`'s filesystem, walked as

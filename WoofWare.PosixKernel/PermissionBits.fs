@@ -488,12 +488,30 @@ module PermissionBits =
     /// <remarks>
     /// This is the throwing version of <c>parse</c>.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentOutOfRangeException"><c>candidate</c> does not fit in <c>0o7777</c>. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : int) : PermissionBits =
         match parse candidate with
         | Some bits -> bits
         | None ->
-            failwith
-                $"%s{context}: 0o%s{System.Convert.ToString (candidate, 8)} is not a permission word; it must lie in [0, 0o7777]. If this is a whole st_mode, mask off the S_IFMT band — the file type is derived from InodeContent, never stored."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.OutOfRange "candidate")
+                    $"0o%s{System.Convert.ToString (candidate, 8)} is not a permission word; it must lie in [0, 0o7777]. If this is a whole st_mode, mask off the S_IFMT band — the file type is derived from InodeContent, never stored."
+            )
+
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the bits were passed as.
+    let internal assertValidFor (operation : string) (parameter : string) (bits : PermissionBits) : PermissionBits =
+        match parse (toInt bits) with
+        | Some bits -> bits
+        | None ->
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    $"0o%s{System.Convert.ToString (toInt bits, 8)} is not a permission word, so these bits did not come from PermissionBits.parse."
+            )
 
     /// <summary>
     /// Re-check a value that crossed an API boundary.
@@ -502,7 +520,8 @@ module PermissionBits =
     /// You don't need to call this on the result of <c>PermissionBits.parse</c>; it's only for hand-constructed
     /// permissions or <c>Unchecked.defaultof</c>.
     /// </remarks>
-    let assertValid (context : string) (bits : PermissionBits) : PermissionBits = parseOrFail context (toInt bits)
+    /// <exception cref="T:System.ArgumentException"><c>bits</c> do not fit in <c>0o7777</c>.</exception>
+    let assertValid (context : string) (bits : PermissionBits) : PermissionBits = assertValidFor context "bits" bits
 
     /// <summary>
     /// Describe the permission bits you end up with when you create an inode with this

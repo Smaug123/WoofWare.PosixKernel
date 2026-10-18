@@ -407,6 +407,10 @@ module SimulatedUnixPlatform =
                 Release = release
             }
 
+    /// `create`, throwing for what it refuses, with `context` in the message:
+    /// `ArgumentException` for a release string no `uname -r` could print, and
+    /// `UnmodelledException` for a combination of kernel, architecture and
+    /// page size that nobody has measured.
     let createOrFail
         (context : string)
         (kernel : SimulatedUnixKernel)
@@ -417,7 +421,13 @@ module SimulatedUnixPlatform =
         =
         match create kernel architecture pageSize release with
         | Ok platform -> platform
-        | Error error -> failwith $"%s{context}: %s{describeError error}"
+        | Error error ->
+            let kind =
+                match error with
+                | SimulatedUnixPlatformError.Release _ -> RefusalKind.Contradictory "release"
+                | SimulatedUnixPlatformError.UnmeasuredKernel _ -> RefusalKind.Unmodelled
+
+            raise (Refusal.exceptionOf context kind (describeError error))
 
     /// 64-bit x86 Linux with 4 KiB pages, at a kernel release a real machine was running (a
     /// GitHub Actions Ubuntu runner's): the release this reports, and the
@@ -501,22 +511,31 @@ module SimulatedUnixPlatform =
     /// Re-check the invariant of a value that may not have come from `create`.
     /// See `FileName.assertValid`: the only value this can reject is
     /// `Unchecked.defaultof` / C# `default`, whose null release would otherwise
-    /// be handed to a process as its `uname -r`.
+    /// be handed to a process as its `uname -r`. That value is null, and
+    /// throws `ArgumentNullException`, with `context` in the message.
     let assertValid (context : string) (platform : SimulatedUnixPlatform) : SimulatedUnixPlatform =
         // A record is a reference type, so the forged value is `null` itself
         // rather than a record with a null field — and reading `Flavour` off it
         // would throw a `NullReferenceException` naming nothing useful.
         match box platform with
         | null ->
-            failwith
-                $"%s{context}: the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Null "platform")
+                    "the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            )
         | _ ->
 
         match create platform.Kernel platform.Architecture platform.PageSize platform.Release with
         | Ok _ -> platform
         | Error error ->
-            failwith
-                $"%s{context}: %s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "platform")
+                    $"%s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            )
 
     /// Whose `<errno.h>` numbering this platform reports, for the errors where
     /// the two Unixes disagree.

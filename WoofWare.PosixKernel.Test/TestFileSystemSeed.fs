@@ -502,7 +502,7 @@ module TestFileSystemSeed =
         // A forged value bypasses `create` entirely; `assertValid` is what
         // catches it before its null release reaches a process as `uname -r`.
         let forged =
-            Assert.Throws (fun () ->
+            Assert.Throws<ArgumentNullException> (fun () ->
                 SimulatedUnixPlatform.assertValid "test" Unchecked.defaultof<SimulatedUnixPlatform>
                 |> ignore<SimulatedUnixPlatform>
             )

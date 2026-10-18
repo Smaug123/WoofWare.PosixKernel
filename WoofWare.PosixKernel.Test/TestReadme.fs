@@ -73,6 +73,7 @@ module TestReadme =
                 "ImmutableArray"
                 "ArgumentException"
                 "ArgumentOutOfRangeException"
+                "ArgumentNullException"
                 "InvalidOperationException"
                 "PlatformNotSupportedException"
             ]

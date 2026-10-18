@@ -117,6 +117,7 @@ module TestUnmodelledException =
         | RefusalKind.Unmodelled -> typeof<UnmodelledException>
         | RefusalKind.Contradictory _ -> typeof<ArgumentException>
         | RefusalKind.OutOfRange _ -> typeof<ArgumentOutOfRangeException>
+        | RefusalKind.Null _ -> typeof<ArgumentNullException>
         | RefusalKind.Misuse -> typeof<InvalidOperationException>
         | RefusalKind.NotOnPlatform -> typeof<PlatformNotSupportedException>
 
@@ -129,6 +130,7 @@ module TestUnmodelledException =
                 Gen.constant RefusalKind.Unmodelled
                 parameter |> Gen.map RefusalKind.Contradictory
                 parameter |> Gen.map RefusalKind.OutOfRange
+                parameter |> Gen.map RefusalKind.Null
                 Gen.constant RefusalKind.Misuse
                 Gen.constant RefusalKind.NotOnPlatform
             ]
@@ -168,7 +170,8 @@ module TestUnmodelledException =
 
                 match kind, e with
                 | RefusalKind.Contradictory parameter, (:? ArgumentException as e)
-                | RefusalKind.OutOfRange parameter, (:? ArgumentException as e) -> e.ParamName |> shouldEqual parameter
+                | RefusalKind.OutOfRange parameter, (:? ArgumentException as e)
+                | RefusalKind.Null parameter, (:? ArgumentException as e) -> e.ParamName |> shouldEqual parameter
                 | _ -> ()
 
         Check.One (Config.QuickThrowOnFailure.WithMaxTest 500, Prop.forAll (Arb.fromGen gen) property)

@@ -4123,6 +4123,9 @@ module UnixSystem =
     /// depth rather than of its kernel. All of these are configuration a
     /// caller overrides with the setters in `UnixBootImage`, which is also how
     /// a caller supplies a non-empty filesystem or a different address list.
+    ///
+    /// Throws `ArgumentNullException` for a null `platform`, which only
+    /// `Unchecked.defaultof` or C# `default` makes.
     let initial<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (platform : SimulatedUnixPlatform)
         : UnixBootImage<'Thread, 'Handler>

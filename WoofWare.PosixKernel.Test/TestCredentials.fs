@@ -62,13 +62,13 @@ module TestCredentials =
     [<Test>]
     let ``parseOrFail names its context when it refuses`` () : unit =
         let userRefusal =
-            Assert.Throws<Exception> (fun () -> UserId.parseOrFail "ctx" UInt32.MaxValue |> ignore<UserId>)
+            Assert.Throws<ArgumentException> (fun () -> UserId.parseOrFail "ctx" UInt32.MaxValue |> ignore<UserId>)
 
         userRefusal.Message.StartsWith ("ctx: ", StringComparison.Ordinal)
         |> shouldEqual true
 
         let groupRefusal =
-            Assert.Throws<Exception> (fun () -> GroupId.parseOrFail "ctx" UInt32.MaxValue |> ignore<GroupId>)
+            Assert.Throws<ArgumentException> (fun () -> GroupId.parseOrFail "ctx" UInt32.MaxValue |> ignore<GroupId>)
 
         groupRefusal.Message.StartsWith ("ctx: ", StringComparison.Ordinal)
         |> shouldEqual true

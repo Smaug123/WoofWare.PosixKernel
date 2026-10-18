@@ -29,16 +29,30 @@ module ProcessId =
     let parse (candidate : int32) : ProcessId option =
         if candidate <= 0 then None else Some (ProcessId candidate)
 
-    /// As `parse`, but failing with `context` in the message if `candidate` is
-    /// not positive.
+    let private notPositive (candidate : int32) : string =
+        $"%d{candidate} is not a process ID; a process ID is positive (0 and the negative numbers name process groups, or every process, to kill(2))."
+
+    /// As `parse`, but throwing `ArgumentOutOfRangeException`, with `context`
+    /// in the message, if `candidate` is not positive.
     let parseOrFail (context : string) (candidate : int32) : ProcessId =
         match parse candidate with
         | Some pid -> pid
-        | None ->
-            failwith
-                $"%s{context}: %d{candidate} is not a process ID; a process ID is positive (0 and the negative numbers name process groups, or every process, to kill(2))."
+        | None -> raise (Refusal.exceptionOf context (RefusalKind.OutOfRange "candidate") (notPositive candidate))
 
-    /// `pid` itself, failing with `context` in the message if it is the one
-    /// value of this type that `parse` could not have produced:
-    /// `Unchecked.defaultof<ProcessId>`, whose ID is 0.
-    let assertValid (context : string) (pid : ProcessId) : ProcessId = parseOrFail context (toInt32 pid)
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the ID was passed as.
+    let internal assertValidFor (operation : string) (parameter : string) (pid : ProcessId) : ProcessId =
+        match parse (toInt32 pid) with
+        | Some pid -> pid
+        | None ->
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    $"%s{notPositive (toInt32 pid)} Only `Unchecked.defaultof` or C# `default` makes such a ProcessId."
+            )
+
+    /// `pid` itself, throwing `ArgumentException`, with `context` in the
+    /// message, if it is the one value of this type that `parse` could not
+    /// have produced: `Unchecked.defaultof<ProcessId>`, whose ID is 0.
+    let assertValid (context : string) (pid : ProcessId) : ProcessId = assertValidFor context "pid" pid
