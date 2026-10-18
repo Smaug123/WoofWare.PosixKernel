@@ -466,7 +466,7 @@ module TestPipeAgainstHost =
 
                                 if (m.IoBlockSize, m.AllocatedBlocks) <> (host.IoBlockSize, host.AllocatedBlocks) then
                                     failwith
-                                        $"%s{where ()}: fd %O{pipeEnd} end: model st_blksize %d{m.IoBlockSize} st_blocks %d{m.AllocatedBlocks}, host %d{host.IoBlockSize} and %d{host.AllocatedBlocks}"
+                                        $"%s{where ()}: fd %O{pipeEnd} end: model st_blksize %A{m.IoBlockSize} st_blocks %A{m.AllocatedBlocks}, host %A{host.IoBlockSize} and %A{host.AllocatedBlocks}"
 
                             match flavour with
                             | SimulatedUnixFlavour.Darwin ->

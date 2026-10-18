@@ -68,7 +68,6 @@ module TestSeedSymlinkTarget =
     /// What the `symlink(2)` or `symlinkat(2)` (from `AT_FDCWD`) of a target
     /// of `length` bytes at `/l` answers on a booted machine, as the probe
     /// prints it: "ok" with the link's `readlink` and `st_size`, or the errno.
-    /// On NFS, where `lstat` refuses, the `st_size` reads "refused".
     let private syscallAnswer (at : bool) (length : int) (image : UnixBootImage<int, string>) : string =
         let system = Launched.boot UnixSystem.pipedStandardStreams 0 (CpuId 0) image
 
@@ -98,7 +97,6 @@ module TestSeedSymlinkTarget =
             let size =
                 match UnixPathResolution.tryStat (Callers.leader after) SymlinkPolicy.NoFollowFinal path after with
                 | Ok (FileStatusAnswer.Reported status) -> $"%d{status.Size}"
-                | Error (StatRefusal.OnNfsMount _) -> "refused"
                 | other -> $"%A{other}"
 
             $"ok readlink=%s{readlink} st_size=%s{size}"
@@ -166,14 +164,6 @@ module TestSeedSymlinkTarget =
                                     $"%O{platform} %A{mount} (measured on %s{fileSystem}) %s{call} len=%d{length}"
 
                                 let modelled = syscallAnswer at length image
-
-                                // The probe measured no NFS mount, and `lstat`
-                                // refuses on one: only its `st_size` differs.
-                                let measured =
-                                    match EmulatedMount.fileSystemType mount with
-                                    | EmulatedFileSystemType.Nfs when measured.StartsWith "ok" ->
-                                        measured.Substring (0, measured.IndexOf " st_size=") + " st_size=refused"
-                                    | _ -> measured
 
                                 if modelled <> measured then
                                     yield $"%s{label}: measured %s{measured}, the syscall answered %s{modelled}"
@@ -243,8 +233,6 @@ module TestSeedSymlinkTarget =
                         system
                 with
                 | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual (int64 length)
-                | Error (StatRefusal.OnNfsMount _) when EmulatedMount.fileSystemType mount = EmulatedFileSystemType.Nfs ->
-                    ()
                 | other -> failwith $"lstat of a seeded link answered %A{other}"
             | Error fault ->
                 created |> shouldEqual "ENAMETOOLONG"

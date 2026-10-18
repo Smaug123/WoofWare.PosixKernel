@@ -75,24 +75,30 @@ type FileStatus =
         /// of file.
         SpecialFileDevice : int64
         /// `st_blksize`: the size of the transfers the kernel prefers, which
-        /// is what a C library sizes a stream's buffer from.
+        /// is what a C library sizes a stream's buffer from; or `None` where
+        /// nothing in the machine determines it, for every file on NFS, where
+        /// it is the mount's.
         ///
         /// 4096 for every file on tmpfs and APFS and for a Linux pipe. A
         /// Darwin pipe reports its buffer's size, 16384 until a write grows the
         /// buffer to 65536, and 16384 again through the write end once the read
         /// end has closed.
-        IoBlockSize : int64
+        IoBlockSize : int64 option
         /// `st_blocks`: how many 512-byte units the file has allocated, which
-        /// is less than its size covers when it has holes.
+        /// is less than its size covers when it has holes; or `None` where
+        /// nothing in the machine determines it. A client filling a
+        /// `struct stat` chooses what to report for `None`.
         ///
         /// On tmpfs a regular file has 8 for each 4096-byte page that holds
         /// data, a hole holding none, and for the page a write allocated
         /// before its buffer faulted, even one past the end of the file; a
-        /// symbolic link has 8 once its target is 128 bytes or longer. On APFS a regular file without holes has 8 per
-        /// page; `stat` refuses one with a hole, since APFS fills some holes when
-        /// it writes the file back, whenever that is. A Darwin pipe has 1 while
-        /// it holds bytes. Everything else has 0.
-        AllocatedBlocks : int64
+        /// symbolic link has 8 once its target is 128 bytes or longer. On APFS
+        /// a regular file of no bytes has 0, and one of any other length
+        /// `None`: APFS allocates as it writes the file back, by when and how
+        /// quickly the writes came, filling some holes and allocating ahead of
+        /// some appends. Everything on NFS is `None`, being the server's. A
+        /// Darwin pipe has 1 while it holds bytes. Everything else has 0.
+        AllocatedBlocks : int64 option
         /// `st_flags`, the BSD file flags `chflags(2)` sets, or `None` on a
         /// flavour whose `stat(2)` has no such field.
         ///
@@ -104,17 +110,10 @@ type FileStatus =
 /// Why this kernel refused to report a `struct stat` for a path.
 [<RequireQualifiedAccess>]
 type internal StatRefusal =
-    /// The path names an inode on an NFS mount. Its `st_blksize` is the
-    /// mount's, its `st_blocks` what the NFS server's GETATTR reports, and a
-    /// directory's `st_size` and `st_nlink` the server's too; nothing in this
-    /// machine determines them.
-    | OnNfsMount of inode : InodeNumber
-    /// The path names a regular file on APFS with a hole: a range no write
-    /// has filled before its last byte. APFS fills such a range with
-    /// allocated zeroes when it writes the file back, on `fsync(2)` or of its
-    /// own accord some seconds later, unless the range is long, so its
-    /// `st_blocks` depends on when the `stat` runs.
-    | HoleOnApfs of inode : InodeNumber
+    /// The path names a directory on an NFS mount. Its `st_size` and its
+    /// `st_nlink` are what the NFS server's GETATTR reports, and nothing in
+    /// this machine determines them.
+    | NfsDirectorySize of inode : InodeNumber
     /// The path names the root of the device filesystem. Its `st_size` and
     /// `st_nlink` count every node and subdirectory a real one holds, and this
     /// kernel's holds only the nodes of the devices it has drivers for.
@@ -128,10 +127,8 @@ module internal StatRefusal =
     /// a diagnostic.
     let describe (refusal : StatRefusal) : string =
         match refusal with
-        | StatRefusal.OnNfsMount inode ->
-            $"inode %O{inode} is on an NFS mount. Its st_blksize is the mount's, and its st_blocks (and a directory's st_size and st_nlink) what the NFS server's GETATTR reports, which nothing in this machine determines, so this kernel will not state them."
-        | StatRefusal.HoleOnApfs inode ->
-            $"inode %O{inode} is a regular file on APFS with a range no write has filled. APFS allocates zeroes for such a range when it writes the file back, which fsync(2) does and APFS does of its own accord within a minute (measured: a one-byte gap and a 1 MiB gap filled; a 64 MiB gap did not), so its st_blocks depends on when the stat runs, which this kernel does not model."
+        | StatRefusal.NfsDirectorySize inode ->
+            $"inode %O{inode} is a directory on an NFS mount. Its st_size and st_nlink are what the NFS server's GETATTR reports, which nothing in this machine determines, so this kernel will not state them."
         | StatRefusal.DeviceFileSystemRoot inode ->
             $"inode %O{inode} is the root of the device filesystem. Its st_size and st_nlink count every node and subdirectory a real one holds, and this kernel's holds only the nodes of the devices it has drivers for, so it will not state them."
         | StatRefusal.Path refusal -> PathRefusal.describe refusal
@@ -139,8 +136,7 @@ module internal StatRefusal =
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : StatRefusal) : RefusalKind =
         match refusal with
-        | StatRefusal.OnNfsMount _ -> RefusalKind.Unmodelled
-        | StatRefusal.HoleOnApfs _ -> RefusalKind.Unmodelled
+        | StatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
         | StatRefusal.DeviceFileSystemRoot _ -> RefusalKind.Unmodelled
         | StatRefusal.Path inner -> PathRefusal.kind inner
 
@@ -171,18 +167,13 @@ type internal FStatRefusal =
     /// </summary>
     | Socket of socket : SocketId
     /// <summary>
-    /// An inode on an NFS mount.
+    /// A directory on an NFS mount.
     /// </summary>
     /// <remarks>
-    /// Its <c>st_blksize</c> is the mount's, and its <c>st_blocks</c> (and a directory's <c>st_size</c> and
-    /// <c>st_nlink</c>) what the NFS server's GETATTR reports; nothing in this machine determines them.
+    /// Its <c>st_size</c> and its <c>st_nlink</c> are what the NFS server's GETATTR reports, and nothing in
+    /// this machine determines them.
     /// </remarks>
-    | OnNfsMount of inode : InodeNumber
-    /// <summary>
-    /// A regular file on APFS with a range no write has filled, whose <c>st_blocks</c> depends on when APFS
-    /// writes it back.
-    /// </summary>
-    | HoleOnApfs of inode : InodeNumber
+    | NfsDirectorySize of inode : InodeNumber
     /// <summary>
     /// The root of the device filesystem.
     /// </summary>
@@ -203,8 +194,7 @@ module internal FStatRefusal =
             "the descriptor is an event queue, an anonymous kernel object this kernel holds no inode for. Measured, the two flavours share not one field, and Linux's identity fields are facts about the machine that produced them rather than portable ones: Linux gives `st_mode` 0600 (permission bits and *no* file-type bits), `st_nlink` 1, `st_blksize` 4096, and a real anon-inode `st_dev`/`st_ino`; Darwin gives `st_mode` S_IFIFO (no permission bits), `st_nlink` 0, `st_blksize` 32, and zero for both identity fields."
         | FStatRefusal.Socket socket ->
             $"the descriptor is socket %O{socket}, for which this kernel holds no inode — a `SocketId` is a contention key rather than an inode number. Measured, only Linux gives a socket an inode at all (`st_dev` 8 and a distinct `st_ino` per socket, on `sockfs`), a Darwin AF_INET socket reporting 0 for both; and the rest would be invented either way — `st_mode` is S_IFSOCK|0777 on Linux against S_IFSOCK|0666 on Darwin, `st_nlink` 1 against 0, and Darwin's `st_blksize` varies with the socket itself (131072 for TCP, 9216 for UDP, 8192 for a Unix-domain socket)."
-        | FStatRefusal.OnNfsMount inode -> StatRefusal.describe (StatRefusal.OnNfsMount inode)
-        | FStatRefusal.HoleOnApfs inode -> StatRefusal.describe (StatRefusal.HoleOnApfs inode)
+        | FStatRefusal.NfsDirectorySize inode -> StatRefusal.describe (StatRefusal.NfsDirectorySize inode)
         | FStatRefusal.DeviceFileSystemRoot inode -> StatRefusal.describe (StatRefusal.DeviceFileSystemRoot inode)
 
     /// Which exception a public entry point raises this refusal as.
@@ -213,8 +203,7 @@ module internal FStatRefusal =
         | FStatRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | FStatRefusal.EventQueue -> RefusalKind.Unmodelled
         | FStatRefusal.Socket _ -> RefusalKind.Unmodelled
-        | FStatRefusal.OnNfsMount _ -> RefusalKind.Unmodelled
-        | FStatRefusal.HoleOnApfs _ -> RefusalKind.Unmodelled
+        | FStatRefusal.NfsDirectorySize _ -> RefusalKind.Unmodelled
         | FStatRefusal.DeviceFileSystemRoot _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer an `fstatat(2)`.
@@ -904,7 +893,7 @@ module UnixPathResolution =
                 | Some size, Some links -> Ok (size, links)
                 | _ ->
                     match fsType with
-                    | EmulatedFileSystemType.Nfs -> Error (StatRefusal.OnNfsMount inode)
+                    | EmulatedFileSystemType.Nfs -> Error (StatRefusal.NfsDirectorySize inode)
                     | EmulatedFileSystemType.Tmpfs
                     | EmulatedFileSystemType.Apfs ->
                         failwith
@@ -919,17 +908,15 @@ module UnixPathResolution =
             else
                 None
 
-        let allocation =
+        let ioBlockSize, allocatedBlocks =
             EmulatedFileSystemType.allocation
                 (UnixMachineState.fileSystemTypeOf inode system.Machine)
                 (SimulatedUnixPlatform.pageSize system.Machine.UnixPlatform)
                 entry.Content
 
-        match sizeAndLinks, allocation with
-        | Error refusal, _ -> Some (Error refusal)
-        | Ok _, StatAllocation.ServerDecides -> Some (Error (StatRefusal.OnNfsMount inode))
-        | Ok _, StatAllocation.WritebackDecides -> Some (Error (StatRefusal.HoleOnApfs inode))
-        | Ok (size, links), StatAllocation.Reported (ioBlockSize, allocatedBlocks) ->
+        match sizeAndLinks with
+        | Error refusal -> Some (Error refusal)
+        | Ok (size, links) ->
 
         Some (
             Ok
@@ -1138,8 +1125,8 @@ module UnixPathResolution =
                 LinkCount = reportedLinkCount system.Machine.UnixPlatform links
                 // Measured 0 through either end on both flavours.
                 SpecialFileDevice = 0L
-                IoBlockSize = ioBlockSize
-                AllocatedBlocks = allocatedBlocks
+                IoBlockSize = Some ioBlockSize
+                AllocatedBlocks = Some allocatedBlocks
                 FileFlags = newFileFlags system.Machine.UnixPlatform
             }
             |> FileStatusAnswer.Reported
@@ -1153,8 +1140,7 @@ module UnixPathResolution =
 
         match statOf inode system with
         | Some (Ok status) -> Ok (FileStatusAnswer.Reported status)
-        | Some (Error (StatRefusal.OnNfsMount inode)) -> Error (FStatRefusal.OnNfsMount inode)
-        | Some (Error (StatRefusal.HoleOnApfs inode)) -> Error (FStatRefusal.HoleOnApfs inode)
+        | Some (Error (StatRefusal.NfsDirectorySize inode)) -> Error (FStatRefusal.NfsDirectorySize inode)
         | Some (Error (StatRefusal.DeviceFileSystemRoot inode)) -> Error (FStatRefusal.DeviceFileSystemRoot inode)
         | Some (Error (StatRefusal.Path refusal)) ->
             failwith

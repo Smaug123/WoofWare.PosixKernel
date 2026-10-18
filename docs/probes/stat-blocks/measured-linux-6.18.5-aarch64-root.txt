@@ -1,4 +1,4 @@
-KERNEL	Linux 6.18.5 aarch64	uid=0	pagesize=4096	dir=/dev/shm/tmp.Oyc1kDW0mc
+KERNEL	Linux 6.18.5 aarch64	uid=0	pagesize=4096	dir=/dev/shm/tmp.8g9QEnjczw
 PIPE	read_end_empty	size=0	blksize=4096	blocks=0
 PIPE	write_end_empty	size=0	blksize=4096	blocks=0
 WROTE	requested=100	wrote=100
@@ -311,6 +311,24 @@ HISTORY	f8192 f4096	size=8192	blksize=4096	blocks=16
 HISTORY	f8192 t8192	size=8192	blksize=4096	blocks=0
 HISTORY	f8192 t12288	size=12288	blksize=4096	blocks=8
 HISTORY	f8192 t8191	size=8191	blksize=4096	blocks=0
+APPEND	pwrite_trial_0	never_more_than_its_pages
+APPEND	pwrite_trial_0_end	size=300000	blksize=4096	blocks=592
+APPEND	pwrite_trial_0_end_fsync	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_0	never_more_than_its_pages
+APPEND	write_trial_0_end	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_0_end_fsync	size=300000	blksize=4096	blocks=592
+APPEND	pwrite_trial_1	never_more_than_its_pages
+APPEND	pwrite_trial_1_end	size=300000	blksize=4096	blocks=592
+APPEND	pwrite_trial_1_end_fsync	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_1	never_more_than_its_pages
+APPEND	write_trial_1_end	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_1_end_fsync	size=300000	blksize=4096	blocks=592
+APPEND	pwrite_trial_2	never_more_than_its_pages
+APPEND	pwrite_trial_2_end	size=300000	blksize=4096	blocks=592
+APPEND	pwrite_trial_2_end_fsync	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_2	never_more_than_its_pages
+APPEND	write_trial_2_end	size=300000	blksize=4096	blocks=592
+APPEND	write_trial_2_end_fsync	size=300000	blksize=4096	blocks=592
 LINK	target_126	size=126	blksize=4096	blocks=0
 LINK	target_127	size=127	blksize=4096	blocks=0
 LINK	target_128	size=128	blksize=4096	blocks=8

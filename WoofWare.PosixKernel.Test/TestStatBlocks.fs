@@ -25,7 +25,8 @@ type FileAllocationOp =
 /// `st_blksize` and `st_blocks` as `stat` and `fstat` report them: the rows
 /// `stat-blocks.c` measured (`docs/probes/stat-blocks/`), replayed on both
 /// flavours; a regular file's against the pages a reference says its history
-/// left holding data; and the same histories run against this host's kernel.
+/// left allocated, and where it states none; and the same histories run
+/// against this host's kernel.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestStatBlocks =
@@ -104,11 +105,6 @@ module TestStatBlocks =
             | Ok (WriteAnswer.Failed UnixError.EFAULT, system) -> system
             | other -> failwith $"pwrite of %d{count} at %d{offset} from NULL: %A{other}"
 
-    let private inodeOf (fd : int) (system : UnixSystem<int, string>) : InodeNumber =
-        match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
-        | Some (OpenFileTarget.File (inode, _)) -> inode
-        | other -> failwith $"fd %d{fd} is %A{other}, not a regular file"
-
     let private reported (what : string) (answer : Result<FileStatusAnswer, 'refusal>) : FileStatus =
         match answer with
         | Ok (FileStatusAnswer.Reported status) -> status
@@ -145,36 +141,20 @@ module TestStatBlocks =
                 | SimulatedUnixFlavour.Darwin -> max length offset, held
         )
 
-    /// What a history leaves `fstat` reporting as `(st_blksize, st_blocks)`
-    /// on the flavour's default filesystem, or `None` where `fstat` refuses:
-    /// on tmpfs 8 per page holding data; on APFS the same, but only for a file
-    /// with no hole.
-    let private expected (flavour : SimulatedUnixFlavour) (ops : FileAllocationOp list) : (int64 * int64) option =
+    /// What a history leaves `fstat` reporting as `(st_blksize, st_blocks)` on
+    /// the flavour's default filesystem: on tmpfs 8 blocks per page
+    /// allocated; on APFS 0 for a file of no bytes, and no `st_blocks` for any
+    /// other.
+    let private expected (flavour : SimulatedUnixFlavour) (ops : FileAllocationOp list) : int64 option * int64 option =
         let length, held = reference flavour ops
-        let blocks = 8L * int64 held.Count
 
         match flavour with
-        | SimulatedUnixFlavour.Linux -> Some (4096L, blocks)
-        | SimulatedUnixFlavour.Darwin ->
-            let pages = (length + 4095L) / 4096L
+        | SimulatedUnixFlavour.Linux -> Some 4096L, Some (8L * int64 held.Count)
+        | SimulatedUnixFlavour.Darwin -> Some 4096L, (if length = 0L then Some 0L else None)
 
-            if int64 held.Count = pages then
-                Some (4096L, blocks)
-            else
-                None
-
-    let private modelAllocation
-        (flavour : SimulatedUnixFlavour)
-        (fd : int)
-        (system : UnixSystem<int, string>)
-        : (int64 * int64) option
-        =
-        match fstatOf fd system with
-        | Ok (FileStatusAnswer.Reported status) -> Some (status.IoBlockSize, status.AllocatedBlocks)
-        | Error (FStatRefusal.HoleOnApfs inode) when flavour = SimulatedUnixFlavour.Darwin ->
-            inode |> shouldEqual (inodeOf fd system)
-            None
-        | other -> failwith $"fstat on %O{flavour}: %A{other}"
+    let private modelAllocation (fd : int) (system : UnixSystem<int, string>) : int64 option * int64 option =
+        let status = fstatOf fd system |> reported "fstat"
+        status.IoBlockSize, status.AllocatedBlocks
 
     let private opGen : Gen<FileAllocationOp> =
         let position =
@@ -206,50 +186,23 @@ module TestStatBlocks =
         Gen.choose (0, 10) |> Gen.bind (fun n -> Gen.listOfLength n opGen)
 
     [<Test>]
-    let ``a regular file reports 8 blocks for each page holding data, and Darwin refuses a hole`` () : unit =
+    let ``a regular file reports 8 blocks for each page allocated, and Darwin none for a file of data`` () : unit =
         let property (ops : FileAllocationOp list) : unit =
             for platform in [ linux ; darwin ] do
                 let flavour = SimulatedUnixPlatform.flavour platform
                 let fd, system = create "/f" (defaultSystemOn platform)
                 let system = List.fold (applyToModel fd) system ops
 
-                let model = modelAllocation flavour fd system
+                let model = modelAllocation fd system
 
                 if model <> expected flavour ops then
                     failwith $"%A{ops} on %O{flavour}: the reference says %A{expected flavour ops}, the model %A{model}"
 
                 // `stat` of the path answers as `fstat` of the descriptor.
-                match lstatOf "/f" system, model with
-                | Ok (FileStatusAnswer.Reported status), Some allocation ->
-                    (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual allocation
-                | Error (StatRefusal.HoleOnApfs inode), None -> inode |> shouldEqual (inodeOf fd system)
-                | other -> failwith $"%A{ops} on %O{flavour}: stat answered %A{other}"
+                let status = lstatOf "/f" system |> reported "lstat"
+                (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual model
 
         Check.One (config, Prop.forAll (Arb.fromGen historyGen) property)
-
-    [<Test>]
-    let ``Darwin's refusal of a hole is unmodelled, and the public stat raises it`` () : unit =
-        let fd, system = create "/f" (defaultSystemOn darwin)
-        let system = applyToModel fd system (FileAllocationOp.Write (8192L, 1))
-        let inode = inodeOf fd system
-
-        StatRefusal.kind (StatRefusal.HoleOnApfs inode)
-        |> shouldEqual RefusalKind.Unmodelled
-
-        FStatRefusal.kind (FStatRefusal.HoleOnApfs inode)
-        |> shouldEqual RefusalKind.Unmodelled
-
-        Assert.Throws<UnmodelledException> (fun () ->
-            UnixPathResolution.fstat (Callers.leader system) fd system
-            |> ignore<FileStatusAnswer>
-        )
-        |> ignore<UnmodelledException>
-
-        Assert.Throws<UnmodelledException> (fun () ->
-            UnixPathResolution.stat (Callers.leader system) SymlinkPolicy.Follow (PathArg.ofText "/f") system
-            |> ignore<FileStatusAnswer>
-        )
-        |> ignore<UnmodelledException>
 
     // ------------------------------------------------- the measured outputs
 
@@ -291,8 +244,48 @@ module TestStatBlocks =
         | Some row -> row
         | None -> failwith $"the %O{flavour} output of stat-blocks.c has no row %s{label}"
 
-    let private fields (status : FileStatus) : int64 * int64 * int64 =
+    let private fields (status : FileStatus) : int64 * int64 option * int64 option =
         status.Size, status.IoBlockSize, status.AllocatedBlocks
+
+    /// The fields of a status that must state both block fields.
+    let private stated (status : FileStatus) : int64 * int64 * int64 =
+        match status.IoBlockSize, status.AllocatedBlocks with
+        | Some blksize, Some blocks -> status.Size, blksize, blocks
+        | other -> failwith $"expected both block fields stated, got %A{other}"
+
+    /// The model's regular file after `ops`, as `(size, blksize, blocks)`.
+    let private modelFields
+        (platform : SimulatedUnixPlatform)
+        (ops : FileAllocationOp list)
+        : int64 * int64 option * int64 option
+        =
+        let fd, system = create "/f" (defaultSystemOn platform)
+        let system = List.fold (applyToModel fd) system ops
+        fstatOf fd system |> reported $"fstat after %A{ops}" |> fields
+
+    /// The model states what every reading measured, leaving `st_blocks`
+    /// unstated only for a Darwin file holding bytes.
+    let private agreesWithReadings
+        (flavour : SimulatedUnixFlavour)
+        (what : string)
+        (model : int64 * int64 option * int64 option)
+        (readings : (int64 * int64 * int64) option list)
+        : unit
+        =
+        let size, blksize, blocks = model
+
+        let blocksMayBeUnstated = flavour = SimulatedUnixFlavour.Darwin && size > 0L
+
+        let agrees (reading : (int64 * int64 * int64) option) : bool =
+            match reading with
+            | None -> false
+            | Some (s, b, n) ->
+                size = s
+                && blksize = Some b
+                && (blocks = Some n || (blocks.IsNone && blocksMayBeUnstated))
+
+        if not (List.forall agrees readings) then
+            failwith $"%s{what} on %O{flavour}: measured %A{readings}, the model %A{model}"
 
     /// Each hole the probe made, by its name in the output, as the history
     /// that makes it; the probe's `fsync` changes nothing the model holds.
@@ -322,38 +315,54 @@ module TestStatBlocks =
         ]
 
     [<Test>]
-    let ``every hole the probe made reports what each kernel did, or Darwin refuses one that moved`` () : unit =
+    let ``every hole the probe made reports what each kernel did, at every reading`` () : unit =
         for platform in [ linux ; darwin ] do
             let flavour = SimulatedUnixPlatform.flavour platform
 
             for name, ops in holes do
-                let fd, system = create "/f" (defaultSystemOn platform)
-                let system = List.fold (applyToModel fd) system ops
-
                 let readings =
                     holeReadings
                     |> List.map (fun suffix -> measured flavour $"HOLE %s{name}%s{suffix}")
 
-                match fstatOf fd system with
-                | Ok (FileStatusAnswer.Reported status) ->
-                    for reading in readings do
-                        if reading <> Some (fields status) then
-                            failwith
-                                $"%s{name} on %O{flavour}: measured %A{readings}, the model reports %A{fields status}"
-                // Every hole here has data before or after it, or is one
-                // `ftruncate` made, which stayed at 0 but need not have.
-                | Error (FStatRefusal.HoleOnApfs _) when flavour = SimulatedUnixFlavour.Darwin -> ()
-                | other -> failwith $"%s{name} on %O{flavour}: %A{other}"
+                agreesWithReadings flavour name (modelFields platform ops) readings
 
     [<Test>]
-    let ``a dense file of 16 MiB reports a block per 512 bytes`` () : unit =
+    let ``a dense file of 16 MiB reports a block per 512 bytes on Linux`` () : unit =
         for platform in [ linux ; darwin ] do
             let flavour = SimulatedUnixPlatform.flavour platform
-            let fd, system = create "/f" (defaultSystemOn platform)
-            let system = applyToModel fd system (FileAllocationOp.Write (0L, 16 * 1048576))
+            let model = modelFields platform [ FileAllocationOp.Write (0L, 16 * 1048576) ]
+            agreesWithReadings flavour "dense_16MiB" model [ measured flavour "FILE dense_16MiB" ]
 
-            Some (fstatOf fd system |> reported "fstat" |> fields)
-            |> shouldEqual (measured flavour "FILE dense_16MiB")
+    [<Test>]
+    let ``a file grown by one-byte appends reports its pages on Linux, and Darwin, which allocated ahead, none``
+        ()
+        : unit
+        =
+        // The model's file is the same however the bytes came, so one write
+        // stands for the probe's 300000 appends.
+        for platform in [ linux ; darwin ] do
+            let flavour = SimulatedUnixPlatform.flavour platform
+            let model = modelFields platform [ FileAllocationOp.Write (0L, 300000) ]
+
+            let readings =
+                [ "pwrite" ; "write" ]
+                |> List.collect (fun call ->
+                    [ 0..2 ]
+                    |> List.collect (fun trial ->
+                        [
+                            measured flavour $"APPEND %s{call}_trial_%d{trial}_end"
+                            measured flavour $"APPEND %s{call}_trial_%d{trial}_end_fsync"
+                        ]
+                    )
+                )
+
+            agreesWithReadings flavour "300000 one-byte appends" model readings
+
+            // Not vacuous on Darwin: some trial allocated more than its pages.
+            if flavour = SimulatedUnixFlavour.Darwin then
+                readings
+                |> List.exists (fun reading -> reading <> Some (300000L, 4096L, 592L))
+                |> shouldEqual true
 
     [<Test>]
     let ``a symbolic link reports the blocks its target takes`` () : unit =
@@ -371,8 +380,7 @@ module TestStatBlocks =
                     | Ok (SyscallAnswer.Completed _, after) -> system <- after
                     | other -> failwith $"symlink of %d{length} bytes on %O{flavour}: %A{other}"
 
-                    Some (lstatOf path system |> reported "lstat" |> fields)
-                    |> shouldEqual (Some row)
+                    lstatOf path system |> reported "lstat" |> stated |> shouldEqual row
 
     [<Test>]
     let ``a directory reports no blocks however many names it holds`` () : unit =
@@ -401,7 +409,8 @@ module TestStatBlocks =
             for names in [ 5000 ; 20000 ] do
                 match measured flavour $"DIR names_%d{names}" with
                 | Some (_, blksize, blocks) ->
-                    (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (blksize, blocks)
+                    (status.IoBlockSize, status.AllocatedBlocks)
+                    |> shouldEqual (Some blksize, Some blocks)
                 | None -> failwith $"the probe could not stat a directory of %d{names} names"
 
     [<Test>]
@@ -411,42 +420,15 @@ module TestStatBlocks =
         for platform in [ linux ; darwin ] do
             let fd, system = create "/f" (defaultSystemOn platform)
             let status = fstatOf fd system |> reported "fstat"
-            (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (4096L, 0L)
+
+            (status.IoBlockSize, status.AllocatedBlocks)
+            |> shouldEqual (Some 4096L, Some 0L)
 
         let status =
             lstatOf "/dev/null" (defaultSystemOn linux) |> reported "lstat /dev/null"
 
-        (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (4096L, 0L)
-
-    /// The answer the model gives after `ops`, as `(size, blksize, blocks)`,
-    /// or `None` where Darwin refuses a hole.
-    let private modelFields
-        (platform : SimulatedUnixPlatform)
-        (ops : FileAllocationOp list)
-        : (int64 * int64 * int64) option
-        =
-        let flavour = SimulatedUnixPlatform.flavour platform
-        let fd, system = create "/f" (defaultSystemOn platform)
-        let system = List.fold (applyToModel fd) system ops
-
-        match fstatOf fd system with
-        | Ok (FileStatusAnswer.Reported status) -> Some (fields status)
-        | Error (FStatRefusal.HoleOnApfs _) when flavour = SimulatedUnixFlavour.Darwin -> None
-        | other -> failwith $"%A{ops} on %O{flavour}: %A{other}"
-
-    /// Linux answers every row as measured; Darwin as measured at every
-    /// reading, or refuses.
-    let private agreesWithReadings
-        (flavour : SimulatedUnixFlavour)
-        (what : string)
-        (model : (int64 * int64 * int64) option)
-        (readings : (int64 * int64 * int64) option list)
-        : unit
-        =
-        match model, flavour with
-        | None, SimulatedUnixFlavour.Darwin -> ()
-        | Some model, _ when readings |> List.forall ((=) (Some model)) -> ()
-        | _ -> failwith $"%s{what} on %O{flavour}: measured %A{readings}, the model %A{model}"
+        (status.IoBlockSize, status.AllocatedBlocks)
+        |> shouldEqual (Some 4096L, Some 0L)
 
     [<Test>]
     let ``a write whose buffer faults leaves what each kernel did`` () : unit =
@@ -537,7 +519,7 @@ module TestStatBlocks =
         | other -> failwith $"close %d{fd}: %A{other}"
 
     let private pipeFields (fd : int) (system : UnixSystem<int, string>) : int64 * int64 * int64 =
-        fstatOf fd system |> reported $"fstat %d{fd}" |> fields
+        fstatOf fd system |> reported $"fstat %d{fd}" |> stated
 
     /// The probe's pipe readings the model can repeat, each with what the
     /// model reports for it. The probe's writes are non-blocking, and each
@@ -627,27 +609,27 @@ module TestStatBlocks =
     // ------------------------------------------------------------------ NFS
 
     [<Test>]
-    let ``every inode on an NFS mount is refused, and the device filesystem answers`` () : unit =
+    let ``nothing on an NFS mount states a block size or blocks, and the device filesystem does`` () : unit =
         for platform in [ linux ; darwin ] do
             let fd, system = create "/f" (systemOn platform EmulatedFileSystemType.Nfs)
-            let inode = inodeOf fd system
-
-            fstatOf fd system |> shouldEqual (Error (FStatRefusal.OnNfsMount inode))
-            lstatOf "/f" system |> shouldEqual (Error (StatRefusal.OnNfsMount inode))
+            let system = applyToModel fd system (FileAllocationOp.Write (0L, 5000))
 
             match Eager.trySymlink (PathArg.ofText "f") (PathArg.ofText "/l") system with
             | Ok (SyscallAnswer.Completed _, system) ->
-                match lstatOf "/l" system with
-                | Error (StatRefusal.OnNfsMount _) -> ()
-                | other -> failwith $"lstat of a symbolic link on NFS on %O{platform}: %A{other}"
-            | other -> failwith $"symlink: %A{other}"
-
-            StatRefusal.kind (StatRefusal.OnNfsMount inode)
-            |> shouldEqual RefusalKind.Unmodelled
+                for status in
+                    [
+                        fstatOf fd system |> reported "fstat /f"
+                        lstatOf "/f" system |> reported "lstat /f"
+                        lstatOf "/l" system |> reported "lstat /l"
+                    ] do
+                    (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (None, None)
+            | other -> failwith $"symlink on %O{platform}: %A{other}"
 
         let system = systemOn linux EmulatedFileSystemType.Nfs
         let status = lstatOf "/dev/null" system |> reported "lstat /dev/null"
-        (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (4096L, 0L)
+
+        (status.IoBlockSize, status.AllocatedBlocks)
+        |> shouldEqual (Some 4096L, Some 0L)
 
     // ------------------------------------------------------------- the host
 
@@ -705,16 +687,17 @@ module TestStatBlocks =
 
                         let system = applyToModel fd system op
 
-                        // A Darwin refusal is the one answer no host reading
-                        // can check: it says the host's answer will move.
-                        match modelAllocation flavour fd system with
-                        | None -> ()
-                        | Some model ->
-                            let host = HostStat.fstat flavour hostFd
+                        // A field the model leaves unstated is the one answer no
+                        // host reading can check: it says the host's answer
+                        // depends on what the model does not follow.
+                        let blksize, blocks = modelAllocation fd system
+                        let host = HostStat.fstat flavour hostFd
 
-                            if (host.IoBlockSize, host.AllocatedBlocks) <> model then
-                                failwith
-                                    $"%A{ops}, after %A{op}: this %O{flavour} host reports (%d{host.IoBlockSize}, %d{host.AllocatedBlocks}), the model %A{model}"
+                        let agrees (model : int64 option) (host : int64 option) : bool = model.IsNone || model = host
+
+                        if not (agrees blksize host.IoBlockSize && agrees blocks host.AllocatedBlocks) then
+                            failwith
+                                $"%A{ops}, after %A{op}: this %O{flavour} host reports (%A{host.IoBlockSize}, %A{host.AllocatedBlocks}), the model (%A{blksize}, %A{blocks})"
 
                         system
                     )

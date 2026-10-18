@@ -548,10 +548,10 @@ module TestDirectorySize =
                         policy
                         (PathArg.ofPath (UnixPath.parseOrFail context path))
                         system
-                    |> shouldEqual (Error (StatRefusal.OnNfsMount (inodeOf path)))
+                    |> shouldEqual (Error (StatRefusal.NfsDirectorySize (inodeOf path)))
 
             UnixPathResolution.tryFstat (Callers.leader system) fd system
-            |> shouldEqual (Error (FStatRefusal.OnNfsMount (inodeOf "/d")))
+            |> shouldEqual (Error (FStatRefusal.NfsDirectorySize (inodeOf "/d")))
 
             match UnixDescriptor.tryLseek (Callers.leader system) fd 0L 2 system with
             | Error (LSeekRefusal.DirectoryEnd _) -> ()
@@ -563,11 +563,29 @@ module TestDirectorySize =
 
         for text in
             [
-                StatRefusal.describe (StatRefusal.OnNfsMount inode)
-                FStatRefusal.describe (FStatRefusal.OnNfsMount inode)
+                StatRefusal.describe (StatRefusal.NfsDirectorySize inode)
+                FStatRefusal.describe (FStatRefusal.NfsDirectorySize inode)
             ] do
             text |> shouldContainText "NFS server"
             text |> shouldContainText (string<InodeNumber> inode)
+
+    [<Test>]
+    let ``an NFS mount still reports a regular file's size`` () : unit =
+        // The refusal is about directories alone: a file's size is its
+        // contents' length on every filesystem.
+        for platform in [ SimulatedUnixPlatform.linuxX64 ; SimulatedUnixPlatform.macOsArm64 ] do
+            let _, system = modelWith platform EmulatedFileSystemType.Nfs
+            let system = applyToModel (DirectorySizeOp.Create "d/f") system
+
+            match
+                UnixPathResolution.tryStat
+                    (Callers.leader system)
+                    SymlinkPolicy.Follow
+                    (PathArg.ofPath (rooted "d/f"))
+                    system
+            with
+            | Ok (FileStatusAnswer.Reported status) -> status.Size |> shouldEqual 0L
+            | other -> failwith $"stat d/f: %A{other}"
 
     // ------------------------------------------------------------ the host
 

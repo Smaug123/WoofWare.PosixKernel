@@ -2,8 +2,8 @@
 // (docs/plans/2026-08-23-posix-kernel-extraction/) left them open: a pipe's as
 // its buffer grows and as its ends close, a regular file's once it has a
 // hole, before and after fsync(2) and after the kernel has had time to write
-// the file back on its own, and a regular file's after a pwrite(2) whose
-// buffer faults. Also a symbolic link's around the length where
+// the file back on its own, a regular file's after a pwrite(2) whose
+// buffer faults, and a dense file's as one-byte appends arrive. Also a symbolic link's around the length where
 // its blocks change, a directory of many names, a dense file of 16 MiB, and
 // (Darwin) a clonefile(2) copy.
 //
@@ -316,6 +316,44 @@ static void fault_histories(const char *dir) {
     }
 }
 
+// One-byte appends, with an fstat(2) after each, to 300000 bytes, by
+// pwrite(2) at the end or by write(2): each row reports the first append
+// after which the file had more blocks than 8 per 4096-byte page its bytes
+// cover, or that none did, and then the blocks at the end, at once and after
+// fsync(2).
+static void appends(const char *dir) {
+    for (int trial = 0; trial < 6; trial++) {
+        int by_write = trial % 2;
+        int fd = fresh(dir, "appends");
+        long long first = -1, firstBlocks = 0;
+        for (long long size = 1; size <= 300000; size++) {
+            if ((by_write ? write(fd, "a", 1) : pwrite(fd, "a", 1, size - 1)) != 1) {
+                perror("pwrite");
+                exit(1);
+            }
+            struct stat st;
+            fstat(fd, &st);
+            if (first < 0 && (long long)st.st_blocks > (size + 4095) / 4096 * 8) {
+                first = size;
+                firstBlocks = (long long)st.st_blocks;
+            }
+        }
+        const char *call = by_write ? "write" : "pwrite";
+        if (first < 0)
+            printf("APPEND\t%s_trial_%d\tnever_more_than_its_pages\n", call, trial / 2);
+        else
+            printf("APPEND\t%s_trial_%d\tfirst_more_at_size=%lld\tblocks=%lld\tpages_cover=%lld\n", call, trial / 2,
+                   first, firstBlocks, (first + 4095) / 4096 * 8);
+        char label[64];
+        snprintf(label, sizeof label, "APPEND\t%s_trial_%d_end", call, trial / 2);
+        fd_row(label, fd);
+        fsync(fd);
+        snprintf(label, sizeof label, "APPEND\t%s_trial_%d_end_fsync", call, trial / 2);
+        fd_row(label, fd);
+        close(fd);
+    }
+}
+
 static void symlinks(const char *dir) {
     static const int lengths[] = {126, 127, 128, 129, 1000, 1022, 1023, 1024, 4095};
     char target[4096];
@@ -365,6 +403,7 @@ int main(int argc, char **argv) {
     files(argv[1], atoi(argv[2]));
     faults(argv[1]);
     fault_histories(argv[1]);
+    appends(argv[1]);
     symlinks(argv[1]);
     directory(argv[1]);
     return 0;

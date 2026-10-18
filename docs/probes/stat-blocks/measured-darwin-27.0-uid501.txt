@@ -1,4 +1,4 @@
-KERNEL	Darwin 27.0.0 arm64	uid=501	pagesize=16384	dir=/private/tmp/stat-blocks.i9eDbG
+KERNEL	Darwin 27.0.0 arm64	uid=501	pagesize=16384	dir=/private/tmp/stat-blocks.OyesOi
 PIPE	read_end_empty	size=0	blksize=16384	blocks=0
 PIPE	write_end_empty	size=0	blksize=16384	blocks=0
 WROTE	requested=100	wrote=100
@@ -314,6 +314,24 @@ HISTORY	f8192 f4096	size=8192	blksize=4096	blocks=8
 HISTORY	f8192 t8192	size=8192	blksize=4096	blocks=0
 HISTORY	f8192 t12288	size=12288	blksize=4096	blocks=0
 HISTORY	f8192 t8191	size=8191	blksize=4096	blocks=0
+APPEND	pwrite_trial_0	first_more_at_size=266241	blocks=648	pages_cover=528
+APPEND	pwrite_trial_0_end	size=300000	blksize=4096	blocks=648
+APPEND	pwrite_trial_0_end_fsync	size=300000	blksize=4096	blocks=648
+APPEND	write_trial_0	first_more_at_size=176129	blocks=472	pages_cover=352
+APPEND	write_trial_0_end	size=300000	blksize=4096	blocks=600
+APPEND	write_trial_0_end_fsync	size=300000	blksize=4096	blocks=600
+APPEND	pwrite_trial_1	first_more_at_size=229377	blocks=576	pages_cover=456
+APPEND	pwrite_trial_1_end	size=300000	blksize=4096	blocks=704
+APPEND	pwrite_trial_1_end_fsync	size=300000	blksize=4096	blocks=704
+APPEND	write_trial_1	first_more_at_size=262145	blocks=640	pages_cover=520
+APPEND	write_trial_1_end	size=300000	blksize=4096	blocks=640
+APPEND	write_trial_1_end_fsync	size=300000	blksize=4096	blocks=640
+APPEND	pwrite_trial_2	first_more_at_size=286721	blocks=688	pages_cover=568
+APPEND	pwrite_trial_2_end	size=300000	blksize=4096	blocks=688
+APPEND	pwrite_trial_2_end_fsync	size=300000	blksize=4096	blocks=688
+APPEND	write_trial_2	first_more_at_size=270337	blocks=656	pages_cover=536
+APPEND	write_trial_2_end	size=300000	blksize=4096	blocks=656
+APPEND	write_trial_2_end_fsync	size=300000	blksize=4096	blocks=656
 LINK	target_126	size=126	blksize=4096	blocks=0
 LINK	target_127	size=127	blksize=4096	blocks=0
 LINK	target_128	size=128	blksize=4096	blocks=0

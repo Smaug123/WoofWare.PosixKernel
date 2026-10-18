@@ -100,9 +100,8 @@ module TestBindingCount =
         | None -> 0
 
     /// The `st_nlink` measured on each filesystem by `stat-fields.c`, from the
-    /// scans alone, or `None` where `stat` must refuse: everything on NFS,
-    /// whose `st_blksize` and `st_blocks` are the server's. Every directory
-    /// here is far below Darwin's 65535 ceiling.
+    /// scans alone, or `None` where `stat` must refuse. Every directory here is
+    /// far below Darwin's 65535 ceiling.
     let private measuredLinkCount
         (fsType : EmulatedFileSystemType)
         (inode : InodeNumber)
@@ -111,7 +110,6 @@ module TestBindingCount =
         =
         match VirtualFileSystem.tryGetContent inode vfs with
         | None -> failwith $"test bug: inode %O{inode} is not in the graph"
-        | Some _ when fsType = EmulatedFileSystemType.Nfs -> None
         | Some (InodeContent.RegularFile _)
         | Some (InodeContent.Socket _)
         | Some (InodeContent.Fifo _)
@@ -125,7 +123,7 @@ module TestBindingCount =
                 else
                     Some (2L + int64 (scannedSubdirectoryCount inode vfs))
             | EmulatedFileSystemType.Apfs -> Some (2L + int64 (scannedEntryCount inode vfs))
-            | EmulatedFileSystemType.Nfs -> failwith "unreachable: every NFS inode is matched above"
+            | EmulatedFileSystemType.Nfs -> None
 
     /// A system on each flavour's default filesystem and on NFS, whose
     /// filesystem a check replaces with the graph under test. `statOf` reads
@@ -172,7 +170,7 @@ module TestBindingCount =
 
                     status.SpecialFileDevice |> Expect.equal context 0L
                     status.FileFlags |> Expect.equal context (if darwin then Some 0u else None)
-                | Some (Error (StatRefusal.OnNfsMount refused)), None -> refused |> Expect.equal context inode
+                | Some (Error (StatRefusal.NfsDirectorySize refused)), None -> refused |> Expect.equal context inode
                 | answer, expected ->
                     failwith
                         $"%s{context ()}: on %O{fsType}, stat of inode %O{inode} answered %A{answer}, where the measured rule is %A{expected}"

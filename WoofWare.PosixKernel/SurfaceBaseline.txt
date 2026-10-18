@@ -1161,21 +1161,21 @@ WoofWare.PosixKernel.FileNameError.NewReserved [static method]: string -> WoofWa
 WoofWare.PosixKernel.FileNameError.NewText [static method]: WoofWare.PosixKernel.UnixPathTextDefect -> WoofWare.PosixKernel.FileNameError
 WoofWare.PosixKernel.FileNameError.Tag [property]: [read-only] int
 WoofWare.PosixKernel.FileStatus inherit obj, implements WoofWare.PosixKernel.FileStatus System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.FileStatus System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.FileStatus..ctor [constructor]: (int, WoofWare.PosixKernel.UserId, WoofWare.PosixKernel.GroupId, System.Int64, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp option, System.Int64, WoofWare.PosixKernel.InodeNumber, System.Int64, System.Int64, System.Int64, System.Int64, System.UInt32 option)
+WoofWare.PosixKernel.FileStatus..ctor [constructor]: (int, WoofWare.PosixKernel.UserId, WoofWare.PosixKernel.GroupId, System.Int64, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp, WoofWare.PosixKernel.UnixTimestamp option, System.Int64, WoofWare.PosixKernel.InodeNumber, System.Int64, System.Int64, System.Int64 option, System.Int64 option, System.UInt32 option)
 WoofWare.PosixKernel.FileStatus.AccessTime [property]: [read-only] WoofWare.PosixKernel.UnixTimestamp
-WoofWare.PosixKernel.FileStatus.AllocatedBlocks [property]: [read-only] System.Int64
+WoofWare.PosixKernel.FileStatus.AllocatedBlocks [property]: [read-only] System.Int64 option
 WoofWare.PosixKernel.FileStatus.BirthTime [property]: [read-only] WoofWare.PosixKernel.UnixTimestamp option
 WoofWare.PosixKernel.FileStatus.DeviceId [property]: [read-only] System.Int64
 WoofWare.PosixKernel.FileStatus.Equals [method]: (WoofWare.PosixKernel.FileStatus, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.FileStatus.FileFlags [property]: [read-only] System.UInt32 option
 WoofWare.PosixKernel.FileStatus.get_AccessTime [method]: unit -> WoofWare.PosixKernel.UnixTimestamp
-WoofWare.PosixKernel.FileStatus.get_AllocatedBlocks [method]: unit -> System.Int64
+WoofWare.PosixKernel.FileStatus.get_AllocatedBlocks [method]: unit -> System.Int64 option
 WoofWare.PosixKernel.FileStatus.get_BirthTime [method]: unit -> WoofWare.PosixKernel.UnixTimestamp option
 WoofWare.PosixKernel.FileStatus.get_DeviceId [method]: unit -> System.Int64
 WoofWare.PosixKernel.FileStatus.get_FileFlags [method]: unit -> System.UInt32 option
 WoofWare.PosixKernel.FileStatus.get_GroupId [method]: unit -> WoofWare.PosixKernel.GroupId
 WoofWare.PosixKernel.FileStatus.get_Inode [method]: unit -> WoofWare.PosixKernel.InodeNumber
-WoofWare.PosixKernel.FileStatus.get_IoBlockSize [method]: unit -> System.Int64
+WoofWare.PosixKernel.FileStatus.get_IoBlockSize [method]: unit -> System.Int64 option
 WoofWare.PosixKernel.FileStatus.get_LinkCount [method]: unit -> System.Int64
 WoofWare.PosixKernel.FileStatus.get_Mode [method]: unit -> int
 WoofWare.PosixKernel.FileStatus.get_ModificationTime [method]: unit -> WoofWare.PosixKernel.UnixTimestamp
@@ -1185,7 +1185,7 @@ WoofWare.PosixKernel.FileStatus.get_StatusChangeTime [method]: unit -> WoofWare.
 WoofWare.PosixKernel.FileStatus.get_UserId [method]: unit -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.FileStatus.GroupId [property]: [read-only] WoofWare.PosixKernel.GroupId
 WoofWare.PosixKernel.FileStatus.Inode [property]: [read-only] WoofWare.PosixKernel.InodeNumber
-WoofWare.PosixKernel.FileStatus.IoBlockSize [property]: [read-only] System.Int64
+WoofWare.PosixKernel.FileStatus.IoBlockSize [property]: [read-only] System.Int64 option
 WoofWare.PosixKernel.FileStatus.LinkCount [property]: [read-only] System.Int64
 WoofWare.PosixKernel.FileStatus.Mode [property]: [read-only] int
 WoofWare.PosixKernel.FileStatus.ModificationTime [property]: [read-only] WoofWare.PosixKernel.UnixTimestamp

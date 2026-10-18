@@ -153,7 +153,7 @@ It throws `ArgumentException` for a name the flavour could never have created, f
 On Darwin it throws `UnmodelledException` for a directory holding two names that might be spellings of one name (see "Names in the filesystem").
 
 The filesystem's type is what `fstatfs(2)` reports for a file, and it changes a directory's `st_size`, every file's `st_blksize` and `st_blocks`, and where `lseek(2)` with `SEEK_END` lands on a directory.
-`stat(2)` refuses where nothing in the machine determines those: every inode on NFS, whose are the mount's and the server's, and on APFS a regular file with a hole, which APFS fills with allocated zeroes or not when it writes the file back, on `fsync(2)` or of its own accord seconds later.
+`FileStatus` states each of those two as `None` where nothing in the machine determines it: both on NFS, where they are the mount's and the server's, and the `st_blocks` of an APFS regular file holding any bytes, which APFS allocates as it writes the file back, by when and how quickly the writes came. A client filling a `struct stat` chooses what to report for `None`.
 It is tmpfs on Linux and APFS on Darwin unless `UnixBootImage.withMount` says otherwise: `Some (EmulatedMount.defaultOf EmulatedFileSystemType.Nfs)`, for example, or `EmulatedMount.Tmpfs` and `EmulatedMount.Apfs` with their fields set.
 A type the flavour could not report is refused: on Linux, which has no APFS, with `ArgumentException`, and on Darwin, where a tmpfs has not been measured, with `UnmodelledException`.
 Path resolution keeps its flavour's limits whichever type is chosen.

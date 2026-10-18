@@ -10,13 +10,14 @@ open WoofWare.PosixKernel
 /// .NET's `System.Native` `stat` does not carry, read in the library's
 /// vocabulary: the oracle for
 /// `FileStatus.LinkCount`, `SpecialFileDevice`, `IoBlockSize`,
-/// `AllocatedBlocks` and `FileFlags`.
+/// `AllocatedBlocks` and `FileFlags`. A host always states the two block
+/// fields, so a model that states neither compares unequal.
 type HostStatus =
     {
         LinkCount : int64
         SpecialFileDevice : int64
-        IoBlockSize : int64
-        AllocatedBlocks : int64
+        IoBlockSize : int64 option
+        AllocatedBlocks : int64 option
         FileFlags : uint32 option
     }
 
@@ -135,8 +136,8 @@ module HostStat =
         {
             LinkCount = unsignedAt layout.LinkCountOffset layout.LinkCountWidth
             SpecialFileDevice = unsignedAt layout.DeviceOffset layout.DeviceWidth
-            IoBlockSize = signedAt layout.BlockSizeOffset layout.BlockSizeWidth
-            AllocatedBlocks = signedAt layout.BlocksOffset 8
+            IoBlockSize = Some (signedAt layout.BlockSizeOffset layout.BlockSizeWidth)
+            AllocatedBlocks = Some (signedAt layout.BlocksOffset 8)
             FileFlags =
                 layout.FlagsOffset
                 |> Option.map (fun offset -> BinaryPrimitives.ReadUInt32LittleEndian (ReadOnlySpan (buffer, offset, 4)))
