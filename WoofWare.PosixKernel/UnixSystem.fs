@@ -685,7 +685,7 @@ type UnixSystemDefect<'Thread> =
     /// `UnixMachineState.isUserBufferCheckOf`.
     | UserBufferCheckNotOfPlatform of platform : SimulatedUnixPlatform * check : UserBufferCheck
     /// The process holds more supplementary groups than its machine's
-    /// platform lets any process hold (`SimulatedUnixPlatform.supplementaryGroupLimit`).
+    /// platform lets any process hold (`SimulatedUnixPlatform.supplementaryGroupsHeld`).
     | TooManySupplementaryGroups of processId : ProcessId * count : int * limit : int
     /// The process's file-mode creation mask holds a bit its machine's
     /// platform's `umask(2)` never stores (`SimulatedUnixPlatform.umaskStoredBits`),
@@ -3756,7 +3756,7 @@ module UnixSystem =
             let count = List.length system.Process.Credentials.SupplementaryGroups
 
             let limit =
-                SimulatedUnixPlatform.supplementaryGroupLimit system.Machine.UnixPlatform
+                SimulatedUnixPlatform.supplementaryGroupsHeld system.Machine.UnixPlatform
 
             if count > limit then
                 [ UnixSystemDefect.TooManySupplementaryGroups (pid, count, limit) ]
