@@ -97,8 +97,9 @@ module TestSockaddrField =
 
         for field in malformed do
             let e =
-                Assert.Throws<exn> (fun () -> SockaddrField.reachedBy field 16 |> ignore<bool>)
+                Assert.Throws<ArgumentException> (fun () -> SockaddrField.reachedBy field 16 |> ignore<bool>)
 
+            e.ParamName |> shouldEqual "field"
             e.Message |> shouldContainText "describes no part of any struct"
 
     /// The family predicate is the same arithmetic, and answers the same:
