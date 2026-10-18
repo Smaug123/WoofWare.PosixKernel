@@ -1,0 +1,119 @@
+Darwin 27.0.0 arm64
+SO_RCVBUF 786896
+size 0: unpaced 3075, 3075; paced 3075; primed 3074
+size 1: unpaced 4099, 4099; paced 4099; primed 4099
+size 16: unpaced 4099, 4099; paced 4099; primed 4099
+size 100: unpaced 4099, 4099; paced 4099; primed 4099
+size 200: unpaced 3391, 3391; paced 3391; primed 3391
+size 500: unpaced 1479, 1479; paced 1479; primed 1479
+size 1000: unpaced 762, 762; paced 762; primed 762
+size 2000: unpaced 387, 387; paced 387; primed 387
+size 4096: unpaced 190, 190; paced 190; primed 190
+size 9216: unpaced 85, 85; paced 85; primed 85
+size 9216: unpaced 85, 85; paced 85; primed 85
+size 0 holds 3075; size 1 holds 4099
+size 159 holds 4099; size 160 holds 4098
+size 160 holds 4098; size 161 holds 4077
+size 161 holds 4077; size 162 holds 4056
+size 162 holds 4056; size 163 holds 4035
+size 163 holds 4035; size 164 holds 4014
+size 164 holds 4014; size 165 holds 3994
+size 165 holds 3994; size 166 holds 3974
+size 166 holds 3974; size 167 holds 3954
+size 167 holds 3954; size 168 holds 3934
+size 168 holds 3934; size 169 holds 3914
+size 169 holds 3914; size 170 holds 3895
+size 170 holds 3895; size 171 holds 3876
+size 171 holds 3876; size 172 holds 3857
+size 172 holds 3857; size 173 holds 3838
+size 173 holds 3838; size 174 holds 3819
+size 174 holds 3819; size 175 holds 3801
+size 175 holds 3801; size 176 holds 3783
+size 176 holds 3783; size 177 holds 3765
+size 177 holds 3765; size 178 holds 3747
+size 178 holds 3747; size 179 holds 3729
+size 179 holds 3729; size 180 holds 3711
+size 180 holds 3711; size 181 holds 3694
+size 181 holds 3694; size 182 holds 3677
+size 182 holds 3677; size 183 holds 3660
+size 183 holds 3660; size 184 holds 3643
+size 184 holds 3643; size 185 holds 3626
+size 185 holds 3626; size 186 holds 3609
+size 186 holds 3609; size 187 holds 3593
+size 187 holds 3593; size 188 holds 3576
+size 188 holds 3576; size 189 holds 3560
+size 189 holds 3560; size 190 holds 3544
+size 190 holds 3544; size 191 holds 3528
+size 191 holds 3528; size 192 holds 3513
+size 192 holds 3513; size 193 holds 3497
+size 193 holds 3497; size 194 holds 3481
+size 194 holds 3481; size 195 holds 3466
+size 195 holds 3466; size 196 holds 3451
+size 196 holds 3451; size 197 holds 3436
+size 197 holds 3436; size 198 holds 3421
+size 198 holds 3421; size 199 holds 3406
+size 199 holds 3406; size 200 holds 3391
+size 200 holds 3391; size 201 holds 3377
+size 201 holds 3377; size 202 holds 3362
+size 202 holds 3362; size 203 holds 3348
+size 203 holds 3348; size 204 holds 3334
+size 204 holds 3334; size 205 holds 3320
+size 205 holds 3320; size 206 holds 3306
+size 206 holds 3306; size 207 holds 3292
+size 207 holds 3292; size 208 holds 3278
+size 208 holds 3278; size 209 holds 3265
+size 209 holds 3265; size 210 holds 3251
+size 210 holds 3251; size 211 holds 3238
+size 211 holds 3238; size 212 holds 3225
+size 212 holds 3225; size 213 holds 3211
+size 213 holds 3211; size 214 holds 3198
+size 214 holds 3198; size 215 holds 3185
+size 215 holds 3185; size 216 holds 3173
+size 216 holds 3173; size 217 holds 3160
+size 217 holds 3160; size 218 holds 3147
+size 218 holds 3147; size 219 holds 3135
+size 219 holds 3135; size 220 holds 3122
+size 220 holds 3122; size 221 holds 3110
+size 221 holds 3110; size 222 holds 3098
+size 222 holds 3098; size 223 holds 3085
+size 223 holds 3085; size 224 holds 3073
+size 224 holds 3073; size 225 holds 3061
+size 225 holds 3061; size 226 holds 3050
+size 226 holds 3050; size 227 holds 3038
+size 227 holds 3038; size 228 holds 3026
+size 228 holds 3026; size 229 holds 3014
+size 229 holds 3014; size 230 holds 3003
+size 230 holds 3003; size 231 holds 2992
+size 231 holds 2992; size 232 holds 2980
+size 232 holds 2980; size 233 holds 2969
+size 233 holds 2969; size 234 holds 2958
+size 234 holds 2958; size 235 holds 2947
+size 235 holds 2947; size 236 holds 2936
+size 236 holds 2936; size 237 holds 2925
+size 237 holds 2925; size 238 holds 2914
+size 238 holds 2914; size 239 holds 2903
+size 239 holds 2903; size 240 holds 2893
+size 240 holds 2893; size 241 holds 2882
+size 241 holds 2882; size 242 holds 2871
+size 242 holds 2871; size 243 holds 2861
+size 243 holds 2861; size 244 holds 2851
+size 244 holds 2851; size 245 holds 2840
+size 245 holds 2840; size 246 holds 2830
+size 246 holds 2830; size 247 holds 2820
+size 247 holds 2820; size 248 holds 2810
+size 248 holds 2810; size 249 holds 2800
+size 249 holds 2800; size 250 holds 2790
+size 250 holds 2790; size 251 holds 2780
+size 251 holds 2780; size 252 holds 2770
+size 252 holds 2770; size 253 holds 2761
+size 253 holds 2761; size 254 holds 2751
+size 254 holds 2751; size 255 holds 2741
+size 255 holds 2741; size 256 holds 2732
+size 256 holds 2732; size 257 holds 1757
+size 282: fresh 1757 (formula 2506), primed 1757 (formula 2506) MISMATCH
+size 343: fresh 1757 (formula 2098), primed 1757 (formula 2098) MISMATCH
+size 404: fresh 1757 (formula 1804), primed 1757 (formula 1804) MISMATCH
+formula checked at 150 sizes from 160 to 9216: 3 mismatches
+size 1138: fresh 672, primed 672
+size 1139: fresh 672, primed 671
+size 1140: fresh 671, primed 671
