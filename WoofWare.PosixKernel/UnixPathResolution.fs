@@ -434,14 +434,6 @@ type internal UTimensAtRefusal =
     /// The call would set a time on a file of this filesystem, whose server
     /// decides what it stores.
     | UnmeasuredFileSystem of fileSystem : EmulatedFileSystemType
-    /// Darwin, a privileged caller, and an inode it does not own: what
-    /// Darwin's root may do here is unmeasured.
-    | UnmeasuredPrivilegedCaller of inode : InodeNumber
-    /// Darwin, `AT_SYMLINK_NOFOLLOW` at a symbolic link the caller does not
-    /// own but may write, and both times now: measured, Darwin answers EPERM
-    /// for another user's link where it answers EACCES for a file, and no
-    /// link the caller may write but does not own was available to measure.
-    | UnmeasuredSymlinkWrite of inode : InodeNumber
     /// An inotify watch could hear of the change, through a name this kernel
     /// does not keep: that of a directory removed before the walk reached it
     /// by ".", "..", or "/".
@@ -463,10 +455,6 @@ module internal UTimensAtRefusal =
             $"the call reached an end of pipe %O{pipe}, which the process was launched with rather than one it made. Measured on Linux, utimensat sets a pipe's times by the same rules as a file's, which depend on who owns the pipe; this pipe's owner is whoever launched the process, which the launch table does not state."
         | UTimensAtRefusal.UnmeasuredFileSystem fileSystem ->
             $"the call would set a time on a file of a %O{fileSystem} mount, where the server decides what is stored; measured, tmpfs and APFS each store a time their own way, and nothing here says what this server does."
-        | UTimensAtRefusal.UnmeasuredPrivilegedCaller inode ->
-            $"a privileged caller would set the times of inode %O{inode}, which it does not own, on Darwin; this was measured only for an unprivileged caller."
-        | UTimensAtRefusal.UnmeasuredSymlinkWrite inode ->
-            $"AT_SYMLINK_NOFOLLOW reached symbolic link %O{inode}, which the caller does not own but may write, with both times now. Measured on Darwin 27.0, another user's link answers EPERM where a file answers EACCES, and whether write permission on a link lets a non-owner set its times to now, as it does for a file, is unmeasured."
         | UTimensAtRefusal.UnplacedChange refusal -> UnplacedChangeRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -478,8 +466,6 @@ module internal UTimensAtRefusal =
         | UTimensAtRefusal.Socket _ -> RefusalKind.Unmodelled
         | UTimensAtRefusal.LaunchedPipe _ -> RefusalKind.Unmodelled
         | UTimensAtRefusal.UnmeasuredFileSystem _ -> RefusalKind.Unmodelled
-        | UTimensAtRefusal.UnmeasuredPrivilegedCaller _ -> RefusalKind.Unmodelled
-        | UTimensAtRefusal.UnmeasuredSymlinkWrite _ -> RefusalKind.Unmodelled
         | UTimensAtRefusal.UnplacedChange inner -> UnplacedChangeRefusal.kind inner
 
 /// <summary>
@@ -2102,28 +2088,15 @@ module UnixPathResolution =
             let entry =
                 VirtualFileSystem.get "UnixPathResolution.utimensat" inode system.Machine.FileSystem
 
-            let isSymlink =
-                match entry.Content with
-                | InodeContent.Symlink _ -> true
-                | InodeContent.RegularFile _
-                | InodeContent.Directory _
-                | InodeContent.Socket _
-                | InodeContent.Fifo _
-                | InodeContent.CharacterDevice _ -> false
-
             match
                 TimestampChangeRules.permission
                     flavour
                     (Standing.toward credentials entry.Owner)
                     (Inode.permissions entry)
-                    isSymlink
                     access
                     modification
             with
             | TimestampChangePermission.Denied error -> Ok (SyscallAnswer.Failed error, system)
-            | TimestampChangePermission.UnmeasuredPrivilegedCaller ->
-                Error (UTimensAtRefusal.UnmeasuredPrivilegedCaller inode)
-            | TimestampChangePermission.UnmeasuredSymlinkWrite -> Error (UTimensAtRefusal.UnmeasuredSymlinkWrite inode)
             | TimestampChangePermission.Permitted ->
 
             match access, modification with
@@ -2184,15 +2157,11 @@ module UnixPathResolution =
                         flavour
                         (Standing.toward credentials anonymousInodeOwner)
                         (PermissionBits.parseOrFail "UnixPathResolution.utimensat" 0o600)
-                        false
                         access
                         modification
                 with
                 | TimestampChangePermission.Denied error -> Ok (SyscallAnswer.Failed error, system)
-                | TimestampChangePermission.Permitted
-                | TimestampChangePermission.UnmeasuredPrivilegedCaller
-                | TimestampChangePermission.UnmeasuredSymlinkWrite ->
-                    Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
+                | TimestampChangePermission.Permitted -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
             | _ -> Ok (SyscallAnswer.Failed UnixError.EOPNOTSUPP, system)
         | TimesTarget.NotInode (OpenFileObject.Kqueue _) ->
             failwith
@@ -2215,15 +2184,10 @@ module UnixPathResolution =
                     flavour
                     (Standing.toward credentials status.Owner)
                     status.Permissions
-                    false
                     access
                     modification
             with
             | TimestampChangePermission.Denied error -> Ok (SyscallAnswer.Failed error, system)
-            | TimestampChangePermission.UnmeasuredPrivilegedCaller
-            | TimestampChangePermission.UnmeasuredSymlinkWrite ->
-                failwith
-                    "UnixPathResolution.utimensat: Linux's permission rule left a pipe's times unmeasured, but it answers every caller (this is a bug in this library)."
             | TimestampChangePermission.Permitted ->
 
             // Linux's two ends are one inode, with one set of times; measured
@@ -2414,8 +2378,9 @@ module UnixPathResolution =
     /// without any permission check.
     ///
     /// Refuses the flags the screen does not model, a socket's times, an end
-    /// of a pipe the process was launched with, a time on an NFS mount, and
-    /// what Darwin's rules leave unmeasured.
+    /// of a pipe the process was launched with, a time on an NFS mount, and a
+    /// change an inotify watch could hear of through a name this kernel does
+    /// not keep.
     let utimensat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (dirfd : int)
