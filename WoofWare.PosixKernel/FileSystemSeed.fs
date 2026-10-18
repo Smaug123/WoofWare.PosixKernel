@@ -27,7 +27,7 @@ open System.Collections.Immutable
 /// realised with, which whoever realises it states explicitly
 /// (`UnixBootImage.withFileSystem`'s `defaultOwner`); it does not mean
 /// "the same owner as the directory holding this entry".
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type SeedEntry =
     | File of contents : ImmutableArray<byte> * permissions : PermissionBits * owner : InodeOwner option
     | Directory of

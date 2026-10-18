@@ -110,6 +110,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = phase
+                                            Uid = UserId.root
                                         }
                                     ]
                             NextSocketId = SocketId 1L
@@ -291,6 +292,7 @@ module TestUnixSystemInvariants =
                                             ReuseAddress = false
                                             Options = SocketOptions.initial
                                             Phase = SocketPhase.Established (connection, ConnectionEnd.Client)
+                                            Uid = UserId.root
                                         }
                                     ]
                             NextSocketId = SocketId 1L
@@ -305,7 +307,11 @@ module TestUnixSystemInvariants =
                                             // No socket is the server end: it has closed.
                                             Transfer =
                                                 TcpBufferSizing.newTransfer SocketDomain.Inet unlaunched.Machine
-                                                |> TcpTransfer.close ConnectionEnd.Server false PortHold.Reserved
+                                                |> TcpTransfer.close
+                                                    ConnectionEnd.Server
+                                                    false
+                                                    PortHold.Reserved
+                                                    UserId.root
                                                 |> snd
                                         }
                                     ]
@@ -620,7 +626,7 @@ module TestUnixSystemInvariants =
         let thread = UnixThreadTable.get name (Lone.threads system)
 
         system
-        |> Lone.mapThreads (fun threads ->
+        |> Lone.mapThreadMap (fun threads ->
             threads
             |> Map.add
                 name
@@ -718,6 +724,7 @@ module TestUnixSystemInvariants =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     /// `system` holding one socket, open on a descriptor so that the socket
@@ -1225,10 +1232,10 @@ module TestUnixSystemInvariants =
             let leader = UnixThreadTable.get 0 (Lone.threads system)
 
             system
-            |> Lone.mapThreads (fun threads ->
+            |> Lone.mapThreadMap (fun threads ->
                 Map.add
                     1
-                    { UnixThreadTable.get 1 threads with
+                    { threads.[1] with
                         OsThreadId = leader.OsThreadId
                     }
                     threads
@@ -1253,7 +1260,7 @@ module TestUnixSystemInvariants =
         // leader's thread ID.
         let moved (system : UnixSystem<int, string>) : UnixSystem<int, string> =
             let pid = Lone.pid system
-            let slot = system.Processes.[ProcessId.toInt32 pid]
+            let slot = ProcessTable.find "test" (ProcessId.toInt32 pid) system.Processes
 
             { system with
                 Machine =
@@ -1264,16 +1271,15 @@ module TestUnixSystemInvariants =
                             |> ProcessIdTable.add seventeen
                     }
                 Processes =
-                    Map.ofList
-                        [
-                            ProcessId.toInt32 seventeen,
-                            { slot with
-                                Process =
-                                    { slot.Process with
-                                        ProcessId = seventeen
-                                    }
-                            }
-                        ]
+                    ProcessTable.empty
+                    |> ProcessTable.add
+                        (ProcessId.toInt32 seventeen)
+                        { slot with
+                            Process =
+                                { slot.Process with
+                                    ProcessId = seventeen
+                                }
+                        }
             }
 
         let linux = spawned SimulatedUnixPlatform.linuxX64
@@ -1330,10 +1336,10 @@ module TestUnixSystemInvariants =
                             }
                     }
             }
-            |> Lone.mapThreads (fun threads ->
+            |> Lone.mapThreadMap (fun threads ->
                 Map.add
                     1
-                    { UnixThreadTable.get 1 threads with
+                    { threads.[1] with
                         OsThreadId = foreign
                     }
                     threads

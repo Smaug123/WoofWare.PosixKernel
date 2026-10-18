@@ -8,7 +8,8 @@ open WoofWare.PosixKernel
 ///
 /// The client named the threads it held asleep, and a parked thread it left out
 /// counted as woken and not yet finished, holding each exclusive queue its call
-/// waits on.
+/// waits on; one whose park records what woke it holds only the queues of
+/// what woke it, as `docs/probes/first-wake` measured.
 [<RequireQualifiedAccess>]
 module internal ReferenceWake =
 
@@ -29,7 +30,7 @@ module internal ReferenceWake =
                 let thread = Caller.thread caller
 
                 let slot =
-                    match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+                    match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
                     | Some slot -> slot
                     | None -> failwith $"ReferenceWake.wakes: the system holds no process %O{pid}"
 
@@ -48,18 +49,24 @@ module internal ReferenceWake =
             |> List.sortBy (fun (ordinal, _, _) -> ordinal)
 
         let finishing : Set<ExclusiveWaitQueue> =
-            system.Processes
+            ProcessTable.slots system.Processes
             |> Seq.collect (fun (KeyValue (key, slot)) ->
                 let pid = ProcessId.parseOrFail "ReferenceWake.wakes" key
 
-                slot.Threads
+                UnixThreadTable.byName slot.Threads
                 |> Map.toSeq
                 |> Seq.filter (fun (thread, _) -> not (Set.contains (Caller.make pid thread) asleep))
             )
             |> Seq.collect (fun (_, state) ->
-                match state.Parked with
-                | Some park -> Parking.exclusiveQueuesOfPark machine park.Syscall
-                | None -> []
+                let primitives =
+                    match state.Parked with
+                    | Some {
+                               State = ParkState.Woken fired
+                           } -> Set.toList fired
+                    | Some park -> WakeCondition.ofPark park.Syscall |> WakeCondition.primitives
+                    | None -> []
+
+                primitives |> List.choose (Parking.exclusiveQueueOf machine)
             )
             |> Set.ofSeq
 
@@ -116,7 +123,7 @@ module internal ReferenceWake =
             let thread = Caller.thread caller
 
             let slot =
-                match Map.tryFind (ProcessId.toInt32 pid) system.Processes with
+                match ProcessTable.tryFind (ProcessId.toInt32 pid) system.Processes with
                 | Some slot -> slot
                 | None -> failwith $"ReferenceWake.deadlines: the system holds no process %O{pid}"
 

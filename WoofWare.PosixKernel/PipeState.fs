@@ -78,7 +78,7 @@ type ExternalEndpoint =
 ///
 /// Each entry makes a pipe of its own, with a description of its own, so no two
 /// launch descriptors share a description or a pipe.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type LaunchDescriptor =
     /// The read end of a pipe, opened `O_RDONLY`. The client holds the write end
     /// and writes `bytes` into it with one blocking `write(2)`, then closes it.
@@ -396,6 +396,7 @@ module PipeState =
 /// One per write that moved bytes, and never coalesced across writes, because a
 /// write's boundaries are what a reader draining the pipe as fast as it is
 /// written observes.
+[<NoComparison>]
 type Delivery =
     {
         /// The client's end the bytes reached.

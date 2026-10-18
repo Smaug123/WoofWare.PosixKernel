@@ -221,7 +221,10 @@ module TestStateQueries =
                 |> UnixSystem.advanceClock 1_234L
 
             UnixSystem.leader (Lone.pid system) system |> shouldEqual (Lone.leader system)
-            UnixSystem.threads (Lone.pid system) system |> shouldEqual (Lone.threads system)
+
+            UnixSystem.threads (Lone.pid system) system
+            |> shouldEqual (Lone.threadMap system)
+
             UnixSystem.platform system |> shouldEqual platform
             UnixSystem.processorCount system |> shouldEqual 3
             UnixSystem.environment (Lone.pid system) system |> shouldEqual [ entry ]

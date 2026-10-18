@@ -766,7 +766,7 @@ module internal KqueueQueue =
 
         let pollQueues =
             machine.PollQueues
-            |> Map.map (fun _ queue ->
+            |> PollQueueTable.map (fun queue ->
                 let registrations =
                     queue.Registrations
                     |> Map.toList

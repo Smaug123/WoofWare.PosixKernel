@@ -466,3 +466,46 @@ module TestSockaddrDecoding =
         decode SimulatedUnixPlatform.macOsArm64 [ 16uy ; 2uy ] |> shouldEqual (Some 2)
         decode SimulatedUnixPlatform.macOsArm64 [ 0uy ; 30uy ] |> shouldEqual (Some 30)
         decode SimulatedUnixPlatform.macOsArm64 [ 2uy ] |> shouldEqual None
+
+    [<Test>]
+    let ``decoding bytes that hold no such field is the caller's mistake`` () : unit =
+        for platform in
+            [
+                SimulatedUnixPlatform.linuxX64
+                SimulatedUnixPlatform.linuxArm64
+                SimulatedUnixPlatform.macOsArm64
+            ] do
+            let width =
+                SockaddrFamilyField.width (SimulatedUnixPlatform.sockaddrFamilyField platform)
+
+            for field in
+                [
+                    ImmutableArray<byte>.Empty
+                    ImmutableArray.CreateRange (List.replicate (width - 1) 2uy)
+                    ImmutableArray.CreateRange (List.replicate (width + 1) 2uy)
+                    Unchecked.defaultof<ImmutableArray<byte>>
+                ] do
+                (Assert.Throws<ArgumentException> (fun () ->
+                    SimulatedUnixPlatform.decodeSockaddrFamily platform field |> ignore<int>
+                ))
+                    .ParamName
+                |> shouldEqual "field"
+
+            (Assert.Throws<ArgumentException> (fun () ->
+                SimulatedUnixPlatform.decodeCInt platform Unchecked.defaultof<ImmutableArray<byte>> 0
+                |> ignore<int>
+            ))
+                .ParamName
+            |> shouldEqual "bytes"
+
+            let eight = ImmutableArray.CreateRange [ 1uy .. 8uy ]
+
+            for offset in [ -1 ; 5 ; 8 ; Int32.MaxValue ; Int32.MaxValue - 3 ; Int32.MinValue ] do
+                (Assert.Throws<ArgumentOutOfRangeException> (fun () ->
+                    SimulatedUnixPlatform.decodeCInt platform eight offset |> ignore<int>
+                ))
+                    .ParamName
+                |> shouldEqual "offset"
+
+            SimulatedUnixPlatform.decodeCInt platform eight 4
+            |> shouldEqual (BinaryPrimitives.ReadInt32LittleEndian (ReadOnlySpan [| 5uy ; 6uy ; 7uy ; 8uy |]))

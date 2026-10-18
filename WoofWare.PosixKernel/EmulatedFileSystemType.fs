@@ -54,8 +54,8 @@ module EmulatedFileSystemType =
     /// The type-naming fields `fstatfs(2)` reports for a file on a mount of
     /// this type, under a kernel of this flavour.
     ///
-    /// Refuses a `flavour` and `fsType` that do not describe one machine (see
-    /// `isReportableUnder`).
+    /// Throws `ArgumentException` for a `flavour` and `fsType` that do not
+    /// describe one machine (see `isReportableUnder`).
     let fieldsFor (flavour : SimulatedUnixFlavour) (fsType : EmulatedFileSystemType) : FileSystemTypeFields =
         let darwinName (name : string) : UnixByteString =
             match UnixByteString.ofString name with
@@ -93,8 +93,12 @@ module EmulatedFileSystemType =
         | SimulatedUnixFlavour.Darwin, EmulatedFileSystemType.Nfs -> FileSystemTypeFields.Darwin (2u, darwinName "nfs")
         | SimulatedUnixFlavour.Linux, EmulatedFileSystemType.Apfs
         | SimulatedUnixFlavour.Darwin, EmulatedFileSystemType.Tmpfs ->
-            failwith
-                $"EmulatedFileSystemType.fieldsFor: asked what a %O{flavour} kernel reports for a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount type have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+            raise (
+                Refusal.exceptionOf
+                    "EmulatedFileSystemType.fieldsFor"
+                    (RefusalKind.Contradictory "fsType")
+                    $"asked what a %O{flavour} kernel reports for a %O{fsType} mount, which %O{flavour} cannot have. The flavour and the mount type have come apart; they constrain each other (see EmulatedFileSystemType.isReportableUnder) and must be chosen together rather than set one at a time."
+            )
 
     /// A directory's `st_size` on a mount of this type, given how many names it
     /// holds besides `.` and `..`, or `None` where the mount's type does not

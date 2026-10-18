@@ -591,8 +591,20 @@ module TestPipeBuffer =
     [<Test>]
     let ``a negative read count is the caller's bug`` () : unit =
         for platform in platforms do
-            Assert.Throws<Exception> (fun () -> PipeBuffer.read -1 (PipeBuffer.empty platform) |> ignore)
-            |> ignore
+            (Assert.Throws<ArgumentOutOfRangeException> (fun () ->
+                PipeBuffer.read -1 (PipeBuffer.empty platform) |> ignore
+            ))
+                .ParamName
+            |> shouldEqual "count"
+
+    [<Test>]
+    let ``asking a Linux buffer for kqueue's write space is the caller's bug`` () : unit =
+        (Assert.Throws<ArgumentException> (fun () ->
+            PipeBuffer.darwinWriteSpace (PipeBuffer.empty SimulatedUnixPlatform.linuxX64)
+            |> ignore<int>
+        ))
+            .ParamName
+        |> shouldEqual "buffer"
 
     [<Test>]
     let ``draining a full buffer a byte at a time copies only the bytes read`` () : unit =

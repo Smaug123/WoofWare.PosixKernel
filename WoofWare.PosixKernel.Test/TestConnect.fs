@@ -82,6 +82,7 @@ module TestConnect =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     let private boundAt (endpoint : Ipv4Endpoint) : Ipv4Binding option =

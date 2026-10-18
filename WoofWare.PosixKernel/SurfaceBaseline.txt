@@ -62,7 +62,7 @@ WoofWare.PosixKernel.AbsoluteUnixPathModule.separator [static field]: char = /
 WoofWare.PosixKernel.AbsoluteUnixPathModule.toByteString [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> WoofWare.PosixKernel.UnixByteString
 WoofWare.PosixKernel.AbsoluteUnixPathModule.toEscaped [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> string
 WoofWare.PosixKernel.AbsoluteUnixPathModule.tryToString [static method]: WoofWare.PosixKernel.AbsoluteUnixPath -> string option
-WoofWare.PosixKernel.AcceptOutcome inherit obj, implements WoofWare.PosixKernel.AcceptOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.AcceptOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 5 cases
+WoofWare.PosixKernel.AcceptOutcome inherit obj, implements WoofWare.PosixKernel.AcceptOutcome System.IEquatable, System.Collections.IStructuralEquatable - union type with 5 cases
 WoofWare.PosixKernel.AcceptOutcome+Accepted inherit WoofWare.PosixKernel.AcceptOutcome
 WoofWare.PosixKernel.AcceptOutcome+Accepted.copiedOut [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.AcceptOutcome+Accepted.fd [property]: [read-only] int
@@ -594,14 +594,14 @@ WoofWare.PosixKernel.DefaultDisposition.IsTerminate [property]: [read-only] bool
 WoofWare.PosixKernel.DefaultDisposition.Stop [static property]: [read-only] WoofWare.PosixKernel.DefaultDisposition
 WoofWare.PosixKernel.DefaultDisposition.Tag [property]: [read-only] int
 WoofWare.PosixKernel.DefaultDisposition.Terminate [static property]: [read-only] WoofWare.PosixKernel.DefaultDisposition
-WoofWare.PosixKernel.Delivery inherit obj, implements WoofWare.PosixKernel.Delivery System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.Delivery System.IComparable, System.IComparable, System.Collections.IStructuralComparable
+WoofWare.PosixKernel.Delivery inherit obj, implements WoofWare.PosixKernel.Delivery System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.Delivery..ctor [constructor]: (WoofWare.PosixKernel.ExternalEndpoint, System.Byte System.Collections.Immutable.ImmutableArray)
 WoofWare.PosixKernel.Delivery.Bytes [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.Delivery.Endpoint [property]: [read-only] WoofWare.PosixKernel.ExternalEndpoint
 WoofWare.PosixKernel.Delivery.Equals [method]: (WoofWare.PosixKernel.Delivery, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.Delivery.get_Bytes [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.Delivery.get_Endpoint [method]: unit -> WoofWare.PosixKernel.ExternalEndpoint
-WoofWare.PosixKernel.DeliveryLog inherit obj, implements WoofWare.PosixKernel.DeliveryLog System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.DeliveryLog System.IComparable, System.IComparable, System.Collections.IStructuralComparable
+WoofWare.PosixKernel.DeliveryLog inherit obj, implements WoofWare.PosixKernel.DeliveryLog System.IEquatable, System.Collections.IStructuralEquatable
 WoofWare.PosixKernel.DeliveryLog.Equals [method]: (WoofWare.PosixKernel.DeliveryLog, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.DeliveryLogModule inherit obj
 WoofWare.PosixKernel.DeliveryLogModule.count [static method]: WoofWare.PosixKernel.DeliveryLog -> int
@@ -1518,7 +1518,7 @@ WoofWare.PosixKernel.GetCpuAnswer.Equals [method]: (WoofWare.PosixKernel.GetCpuA
 WoofWare.PosixKernel.GetCpuAnswer.get_Cpu [method]: unit -> WoofWare.PosixKernel.CpuId
 WoofWare.PosixKernel.GetCpuAnswer.get_Node [method]: unit -> WoofWare.PosixKernel.NumaNode
 WoofWare.PosixKernel.GetCpuAnswer.Node [property]: [read-only] WoofWare.PosixKernel.NumaNode
-WoofWare.PosixKernel.GetCwdAnswer inherit obj, implements WoofWare.PosixKernel.GetCwdAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GetCwdAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.GetCwdAnswer inherit obj, implements WoofWare.PosixKernel.GetCwdAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.GetCwdAnswer+Failed inherit WoofWare.PosixKernel.GetCwdAnswer
 WoofWare.PosixKernel.GetCwdAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.GetCwdAnswer+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
@@ -1658,7 +1658,7 @@ WoofWare.PosixKernel.GetRandomFlags inherit obj
 WoofWare.PosixKernel.GetRandomFlags.Insecure [static field]: System.UInt32 = 4
 WoofWare.PosixKernel.GetRandomFlags.NonBlock [static field]: System.UInt32 = 1
 WoofWare.PosixKernel.GetRandomFlags.Random [static field]: System.UInt32 = 2
-WoofWare.PosixKernel.GetSockNameAnswer inherit obj, implements WoofWare.PosixKernel.GetSockNameAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GetSockNameAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.GetSockNameAnswer inherit obj, implements WoofWare.PosixKernel.GetSockNameAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.GetSockNameAnswer+Failed inherit WoofWare.PosixKernel.GetSockNameAnswer
 WoofWare.PosixKernel.GetSockNameAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.GetSockNameAnswer+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
@@ -1696,7 +1696,7 @@ WoofWare.PosixKernel.GetSockNameFaultLength.IsAlreadyReported [property]: [read-
 WoofWare.PosixKernel.GetSockNameFaultLength.IsUntouched [property]: [read-only] bool
 WoofWare.PosixKernel.GetSockNameFaultLength.Tag [property]: [read-only] int
 WoofWare.PosixKernel.GetSockNameFaultLength.Untouched [static property]: [read-only] WoofWare.PosixKernel.GetSockNameFaultLength
-WoofWare.PosixKernel.GetSockOptAnswer inherit obj, implements WoofWare.PosixKernel.GetSockOptAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.GetSockOptAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.GetSockOptAnswer inherit obj, implements WoofWare.PosixKernel.GetSockOptAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.GetSockOptAnswer+Failed inherit WoofWare.PosixKernel.GetSockOptAnswer
 WoofWare.PosixKernel.GetSockOptAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.GetSockOptAnswer+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
@@ -2301,7 +2301,7 @@ WoofWare.PosixKernel.KqueueFilter.Timer [static property]: [read-only] WoofWare.
 WoofWare.PosixKernel.KqueueFilter.Write [static property]: [read-only] WoofWare.PosixKernel.KqueueFilter
 WoofWare.PosixKernel.KqueueState inherit obj, implements WoofWare.PosixKernel.KqueueState System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.KqueueState System.IComparable, System.IComparable, System.Collections.IStructuralComparable
 WoofWare.PosixKernel.KqueueState.Equals [method]: (WoofWare.PosixKernel.KqueueState, System.Collections.IEqualityComparer) -> bool
-WoofWare.PosixKernel.LaunchDescriptor inherit obj, implements WoofWare.PosixKernel.LaunchDescriptor System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.LaunchDescriptor System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.LaunchDescriptor inherit obj, implements WoofWare.PosixKernel.LaunchDescriptor System.IEquatable, System.Collections.IStructuralEquatable - union type with 3 cases
 WoofWare.PosixKernel.LaunchDescriptor+Supplied inherit WoofWare.PosixKernel.LaunchDescriptor
 WoofWare.PosixKernel.LaunchDescriptor+Supplied.bytes [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.LaunchDescriptor+Supplied.get_bytes [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
@@ -3718,7 +3718,7 @@ WoofWare.PosixKernel.RawErrnoPortability.NewLinuxOnly [static method]: int -> Wo
 WoofWare.PosixKernel.RawErrnoPortability.NewPlatformDependent [static method]: (int, int) -> WoofWare.PosixKernel.RawErrnoPortability
 WoofWare.PosixKernel.RawErrnoPortability.NewPortable [static method]: int -> WoofWare.PosixKernel.RawErrnoPortability
 WoofWare.PosixKernel.RawErrnoPortability.Tag [property]: [read-only] int
-WoofWare.PosixKernel.ReadAnswer inherit obj, implements WoofWare.PosixKernel.ReadAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.ReadAnswer inherit obj, implements WoofWare.PosixKernel.ReadAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 3 cases
 WoofWare.PosixKernel.ReadAnswer+Completed inherit WoofWare.PosixKernel.ReadAnswer
 WoofWare.PosixKernel.ReadAnswer+Completed.bytes [property]: [read-only] System.Byte System.Collections.Immutable.ImmutableArray
 WoofWare.PosixKernel.ReadAnswer+Completed.get_bytes [method]: unit -> System.Byte System.Collections.Immutable.ImmutableArray
@@ -3785,7 +3785,7 @@ WoofWare.PosixKernel.ReadinessLevelModule inherit obj
 WoofWare.PosixKernel.ReadinessLevelModule.get_none [static method]: unit -> WoofWare.PosixKernel.ReadinessLevel
 WoofWare.PosixKernel.ReadinessLevelModule.isEmpty [static method]: WoofWare.PosixKernel.ReadinessLevel -> bool
 WoofWare.PosixKernel.ReadinessLevelModule.none [static property]: [read-only] WoofWare.PosixKernel.ReadinessLevel
-WoofWare.PosixKernel.ReadLinkAnswer inherit obj, implements WoofWare.PosixKernel.ReadLinkAnswer System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadLinkAnswer System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 2 cases
+WoofWare.PosixKernel.ReadLinkAnswer inherit obj, implements WoofWare.PosixKernel.ReadLinkAnswer System.IEquatable, System.Collections.IStructuralEquatable - union type with 2 cases
 WoofWare.PosixKernel.ReadLinkAnswer+Failed inherit WoofWare.PosixKernel.ReadLinkAnswer
 WoofWare.PosixKernel.ReadLinkAnswer+Failed.error [property]: [read-only] WoofWare.PosixKernel.UnixError
 WoofWare.PosixKernel.ReadLinkAnswer+Failed.get_error [method]: unit -> WoofWare.PosixKernel.UnixError
@@ -3804,7 +3804,7 @@ WoofWare.PosixKernel.ReadLinkAnswer.IsReported [property]: [read-only] bool
 WoofWare.PosixKernel.ReadLinkAnswer.NewFailed [static method]: WoofWare.PosixKernel.UnixError -> WoofWare.PosixKernel.ReadLinkAnswer
 WoofWare.PosixKernel.ReadLinkAnswer.NewReported [static method]: System.Byte System.Collections.Immutable.ImmutableArray -> WoofWare.PosixKernel.ReadLinkAnswer
 WoofWare.PosixKernel.ReadLinkAnswer.Tag [property]: [read-only] int
-WoofWare.PosixKernel.ReadOutcome inherit obj, implements WoofWare.PosixKernel.ReadOutcome System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.ReadOutcome System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.ReadOutcome inherit obj, implements WoofWare.PosixKernel.ReadOutcome System.IEquatable, System.Collections.IStructuralEquatable - union type with 3 cases
 WoofWare.PosixKernel.ReadOutcome+Answered inherit WoofWare.PosixKernel.ReadOutcome
 WoofWare.PosixKernel.ReadOutcome+Answered.get_Item [method]: unit -> WoofWare.PosixKernel.ReadAnswer
 WoofWare.PosixKernel.ReadOutcome+Answered.Item [property]: [read-only] WoofWare.PosixKernel.ReadAnswer
@@ -3907,7 +3907,7 @@ WoofWare.PosixKernel.RmDirRules..ctor [constructor]: WoofWare.PosixKernel.Unbind
 WoofWare.PosixKernel.RmDirRules.Equals [method]: (WoofWare.PosixKernel.RmDirRules, System.Collections.IEqualityComparer) -> bool
 WoofWare.PosixKernel.RmDirRules.get_RemovedDirectoryEffect [method]: unit -> WoofWare.PosixKernel.UnbindTargetEffect
 WoofWare.PosixKernel.RmDirRules.RemovedDirectoryEffect [property]: [read-only] WoofWare.PosixKernel.UnbindTargetEffect
-WoofWare.PosixKernel.SeedEntry inherit obj, implements WoofWare.PosixKernel.SeedEntry System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SeedEntry System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
+WoofWare.PosixKernel.SeedEntry inherit obj, implements WoofWare.PosixKernel.SeedEntry System.IEquatable, System.Collections.IStructuralEquatable - union type with 3 cases
 WoofWare.PosixKernel.SeedEntry+Directory inherit WoofWare.PosixKernel.SeedEntry
 WoofWare.PosixKernel.SeedEntry+Directory.entries [property]: [read-only] Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
 WoofWare.PosixKernel.SeedEntry+Directory.get_entries [method]: unit -> Map<WoofWare.PosixKernel.DirectoryEntryName, WoofWare.PosixKernel.SeedEntry>
@@ -4707,7 +4707,7 @@ WoofWare.PosixKernel.SocketAddressingModule.initial [static method]: WoofWare.Po
 WoofWare.PosixKernel.SocketAddressModule inherit obj
 WoofWare.PosixKernel.SocketAddressModule.toString [static method]: WoofWare.PosixKernel.SocketAddress -> string
 WoofWare.PosixKernel.SocketDescription inherit obj, implements WoofWare.PosixKernel.SocketDescription System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SocketDescription System.IComparable, System.IComparable, System.Collections.IStructuralComparable
-WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase)
+WoofWare.PosixKernel.SocketDescription..ctor [constructor]: (WoofWare.PosixKernel.SocketAddressing, WoofWare.PosixKernel.SocketKind, WoofWare.PosixKernel.SocketProtocol, bool, WoofWare.PosixKernel.SocketOptions, WoofWare.PosixKernel.SocketPhase, WoofWare.PosixKernel.UserId)
 WoofWare.PosixKernel.SocketDescription.Addressing [property]: [read-only] WoofWare.PosixKernel.SocketAddressing
 WoofWare.PosixKernel.SocketDescription.Domain [property]: [read-only] WoofWare.PosixKernel.SocketDomain
 WoofWare.PosixKernel.SocketDescription.Equals [method]: (WoofWare.PosixKernel.SocketDescription, System.Collections.IEqualityComparer) -> bool
@@ -4718,11 +4718,13 @@ WoofWare.PosixKernel.SocketDescription.get_Options [method]: unit -> WoofWare.Po
 WoofWare.PosixKernel.SocketDescription.get_Phase [method]: unit -> WoofWare.PosixKernel.SocketPhase
 WoofWare.PosixKernel.SocketDescription.get_Protocol [method]: unit -> WoofWare.PosixKernel.SocketProtocol
 WoofWare.PosixKernel.SocketDescription.get_ReuseAddress [method]: unit -> bool
+WoofWare.PosixKernel.SocketDescription.get_Uid [method]: unit -> WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.SocketDescription.Kind [property]: [read-only] WoofWare.PosixKernel.SocketKind
 WoofWare.PosixKernel.SocketDescription.Options [property]: [read-only] WoofWare.PosixKernel.SocketOptions
 WoofWare.PosixKernel.SocketDescription.Phase [property]: [read-only] WoofWare.PosixKernel.SocketPhase
 WoofWare.PosixKernel.SocketDescription.Protocol [property]: [read-only] WoofWare.PosixKernel.SocketProtocol
 WoofWare.PosixKernel.SocketDescription.ReuseAddress [property]: [read-only] bool
+WoofWare.PosixKernel.SocketDescription.Uid [property]: [read-only] WoofWare.PosixKernel.UserId
 WoofWare.PosixKernel.SocketDomain inherit obj, implements WoofWare.PosixKernel.SocketDomain System.IEquatable, System.Collections.IStructuralEquatable, WoofWare.PosixKernel.SocketDomain System.IComparable, System.IComparable, System.Collections.IStructuralComparable - union type with 3 cases
 WoofWare.PosixKernel.SocketDomain+Tags inherit obj
 WoofWare.PosixKernel.SocketDomain+Tags.Inet [static field]: int = 0

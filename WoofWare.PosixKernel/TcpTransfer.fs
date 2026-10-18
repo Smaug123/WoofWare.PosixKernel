@@ -59,8 +59,8 @@ type internal TcpEndState =
     /// `reuseAddress` is the `SO_REUSEADDR` the end's socket carried when it
     /// closed, and `portHold` how its socket held its port, which the end
     /// holds its endpoint with against a bind or a search while it still
-    /// holds it.
-    | Closed of reuseAddress : bool * portHold : PortHold
+    /// holds it; `uid` is the uid its socket carried (`SocketDescription.Uid`).
+    | Closed of reuseAddress : bool * portHold : PortHold * uid : UserId
 
 /// The bytes travelling towards one end of a TCP connection, and that end's
 /// state.
@@ -183,7 +183,7 @@ type internal TcpShutdownRefusal =
     | DarwinReceiveShutBeforeUnsentBytes of shutter : ConnectionEnd * unsent : int
 
 /// What a non-blocking read of a TCP connection answers.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type internal TcpReadAnswer =
     /// These bytes, which may be none: a request for zero bytes, or one on a
     /// Darwin connection that is open with nothing queued.
@@ -1303,6 +1303,7 @@ module internal TcpTransfer =
         (closer : ConnectionEnd)
         (reuseAddress : bool)
         (portHold : PortHold)
+        (uid : UserId)
         (transfer : TcpTransfer)
         : TcpWake list * TcpTransfer
         =
@@ -1316,7 +1317,7 @@ module internal TcpTransfer =
             { own with
                 Sending = ByteQueue.empty
                 Receiving = ByteQueue.empty
-                Receiver = TcpEndState.Closed (reuseAddress, portHold)
+                Receiver = TcpEndState.Closed (reuseAddress, portHold, uid)
             }
 
         match own.Receiver, outbound.Receiver with
@@ -1494,26 +1495,28 @@ module internal TcpTransfer =
     /// arrived on Linux, or on Darwin once the closer's has arrived and the
     /// peer has made its own, bytes left unread are discarded without a
     /// reset. Not to be asked where `closeRefused` holds. `reuseAddress` is
-    /// the closing socket's `SO_REUSEADDR`, and `portHold` how it held its
-    /// port, which the closed end keeps.
+    /// the closing socket's `SO_REUSEADDR`, `portHold` how it held its port,
+    /// and `uid` the uid it carried, which the closed end keeps.
     let close
         (closer : ConnectionEnd)
         (reuseAddress : bool)
         (portHold : PortHold)
+        (uid : UserId)
         (transfer : TcpTransfer)
         : TcpWake list * TcpTransfer
         =
-        closeWith "close" false closer reuseAddress portHold transfer
+        closeWith "close" false closer reuseAddress portHold uid transfer
 
     /// `closer`'s socket closes under `SO_LINGER` {1, 0}: a reset, unless
     /// both FINs have arrived, when it is the ordinary close (measured,
     /// `tcp-shutdown.c` section L). Not to be asked where `abortRefused`
-    /// holds. `reuseAddress` and `portHold` are as for `close`.
+    /// holds. `reuseAddress`, `portHold` and `uid` are as for `close`.
     let abort
         (closer : ConnectionEnd)
         (reuseAddress : bool)
         (portHold : PortHold)
+        (uid : UserId)
         (transfer : TcpTransfer)
         : TcpWake list * TcpTransfer
         =
-        closeWith "abort" true closer reuseAddress portHold transfer
+        closeWith "abort" true closer reuseAddress portHold uid transfer

@@ -40,14 +40,19 @@ module internal CallProgress =
         | Ok (CallProgress.Answered answer) -> Ok answer
         | Ok (CallProgress.NeedsCopyIn paused) -> resume paused
 
-    /// Fails loudly if `paused` is null, as only `Unchecked.defaultof` or C#
-    /// `default` can make a paused call: `resume` names the function the
-    /// client called with it, and `origin` the functions that answer one.
+    /// Throws `ArgumentNullException`, naming the parameter `paused`, if
+    /// `paused` is null, as only `Unchecked.defaultof` or C# `default` can make
+    /// a paused call: `resume` names the function the client called with it,
+    /// and `origin` the functions that answer one.
     let requirePaused<'Paused when 'Paused : not struct> (resume : string) (origin : string) (paused : 'Paused) : unit =
         match box paused with
         | null ->
-            failwith
-                $"%s{resume}: this paused call is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from %s{origin} instead."
+            raise (
+                Refusal.exceptionOf
+                    resume
+                    (RefusalKind.Null "paused")
+                    $"this paused call is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; obtain one from %s{origin} instead."
+            )
         | _ -> ()
 
 /// The bytes of a buffer the caller passed that a paused call copies next:

@@ -448,8 +448,10 @@ module TestBlockingConnection =
         | Call.Writing _ when park.Through.IsNone -> Seen.Failed UnixError.EBADF, answered thread r
         | Call.Reading (connectionEnd, count, call) ->
             if readable connectionEnd r then
+                // A pending signal beats bytes, a FIN and a reset on Darwin
+                // (`docs/probes/first-wake`).
                 if signalled && not r.Linux then
-                    Seen.RefusedSignal, r
+                    interrupted r, answered thread r
                 else
                     let seen, _, model = TcpTransferReference.read connectionEnd call count r.Model
 
@@ -472,8 +474,12 @@ module TestBlockingConnection =
             let movedSome = marking connectionEnd call (written > 0)
 
             if cannotSend connectionEnd r then
-                if signalled && not r.Linux then
-                    Seen.RefusedSignal, r
+                // A pending signal beats a reset on Darwin
+                // (`docs/probes/first-wake`).
+                if signalled && not r.Linux && written > 0 then
+                    Seen.Wrote (int64 written), answered thread r |> movedSome
+                elif signalled && not r.Linux then
+                    interrupted r, answered thread r
                 elif r.Linux && written > 0 then
                     Seen.Wrote (int64 written), answered thread r |> movedSome
                 else
@@ -487,9 +493,9 @@ module TestBlockingConnection =
                         }
                     |> movedSome
             elif signalled then
-                if not r.Linux && (takes connectionEnd (count - written) r).IsSome then
-                    Seen.RefusedSignal, r
-                elif written > 0 then
+                // A pending signal beats room on both
+                // (`tcp-blocking.c` section D-write, `docs/probes/first-wake`).
+                if written > 0 then
                     Seen.Wrote (int64 written), answered thread r |> movedSome
                 else
                     interrupted r, answered thread r
@@ -2000,7 +2006,7 @@ module TestBlockingConnection =
                 // and then; `TestConnectedTransfer` holds their rows.
                 "Linux close: refused, deferred to a call under SO_LINGER"
                 "Darwin finish read: sleeps"
-                "Darwin finish read: refused beside a signal"
+                "Darwin finish read: EINTR"
                 "Darwin close: ends a read"
                 "Darwin close: close refused"
                 "Darwin finish read ended by a close: EBADF"
@@ -2533,9 +2539,10 @@ module TestBlockingConnection =
 
     /// D-write and D-read: room and a signal at once. Linux's writer takes
     /// none of the room and returns its count; its reader answers the bytes.
-    /// Darwin answers whichever reached the sleeper first, which is refused.
+    /// Darwin's signal wins both (`docs/probes/first-wake`): the writer
+    /// returns its count, and the reader is interrupted.
     [<Test>]
-    let ``room and a signal at once: Linux's signal wins a write and loses a read`` () : unit =
+    let ``room and a signal at once: Linux's signal wins a write and loses a read, and Darwin's wins both`` () : unit =
         for platform in Machines.platforms do
             let linux = SimulatedUnixPlatform.flavour platform = SimulatedUnixFlavour.Linux
             let client, server, system = pair (systemOn platform false)
@@ -2551,10 +2558,9 @@ module TestBlockingConnection =
                 wokenAfter (fun system -> readNow server 65536 system |> snd) system
                 |> signalled 1
 
-            match finishedWrite 1 bytes system, linux with
-            | Ok (WriteStep.Returns (WriteAnswer.Completed n, _)), true -> n |> shouldEqual (int64 taken)
-            | Error (WriteRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion _)), false -> ()
-            | other, _ -> failwith $"%O{platform}: the write came to %A{other}"
+            match finishedWrite 1 bytes system with
+            | Ok (WriteStep.Returns (WriteAnswer.Completed n, _)) -> n |> shouldEqual (int64 taken)
+            | other -> failwith $"%O{platform}: the write came to %A{other}"
 
             let client, server, system = pair (systemOn platform false)
             let system = asleepReading 2 client 4096 system
@@ -2562,7 +2568,7 @@ module TestBlockingConnection =
 
             match UnixReadWrite.tryFinishRead (Callers.thread 2 system) (Woken.thread 2 system), linux with
             | Ok (ReadOutcome.Answered (ReadAnswer.Completed got), _), true -> got.Length |> shouldEqual 10
-            | Error (ReadRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion _)), false -> ()
+            | Ok (ReadOutcome.Interrupted, _), false -> ()
             | other, _ -> failwith $"%O{platform}: the read came to %A{other}"
 
     /// W-reset: a reset reaches a sleeping writer. Linux's returns the count

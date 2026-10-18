@@ -112,7 +112,7 @@ module TestUnixThreadLifecycle =
 
             let after = exitOrFail 1 system
 
-            Lone.threads after |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ; 2 ]
+            Lone.threadMap after |> Map.keys |> List.ofSeq |> shouldEqual [ 0 ; 2 ]
 
             SignalState.pending (Lone.proc after).Signals
             |> shouldEqual
@@ -453,7 +453,7 @@ module TestUnixThreadLifecycle =
 
     /// The per-thread entries the system holds, each of which must name a thread.
     let private orphans (system : UnixSystem<int, string>) : string list =
-        let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+        let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
         let frames =
             Set.difference (SignalState.threadsWithFrames (Lone.proc system).Signals) threads
@@ -549,7 +549,7 @@ module TestUnixThreadLifecycle =
                         Live = Set.add child model.Live
                     }
                 | Op.Block (thread, signal) when live thread ->
-                    let threads = Lone.threads system |> Map.keys |> Set.ofSeq
+                    let threads = Lone.threadMap system |> Map.keys |> Set.ofSeq
 
                     match
                         HandlerFrames.tryEnter
@@ -712,7 +712,7 @@ module TestUnixThreadLifecycle =
                         SignalState.dispositions signalsAfter
                         |> shouldEqual (SignalState.dispositions signalsBefore)
 
-                        Lone.threads after |> shouldEqual (Map.remove thread (Lone.threads system))
+                        Lone.threadMap after |> shouldEqual (Map.remove thread (Lone.threadMap system))
 
                         // The thread's ID is freed, and nothing else on the
                         // machine moves.
@@ -777,12 +777,12 @@ module TestUnixThreadLifecycle =
             let after =
                 after
                 |> Lone.mapThreads (fun threads ->
-                    (threads, Map.keys threads |> List.ofSeq)
+                    (threads, Map.keys (UnixThreadTable.byName threads) |> List.ofSeq)
                     ||> List.fold (fun threads name -> UnixThreadTable.settle name threads)
                 )
 
             // The thread set is exactly the model's, and no per-thread entry outlives its thread.
-            Lone.threads after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
+            Lone.threadMap after |> Map.keys |> Set.ofSeq |> shouldEqual model'.Live
             orphans after |> shouldEqual []
 
             UnixSystem.checkInvariants after

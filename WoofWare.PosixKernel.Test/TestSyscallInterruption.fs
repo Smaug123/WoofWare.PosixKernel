@@ -15,8 +15,8 @@ open WoofWare.PosixKernel
 /// either way (`signal-sigaction-flags.c`, and `signal-interrupt-requeue.c`
 /// section A for a poll that watches nothing). The call's own answer beats the
 /// signal on Linux (section D), `epoll_wait`'s deadline beats the signal and the
-/// signal beats `poll`'s (section E); Darwin answers whichever reached the
-/// sleeper first (section F), which this library refuses.
+/// signal beats `poll`'s (section E); on Darwin a signal pending as the woken
+/// sleeper runs beats the call's own answer (`docs/probes/first-wake`).
 ///
 /// Every world is built through the syscalls themselves: a listener the
 /// `accept`, `poll` and `epoll_wait` sleep on, made ready by a `connect`; and a
@@ -476,8 +476,9 @@ module TestSyscallInterruption =
                     Ending.RefusedOnReturn (ReturnToUserRefusal.MixedRestartFlags (signalsWith true, signalsWith false))
 
         match flavour with
-        | SimulatedUnixFlavour.Darwin when ready && signalled ->
-            Ending.Refused (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)
+        // A pending signal beats the call's own answer on Darwin
+        // (`docs/probes/first-wake`).
+        | SimulatedUnixFlavour.Darwin when ready && signalled -> interrupted ()
         | _ when ready -> Ending.Completed
         | _ ->
 
@@ -731,7 +732,6 @@ module TestSyscallInterruption =
                     "closed under, then Eintr"
                     "closed under, then Restart"
                     "closed under, then Reparked"
-                    $"%A{Ending.Refused (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)}"
                     $"%A{Ending.RefusedOnReturn (ReturnToUserRefusal.MixedRestartFlags ([ Signal.SIGUSR1 ], [ Signal.SIGUSR2 ]))}"
                     $"%A{Ending.RefusedOnReturn (ReturnToUserRefusal.MixedRestartFlags ([ Signal.SIGUSR2 ], [ Signal.SIGUSR1 ]))}"
                 ]
@@ -976,7 +976,7 @@ module TestSyscallInterruption =
 
         let threads = (worldOn SimulatedUnixPlatform.linuxX64).System |> Lone.threads
 
-        let park (parked : ParkedSyscall) (threads : Map<int, UnixThreadState>) : Map<int, UnixThreadState> =
+        let park (parked : ParkedSyscall) (threads : ThreadTable<int>) : ThreadTable<int> =
             UnixThreadTable.withPark
                 1
                 {
@@ -992,7 +992,7 @@ module TestSyscallInterruption =
             for second in oneParkOfEach do
                 let accepted =
                     try
-                        park second parkedOnce |> ignore<Map<int, UnixThreadState>>
+                        park second parkedOnce |> ignore<ThreadTable<int>>
                         true
                     with e when e.Message.Contains "without clearing the first" ->
                         false

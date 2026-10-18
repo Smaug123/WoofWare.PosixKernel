@@ -151,8 +151,12 @@ module TestProcessView =
                 let focused = Proc.view pid system
 
                 focused.ProcessId |> shouldEqual pid
-                focused.Others.ContainsKey (ProcessId.toInt32 pid) |> shouldEqual false
-                focused.Others.Count |> shouldEqual ((UnixSystem.processIds system).Count - 1)
+
+                (ProcessTable.slots focused.Others).ContainsKey (ProcessId.toInt32 pid)
+                |> shouldEqual false
+
+                (ProcessTable.slots focused.Others).Count
+                |> shouldEqual ((UnixSystem.processIds system).Count - 1)
 
                 ProcessView.unfocus focused |> shouldEqual system
 
@@ -220,13 +224,13 @@ module TestProcessView =
                     }
                     "threads",
                     { focused with
-                        Threads = Map.add 0 focused.Threads.[0] focused.Threads
+                        Threads = UnixThreadTable.withCpu 0 (UnixThreadTable.get 0 focused.Threads).Cpu focused.Threads
                     }
                     "others",
-                    (let key = Seq.head (Map.keys focused.Others)
+                    (let key = Seq.head (Map.keys (ProcessTable.slots focused.Others))
 
                      { focused with
-                         Others = Map.add key focused.Others.[key] focused.Others
+                         Others = ProcessTable.add key (ProcessTable.find "test" key focused.Others) focused.Others
                      })
                 ]
 
@@ -272,8 +276,8 @@ module TestProcessView =
                     for other in pids do
                         if other <> pid then
                             obj.ReferenceEquals (
-                                after.Processes.[ProcessId.toInt32 other],
-                                system.Processes.[ProcessId.toInt32 other]
+                                ProcessTable.find "test" (ProcessId.toInt32 other) after.Processes,
+                                ProcessTable.find "test" (ProcessId.toInt32 other) system.Processes
                             )
                             |> shouldEqual true
                 | other -> failwith $"dup: %A{other}"
@@ -307,7 +311,10 @@ module TestProcessView =
             let cloned =
                 { system with
                     Processes =
-                        Map.add (ProcessId.toInt32 other) system.Processes.[ProcessId.toInt32 pid] system.Processes
+                        ProcessTable.add
+                            (ProcessId.toInt32 other)
+                            (ProcessTable.find "test" (ProcessId.toInt32 pid) system.Processes)
+                            system.Processes
                 }
 
             let leaderTid =

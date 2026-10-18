@@ -1711,8 +1711,10 @@ module TestMultiProcessFuzz =
         =
         for pid in UnixSystem.processIds after do
             if pid <> except then
-                after.Processes.[ProcessId.toInt32 pid]
-                |> Expect.equal (fun () -> $"process %O{pid}") before.Processes.[ProcessId.toInt32 pid]
+                ProcessTable.find "untouched" (ProcessId.toInt32 pid) after.Processes
+                |> Expect.equal
+                    (fun () -> $"process %O{pid}")
+                    (ProcessTable.find "untouched" (ProcessId.toInt32 pid) before.Processes)
 
     /// `made`, by `thread` of `pid`, written into `world`: a view written back,
     /// the thread asleep, or the process ended.
@@ -1848,7 +1850,7 @@ module TestMultiProcessFuzz =
                     // A finish whose process's end was refused leaves the thread
                     // parked, woken still, for a later pass.
                     let world =
-                        match Map.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
+                        match ProcessTable.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
                         | Some slot when
                             (UnixThreadTable.parkedFor thread slot.Threads).IsSome
                             && not (Set.contains (pid, thread) world.Asleep)
@@ -1907,7 +1909,7 @@ module TestMultiProcessFuzz =
 
                         cover (FuzzLabel.CrossWakeKind kind)
 
-            match Map.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
+            match ProcessTable.tryFind (ProcessId.toInt32 pid) world.Machine.Processes with
             | None -> world
             | Some _ ->
 
@@ -2501,11 +2503,11 @@ module TestMultiProcessFuzz =
 
     /// Every thread of `machine`'s processes that is parked in a call.
     let private parkedThreads (machine : UnixSystem<int, string>) : Set<ProcessId * int> =
-        machine.Processes
+        ProcessTable.slots machine.Processes
         |> Seq.collect (fun (KeyValue (key, slot)) ->
             let pid = ProcessId.parseOrFail "parkedThreads" key
 
-            slot.Threads
+            UnixThreadTable.byName slot.Threads
             |> Map.toSeq
             |> Seq.choose (fun (thread, state) ->
                 match UnixThreadState.parkedIn state with
@@ -2549,11 +2551,11 @@ module TestMultiProcessFuzz =
                 obj.ReferenceEquals (after.Scheduling, machine.Scheduling) |> shouldEqual true
 
                 for pid in UnixSystem.processIds machine do
-                    let before = machine.Processes.[ProcessId.toInt32 pid]
-                    let slot = after.Processes.[ProcessId.toInt32 pid]
+                    let before = ProcessTable.find "wake" (ProcessId.toInt32 pid) machine.Processes
+                    let slot = ProcessTable.find "wake" (ProcessId.toInt32 pid) after.Processes
                     obj.ReferenceEquals (slot.Process, before.Process) |> shouldEqual true
 
-                    for KeyValue (thread, state) in before.Threads do
+                    for KeyValue (thread, state) in UnixThreadTable.byName before.Threads do
                         let expected =
                             match Map.tryFind (pid, thread) answered with
                             | Some fired ->
@@ -2568,9 +2570,10 @@ module TestMultiProcessFuzz =
                                 }
                             | None -> state
 
-                        slot.Threads.[thread] |> shouldEqual expected
+                        UnixThreadTable.get thread slot.Threads |> shouldEqual expected
 
-                    slot.Threads.Count |> shouldEqual before.Threads.Count
+                    (UnixThreadTable.byName slot.Threads).Count
+                    |> shouldEqual (UnixThreadTable.byName before.Threads).Count
 
                 if answer.IsEmpty then
                     after |> shouldEqual machine
@@ -2585,12 +2588,16 @@ module TestMultiProcessFuzz =
                 if not woken.IsEmpty then
                     cover SweepLabel.WokenUnfinished
 
-                // The exclusive queues the woken threads' calls wait on.
+                // The exclusive queues the woken threads hold: those of what
+                // woke them.
                 let held =
                     woken
                     |> Seq.collect (fun (pid, thread) ->
                         match UnixThreadTable.parkOf thread (Proc.threads pid machine) with
-                        | Some park -> Parking.exclusiveQueuesOfPark machine.Machine park.Syscall
+                        | Some {
+                                   State = ParkState.Woken fired
+                               } -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine.Machine)
+                        | Some _
                         | None -> []
                     )
                     |> Set.ofSeq
@@ -2680,6 +2687,128 @@ module TestMultiProcessFuzz =
         |> List.sumBy (fun (label, count) -> if label.EndsWith " refused" then count else 0)
         |> shouldBeGreaterThan 80
 
+    /// A close looks only at the parked calls holding the description the
+    /// closed descriptor names, and at none when no call holds it; it answers
+    /// what a close looking at every parked call of the process answers. At
+    /// every step of the first property's interleavings, for every descriptor
+    /// of every process with a parked call.
+    [<Test>]
+    let ``close answers what a close examining every parked call answers, at every step of random interleavings``
+        ()
+        : unit
+        =
+        let caseName (value : 'a) : string =
+            (fst (
+                Reflection.FSharpValue.GetUnionFields (
+                    value,
+                    typeof<'a>,
+                    System.Reflection.BindingFlags.Public
+                    ||| System.Reflection.BindingFlags.NonPublic
+                )
+            ))
+                .Name
+
+        let property (cover : string -> unit) (case : Case) : unit =
+            let observe (_ : Step) (world : World) : unit =
+                for pid in UnixSystem.processIds world.Machine do
+                    let view = Proc.view pid world.Machine
+
+                    let parked =
+                        UnixThreadTable.byName view.Threads
+                        |> Map.toList
+                        |> List.choose (fun (thread, state) ->
+                            state.Parked |> Option.map (fun park -> thread, park.Syscall)
+                        )
+
+                    if not parked.IsEmpty then
+                        for KeyValue (fd, _) in fdsOf pid world.Machine do
+                            let closingId =
+                                FileDescriptorRegistry.tryFindId fd (UnixSystemState.fileDescriptors view)
+                                |> Option.get
+
+                            let holders =
+                                parked
+                                |> List.filter (fun (_, parked) ->
+                                    List.contains closingId (ParkedSyscall.descriptions parked)
+                                )
+
+                            if holders.IsEmpty then
+                                cover "unheld"
+
+                            for _, holder in holders do
+                                cover $"held %s{caseName holder}"
+
+                            let watchedByNumber =
+                                parked
+                                |> List.exists (fun (_, parked) ->
+                                    match parked with
+                                    | ParkedSyscall.Poll poll ->
+                                        poll.Entries
+                                        |> List.exists (fun entry ->
+                                            match entry with
+                                            | ParkedPollEntry.Watched (watched, _, _) -> watched = fd
+                                            | ParkedPollEntry.Ignored _ -> false
+                                        )
+                                    | ParkedSyscall.KqueuePoll poll ->
+                                        poll.Entries |> List.exists (fun entry -> entry.Fd = fd)
+                                    | ParkedSyscall.Kevent wait -> wait.Fd = fd
+                                    | _ -> false
+                                )
+
+                            if watchedByNumber then
+                                cover "watched by number"
+
+                            let reference =
+                                UnixDescriptor.tryCloseExamining UnixDescriptor.ParksExamined.Every fd view
+
+                            UnixDescriptor.tryCloseExamining UnixDescriptor.ParksExamined.Holding fd view
+                            |> shouldEqual reference
+
+                            match reference with
+                            | Error refusal -> cover $"refused %s{caseName refusal}"
+                            | Ok (_, after) ->
+                                let ended =
+                                    parked
+                                    |> List.exists (fun (thread, parked) ->
+                                        UnixThreadTable.parkOf thread after.Threads
+                                        |> Option.map (fun park -> park.Syscall)
+                                        <> Some parked
+                                    )
+
+                                if ended then
+                                    cover "ended a call"
+
+            runObserving smallBuffers observe ignore ignore case
+
+        let coverage =
+            CoverageSample.check (Config.QuickThrowOnFailure.WithMaxTest 100) (Arb.fromGen caseGen) property
+
+        // A third of what the fixed sample reached when this was added: closes
+        // of a description each kind of parked call holds, of one a poll,
+        // a Darwin poll or a `kevent` refers to by number, and of one no call
+        // holds, closes that end a call, and each refusal the interleavings
+        // reach. A pipe's `read` and `write` they park in seldom.
+        coverage.Count "unheld" |> shouldBeGreaterThan 22000
+        coverage.Count "watched by number" |> shouldBeGreaterThan 410
+        coverage.Count "ended a call" |> shouldBeGreaterThan 700
+        coverage.Count "held Accept" |> shouldBeGreaterThan 1650
+        coverage.Count "held ConnectionRead" |> shouldBeGreaterThan 660
+        coverage.Count "held ConnectionWrite" |> shouldBeGreaterThan 480
+        coverage.Count "held EpollWait" |> shouldBeGreaterThan 470
+        coverage.Count "held Flock" |> shouldBeGreaterThan 250
+        coverage.Count "held InotifyRead" |> shouldBeGreaterThan 115
+        coverage.Count "held Kevent" |> shouldBeGreaterThan 195
+        coverage.Count "held Poll" |> shouldBeGreaterThan 34
+        coverage.Count "held PipeRead" |> shouldBeGreaterThan 29
+        coverage.Count "held PipeWrite" |> shouldBeGreaterThan 19
+        coverage.Count "refused PolledDescriptor" |> shouldBeGreaterThan 34
+
+        coverage.Count "refused DarwinFlockedDescriptorWithWaiter"
+        |> shouldBeGreaterThan 158
+
+        coverage.Count "refused DarwinWokenTransfer" |> shouldBeGreaterThan 47
+        coverage.Count "refused DarwinEndedWriteSignal" |> shouldBeGreaterThan 19
+
     /// How many cases of `caseGen`'s fixed sample the oracle replays: every one
     /// the first property counts its coverage over.
     let private oracleCases : int = 1500
@@ -2712,7 +2841,7 @@ module TestMultiProcessFuzz =
 
                 builder.Append (';') |> ignore
 
-                for KeyValue (thread, state) in Proc.threads pid view do
+                for KeyValue (thread, state) in Proc.threadMap pid view do
                     let parked =
                         match UnixThreadState.parkedIn state with
                         | None -> "running"
@@ -2883,7 +3012,7 @@ module TestMultiProcessFuzz =
     /// How the process `pid` of `machine` ends by `ending`, made by its
     /// lowest-named thread parked in nothing.
     let private endBy (ending : Ending) (pid : ProcessId) (machine : UnixSystem<int, string>) : Ended =
-        let threads = Proc.threads pid machine
+        let threads = Proc.threadMap pid machine
 
         let running =
             threads
@@ -3018,7 +3147,7 @@ module TestMultiProcessFuzz =
 
         for pid in pids do
             let registry = Proc.fileDescriptors pid kernel
-            let threads = Proc.threads pid kernel
+            let threads = Proc.threadMap pid kernel
 
             let descriptors =
                 FileDescriptorRegistry.fds registry

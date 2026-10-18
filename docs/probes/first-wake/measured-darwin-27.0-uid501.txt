@@ -1,0 +1,487 @@
+# Darwin 27.0.0 arm64, uid 501
+darwin call=accept sleepers=1 order=own,signal trial=0 first-at=45ms woken-by=56ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=1 first-at=20ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=2 first-at=33ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=3 first-at=26ms woken-by=36ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=4 first-at=22ms woken-by=33ms woken=1 held=0 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=5 first-at=28ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=6 first-at=21ms woken-by=21ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=7 first-at=24ms woken-by=249ms woken=0 held=0 front=accepted h1=0
+darwin call=accept sleepers=1 order=own,signal trial=8 first-at=18ms woken-by=18ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal trial=9 first-at=30ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=own,signal summary held=8/10 [front=EINTR]x8 unheld: [front=EINTR]x1 [front=accepted]x1
+darwin call=accept sleepers=1 order=signal,own trial=0 first-at=28ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=1 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=2 first-at=26ms woken-by=26ms woken=1 held=0 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=3 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=4 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=5 first-at=31ms woken-by=34ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=6 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=7 first-at=21ms woken-by=21ms woken=1 held=0 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=8 first-at=17ms woken-by=17ms woken=1 held=1 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own trial=9 first-at=24ms woken-by=24ms woken=1 held=0 front=EINTR h1=1
+darwin call=accept sleepers=1 order=signal,own summary held=7/10 [front=EINTR]x7 unheld: [front=EINTR]x3
+darwin call=flock sleepers=1 order=own,signal trial=0 first-at=18ms woken-by=18ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=1 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=2 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=3 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=4 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=5 first-at=26ms woken-by=26ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=6 first-at=34ms woken-by=34ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=7 first-at=23ms woken-by=23ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=8 first-at=21ms woken-by=21ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=own,signal trial=9 first-at=21ms woken-by=21ms woken=1 held=0 front=0 h1=1
+darwin call=flock sleepers=1 order=own,signal summary held=6/10 [front=EINTR]x6 unheld: [front=EINTR]x3 [front=0]x1
+darwin call=flock sleepers=1 order=signal,own trial=0 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=1 first-at=34ms woken-by=34ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=2 first-at=17ms woken-by=17ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=3 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=4 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=5 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=6 first-at=24ms woken-by=24ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=7 first-at=42ms woken-by=42ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=8 first-at=20ms woken-by=20ms woken=1 held=0 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own trial=9 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=flock sleepers=1 order=signal,own summary held=6/10 [front=EINTR]x6 unheld: [front=EINTR]x4
+darwin call=read sleepers=1 order=own,signal trial=0 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=1 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=2 first-at=25ms woken-by=25ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=3 first-at=26ms woken-by=26ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=4 first-at=22ms woken-by=22ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=5 first-at=17ms woken-by=17ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=6 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=7 first-at=38ms woken-by=38ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=8 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal trial=9 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=own,signal summary held=7/10 [front=EINTR]x7 unheld: [front=EINTR]x3
+darwin call=read sleepers=1 order=signal,own trial=0 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=1 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=2 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=3 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=4 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=5 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=6 first-at=18ms woken-by=18ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=7 first-at=17ms woken-by=18ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=8 first-at=18ms woken-by=18ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own trial=9 first-at=19ms woken-by=19ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,own summary held=7/10 [front=EINTR]x7 unheld: [front=EINTR]x3
+darwin call=write sleepers=1 order=own,signal trial=0 first-at=14ms woken-by=215ms woken=0 held=0 front=1 h1=0
+darwin call=write sleepers=1 order=own,signal trial=1 first-at=42ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=2 first-at=13ms woken-by=214ms woken=0 held=0 front=1 h1=0
+darwin call=write sleepers=1 order=own,signal trial=3 first-at=30ms woken-by=31ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=4 first-at=29ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=5 first-at=28ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=6 first-at=14ms woken-by=228ms woken=0 held=0 front=1 h1=0
+darwin call=write sleepers=1 order=own,signal trial=7 first-at=27ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=8 first-at=36ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal trial=9 first-at=24ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=own,signal summary held=7/10 [front=EINTR]x7 unheld: [front=1]x3
+darwin call=write sleepers=1 order=signal,own trial=0 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=1 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=2 first-at=18ms woken-by=19ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=3 first-at=52ms woken-by=53ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=4 first-at=22ms woken-by=22ms woken=1 held=0 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=5 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=6 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=7 first-at=51ms woken-by=51ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=8 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own trial=9 first-at=93ms woken-by=93ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,own summary held=9/10 [front=EINTR]x9 unheld: [front=EINTR]x1
+darwin call=tcp-read sleepers=1 order=own,signal trial=0 first-at=62ms woken-by=62ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=1 first-at=18ms woken-by=67ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=2 first-at=48ms woken-by=48ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=3 first-at=46ms woken-by=47ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=4 first-at=19ms woken-by=114ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=5 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=6 first-at=66ms woken-by=87ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=7 first-at=82ms woken-by=86ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=8 first-at=90ms woken-by=104ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal trial=9 first-at=36ms woken-by=74ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=own,signal summary held=9/10 [front=EINTR]x9 unheld: [front=EINTR]x1
+darwin call=tcp-read sleepers=1 order=signal,own trial=0 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=1 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=2 first-at=24ms woken-by=24ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=3 first-at=48ms woken-by=48ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=4 first-at=77ms woken-by=77ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=5 first-at=98ms woken-by=98ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=6 first-at=72ms woken-by=72ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=7 first-at=72ms woken-by=72ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=8 first-at=87ms woken-by=87ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own trial=9 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,own summary held=10/10 [front=EINTR]x10 unheld:
+darwin call=tcp-write sleepers=1 order=own,signal trial=0 first-at=17ms woken-by=257ms woken=0 held=0 front=1000 h1=0
+darwin call=tcp-write sleepers=1 order=own,signal trial=1 first-at=22ms woken-by=292ms woken=0 held=0 front=1000 h1=0
+darwin call=tcp-write sleepers=1 order=own,signal trial=2 first-at=174ms woken-by=209ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=own,signal trial=3 first-at=17ms woken-by=296ms woken=0 held=0 front=1000 h1=0
+darwin call=tcp-write sleepers=1 order=own,signal trial=4 first-at=35ms woken-by=107ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=own,signal trial=5 first-at=20ms woken-by=75ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=own,signal trial=6 first-at=17ms woken-by=261ms woken=0 held=0 front=1000 h1=0
+darwin call=tcp-write sleepers=1 order=own,signal trial=7 first-at=13ms woken-by=87ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=own,signal trial=8 first-at=69ms woken-by=121ms woken=1 held=1 front=EINTR h1=1
+sleeper never slept: Operation timed out
+darwin call=tcp-write sleepers=1 order=own,signal trial=9 failed (status 25344)
+darwin call=tcp-write sleepers=1 order=own,signal summary held=5/10 [front=EINTR]x5 unheld: [front=1000]x4
+darwin call=tcp-write sleepers=1 order=signal,own trial=0 first-at=14ms woken-by=14ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=1 first-at=16ms woken-by=16ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=2 first-at=14ms woken-by=14ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=3 first-at=29ms woken-by=29ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=4 first-at=38ms woken-by=38ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=5 first-at=28ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=6 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own trial=7 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1
+sleeper did not stay asleep: Operation timed out
+darwin call=tcp-write sleepers=1 order=signal,own trial=8 failed (status 25344)
+darwin call=tcp-write sleepers=1 order=signal,own trial=9 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,own summary held=4/10 [front=EINTR]x4 unheld: [front=EINTR]x5
+darwin call=poll sleepers=1 order=own,signal trial=0 first-at=28ms woken-by=28ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=1 first-at=30ms woken-by=30ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=2 first-at=26ms woken-by=26ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=3 first-at=25ms woken-by=25ms woken=1 held=0 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=4 first-at=29ms woken-by=29ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=5 first-at=31ms woken-by=31ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=6 first-at=22ms woken-by=22ms woken=1 held=1 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=7 first-at=27ms woken-by=27ms woken=1 held=0 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=8 first-at=40ms woken-by=40ms woken=1 held=0 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal trial=9 first-at=14ms woken-by=14ms woken=1 held=0 front=1 h1=1
+darwin call=poll sleepers=1 order=own,signal summary held=6/10 [front=1]x6 unheld: [front=1]x4
+darwin call=poll sleepers=1 order=signal,own trial=0 first-at=22ms woken-by=22ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=1 first-at=22ms woken-by=22ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=2 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=3 first-at=26ms woken-by=26ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=4 first-at=31ms woken-by=31ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=5 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=6 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=7 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=8 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own trial=9 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,own summary held=8/10 [front=EINTR]x8 unheld: [front=EINTR]x2
+darwin call=events sleepers=1 order=own,signal trial=0 first-at=22ms woken-by=223ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,signal trial=1 first-at=27ms woken-by=249ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,signal trial=2 first-at=34ms woken-by=35ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=3 first-at=39ms woken-by=39ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=4 first-at=28ms woken-by=28ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=5 first-at=15ms woken-by=18ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=6 first-at=15ms woken-by=215ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,signal trial=7 first-at=16ms woken-by=20ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=8 first-at=28ms woken-by=31ms woken=1 held=1 front=1 h1=1
+darwin call=events sleepers=1 order=own,signal trial=9 first-at=21ms woken-by=221ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,signal summary held=6/10 [front=1]x6 unheld: [front=1]x4
+darwin call=events sleepers=1 order=signal,own trial=0 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=1 first-at=23ms woken-by=23ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=2 first-at=12ms woken-by=12ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=3 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=4 first-at=20ms woken-by=20ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=5 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=6 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=7 first-at=48ms woken-by=48ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=8 first-at=45ms woken-by=45ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own trial=9 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,own summary held=4/10 [front=EINTR]x4 unheld: [front=EINTR]x6
+darwin call=read sleepers=1 order=close,signal trial=0 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=1 first-at=28ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=2 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=3 first-at=22ms woken-by=22ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=4 first-at=42ms woken-by=42ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=5 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=6 first-at=62ms woken-by=62ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=7 first-at=62ms woken-by=62ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=8 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal trial=9 first-at=19ms woken-by=19ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=close,signal summary held=8/10 [front=EINTR]x8 unheld: [front=EINTR]x2
+darwin call=read sleepers=1 order=signal,close trial=0 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=1 first-at=23ms woken-by=23ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=2 first-at=17ms woken-by=17ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=3 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=4 first-at=79ms woken-by=79ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=5 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=6 first-at=17ms woken-by=17ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=7 first-at=21ms woken-by=21ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=8 first-at=47ms woken-by=47ms woken=1 held=1 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close trial=9 first-at=31ms woken-by=31ms woken=1 held=0 front=EINTR h1=1
+darwin call=read sleepers=1 order=signal,close summary held=6/10 [front=EINTR]x6 unheld: [front=EINTR]x4
+darwin call=write sleepers=1 order=close,signal trial=0 first-at=13ms woken-by=217ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal trial=1 first-at=44ms woken-by=74ms woken=1 held=0 front=EPIPE h1=1
+darwin call=write sleepers=1 order=close,signal trial=2 first-at=37ms woken-by=275ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal trial=3 first-at=12ms woken-by=392ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal trial=4 first-at=14ms woken-by=18ms woken=1 held=0 front=EPIPE h1=1
+darwin call=write sleepers=1 order=close,signal trial=5 first-at=21ms woken-by=46ms woken=1 held=0 front=EPIPE h1=1
+darwin call=write sleepers=1 order=close,signal trial=6 first-at=28ms woken-by=154ms woken=1 held=0 front=EPIPE h1=1
+darwin call=write sleepers=1 order=close,signal trial=7 first-at=25ms woken-by=396ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal trial=8 first-at=14ms woken-by=390ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal trial=9 first-at=30ms woken-by=385ms woken=0 held=0 front=EPIPE h1=0
+darwin call=write sleepers=1 order=close,signal summary held=0/10 unheld: [front=EPIPE]x10
+darwin call=write sleepers=1 order=signal,close trial=0 first-at=12ms woken-by=12ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=1 first-at=12ms woken-by=12ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=2 first-at=17ms woken-by=17ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=3 first-at=13ms woken-by=13ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=4 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=5 first-at=14ms woken-by=14ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=6 first-at=13ms woken-by=13ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=7 first-at=12ms woken-by=12ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=8 first-at=42ms woken-by=42ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close trial=9 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=write sleepers=1 order=signal,close summary held=10/10 [front=EINTR]x10 unheld:
+darwin call=tcp-read sleepers=1 order=close,signal trial=0 first-at=26ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=1 first-at=20ms woken-by=20ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=2 first-at=45ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=3 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=4 first-at=44ms woken-by=45ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=5 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=6 first-at=24ms woken-by=24ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=7 first-at=21ms woken-by=21ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=8 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal trial=9 first-at=22ms woken-by=22ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=close,signal summary held=9/10 [front=EINTR]x9 unheld: [front=EINTR]x1
+darwin call=tcp-read sleepers=1 order=signal,close trial=0 first-at=21ms woken-by=21ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=1 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=2 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=3 first-at=42ms woken-by=42ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=4 first-at=26ms woken-by=26ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=5 first-at=50ms woken-by=50ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=6 first-at=13ms woken-by=13ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=7 first-at=16ms woken-by=16ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=8 first-at=21ms woken-by=21ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close trial=9 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-read sleepers=1 order=signal,close summary held=8/10 [front=EINTR]x8 unheld: [front=EINTR]x2
+darwin call=tcp-write sleepers=1 order=close,signal trial=0 first-at=45ms woken-by=45ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=1 first-at=22ms woken-by=22ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=2 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=3 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=4 first-at=13ms woken-by=13ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=5 first-at=13ms woken-by=13ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=6 first-at=13ms woken-by=13ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=7 first-at=16ms woken-by=16ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=8 first-at=13ms woken-by=13ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal trial=9 first-at=14ms woken-by=14ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=close,signal summary held=8/10 [front=EINTR]x8 unheld: [front=EINTR]x2
+darwin call=tcp-write sleepers=1 order=signal,close trial=0 first-at=66ms woken-by=66ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=1 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=2 first-at=12ms woken-by=12ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=3 first-at=14ms woken-by=14ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=4 first-at=23ms woken-by=23ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=5 first-at=44ms woken-by=44ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=6 first-at=72ms woken-by=72ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=7 first-at=25ms woken-by=25ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=8 first-at=40ms woken-by=40ms woken=1 held=1 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close trial=9 first-at=12ms woken-by=12ms woken=1 held=0 front=EINTR h1=1
+darwin call=tcp-write sleepers=1 order=signal,close summary held=5/10 [front=EINTR]x5 unheld: [front=EINTR]x5
+darwin call=poll sleepers=1 order=deadline,own trial=0 first-at=92ms woken-by=101ms woken=1 held=0 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=1 first-at=23ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=2 first-at=23ms woken-by=1086ms woken=1 held=0 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=3 first-at=13ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=4 first-at=25ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=5 first-at=29ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=6 first-at=21ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=7 first-at=34ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=8 first-at=24ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own trial=9 first-at=42ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,own summary held=8/10 [front=0]x8 unheld: [front=0]x2
+darwin call=poll sleepers=1 order=own,deadline trial=0 first-at=26ms woken-by=26ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=1 first-at=19ms woken-by=19ms woken=1 held=0 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=2 first-at=30ms woken-by=30ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=3 first-at=22ms woken-by=22ms woken=1 held=0 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=4 first-at=35ms woken-by=35ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=5 first-at=20ms woken-by=20ms woken=1 held=0 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=6 first-at=35ms woken-by=35ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=7 first-at=28ms woken-by=28ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=8 first-at=35ms woken-by=35ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline trial=9 first-at=29ms woken-by=29ms woken=1 held=1 front=1 h1=0
+darwin call=poll sleepers=1 order=own,deadline summary held=7/10 [front=1]x7 unheld: [front=1]x3
+darwin call=poll sleepers=1 order=deadline,signal trial=0 first-at=25ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=1 first-at=14ms woken-by=100ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=2 first-at=30ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=3 first-at=22ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=4 first-at=20ms woken-by=1020ms woken=0 held=0 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,signal trial=5 first-at=19ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=6 first-at=17ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=7 first-at=22ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal trial=8 first-at=22ms woken-by=1023ms woken=0 held=0 front=0 h1=0
+darwin call=poll sleepers=1 order=deadline,signal trial=9 first-at=18ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=poll sleepers=1 order=deadline,signal summary held=8/10 [front=0]x8 unheld: [front=0]x2
+darwin call=poll sleepers=1 order=signal,deadline trial=0 first-at=24ms woken-by=24ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=1 first-at=20ms woken-by=20ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=2 first-at=28ms woken-by=28ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=3 first-at=19ms woken-by=19ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=4 first-at=31ms woken-by=31ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=5 first-at=13ms woken-by=14ms woken=1 held=0 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=6 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=7 first-at=20ms woken-by=20ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=8 first-at=38ms woken-by=38ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline trial=9 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1
+darwin call=poll sleepers=1 order=signal,deadline summary held=6/10 [front=EINTR]x6 unheld: [front=EINTR]x4
+darwin call=events sleepers=1 order=deadline,own trial=0 first-at=31ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=1 first-at=24ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=2 first-at=28ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=3 first-at=38ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=4 first-at=16ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=5 first-at=42ms woken-by=112ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=6 first-at=21ms woken-by=103ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=7 first-at=13ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=8 first-at=13ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own trial=9 first-at=27ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,own summary held=10/10 [front=0]x10 unheld:
+darwin call=events sleepers=1 order=own,deadline trial=0 first-at=41ms woken-by=41ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=1 first-at=14ms woken-by=214ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=2 first-at=23ms woken-by=26ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=3 first-at=42ms woken-by=43ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=4 first-at=39ms woken-by=41ms woken=1 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=5 first-at=49ms woken-by=49ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=6 first-at=17ms woken-by=17ms woken=1 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=7 first-at=25ms woken-by=27ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=8 first-at=18ms woken-by=218ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline trial=9 first-at=29ms woken-by=29ms woken=1 held=1 front=1 h1=0
+darwin call=events sleepers=1 order=own,deadline summary held=6/10 [front=1]x6 unheld: [front=1]x4
+darwin call=events sleepers=1 order=deadline,signal trial=0 first-at=23ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=1 first-at=19ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=2 first-at=42ms woken-by=100ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=3 first-at=42ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=4 first-at=31ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=5 first-at=13ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=6 first-at=26ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=7 first-at=17ms woken-by=101ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=8 first-at=22ms woken-by=100ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal trial=9 first-at=42ms woken-by=102ms woken=1 held=1 front=0 h1=1
+darwin call=events sleepers=1 order=deadline,signal summary held=10/10 [front=0]x10 unheld:
+darwin call=events sleepers=1 order=signal,deadline trial=0 first-at=28ms woken-by=28ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=1 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=2 first-at=24ms woken-by=24ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=3 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=4 first-at=14ms woken-by=14ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=5 first-at=13ms woken-by=13ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=6 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=7 first-at=31ms woken-by=31ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=8 first-at=18ms woken-by=18ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline trial=9 first-at=15ms woken-by=15ms woken=1 held=0 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,deadline summary held=5/10 [front=EINTR]x5 unheld: [front=EINTR]x5
+darwin call=events sleepers=1 order=drain,deadline trial=0 first-at=15ms woken-by=15ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=1 first-at=45ms woken-by=6270ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=2 first-at=12ms woken-by=18ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=3 first-at=28ms woken-by=384ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=4 first-at=21ms woken-by=400ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=5 first-at=32ms woken-by=397ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=6 first-at=15ms woken-by=20ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=7 first-at=30ms woken-by=185ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=8 first-at=26ms woken-by=396ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline trial=9 first-at=36ms woken-by=398ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,deadline summary held=0/10 unheld: [front=EBADF]x10
+darwin call=events sleepers=1 order=deadline,drain trial=0 first-at=12ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=1 first-at=16ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=2 first-at=23ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=3 first-at=42ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=4 first-at=33ms woken-by=100ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=5 first-at=20ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=6 first-at=13ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=7 first-at=13ms woken-by=101ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=8 first-at=24ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain trial=9 first-at=31ms woken-by=102ms woken=1 held=1 front=0 h1=0
+darwin call=events sleepers=1 order=deadline,drain summary held=10/10 [front=0]x10 unheld:
+darwin call=events sleepers=1 order=drain,own trial=0 first-at=18ms woken-by=19ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=1 first-at=21ms woken-by=386ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=2 first-at=45ms woken-by=387ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=3 first-at=24ms woken-by=91ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=4 first-at=38ms woken-by=385ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=5 first-at=26ms woken-by=386ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=6 first-at=13ms woken-by=20ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=7 first-at=14ms woken-by=31ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=8 first-at=27ms woken-by=113ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own trial=9 first-at=24ms woken-by=25ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,own summary held=0/10 unheld: [front=EBADF]x10
+darwin call=events sleepers=1 order=own,drain trial=0 first-at=31ms woken-by=32ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=1 first-at=43ms woken-by=44ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=2 first-at=17ms woken-by=218ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,drain trial=3 first-at=18ms woken-by=218ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,drain trial=4 first-at=37ms woken-by=37ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=5 first-at=29ms woken-by=29ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=6 first-at=17ms woken-by=23ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=7 first-at=26ms woken-by=26ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=8 first-at=13ms woken-by=13ms woken=1 held=1 front=EBADF h1=0
+darwin call=events sleepers=1 order=own,drain trial=9 first-at=19ms woken-by=219ms woken=0 held=0 front=1 h1=0
+darwin call=events sleepers=1 order=own,drain summary held=7/10 [front=EBADF]x7 unheld: [front=1]x3
+darwin call=events sleepers=1 order=drain,signal trial=0 first-at=14ms woken-by=17ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=1 first-at=17ms woken-by=27ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=2 first-at=12ms woken-by=12ms woken=1 held=0 front=EBADF h1=1
+darwin call=events sleepers=1 order=drain,signal trial=3 first-at=26ms woken-by=65ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=4 first-at=26ms woken-by=400ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=5 first-at=24ms woken-by=63ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=6 first-at=20ms woken-by=385ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=7 first-at=27ms woken-by=58ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=8 first-at=23ms woken-by=45ms woken=1 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal trial=9 first-at=24ms woken-by=416ms woken=0 held=0 front=EBADF h1=0
+darwin call=events sleepers=1 order=drain,signal summary held=0/10 unheld: [front=EBADF]x10
+darwin call=events sleepers=1 order=signal,drain trial=0 first-at=16ms woken-by=16ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=1 first-at=17ms woken-by=17ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=2 first-at=17ms woken-by=17ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=3 first-at=30ms woken-by=30ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=4 first-at=28ms woken-by=28ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=5 first-at=16ms woken-by=16ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=6 first-at=44ms woken-by=44ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=7 first-at=16ms woken-by=16ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=8 first-at=16ms woken-by=16ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain trial=9 first-at=15ms woken-by=15ms woken=1 held=1 front=EINTR h1=1
+darwin call=events sleepers=1 order=signal,drain summary held=10/10 [front=EINTR]x10 unheld:
+darwin call=accept sleepers=2 order=signal,own trial=0 first-at=31ms woken-by=31ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=1 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=2 first-at=48ms woken-by=48ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=3 first-at=27ms woken-by=27ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=4 first-at=50ms woken-by=50ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=5 first-at=34ms woken-by=34ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=6 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=7 first-at=39ms woken-by=39ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=8 first-at=24ms woken-by=24ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own trial=9 first-at=72ms woken-by=72ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=accepted
+darwin call=accept sleepers=2 order=signal,own summary held=9/10 [front=EINTR other-woken=1 other=accepted]x9 unheld: [front=EINTR other-woken=0 other=accepted]x1
+darwin call=accept sleepers=2 order=own,signal trial=0 first-at=27ms woken-by=234ms woken=0 held=0 front=accepted h1=0 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=1 first-at=35ms woken-by=43ms woken=1 held=1 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=2 first-at=24ms woken-by=44ms woken=1 held=0 front=accepted h1=0 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=3 first-at=23ms woken-by=23ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=4 first-at=44ms woken-by=44ms woken=1 held=1 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=5 first-at=45ms woken-by=64ms woken=1 held=1 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=6 first-at=68ms woken-by=68ms woken=1 held=1 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=7 first-at=63ms woken-by=63ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=8 first-at=68ms woken-by=68ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal trial=9 first-at=71ms woken-by=74ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=asleep
+darwin call=accept sleepers=2 order=own,signal summary held=4/10 [front=EINTR other-woken=0 other=asleep]x4 unheld: [front=accepted other-woken=0 other=asleep]x2 [front=EINTR other-woken=0 other=asleep]x4
+darwin call=read sleepers=2 order=signal,own trial=0 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=1 first-at=33ms woken-by=33ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=2 first-at=24ms woken-by=24ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=3 first-at=44ms woken-by=44ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=4 first-at=34ms woken-by=34ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=signal,own trial=5 first-at=29ms woken-by=29ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=signal,own trial=6 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=7 first-at=42ms woken-by=42ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own trial=8 first-at=25ms woken-by=25ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=signal,own trial=9 first-at=67ms woken-by=67ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=signal,own summary held=7/10 [front=EINTR other-woken=1 other=1]x7 unheld: [front=EINTR other-woken=0 other=1]x3
+darwin call=read sleepers=2 order=own,signal trial=0 first-at=56ms woken-by=56ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=own,signal trial=1 first-at=31ms woken-by=31ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=2 first-at=30ms woken-by=30ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=3 first-at=40ms woken-by=40ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=own,signal trial=4 first-at=63ms woken-by=63ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=5 first-at=27ms woken-by=27ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=6 first-at=51ms woken-by=51ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=read sleepers=2 order=own,signal trial=7 first-at=25ms woken-by=25ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=8 first-at=38ms woken-by=38ms woken=1 held=0 front=EINTR h1=1 other-woken=0 other=1
+darwin call=read sleepers=2 order=own,signal trial=9 first-at=25ms woken-by=25ms woken=1 held=0 front=1 h1=0 other-woken=0 other=asleep
+darwin call=read sleepers=2 order=own,signal summary held=3/10 [front=EINTR other-woken=1 other=1]x3 unheld: [front=EINTR other-woken=0 other=1]x6 [front=1 other-woken=0 other=asleep]x1
+darwin call=events sleepers=2 order=signal,own trial=0 first-at=32ms woken-by=32ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=1 first-at=31ms woken-by=31ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=2 first-at=35ms woken-by=35ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=3 first-at=44ms woken-by=44ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=4 first-at=37ms woken-by=37ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=5 first-at=46ms woken-by=46ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=6 first-at=25ms woken-by=25ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=7 first-at=29ms woken-by=29ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=8 first-at=43ms woken-by=43ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own trial=9 first-at=52ms woken-by=52ms woken=1 held=1 front=EINTR h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=signal,own summary held=10/10 [front=EINTR other-woken=1 other=1]x10 unheld:
+darwin call=events sleepers=2 order=own,signal trial=0 first-at=32ms woken-by=33ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal trial=1 first-at=51ms woken-by=55ms woken=1 held=0 front=1 h1=1 other-woken=0 other=1
+darwin call=events sleepers=2 order=own,signal trial=2 first-at=101ms woken-by=114ms woken=1 held=0 front=1 h1=1 other-woken=0 other=1
+darwin call=events sleepers=2 order=own,signal trial=3 first-at=30ms woken-by=230ms woken=0 held=0 front=1 h1=0 other-woken=0 other=1
+darwin call=events sleepers=2 order=own,signal trial=4 first-at=44ms woken-by=44ms woken=1 held=0 front=1 h1=1 other-woken=0 other=1
+darwin call=events sleepers=2 order=own,signal trial=5 first-at=55ms woken-by=55ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal trial=6 first-at=30ms woken-by=30ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal trial=7 first-at=32ms woken-by=32ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal trial=8 first-at=29ms woken-by=41ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal trial=9 first-at=34ms woken-by=35ms woken=1 held=1 front=1 h1=1 other-woken=1 other=1
+darwin call=events sleepers=2 order=own,signal summary held=6/10 [front=1 other-woken=1 other=1]x6 unheld: [front=1 other-woken=0 other=1]x4

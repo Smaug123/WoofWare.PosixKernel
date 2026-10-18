@@ -121,6 +121,7 @@
     <Compile Include="SocketFuzz.fs" />
     <Compile Include="TestSocketFuzz.fs" />
     <Compile Include="TestNoPawPrintReference.fs" />
+    <Compile Include="TestTotalComparison.fs" />
     <Compile Include="TestPublicSurface.fs" />
     <Compile Include="TestTotalQueries.fs" />
     <Compile Include="LibraryNames.fs" />
@@ -170,6 +171,7 @@
     <Compile Include="TestFileSystemSeed.fs" />
     <Compile Include="TestFileDescriptorRegistry.fs" />
     <Compile Include="TestProcessId.fs" />
+    <Compile Include="TestForgedValues.fs" />
     <Compile Include="TestSignal.fs" />
     <Compile Include="TestSignalMask.fs" />
     <Compile Include="TestSignalAgainstHost.fs" />
@@ -268,6 +270,7 @@
     <Compile Include="TestPrivilegedPortMeasured.fs" />
     <Compile Include="TestPortRangeSysctlsMeasured.fs" />
     <Compile Include="TestBindUidsMeasured.fs" />
+    <Compile Include="TestSocketUid.fs" />
     <Compile Include="TestDualMode.fs" />
     <Compile Include="TestConnectLadderMeasured.fs" />
     <Compile Include="TestBindLadderMeasured.fs" />
@@ -299,6 +302,7 @@
     <Compile Include="TestKqueue.fs" />
     <Compile Include="KeventWorld.fs" />
     <Compile Include="TestDispositionBeforeReturn.fs" />
+    <Compile Include="TestFirstWake.fs" />
     <Compile Include="TestKeventMeasured.fs" />
     <Compile Include="TestKeventRegistration.fs" />
     <Compile Include="TestKqueueOwner.fs" />
@@ -309,7 +313,11 @@
     <Compile Include="TestCrossProcess.fs" />
     <Compile Include="TestWakeMemo.fs" />
     <Compile Include="TestWakeSweepCost.fs" />
+    <Compile Include="TestCloseCost.fs" />
     <Compile Include="TestOpenFileIndex.fs" />
+    <Compile Include="TestCloseRegistrationCost.fs" />
+    <Compile Include="TestPollQueueIndex.fs" />
+    <Compile Include="TestSleeperIndex.fs" />
     <Compile Include="TestUnixWaitFinish.fs" />
     <Compile Include="TestConnectedTransfer.fs" />
     <Compile Include="TestTimeWait.fs" />
@@ -383,6 +391,9 @@
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-linux-6.12.113-x86_64-uid0-qemu.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.linux-x86_64-uid0.txt" />
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid501.txt" />
     <EmbeddedResource Include="..\docs\probes\poll-entry-count\measured-darwin-27.0-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.poll-entry-count.darwin-uid0.txt" />
+    <!-- docs/probes/first-wake. `TestFirstWake` replays every row. -->
+    <EmbeddedResource Include="..\docs\probes\first-wake\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\first-wake\measured-darwin-27.0-uid501.txt" LogicalName="WoofWare.PosixKernel.Test.first-wake.darwin.txt" />
     <!-- docs/probes/futex. `TestFutex` replays its screen and count rows. -->
     <EmbeddedResource Include="..\docs\probes\futex\measured-linux-6.18.5-aarch64-uid0.txt" LogicalName="WoofWare.PosixKernel.Test.futex.linux.txt" />
     <!-- docs/probes/setxid-threads. `TestCredentialThreadsMeasured` replays it. -->
@@ -511,6 +522,9 @@
     <EmbeddedResource Include="..\docs\probes\darwin-root\port-range.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.port-range.txt" />
     <!-- docs/probes/darwin-root/bind-uids.c, as root. `TestBindUidsMeasured` replays it. -->
     <EmbeddedResource Include="..\docs\probes\darwin-root\bind-uids.darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.darwin-root.bind-uids.txt" />
+    <!-- docs/probes/socket-creator-uid: which uid a TCP socket carries, made and accepted. `TestSocketUid` replays it. -->
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\linux-6.18.5-aarch64.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.linux.txt" />
+    <EmbeddedResource Include="..\docs\probes\socket-creator-uid\darwin-27.0-root.txt" LogicalName="WoofWare.PosixKernel.Test.socket-creator-uid.darwin-root.txt" />
     <!-- What a lookup, a creation and a rename answer when they spell a bound
          name another way, measured by docs/probes/name-equivalence/name-equivalence.c
          on case-sensitive APFS and on Linux's tmpfs, and embedded from beside it.

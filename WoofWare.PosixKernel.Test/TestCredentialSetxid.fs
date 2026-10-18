@@ -214,11 +214,11 @@ module TestCredentialSetxid =
     /// The threads' parks, what each owes, and its mask: what a credential call
     /// must leave as it found it.
     let private threadsOf (system : UnixSystem<int, string>) =
-        Lone.threads system
+        Lone.threadMap system
         |> Map.map (fun _ state -> UnixThreadState.park state, state.Owes)
 
     let private masksOf (system : UnixSystem<int, string>) : Map<int, SignalMask> =
-        Lone.threads system
+        Lone.threadMap system
         |> Map.map (fun thread _ -> SignalState.maskOf thread (Lone.proc system).Signals)
 
     [<Test>]

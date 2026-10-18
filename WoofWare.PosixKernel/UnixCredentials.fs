@@ -315,7 +315,7 @@ module UnixCredentials =
         (system : ProcessView<'Thread, 'Handler>)
         : Result<unit, SetxidSignalRefusal>
         =
-        let others = system.Threads |> Map.remove caller
+        let others = UnixThreadTable.byName system.Threads |> Map.remove caller
 
         let blocksSignal =
             others
@@ -576,11 +576,19 @@ module UnixCredentials =
     let private assertWordsAgree (size : int) (words : GroupListWords) : unit =
         match words with
         | GroupListWords.Readable words when List.length words <> size ->
-            failwith
-                $"UnixCredentials.setgroups: the list is %d{size} groups long, but the caller read %d{List.length words} words of it; GroupListWords.Readable holds every word of the list."
+            raise (
+                Refusal.exceptionOf
+                    "UnixCredentials.setgroups"
+                    (RefusalKind.Contradictory "words")
+                    $"the list is %d{size} groups long, but the caller read %d{List.length words} words of it; GroupListWords.Readable holds every word of the list."
+            )
         | GroupListWords.FaultsAfter readable when List.length readable >= size ->
-            failwith
-                $"UnixCredentials.setgroups: the list is %d{size} groups long, and the caller read %d{List.length readable} words of it before the fault; GroupListWords.FaultsAfter holds fewer words than the list has."
+            raise (
+                Refusal.exceptionOf
+                    "UnixCredentials.setgroups"
+                    (RefusalKind.Contradictory "words")
+                    $"the list is %d{size} groups long, and the caller read %d{List.length readable} words of it before the fault; GroupListWords.FaultsAfter holds fewer words than the list has."
+            )
         | GroupListWords.Readable _
         | GroupListWords.FaultsAfter _ -> ()
 
@@ -775,6 +783,10 @@ module UnixCredentials =
     /// another thread blocks signal 33, is asleep in a call, or owes a return
     /// to user mode, since the C library reaches every other thread with that
     /// signal.
+    ///
+    /// Throws `ArgumentException` where the kernel would copy the list and
+    /// `words` disagrees with `size`: `Readable` holding other than `size`
+    /// words, or `FaultsAfter` holding `size` or more.
     let setgroups<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (size : int)

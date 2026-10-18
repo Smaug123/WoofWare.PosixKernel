@@ -62,7 +62,7 @@ type internal UnixMachineState =
             /// The kqueue of every Darwin `poll(2)` asleep on the machine, in
             /// whichever process: see `PollQueue`. Made as the call goes to
             /// sleep, and destroyed with the park that names it.
-            PollQueues : Map<PollQueueId, PollQueue>
+            PollQueues : PollQueueTable
             /// The identity the next sleeping Darwin `poll` gives its kqueue.
             /// Monotonic and never reused, for the replay-trace reason
             /// `NextSocketId` gives.
@@ -492,14 +492,14 @@ module UnixMachineState =
 
         id,
         { machine with
-            PollQueues = Map.add id queue machine.PollQueues
+            PollQueues = PollQueueTable.add id queue machine.PollQueues
             NextPollQueueId = PollQueueId (next + 1L)
         }
 
     /// The kqueue `queue` of a sleeping Darwin `poll`. Loudly partial: the
     /// caller read the identity from a park, which holds it.
     let internal pollQueue (queue : PollQueueId) (machine : UnixMachineState) : PollQueue =
-        match Map.tryFind queue machine.PollQueues with
+        match PollQueueTable.tryFind queue machine.PollQueues with
         | Some found -> found
         | None ->
             failwith
@@ -513,11 +513,8 @@ module UnixMachineState =
         (machine : UnixMachineState)
         : UnixMachineState
         =
-        if not (Map.containsKey queue machine.PollQueues) then
-            failwith $"UnixMachineState.setPollQueue: %O{queue} is not on the machine (this is a bug in this library)."
-
         { machine with
-            PollQueues = Map.add queue state machine.PollQueues
+            PollQueues = PollQueueTable.set queue state machine.PollQueues
         }
 
     /// Every live open file description on the machine naming `socketId`.
@@ -878,6 +875,7 @@ module UnixMachineState =
             Claim = PortClaim.ofPortHold timeWait.PortHold
             ReuseAddress = timeWait.ReuseAddress
             Peer = Some timeWait.Remote
+            Owner = PortHolderOwner.ClosedSocket timeWait.SocketUid
         }
 
     /// What a socket in `phase` is, as a port holder.
@@ -925,6 +923,7 @@ module UnixMachineState =
                             Claim = PortClaim.ofPortHold binding.PortHold
                             ReuseAddress = socket.ReuseAddress
                             Peer = None
+                            Owner = PortHolderOwner.Socket socket.Uid
                         }
                 | _ -> None
             )
@@ -979,11 +978,12 @@ module UnixMachineState =
                                         PortClaim.ofPortHold binding.PortHold
                                 ReuseAddress = socket.ReuseAddress
                                 Peer = peer
+                                Owner = PortHolderOwner.Socket socket.Uid
                             }
                     | None ->
 
                     match (TcpTransfer.towards connectionEnd connection.Transfer).Receiver with
-                    | TcpEndState.Closed (reuseAddress, portHold) ->
+                    | TcpEndState.Closed (reuseAddress, portHold, uid) ->
                         Some
                             {
                                 Endpoint = local
@@ -995,6 +995,7 @@ module UnixMachineState =
                                         PortClaim.ofPortHold portHold
                                 ReuseAddress = reuseAddress
                                 Peer = peer
+                                Owner = PortHolderOwner.ClosedSocket uid
                             }
                     // A server end in an accept queue, whose listener's own
                     // binding holds the port; or an end a reset reached,
@@ -1009,6 +1010,7 @@ module UnixMachineState =
                                 Claim = PortClaim.Released
                                 ReuseAddress = false
                                 Peer = Some peer
+                                Owner = PortHolderOwner.NoSocket
                             }
                         )
                 )
@@ -1045,7 +1047,7 @@ module UnixMachineState =
 
         portHolders socketId socket.Kind machine
         |> Seq.map (fun holder ->
-            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress
+            PortHolderRules.bindVerdict flavour clock holder candidate.Endpoint socket.ReuseAddress socket.Uid
         )
         |> PortVerdict.ofAll
 
@@ -1237,13 +1239,14 @@ module UnixMachineState =
                 else
 
                 match (TcpTransfer.towards connectionEnd forgotten.Transfer).Receiver, forgotten.FinsExchangedAt with
-                | TcpEndState.Closed (reuseAddress, portHold), Some exchanged ->
+                | TcpEndState.Closed (reuseAddress, portHold, uid), Some exchanged ->
                     Some
                         {
                             Local = local
                             Remote = remote
                             ReuseAddress = reuseAddress
                             PortHold = portHold
+                            SocketUid = uid
                             EnteredAt = exchanged
                         }
                 | other, exchanged ->

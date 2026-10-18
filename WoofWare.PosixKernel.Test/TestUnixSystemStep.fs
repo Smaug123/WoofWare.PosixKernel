@@ -295,6 +295,7 @@ module TestUnixSystemStep =
             Kind = SocketKind.Stream
             Protocol = SocketProtocol.Tcp
             Phase = SocketPhase.Idle
+            Uid = UserId.root
             ReuseAddress = false
             Options = SocketOptions.initial
         }
@@ -683,6 +684,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = refused
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }
@@ -789,6 +791,7 @@ module TestUnixSystemStep =
                 Kind = SocketKind.Stream
                 Protocol = SocketProtocol.Tcp
                 Phase = SocketPhase.Idle
+                Uid = UserId.root
                 ReuseAddress = false
                 Options = SocketOptions.initial
             }
@@ -2705,7 +2708,7 @@ module TestUnixSystemStep =
             Launched.processId Unchecked.defaultof<ProcessId> (imageOn SimulatedUnixPlatform.linuxX64)
             |> ignore<UnixBootImage<int, string>>
 
-        let exn = Assert.Throws<System.Exception> (TestDelegate apply)
+        let exn = Assert.Throws<System.ArgumentException> (TestDelegate apply)
 
         exn.Message |> shouldContainText "UnixBootImage.withProcessId"
 
@@ -3847,7 +3850,7 @@ module TestUnixSystemStep =
     [<Test>]
     let ``step by a name that is no thread of the process throws, whatever the call`` () : unit =
         for system in [ linux ; darwin ] do
-            Map.containsKey 99 (Lone.threads system) |> shouldEqual false
+            Map.containsKey 99 (Lone.threadMap system) |> shouldEqual false
 
             for call in callsOfEveryShape do
                 let error =

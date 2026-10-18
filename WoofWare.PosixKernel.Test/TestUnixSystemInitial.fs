@@ -97,7 +97,7 @@ module TestUnixSystemInitial =
     [<Test>]
     let ``a forged platform is refused by the constructor`` () : unit =
         let exn =
-            Assert.Throws<System.Exception> (fun () ->
+            Assert.Throws<System.ArgumentNullException> (fun () ->
                 UnixSystem.initial<int, string> Unchecked.defaultof<SimulatedUnixPlatform>
                 |> ignore<UnixBootImage<int, string>>
             )
@@ -202,6 +202,7 @@ module TestUnixSystemInitial =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                Uid = UserId.root
             }
 
         let candidate (port : uint16) : Ipv4Binding =

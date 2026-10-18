@@ -181,6 +181,7 @@ module TestKeventWriteData =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     /// The machine of `darwinWithSendSpace`, holding connection 0, which the

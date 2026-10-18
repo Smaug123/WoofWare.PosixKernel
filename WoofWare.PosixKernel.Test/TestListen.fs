@@ -50,6 +50,7 @@ module TestListen =
             ReuseAddress = reuse
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     let private withSocket

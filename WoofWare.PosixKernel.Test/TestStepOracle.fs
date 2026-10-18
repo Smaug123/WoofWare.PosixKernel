@@ -534,7 +534,7 @@ module TestStepOracle =
     /// another thread's call made a signal deliverable to it. `None` where a
     /// return ends or stops the process, or is refused.
     let private owingReturned (system : UnixSystem<int, string>) : UnixSystem<int, string> option =
-        (Some system, Lone.threads system |> Map.keys |> List.ofSeq)
+        (Some system, Lone.threadMap system |> Map.keys |> List.ofSeq)
         ||> List.fold (fun system thread ->
             system
             |> Option.bind (fun system ->
@@ -1933,7 +1933,7 @@ module TestStepOracle =
             // So the call is made by a thread that owes no return, and step
             // and the call's own function are compared on what the call does,
             // rather than on both refusing it.
-            match Map.tryFind caller (Lone.threads system) with
+            match Map.tryFind caller (Lone.threadMap system) with
             | Some state -> state.Owes |> shouldEqual None
             | None -> ()
 

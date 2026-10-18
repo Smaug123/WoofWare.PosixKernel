@@ -199,12 +199,17 @@ module PipeBuffer =
     /// `pipe-activation.c`). The write end is ready exactly when this is at
     /// least 512 (`writable`).
     ///
-    /// Only a Darwin buffer has one: Linux has no kqueue.
+    /// Only a Darwin buffer has one: Linux has no kqueue, and a Linux buffer
+    /// throws `ArgumentException`.
     let darwinWriteSpace (buffer : PipeBuffer) : int =
         match buffer with
         | PipeBuffer.Linux _ ->
-            failwith
-                "PipeBuffer.darwinWriteSpace: a Linux pipe's buffer was asked for the space a kqueue filter reports, and only Darwin has kqueue (this is a bug in the caller)."
+            raise (
+                Refusal.exceptionOf
+                    "PipeBuffer.darwinWriteSpace"
+                    (RefusalKind.Contradictory "buffer")
+                    "a Linux pipe's buffer was asked for the space a kqueue filter reports, and only Darwin has kqueue."
+            )
         | PipeBuffer.Darwin darwin ->
             max DarwinReadyFloor (DarwinPipeBufferSize.bytes darwin.Size)
             - ByteQueue.length darwin.Bytes
@@ -531,12 +536,16 @@ module PipeBuffer =
     /// A read of up to `count` bytes: the oldest `min count (held buffer)` bytes,
     /// and the buffer without them. Returns no bytes when the buffer is empty,
     /// which a caller answers as end-of-file, `EAGAIN` or by waiting, according
-    /// to the pipe's write end and the read's blocking mode. `count` must not be
-    /// negative.
+    /// to the pipe's write end and the read's blocking mode. A negative `count`
+    /// throws `ArgumentOutOfRangeException`.
     let read (count : int) (buffer : PipeBuffer) : ImmutableArray<byte> * PipeBuffer =
         if count < 0 then
-            failwith
-                $"PipeBuffer.read: a count of %d{count} is not a request a kernel ever sees; the caller must answer a negative count before asking."
+            raise (
+                Refusal.exceptionOf
+                    "PipeBuffer.read"
+                    (RefusalKind.OutOfRange "count")
+                    $"a count of %d{count} is not a request a kernel ever sees; the caller must answer a negative count before asking."
+            )
 
         let taking = min count (held buffer)
 

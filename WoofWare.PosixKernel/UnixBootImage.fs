@@ -548,7 +548,7 @@ module UnixBootImage =
             {
                 Machine = machine
                 Scheduling = UnixSchedulingState.initial
-                Processes = Map.empty |> Map.add (ProcessId.toInt32 image.ProcessId) slot
+                Processes = ProcessTable.empty |> ProcessTable.add (ProcessId.toInt32 image.ProcessId) slot
                 Sweep = WakeMemo.none
             }
         )
@@ -582,7 +582,7 @@ module UnixBootImage =
         (image : UnixBootImage<'Thread, 'Handler>)
         : Result<UnixBootImage<'Thread, 'Handler>, ProcessIdRefusal>
         =
-        let pid = ProcessId.assertValid "UnixBootImage.withProcessId" pid
+        let pid = ProcessId.assertValidFor "UnixBootImage.withProcessId" "pid" pid
         let machine = image.Machine
 
         match machine.ThreadIds.Counter with
@@ -625,6 +625,7 @@ module UnixBootImage =
     /// (`ProcessIdTable.darwinPidMax`).
     /// </summary>
     /// <exception cref="T:System.ArgumentOutOfRangeException">On Linux, the ID is not below the machine's `pid_max`, so a Linux kernel could not have handed it out. Contradictory. On Darwin, the ID is not below `PID_MAX` (`ProcessIdTable.darwinPidMax`, read from xnu's source and not measured), so a Darwin kernel could not have handed it out. Contradictory.</exception>
+    /// <exception cref="T:System.ArgumentException">`pid` is a forged value, such as `Unchecked.defaultof`, which is no process ID.</exception>
     let withProcessId<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (pid : ProcessId)
         (image : UnixBootImage<'Thread, 'Handler>)
@@ -706,10 +707,10 @@ module UnixBootImage =
                 entries
                 |> Map.toSeq
                 |> Seq.tryPick (fun (name, entry) ->
-                    // A forged name is refused with the seed's context, as
-                    // `ofFileSystemSeed` would refuse it, rather than reaching the
-                    // measurement as a null.
-                    let name = DirectoryEntryName.assertValid "UnixBootImage.withFileSystem seed" name
+                    // A forged name or target is refused naming the seed,
+                    // rather than reaching the measurement as a null.
+                    let name =
+                        DirectoryEntryName.assertValidFor "UnixBootImage.withFileSystem" "seed" name
 
                     if not (PathLimits.nameWithinLimit limits name) then
                         Some (FileSystemSeedFault.SeedNameTooLong (name, flavour))
@@ -720,6 +721,9 @@ module UnixBootImage =
                         | SeedEntry.Directory (children, _, _) -> firstImpossibleName children
                         | SeedEntry.File _ -> None
                         | SeedEntry.Symlink (target, _) ->
+                            let target =
+                                SymlinkTarget.assertValidFor "UnixBootImage.withFileSystem" "seed" target
+
                             // `symlink(2)` copies its target in as it does a
                             // pathname, so a target it could not copy in is
                             // one no process made. Measured by
@@ -793,7 +797,7 @@ module UnixBootImage =
     /// holding two names that might be two such spellings: this library holds
     /// no Unicode tables to tell, and raises `UnmodelledException`.
     /// </summary>
-    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed holds a symbolic link whose target is longer than this flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux), so no process of that flavour could have created it. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds.</exception>
+    /// <exception cref="T:System.ArgumentException">The seed holds a directory entry whose name is past this flavour's `NAME_MAX`, so it describes a filesystem no kernel of that flavour could have mounted: `stat` of the name would answer ENAMETOOLONG while `readdir` listed it. The seed holds a directory entry whose name this flavour's filesystem will not bind (see `SimulatedUnixPlatform.bindableEntryNames`): on Darwin, a name that is not valid UTF-8. No kernel of that flavour could have created it, and a process there could not create it either. The seed holds a symbolic link whose target is longer than this flavour's `symlink(2)` stores (1023 bytes on Darwin, 4095 on Linux), so no process of that flavour could have created it. The seed binds `dev` at its root to something other than an empty directory. The kernel mounts its device filesystem there at boot, and a mount over a populated directory would hide what it holds. The seed holds a forged name or symbolic-link target, such as `Unchecked.defaultof`.</exception>
     let withFileSystem<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (createdAt : UnixTimestamp)
         (defaultOwner : InodeOwner)

@@ -3,7 +3,7 @@ namespace WoofWare.PosixKernel
 open System.Collections.Immutable
 
 /// What `read(2)` moved, for a request this kernel could answer.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type ReadAnswer =
     /// The bytes to place in the caller's buffer; the entry point returns how
     /// many there are.
@@ -2298,11 +2298,13 @@ module UnixReadWrite =
             // reader woken by bytes and signalled, held off the CPU until both
             // had happened, answered the bytes in 40 trials of 40, whichever
             // came first, as `tcp_recvmsg` looks at the queue before it looks
-            // for a signal. Darwin's sleeper takes whichever reached it first,
-            // which `beforeCompleting` refuses.
+            // for a signal. On Darwin a pending signal beats bytes, a FIN and a
+            // reset alike (`SyscallInterruption.beforeCompleting`).
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+            | Ok SyscallInterruption.Completion.Completes ->
 
             let answer, wakes, after =
                 TcpTransfer.read connectionEnd parked.Call parked.Count transfer
@@ -2388,11 +2390,13 @@ module UnixReadWrite =
         then
             // Measured on Linux 6.18.5 (pipe-blocking.c section H1): a reader
             // with a byte to read and a signal pending answered the byte,
-            // whichever came first. Darwin answered whichever reached the
-            // sleeper first (section J), which `beforeCompleting` refuses.
+            // whichever came first. On Darwin a pending signal beats bytes and
+            // end of file alike (`SyscallInterruption.beforeCompleting`).
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+            | Ok SyscallInterruption.Completion.Completes ->
 
             if held = 0 then
                 Ok (ReadOutcome.Answered (ReadAnswer.Completed ImmutableArray.Empty), finished)
@@ -2446,7 +2450,9 @@ module UnixReadWrite =
             // so a record beats a signal pending as it wakes.
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (ReadRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (ReadOutcome.Interrupted, OwedReturns.interrupt thread interruption finished)
+            | Ok SyscallInterruption.Completion.Completes ->
                 takeInotifyRecords parked.Instance parked.Buffer parked.Count finished
                 |> Result.map (fun (answer, system) -> ReadOutcome.Answered answer, system)
         // Then at the description's `O_NONBLOCK`, which it reads again each
@@ -2527,9 +2533,9 @@ module UnixReadWrite =
     /// the buffer it was made with: a buffer naming no storage answers `EFAULT`
     /// and leaves them there. A pipe still empty with no write end open is end
     /// of file. Under Linux either beats a signal pending for the thread, whose
-    /// handlers run as the call returns; under Darwin, a kernel answers
-    /// whichever reached the sleeper first, which this library does not
-    /// record, so both at once is refused.
+    /// handlers run as the call returns; under Darwin a signal with a handler
+    /// pending for the thread beats either, and interrupts the call
+    /// (`ReadOutcome.Interrupted`).
     ///
     /// A pipe still empty with a write end open, and a signal the thread would
     /// take as it returned to user mode, interrupts the call
@@ -2550,7 +2556,7 @@ module UnixReadWrite =
     /// a reset's error, which it takes unless it is a Darwin peek; a buffer
     /// naming no storage, with bytes to copy, is refused. A signal is as for a
     /// pipe: under Linux
-    /// the answer beats it, and under Darwin both at once are refused; with
+    /// the answer beats it, and under Darwin it beats the answer; with
     /// nothing to answer, it interrupts the read, `Interrupted`. With
     /// neither, the read sleeps again, refused instead if its description has
     /// become non-blocking. One a
@@ -3730,12 +3736,17 @@ module UnixReadWrite =
 
         if cannotSend then
             // Linux's `sk_stream_wait_memory` looks for the error, and for
-            // the send side being shut, before it looks for a signal; Darwin's
-            // sleeper takes whichever reached it first, which
-            // `beforeCompleting` refuses.
+            // the send side being shut, before it looks for a signal; on
+            // Darwin a pending signal beats them
+            // (`SyscallInterruption.beforeCompleting`), and the write returns
+            // what it had taken, or with nothing taken is interrupted.
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok (SyscallInterruption.Completion.Interrupted _) when parked.Written > 0 ->
+                answered (WriteAnswer.Completed (int64 parked.Written)) finished
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (WriteStep.Interrupted (OwedReturns.interrupt thread interruption finished))
+            | Ok SyscallInterruption.Completion.Completes ->
 
             // Measured (`tcp-blocking.c`, section W-reset, and
             // `tcp-shutdown.c`, section B): Linux's write returned the count
@@ -3787,22 +3798,18 @@ module UnixReadWrite =
             // happened, took none of the room in 40 trials of 40, whichever
             // came first, and returned the count it had taken, as
             // `sk_stream_wait_memory` looks for a signal before it looks for
-            // room. Darwin's sleeper takes whichever reached it first, which is
-            // refused. With no room, measured on both (sections W-partial and
+            // room; and so did Darwin's, held off the CPU from its wake by room
+            // until it was signalled or the other way round
+            // (`docs/probes/first-wake`, the tcp-write rows), with nothing
+            // taken. With no room, measured on both (sections W-partial and
             // W-empty): the count taken, under SA_RESTART or not, or with
             // nothing taken EINTR, or a restart under SA_RESTART; with nothing
             // taken through a description made non-blocking while it slept
             // too, unlike a Linux pipe write (`docs/probes/nonblocking-asleep`,
             // row T-write0).
-            match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform, room with
-            | SimulatedUnixFlavour.Darwin, Some _ ->
-                Error (
-                    WriteRefusal.Interruption (
-                        SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin
-                    )
-                )
-            | _ when parked.Written > 0 -> answered (WriteAnswer.Completed (int64 parked.Written)) finished
-            | _ ->
+            if parked.Written > 0 then
+                answered (WriteAnswer.Completed (int64 parked.Written)) finished
+            else
 
             match SyscallInterruption.ofPark thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
@@ -3947,28 +3954,74 @@ module UnixReadWrite =
             // count it had put in otherwise, where Darwin answered EPIPE; SIGPIPE
             // ran on the writing thread on Linux and the main thread on Darwin,
             // in every case. Linux's `pipe_write` checks for a reader before it
-            // checks for a signal; Darwin's sleeper takes whichever reached it
-            // first (section J).
+            // checks for a signal.
+            //
+            // Measured on Darwin 27.0.0 (`docs/probes/first-wake`, the write
+            // rows with the close): the close of the read end waits for the
+            // writer asleep on the pipe to leave its call, so a writer woken
+            // by the close answered EPIPE before a signal sent after it, and
+            // one woken by a signal, the close coming after, answered EINTR,
+            // as a pending signal beats room too. A writer woken by room, the
+            // close and a signal both coming after, answered as their order
+            // says, which nothing records.
+            let epipe () =
+                let answer =
+                    match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
+                    | SimulatedUnixFlavour.Linux when parked.Written > 0 ->
+                        WriteResumption.Answered (WriteAnswer.Completed (int64 parked.Written))
+                    | SimulatedUnixFlavour.Linux
+                    | SimulatedUnixFlavour.Darwin -> WriteResumption.Answered (WriteAnswer.Failed UnixError.EPIPE)
+
+                broken answer thread (BrokenWriteTarget.Pipe pipeId) finished
+
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok SyscallInterruption.Completion.Completes -> epipe ()
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                let fired = SyscallInterruption.wokenBy thread system
 
-            let answer =
-                match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
-                | SimulatedUnixFlavour.Linux when parked.Written > 0 ->
-                    WriteResumption.Answered (WriteAnswer.Completed (int64 parked.Written))
-                | SimulatedUnixFlavour.Linux
-                | SimulatedUnixFlavour.Darwin -> WriteResumption.Answered (WriteAnswer.Failed UnixError.EPIPE)
+                let byClose =
+                    fired
+                    |> Set.exists (fun primitive ->
+                        match primitive with
+                        | WakePrimitive.PipeReadEndClosed _ -> true
+                        | _ -> false
+                    )
 
-            broken answer thread (BrokenWriteTarget.Pipe pipeId) finished
+                let bySignal = Set.contains WakePrimitive.SignalDeliverable fired
+
+                match byClose, bySignal with
+                | true, false -> epipe ()
+                | false, true when parked.Written > 0 ->
+                    WriteStep.Returns (
+                        WriteResumption.Answered (WriteAnswer.Completed (int64 parked.Written)),
+                        finished
+                    )
+                    |> Ok
+                | false, true -> Ok (WriteStep.Interrupted (OwedReturns.interrupt thread interruption finished))
+                | true, true
+                | false, false ->
+                    Error (
+                        WriteRefusal.Interruption (
+                            SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin
+                        )
+                    )
         else
 
         let taking = PipeBuffer.resumeTakes parked.Count parked.Written pipe.Buffer
 
         if taking > 0 then
+            // On Darwin a pending signal beats room
+            // (`SyscallInterruption.beforeCompleting`): measured, with nothing
+            // put in, EINTR (`docs/probes/first-wake`), and with some put in,
+            // the count (`pipe-blocking.c` section J-partial).
             match SyscallInterruption.beforeCompleting thread system with
             | Error refusal -> Error (WriteRefusal.Interruption refusal)
-            | Ok () ->
+            | Ok (SyscallInterruption.Completion.Interrupted _) when parked.Written > 0 ->
+                answered (WriteAnswer.Completed (int64 parked.Written)) finished
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                Ok (WriteStep.Interrupted (OwedReturns.interrupt thread interruption finished))
+            | Ok SyscallInterruption.Completion.Completes ->
 
             match parked.Buffer with
             | UserBuffer.Unmapped _ ->
@@ -4760,9 +4813,13 @@ module UnixReadWrite =
     ///   end.
     ///
     /// Under Linux the first two beat a pending signal, whose handlers run as
-    /// the call returns; under Darwin a kernel answers whichever reached the
-    /// sleeper first, which this library does not record, so either beside a
-    /// signal is refused. An answer, `Interrupted` included, clears the park, and
+    /// the call returns. Under Darwin a signal with a handler pending beats
+    /// room, as it does when there is neither; and beside a reader gone, what
+    /// woke the thread (`ParkState.Woken`) decides, since Darwin's close of the
+    /// read end waits for the writer to leave its call: the close, `EPIPE`; the
+    /// signal, as when there is neither; and refused where the wake found both,
+    /// or found room, the close and the signal coming after, since Darwin then
+    /// answers whichever came first. An answer, `Interrupted` included, clears the park, and
     /// on Darwin moves the pipe's timestamps, which do not move while the call
     /// sleeps.
     ///
@@ -4774,10 +4831,10 @@ module UnixReadWrite =
     ///   write made now answers: the pending error, which it takes, or `EPIPE`
     ///   with `SIGPIPE`. On Darwin, `EPIPE` with `SIGPIPE` whatever it had
     ///   taken. A `send` with `MSG_NOSIGNAL` raises no `SIGPIPE`. Under
-    ///   Darwin, a signal with a handler beside it is refused.
+    ///   Darwin, a signal with a handler beside it beats the reset, as below.
     /// - **A signal with a handler is pending.** The count it had taken, or
-    ///   with nothing taken `Interrupted`. Under Linux this
-    ///   beats room; under Darwin, room beside it is refused.
+    ///   with nothing taken `Interrupted`. This beats room under either
+    ///   flavour.
     /// - **There is room**, as a write made now would take: the call stops at
     ///   the copy, as for a pipe. A buffer naming no storage is refused.
     /// - **Neither**: the thread sleeps again, refused instead if its

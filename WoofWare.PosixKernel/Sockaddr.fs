@@ -40,14 +40,18 @@ module SockaddrField =
     /// negative, so this answers for what the *caller declared* before any such
     /// cast.
     ///
-    /// A malformed descriptor is refused rather than answered for. `SockaddrField`
-    /// is a public record, so unlike the closed `SockaddrFamilyField` it can be
-    /// built with nonsense; a negative offset or width describes no field of any
-    /// struct.
+    /// A malformed descriptor throws `ArgumentException` rather than being
+    /// answered for. `SockaddrField` is a public record, so unlike the closed
+    /// `SockaddrFamilyField` it can be built with nonsense; a negative offset
+    /// or width describes no field of any struct.
     let reachedBy (field : SockaddrField) (declaredLength : int) : bool =
         if field.Offset < 0 || field.Width < 0 then
-            failwith
-                $"SockaddrField.reachedBy: a field at offset %d{field.Offset} of width %d{field.Width} describes no part of any struct (this is a bug in the caller)."
+            raise (
+                Refusal.exceptionOf
+                    "SockaddrField.reachedBy"
+                    (RefusalKind.Contradictory "field")
+                    $"a field at offset %d{field.Offset} of width %d{field.Width} describes no part of any struct."
+            )
 
         // Rearranged to subtract rather than add, so that a field whose end is
         // past `Int32.MaxValue` is not reached instead of wrapping onto a low

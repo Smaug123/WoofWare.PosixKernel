@@ -218,7 +218,7 @@ module TestPathCursor =
         let forged = Unchecked.defaultof<PathCursor>
 
         let refuses (what : string) (action : unit -> unit) : unit =
-            let exn = Assert.Throws<exn> (fun () -> action ())
+            let exn = Assert.Throws<System.ArgumentException> (fun () -> action ())
 
             exn.Message
             |> shouldContainText "came from `Unchecked.defaultof` or C# `default`"

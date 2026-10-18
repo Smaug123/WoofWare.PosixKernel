@@ -158,7 +158,7 @@ module internal ReadLinkRefusal =
         | ReadLinkRefusal.Path inner -> PathRefusal.kind inner
 
 /// What `readlink(2)` puts in the caller's buffer and what it returns.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type ReadLinkAnswer =
     /// Place these bytes in the caller's buffer; the entry point returns how
     /// many there are.
@@ -341,17 +341,12 @@ type internal CloneFileRefusal =
     /// `CLONE_RESOLVE_BENEATH`, which change how a pathname resolves in ways
     /// this kernel does not model.
     | UnmodelledFlags of flags : int
-    /// The caller is privileged, which changes who owns the clone and which
-    /// permission bits it keeps, unmeasured.
-    | PrivilegedCaller
+    /// The caller is privileged and `flags` asks for `CLONE_ACL` (0x4), whose
+    /// effect on a privileged clone has not been measured.
+    | PrivilegedAclCopy of flags : int
     /// The source is the directory at `inode`; cloning one copies its whole
     /// tree, which this kernel does not model.
     | DirectorySource of inode : InodeNumber
-    /// The source at `inode` carries set-ID or sticky bits, and the caller
-    /// stands towards it as `standing`: which of those bits a clone keeps has
-    /// been measured only for an owner in the source's group, and for an
-    /// owner outside it without `S_ISGID`.
-    | UnmeasuredSpecialBits of inode : InodeNumber * standing : Standing * permissions : PermissionBits
     /// This kernel will not resolve one of the paths.
     | Path of PathRefusal
 
@@ -367,12 +362,10 @@ module internal CloneFileRefusal =
             $"the machine's mount is %O{fileSystem}, where whether clonefile can share a file's blocks (or answers ENOTSUP or EXDEV) has not been measured."
         | CloneFileRefusal.UnmodelledFlags flags ->
             $"flags 0x%x{flags} ask for CLONE_NOFOLLOW (0x1), CLONE_NOFOLLOW_ANY (0x8) or CLONE_RESOLVE_BENEATH (0x10). Each changes how a pathname resolves, and cloning a symbolic link itself is not modelled."
-        | CloneFileRefusal.PrivilegedCaller ->
-            "the caller is privileged. A privileged clone keeps the source's owner unless CLONE_NOOWNERCOPY is given, and which permission bits it keeps has not been measured."
+        | CloneFileRefusal.PrivilegedAclCopy flags ->
+            $"the caller is privileged and flags 0x%x{flags} ask for CLONE_ACL (0x4). A privileged clone was measured with no flags and with CLONE_NOOWNERCOPY (0x2) only."
         | CloneFileRefusal.DirectorySource inode ->
             $"the source is directory %O{inode}. clonefile clones a directory's whole tree, which this kernel does not model."
-        | CloneFileRefusal.UnmeasuredSpecialBits (inode, standing, permissions) ->
-            $"the source, inode %O{inode}, has mode 0o%o{PermissionBits.toInt permissions}, and the caller stands towards it as %O{standing}. A clone drops both set-ID bits and keeps the sticky bit when an unprivileged owner in the source's group clones it, but which of these bits survive any other caller's clone has not been measured."
         | CloneFileRefusal.Path refusal -> PathRefusal.describe refusal
 
     /// Which exception a public entry point raises this refusal as.
@@ -381,10 +374,18 @@ module internal CloneFileRefusal =
         | CloneFileRefusal.UnmodelledFlavour _ -> RefusalKind.NotOnPlatform
         | CloneFileRefusal.UnmeasuredFileSystem _ -> RefusalKind.Unmodelled
         | CloneFileRefusal.UnmodelledFlags _ -> RefusalKind.Unmodelled
-        | CloneFileRefusal.PrivilegedCaller -> RefusalKind.Unmodelled
+        | CloneFileRefusal.PrivilegedAclCopy _ -> RefusalKind.Unmodelled
         | CloneFileRefusal.DirectorySource _ -> RefusalKind.Unmodelled
-        | CloneFileRefusal.UnmeasuredSpecialBits _ -> RefusalKind.Unmodelled
         | CloneFileRefusal.Path inner -> PathRefusal.kind inner
+
+/// Who owns the inode a `clonefile(2)` makes, as its caller and flags decide.
+[<RequireQualifiedAccess>]
+type internal CloneOwnership =
+    /// The source's owner and group: a privileged caller without
+    /// `CLONE_NOOWNERCOPY`.
+    | Source
+    /// Whoever owns any new file in the clone's directory.
+    | NewInode
 
 /// A `clonefile(2)` whose flags have been screened, stopped at the point
 /// where the kernel copies its source pathname in.
@@ -399,6 +400,7 @@ type PausedCloneFileSource<'Thread, 'Handler when 'Thread : comparison and 'Hand
     private
         {
             System : ProcessView<'Thread, 'Handler>
+            Ownership : CloneOwnership
         }
 
 /// A `clonefile(2)` that has resolved its source and stopped at the point
@@ -416,6 +418,7 @@ type PausedCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : 
         {
             System : ProcessView<'Thread, 'Handler>
             Source : InodeNumber
+            Ownership : CloneOwnership
         }
 
 /// Why this kernel will not answer a `symlink(2)` or `symlinkat(2)`.
@@ -2773,6 +2776,8 @@ module UnixNamespace =
         // 0 to 4 alone are accepted and every higher bit alone is EINVAL, and
         // EINVAL beats an absent source and an existing destination.
         let cloneNoFollow = 0x1
+        let cloneNoOwnerCopy = 0x2
+        let cloneAcl = 0x4
         let cloneNoFollowAny = 0x8
         let cloneResolveBeneath = 0x10
         let known = 0x1F
@@ -2790,15 +2795,27 @@ module UnixNamespace =
             Ok (CallProgress.Answered (SyscallAnswer.Failed UnixError.EINVAL, system))
         elif flags &&& (cloneNoFollow ||| cloneNoFollowAny ||| cloneResolveBeneath) <> 0 then
             Error (CloneFileRefusal.UnmodelledFlags flags)
-        elif Credentials.privilege system.Process.Credentials = CallerPrivilege.Privileged then
-            Error CloneFileRefusal.PrivilegedCaller
         else
-            Ok (
-                CallProgress.NeedsCopyIn
-                    {
-                        System = system
-                    }
-            )
+
+        // Measured as root on Darwin 27.0 (`docs/probes/darwin-root/root-files.c`,
+        // CLONE): with no flags root's clone keeps the source's owner and
+        // group, and under CLONE_NOOWNERCOPY it is owned as a new file in its
+        // directory, as an ordinary user's clone always is.
+        match Credentials.privilege system.Process.Credentials with
+        | CallerPrivilege.Privileged when flags &&& cloneAcl <> 0 -> Error (CloneFileRefusal.PrivilegedAclCopy flags)
+        | privilege ->
+
+        Ok (
+            CallProgress.NeedsCopyIn
+                {
+                    System = system
+                    Ownership =
+                        match privilege with
+                        | CallerPrivilege.Privileged when flags &&& cloneNoOwnerCopy = 0 -> CloneOwnership.Source
+                        | CallerPrivilege.Privileged
+                        | CallerPrivilege.Unprivileged -> CloneOwnership.NewInode
+                }
+        )
 
     /// `cloneFile`, with a refusal answered as the `Error` rather than raised.
     let internal tryCloneFile<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2826,7 +2843,9 @@ module UnixNamespace =
     /// above `CLONE_RESOLVE_BENEATH` (0x10) is EINVAL, answered as
     /// `CallProgress.Answered`. `CLONE_ACL` (0x4) and `CLONE_NOOWNERCOPY` (0x2)
     /// change nothing for an unprivileged caller of a filesystem without
-    /// access control lists, which is what this kernel models. Otherwise the
+    /// access control lists, which is what this kernel models. A privileged
+    /// caller's clone keeps the source's owner and group unless
+    /// `CLONE_NOOWNERCOPY` is given; its `CLONE_ACL` is refused. Otherwise the
     /// call stops where the kernel copies the source pathname in
     /// (`PausedCloneFileSource`), which `cloneFileWithSource` takes, and then
     /// where it copies the destination's, which `cloneFileWithDestination`
@@ -2879,6 +2898,7 @@ module UnixNamespace =
                     {
                         System = system
                         Source = inode
+                        Ownership = paused.Ownership
                     }
             )
         | Some (InodeContent.CharacterDevice _) ->
@@ -2983,27 +3003,25 @@ module UnixNamespace =
         | NewNameVerdict.Bind (directory, name, _) ->
 
         // The verdict has found the source a readable regular file.
-        let sourceBits, sourceStanding =
+        let sourceBits, sourceOwner =
             match VirtualFileSystem.tryGet paused.Source system.Machine.FileSystem with
             | Some ({
                         Content = InodeContent.RegularFile (_, bits)
-                    } as source) -> bits, Standing.toward credentials source.Owner
+                    } as source) -> bits, source.Owner
             | Some _
             | None ->
                 failwith
                     $"UnixNamespace.cloneFileWithDestination: the source, inode %O{paused.Source}, is no longer a regular file in the filesystem, but nothing ran between resolving it and now (this is a bug in this library)."
 
+        // Measured as root (`root-files.c`, CLONE): over every mode, root's
+        // clone and uid 501's of another user's file drop both set-ID bits
+        // and keep the sticky bit, as the owner's always did.
         let raw = PermissionBits.toInt sourceBits
 
-        let measured =
-            raw
-            &&& (PermissionBits.setUserId ||| PermissionBits.setGroupId ||| PermissionBits.sticky) = 0
-            || (sourceStanding.Owns && sourceStanding.InGroup)
-            || (sourceStanding.Owns && raw &&& PermissionBits.setGroupId = 0)
-
-        if not measured then
-            Error (CloneFileRefusal.UnmeasuredSpecialBits (paused.Source, sourceStanding, sourceBits))
-        else
+        let owner =
+            match paused.Ownership with
+            | CloneOwnership.Source -> sourceOwner
+            | CloneOwnership.NewInode -> newInodeOwner "UnixNamespace.cloneFileWithDestination" directory system
 
         let permissions =
             PermissionBits.parseOrFail
@@ -3013,14 +3031,7 @@ module UnixNamespace =
         let now = UnixMachineState.realtime system.Scheduling system.Machine
 
         match
-            VirtualFileSystem.cloneFile
-                paused.Source
-                directory
-                name
-                permissions
-                (newInodeOwner "UnixNamespace.cloneFileWithDestination" directory system)
-                now
-                system.Machine.FileSystem
+            VirtualFileSystem.cloneFile paused.Source directory name permissions owner now system.Machine.FileSystem
         with
         | Error error ->
             failwith
@@ -3053,7 +3064,8 @@ module UnixNamespace =
     ///
     /// The clone is a new regular file holding the source's bytes and its
     /// permission bits less both set-ID bits, owned as any new file in that
-    /// directory is, with the source's access, modification and birth times;
+    /// directory is (or, for a privileged caller without `CLONE_NOOWNERCOPY`,
+    /// as the source is), with the source's access, modification and birth times;
     /// its status-change time is now, and the directory's modification and
     /// status-change times move. The source does not change.
     /// </summary>

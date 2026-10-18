@@ -239,7 +239,7 @@ module UnixWait =
         (system : ProcessView<'Thread, 'Handler>)
         : Set<WakePrimitive> option
         =
-        Map.tryFind thread system.Threads
+        UnixThreadTable.tryFind thread system.Threads
         |> Option.bind UnixThreadState.parkedIn
         |> Option.map (fun parked -> WakeCondition.satisfied thread (WakeCondition.ofPark parked) system)
 
@@ -264,24 +264,41 @@ module UnixWait =
         =
         Entry.query "UnixWait.satisfied" (Caller.processId caller) (satisfiedIn (Caller.thread caller)) system
 
-    /// Every park on the machine, each with its thread's caller and the slot of
-    /// its process, in process ID order and, within a process, in the order of
-    /// its threads' names.
+    /// The park of `thread`, which the threads of the process whose slot is
+    /// `slot` name among their parked ones (`UnixThreadTable.parked`); fails
+    /// loudly if it has none.
+    let private namedPark<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (operation : string)
+        (slot : ProcessSlot<'Thread, 'Handler>)
+        (thread : 'Thread)
+        : ThreadPark
+        =
+        match UnixThreadTable.parkOf thread slot.Threads with
+        | Some park -> park
+        | None ->
+            failwith
+                $"%s{operation}: the process's threads name %O{thread} among their parked ones, and it is parked in no syscall (this is a bug in this library)."
+
+    /// Every park on the machine, each with its thread's caller, in process ID
+    /// order and, within a process, in the order of its threads' names.
+    ///
+    /// Read from the processes the kernel names as having a parked thread
+    /// (`ProcessTable.withParks`), and from the threads each of those names
+    /// as parked, so it takes time in the number of parked threads, however
+    /// many processes and threads there are besides.
     let private parks<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (operation : string)
         (system : UnixSystem<'Thread, 'Handler>)
-        : (Caller<'Thread> * ProcessSlot<'Thread, 'Handler> * ThreadPark) list
+        : (Caller<'Thread> * ThreadPark) list
         =
-        system.Processes
-        |> Seq.collect (fun (KeyValue (key, slot)) ->
+        (ProcessTable.withParks system.Processes, [])
+        ||> Set.foldBack (fun key parks ->
             let pid = ProcessId.parseOrFail operation key
+            let slot = ProcessTable.find operation key system.Processes
 
-            slot.Threads
-            |> Seq.choose (fun (KeyValue (thread, state)) ->
-                state.Parked |> Option.map (fun park -> Caller.make pid thread, slot, park)
-            )
+            (UnixThreadTable.parked slot.Threads, parks)
+            ||> Set.foldBack (fun thread parks -> (Caller.make pid thread, namedPark operation slot thread) :: parks)
         )
-        |> List.ofSeq
 
     /// The sleeping threads `system` wakes now, in the order they parked, each
     /// with the primitives of its wake condition which hold: what `wake`
@@ -296,18 +313,19 @@ module UnixWait =
 
         // One pass over the parks, in which each sleeping thread's condition is
         // made once and asked of the view from its own process, which is made
-        // once for all the process's threads.
+        // once for all the process's threads. Only the processes with a parked
+        // thread are visited, and in each only its parked threads, as `parks`
+        // visits them.
         let struct (satisfied, earliest) =
-            (struct ([], ValueNone), system.Processes)
-            ||> Map.fold (fun acc key slot ->
+            (struct ([], ValueNone), ProcessTable.withParks system.Processes)
+            ||> Set.fold (fun acc key ->
                 let pid = ProcessId.parseOrFail "UnixWait.wake" key
+                let slot = ProcessTable.find "UnixWait.wake" key system.Processes
                 let view = lazy (ProcessView.ofSlot pid slot system)
 
-                (acc, slot.Threads)
-                ||> Map.fold (fun (struct (satisfied, earliest) as acc) thread state ->
-                    match state.Parked with
-                    | None -> acc
-                    | Some park ->
+                (acc, UnixThreadTable.parked slot.Threads)
+                ||> Set.fold (fun (struct (satisfied, earliest) as acc) thread ->
+                    let park = namedPark "UnixWait.wake" slot thread
 
                     match park.State with
                     | ParkState.Woken _ -> acc
@@ -400,13 +418,19 @@ module UnixWait =
         // watches non-exclusively, so every poller of a description that
         // becomes ready wakes; and a deadline, like a signal, is each waiter's
         // own.
-        // A thread woken and not yet finished stands, on each queue its own
-        // call waits on exclusively, for whatever woke it.
+        // A thread woken and not yet finished stands for whatever woke it: on
+        // the queue of each primitive that held as it woke, and on no queue
+        // for a signal or a deadline alone. Measured on Linux 6.18.5 and
+        // Darwin 27.0.0 (`docs/probes/first-wake`, the two-sleeper rows): with
+        // the first accepter, pipe reader or epoll waiter signalled, and held
+        // off the CPU, the next connection, byte or event woke the other
+        // sleeper too, and on Darwin the other accepted the connection while
+        // the first failed with EINTR.
         let finishing : Set<ExclusiveWaitQueue> =
             parks
-            |> List.collect (fun (_, _, park) ->
+            |> List.collect (fun (_, park) ->
                 match park.State with
-                | ParkState.Woken _ -> Parking.exclusiveQueuesOfPark machine park.Syscall
+                | ParkState.Woken fired -> fired |> Set.toList |> List.choose (Parking.exclusiveQueueOf machine)
                 | ParkState.Asleep -> []
             )
             |> Set.ofList
@@ -463,7 +487,7 @@ module UnixWait =
         : int64 list
         =
         parks "UnixWait.deadlines" system
-        |> List.collect (fun (_, _, park) ->
+        |> List.collect (fun (_, park) ->
             match park.State with
             | ParkState.Asleep -> WakeCondition.deadlines (WakeCondition.ofPark park.Syscall)
             | ParkState.Woken _ -> []
@@ -515,7 +539,9 @@ module UnixWait =
     /// `read` or `write` on a connected socket all wake, under either
     /// flavour. Exclusive
     /// queues wake none while any thread parked on the same queue has been woken
-    /// and has not yet finished its call, since that thread will take it. The
+    /// by something to take from it and has not yet finished its call, since
+    /// that thread will take it; one a signal or its deadline alone woke holds
+    /// no queue. The
     /// end of a pipe closing
     /// wakes every waiter on the other end, under either flavour; and an event
     /// to report, or a close that drains a kqueue, wakes every waiter in
@@ -574,9 +600,9 @@ module UnixWait =
                 (system.Processes, woken)
                 ||> List.fold (fun processes (caller, fired) ->
                     let key = ProcessId.toInt32 (Caller.processId caller)
-                    let slot = Map.find key processes
+                    let slot = ProcessTable.find "UnixWait.wake" key processes
 
-                    Map.add
+                    ProcessTable.add
                         key
                         { slot with
                             Threads = UnixThreadTable.markWoken (Caller.thread caller) fired slot.Threads

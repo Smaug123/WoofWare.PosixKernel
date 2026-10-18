@@ -113,6 +113,9 @@
         # mkShell's stdenv puts `cc` on the path. TestSignalFuzz builds its harness with it,
         # and fails rather than skips when this says a compiler was promised.
         POSIXKERNEL_REQUIRE_C_COMPILER = "1";
+        # Likewise for the python3 in `packages` below, which
+        # TestVirtualFileSystemAgainstHost starts.
+        POSIXKERNEL_REQUIRE_PYTHON3 = "1";
         packages = [
           pkgs.alejandra
           pkgs.shellcheck
@@ -123,7 +126,8 @@
           # in the test host, and Python is the only thing to hand that reports
           # errno numerically. Declared here rather than relied on from the
           # ambient system, so that CI -- which runs `nix develop --command
-          # dotnet test` -- runs that comparison instead of skipping it.
+          # dotnet test` -- runs that comparison instead of skipping it, and
+          # POSIXKERNEL_REQUIRE_PYTHON3 above fails it if python3 is missing.
           pkgs.python3
         ];
       };

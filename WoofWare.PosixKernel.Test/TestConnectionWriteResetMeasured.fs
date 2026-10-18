@@ -337,9 +337,11 @@ module TestConnectionWriteResetMeasured =
     /// Section B: a signal sent to the writer over and over, from before the
     /// write until it returns. Where a row's write never sleeps (Linux's
     /// writes that reset), or sleeps only for room, the model answers what
-    /// the row did; where Darwin's sleep ends in a race between the signal and
-    /// the reset, the model refuses, as it refuses every Darwin race between a
-    /// signal and the call's own answer.
+    /// the row did. Where Darwin's sleep ends with both the signal and the
+    /// reset there, the model answers as the signal ends it, with the count
+    /// taken, as Darwin's woken sleeper answers a pending signal whatever
+    /// woke it (`docs/probes/first-wake`), and which some of the row's trials
+    /// answered.
     [<Test>]
     let ``a signal beside a write whose own bytes reset the connection answers as section B measured`` () : unit =
         for platform in platforms do
@@ -381,12 +383,8 @@ module TestConnectionWriteResetMeasured =
                     | written -> written
 
                 match outcome with
-                | Ok (WriteStep.Returns (WriteAnswer.Completed n, _)) when raced = 0 && counts = 20 ->
+                | Ok (WriteStep.Returns (WriteAnswer.Completed n, _)) when counts > 0 && counts + raced = 20 ->
                     n |> shouldBeGreaterThan 0L
-                | Error (WriteRefusal.Interruption (SyscallInterruptionRefusal.SignalBesideCompletion SimulatedUnixFlavour.Darwin)) when
-                    raced > 0
-                    ->
-                    ()
                 | other -> failwith $"%O{platform}: %s{line.Text}\nmodelled %A{other}"
 
     /// Section C, Linux: a write asleep with the buffers full, woken once the

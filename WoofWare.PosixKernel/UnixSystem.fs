@@ -887,6 +887,15 @@ type UnixSystemDefect<'Thread> =
     /// signal. A real thread takes a signal deliverable to it before it runs
     /// more of its own code.
     | SignalDeliverableWithoutOwedReturn of thread : Caller<'Thread> * signal : Signal
+    /// The machine's record of the sleeping Darwin polls' kqueues registering
+    /// through each descriptor of each process is not what the kqueues say.
+    | StalePollQueueIndex
+    /// The processes the kernel names as having a thread parked in a syscall,
+    /// or the threads a process names as parked, are not those a scan of
+    /// every thread finds, so a sweep of the sleeping threads
+    /// (`UnixWait.wake`) would miss a sleeper or ask about a thread asleep in
+    /// nothing.
+    | StaleParkIndex
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -1057,7 +1066,11 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : Map<'Thread, UnixThreadState>
         =
-        Entry.query "UnixSystem.threads" pid (fun (system : ProcessView<'Thread, 'Handler>) -> system.Threads) system
+        Entry.query
+            "UnixSystem.threads"
+            pid
+            (fun (system : ProcessView<'Thread, 'Handler>) -> UnixThreadTable.byName system.Threads)
+            system
 
     /// Every write that has reached a client draining one of the machine's
     /// pipes, oldest first: the bytes the outside world has received from the
@@ -1320,7 +1333,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : PollQueue option
         =
-        Map.tryFind queue system.Machine.PollQueues
+        PollQueueTable.tryFind queue system.Machine.PollQueues
 
     /// The pipe `pipeId` names. Loudly partial, as `UnixMachineState.pipe` is.
     let internal pipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1361,7 +1374,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : Set<ProcessId>
         =
-        system.Processes
+        ProcessTable.slots system.Processes
         |> Map.keys
         |> Seq.map (ProcessId.parseOrFail "UnixSystem.processIds")
         |> Set.ofSeq
@@ -2597,7 +2610,7 @@ module UnixSystem =
                 |> List.countBy id
                 |> Map.ofList
 
-            machine.PollQueues
+            PollQueueTable.all machine.PollQueues
             |> Map.toList
             |> List.choose (fun (queue, _) ->
                 match Map.tryFind queue parks |> Option.defaultValue 0 with
@@ -2606,10 +2619,16 @@ module UnixSystem =
             )
 
         let pollQueueFreshness =
-            machine.PollQueues
+            PollQueueTable.all machine.PollQueues
             |> Map.toList
             |> List.filter (fun (queue, _) -> queue >= machine.NextPollQueueId)
             |> List.map (fun (queue, _) -> UnixSystemDefect.PollQueueIdNotFresh (machine.NextPollQueueId, queue))
+
+        let pollQueueIndex =
+            if PollQueueTable.indexFresh machine.PollQueues then
+                []
+            else
+                [ UnixSystemDefect.StalePollQueueIndex ]
 
 
         let parkOrdinals =
@@ -3132,6 +3151,7 @@ module UnixSystem =
         @ holdCounts
         @ pollQueueParks
         @ pollQueueFreshness
+        @ pollQueueIndex
         @ parkOrdinalFreshness
         @ parkOrdinalDuplicates
         @ bindings
@@ -3266,7 +3286,7 @@ module UnixSystem =
                             UnixSystemDefect.ParkedConnectionTransferOnNonConnection (caller thread, description)
                         ]
 
-            system.Threads
+            UnixThreadTable.byName system.Threads
             |> Map.toList
             |> List.collect (fun (thread, state) ->
                 match state.Parked |> Option.map (fun park -> park.Syscall) with
@@ -3414,7 +3434,7 @@ module UnixSystem =
                                 target @ rebound
                     )
                 | Some (ParkedSyscall.KqueuePoll poll) ->
-                    match Map.tryFind poll.Queue system.Machine.PollQueues with
+                    match PollQueueTable.tryFind poll.Queue system.Machine.PollQueues with
                     | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (caller thread, poll.Queue) ]
                     | Some queue when queue.Owner <> system.Process.ProcessId ->
                         [
@@ -3657,7 +3677,7 @@ module UnixSystem =
                 )
 
             let waited =
-                system.Threads
+                UnixThreadTable.byName system.Threads
                 |> Map.toList
                 |> List.choose (fun (_, state) ->
                     match state.Parked with
@@ -3683,13 +3703,13 @@ module UnixSystem =
             let frames =
                 SignalState.threadsWithFrames signals
                 |> Set.toList
-                |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
+                |> List.filter (fun thread -> not (UnixThreadTable.contains thread system.Threads))
                 |> List.map (caller >> UnixSystemDefect.HandlerFramesWithoutThread)
 
             let masks =
                 SignalState.threadsWithMasks signals
                 |> Set.toList
-                |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
+                |> List.filter (fun thread -> not (UnixThreadTable.contains thread system.Threads))
                 |> List.map (caller >> UnixSystemDefect.MaskWithoutThread)
 
             // A mask to restore exists from a `sigsuspend` until its thread
@@ -3703,11 +3723,11 @@ module UnixSystem =
                 let orphaned =
                     restoring
                     |> Set.toList
-                    |> List.filter (fun thread -> not (Map.containsKey thread system.Threads))
+                    |> List.filter (fun thread -> not (UnixThreadTable.contains thread system.Threads))
                     |> List.map (caller >> UnixSystemDefect.MaskToRestoreWithoutThread)
 
                 let parked =
-                    system.Threads
+                    UnixThreadTable.byName system.Threads
                     |> Map.toList
                     |> List.choose (fun (thread, state) ->
                         match UnixThreadState.park state with
@@ -3730,7 +3750,7 @@ module UnixSystem =
                 SignalState.pending signals
                 |> List.choose (fun entry ->
                     match entry.Target with
-                    | ValueSome thread when not (Map.containsKey thread system.Threads) ->
+                    | ValueSome thread when not (UnixThreadTable.contains thread system.Threads) ->
                         Some (UnixSystemDefect.PendingSignalTargetWithoutThread (caller thread, entry.Signal))
                     | ValueSome _
                     | ValueNone -> None
@@ -3742,7 +3762,7 @@ module UnixSystem =
             // thread has since discarded still owes its return, which then
             // takes nothing.
             let undue =
-                system.Threads
+                UnixThreadTable.byName system.Threads
                 |> Map.toList
                 |> List.choose (fun (thread, state) ->
                     match state.Parked, state.Owes with
@@ -3780,7 +3800,7 @@ module UnixSystem =
         // The process's leader against its threads: it is one, and on Linux its
         // thread ID is the process ID.
         let leader =
-            match Map.tryFind system.Leader system.Threads with
+            match UnixThreadTable.tryFind system.Leader system.Threads with
             | None -> [ UnixSystemDefect.LeaderWithoutThread (caller system.Leader) ]
             | Some state ->
                 match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -3799,7 +3819,7 @@ module UnixSystem =
                 | SimulatedUnixFlavour.Darwin -> []
 
         let cpus =
-            system.Threads
+            UnixThreadTable.byName system.Threads
             |> Map.toList
             |> List.filter (fun (_, state) -> not (UnixMachineState.hasProcessor state.Cpu system.Machine))
             |> List.map (fun (thread, state) ->
@@ -3824,8 +3844,10 @@ module UnixSystem =
     /// descriptor table's, a descriptor naming a description the machine does
     /// not hold, and a registration of a kqueue the process owns made through
     /// a descriptor that is closed or names no socket; the open file table's
-    /// own rules, read against every process's descriptor table; and that each
-    /// process is held under its own process ID, and no two have one.
+    /// own rules, read against every process's descriptor table; that each
+    /// process is held under its own process ID, and no two have one; and that
+    /// the record the kernel keeps of which threads are parked, which a sweep
+    /// of the sleeping threads reads, names exactly the parked threads.
     ///
     /// The filesystem's own rules are `VirtualFileSystem.checkInvariants`'s,
     /// and are not repeated here. It takes a `pinned` argument, which is what
@@ -3840,13 +3862,14 @@ module UnixSystem =
         : UnixSystemDefect<'Thread> list
         =
         let slots =
-            system.Processes
+            ProcessTable.slots system.Processes
             |> Map.toList
             |> List.map (fun (key, slot) -> ProcessId.parseOrFail "UnixSystem.checkInvariants" key, slot)
 
         let machine =
             machineDefects
-                (slots |> List.map (fun (_, slot) -> slot.Process, slot.Threads))
+                (slots
+                 |> List.map (fun (_, slot) -> slot.Process, UnixThreadTable.byName slot.Threads))
                 system.Scheduling
                 system.Machine
 
@@ -3883,7 +3906,13 @@ module UnixSystem =
             |> List.filter (fun (_, count) -> count > 1)
             |> List.map (fst >> UnixSystemDefect.DuplicateProcessId)
 
-        machine @ processes @ tables @ openFiles @ misplaced @ duplicates
+        let staleParks =
+            if ProcessTable.parksFresh system.Processes then
+                []
+            else
+                [ UnixSystemDefect.StaleParkIndex ]
+
+        machine @ processes @ tables @ openFiles @ misplaced @ duplicates @ staleParks
 
     /// Logical-processor count a freshly-minted simulated process reports.
     /// One, because only single-processor behaviour has been exercised
@@ -4123,6 +4152,9 @@ module UnixSystem =
     /// depth rather than of its kernel. All of these are configuration a
     /// caller overrides with the setters in `UnixBootImage`, which is also how
     /// a caller supplies a non-empty filesystem or a different address list.
+    ///
+    /// Throws `ArgumentNullException` for a null `platform`, which only
+    /// `Unchecked.defaultof` or C# `default` makes.
     let initial<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (platform : SimulatedUnixPlatform)
         : UnixBootImage<'Thread, 'Handler>
@@ -4178,7 +4210,7 @@ module UnixSystem =
                     NextConnectionId = ConnectionId 0L
                     NextEventRegistrationOrdinal = 0L
                     NextParkOrdinal = ParkOrdinal 0L
-                    PollQueues = Map.empty
+                    PollQueues = PollQueueTable.empty
                     NextPollQueueId = PollQueueId 0L
                     ThreadIds = threadIds
                     ProcessIds = processIds
@@ -4298,7 +4330,7 @@ module UnixSystem =
         | Error refusal -> Error refusal
         | Ok (pid, leaderThreadId, allocatedMachine) ->
 
-        if Map.containsKey (ProcessId.toInt32 pid) system.Processes then
+        if Map.containsKey (ProcessId.toInt32 pid) (ProcessTable.slots system.Processes) then
             failwith
                 $"UnixSystem.launch: the kernel chose process ID %O{pid}, which a process on the machine already has (this is a bug in this library)."
 
@@ -4316,7 +4348,7 @@ module UnixSystem =
                 pid,
                 { system with
                     Machine = launched
-                    Processes = Map.add (ProcessId.toInt32 pid) slot system.Processes
+                    Processes = ProcessTable.add (ProcessId.toInt32 pid) slot system.Processes
                 }
             )
 
