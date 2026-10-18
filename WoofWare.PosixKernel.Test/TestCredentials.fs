@@ -252,18 +252,22 @@ module TestCredentials =
             |> Result.map ignore
             |> shouldEqual (Error (CredentialsRefusal.IdsDifferOnDarwin variant))
 
-    [<TestCase("linux", 65536)>]
-    [<TestCase("darwin", 16)>]
-    let ``each platform holds exactly NGROUPS_MAX supplementary groups`` (flavour : string, limit : int) : unit =
-        // Measured as setgroups(2)'s own boundary on both: one more than this is
-        // EINVAL.
+    [<TestCase("linux", 65536, 65536)>]
+    [<TestCase("darwin", 16, 15)>]
+    let ``each platform holds as many supplementary groups as a list of NGROUPS_MAX leaves room for``
+        (flavour : string, ngroupsMax : int, limit : int)
+        : unit
+        =
+        // Measured as setgroups(2)'s own boundary on both: one more than
+        // NGROUPS_MAX is EINVAL. Darwin's list holds the effective group first.
         let platform =
             match flavour with
             | "linux" -> SimulatedUnixPlatform.linuxX64
             | "darwin" -> SimulatedUnixPlatform.macOsArm64
             | other -> failwith $"unknown flavour %s{other}"
 
-        SimulatedUnixPlatform.supplementaryGroupLimit platform |> shouldEqual limit
+        SimulatedUnixPlatform.supplementaryGroupLimit platform |> shouldEqual ngroupsMax
+        SimulatedUnixPlatform.supplementaryGroupsHeld platform |> shouldEqual limit
 
         let image : UnixBootImage<int, string> = UnixSystem.initial platform
 

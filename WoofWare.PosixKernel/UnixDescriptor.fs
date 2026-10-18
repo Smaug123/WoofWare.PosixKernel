@@ -488,9 +488,6 @@ type internal GetGroupsRefusal =
     /// The buffer has no answer at the copy, which is the only step that
     /// reads it.
     | Buffer of BufferRefusal
-    /// This flavour's list for these credentials has not been measured; see
-    /// `GroupListReport.Unmeasured`.
-    | UnmeasuredGroupList of flavour : SimulatedUnixFlavour
 
 [<RequireQualifiedAccess>]
 module internal GetGroupsRefusal =
@@ -499,14 +496,11 @@ module internal GetGroupsRefusal =
     let describe (refusal : GetGroupsRefusal) : string =
         match refusal with
         | GetGroupsRefusal.Buffer refusal -> BufferRefusal.describe refusal
-        | GetGroupsRefusal.UnmeasuredGroupList flavour ->
-            $"which groups %O{flavour}'s getgroups(2) reports for these credentials has not been measured. It depends on what setgroups(2) does with the list it is given, and setting that needs root. A login process reports its effective group first and the rest unsorted, which fits both of two rules (the effective group added in front of the supplementary groups, or a list that already began with it reported as given), and the two disagree about every other list."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : GetGroupsRefusal) : RefusalKind =
         match refusal with
         | GetGroupsRefusal.Buffer refusal -> BufferRefusal.kind refusal
-        | GetGroupsRefusal.UnmeasuredGroupList _ -> RefusalKind.Unmodelled
 
 /// Why this kernel will not answer an `ioctl(2)` of `FICLONE`.
 [<RequireQualifiedAccess>]
@@ -657,7 +651,8 @@ module UnixDescriptor =
         // INT_MIN + 1 and INT_MIN, and -1 with a NULL buffer); a size of 0 returns the count and writes nothing,
         // even through NULL; a size below the count is EINVAL, NULL or not; and
         // only then is the buffer written, so NULL is EFAULT. Linux copies
-        // nothing for an empty list, so no buffer faults then. Linux writes
+        // nothing for an empty list, so no buffer faults then; Darwin's list
+        // always holds the effective group. Linux writes
         // element by element up to a fault (a buffer one element short of a
         // PROT_NONE page had its first element written), which an `Unmapped`
         // buffer, holding no storage at all, never shows.
@@ -665,14 +660,10 @@ module UnixDescriptor =
             Ok (GetGroupsAnswer.Failed UnixError.EINVAL)
         else
 
-        match
+        let groups =
             Credentials.reportedGroups
                 (SimulatedUnixPlatform.groupListReport system.Machine.UnixPlatform)
                 system.Process.Credentials
-        with
-        | None ->
-            Error (GetGroupsRefusal.UnmeasuredGroupList (SimulatedUnixPlatform.flavour system.Machine.UnixPlatform))
-        | Some groups ->
 
         let count = List.length groups
 
