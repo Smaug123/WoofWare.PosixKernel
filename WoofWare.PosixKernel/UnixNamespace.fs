@@ -2036,7 +2036,9 @@ module UnixNamespace =
     /// reads it: Linux answers a directory
     /// EPERM and a field naming no type it makes EINVAL, and Darwin answers
     /// any type but a FIFO EPERM to a caller without privilege, each before
-    /// the path is copied in. Then `path` is copied in (EFAULT, ENAMETOOLONG),
+    /// the path is copied in. Darwin's privileged caller is EINVAL for any
+    /// type but a FIFO or a device only once the path has been found free.
+    /// Then `path` is copied in (EFAULT, ENAMETOOLONG),
     /// a relative path starts where `dirfd` says, as every `*at` call's does,
     /// and the walk never follows a final
     /// symbolic link. A regular file (`S_IFREG`, or a type field of 0) is
@@ -2050,8 +2052,8 @@ module UnixNamespace =
     /// Refuses, once every check that would fail the call has passed, to
     /// make a FIFO, a socket or a device node, none of which this library
     /// models, but answers Linux's EPERM to a caller without privilege who
-    /// asks for a device. Refuses Darwin's FIFO, which is `mkfifo(2)`, and
-    /// Darwin's privileged caller before the path is read.
+    /// asks for a device. Refuses an unprivileged Darwin FIFO, which is
+    /// `mkfifo(2)`, before the path is read.
     let mknodat<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (caller : Caller<'Thread>)
         (dirfd : int)

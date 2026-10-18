@@ -55,13 +55,15 @@ type MkNodRules =
     /// a character or block device needs privilege only once its name has
     /// been found free and its directory writable.
     | TypeBeforePath
-    /// Darwin's. A FIFO is `mkfifo(2)`'s business; any other type, a regular
-    /// file's included, is EPERM before the path is copied in for a caller
-    /// without privilege.
+    /// Darwin's. For a caller without privilege, a FIFO is `mkfifo(2)`'s
+    /// business, and any other type, a regular file's included, is EPERM
+    /// before the path is copied in. A privileged caller's path is walked
+    /// first, as `open(O_CREAT|O_EXCL)` walks it; then a FIFO, a character
+    /// device or a block device is made, and any other type is EINVAL.
     | PrivilegeBeforePath
 
-/// What Linux's `mknod(2)` goes on to make once the type field has passed
-/// its screen.
+/// What `mknod(2)` goes on to make once the type field has passed its
+/// screen.
 [<RequireQualifiedAccess>]
 type internal MkNodNode =
     /// `S_IFREG`, or a type field of 0.
@@ -74,6 +76,9 @@ type internal MkNodNode =
     | CharacterDevice of dev : uint32
     /// `S_IFBLK`, standing for the raw device number `dev`.
     | BlockDevice of dev : uint32
+    /// A type field Darwin's privileged `mknod` makes nothing of: EINVAL
+    /// once the path has been found free.
+    | Invalid
 
 /// Why this kernel will not answer a `mknod(2)` or `mknodat(2)`.
 [<RequireQualifiedAccess>]
@@ -97,9 +102,6 @@ type internal MkNodRefusal =
     /// `dev`, by a privileged caller. Every check that would fail the call
     /// has already passed.
     | BlockDevice of dev : uint32
-    /// A privileged caller on Darwin asked for a type other than a FIFO,
-    /// which has not been measured. Refused before the path is read.
-    | UnmeasuredPrivilegedCaller
 
 [<RequireQualifiedAccess>]
 module internal MkNodRefusal =
@@ -114,8 +116,6 @@ module internal MkNodRefusal =
             $"the call would make a character device node for device 0x%x{dev}, which this library does not model."
         | MkNodRefusal.BlockDevice dev ->
             $"the call would make a block device node for device 0x%x{dev}, which this library does not model."
-        | MkNodRefusal.UnmeasuredPrivilegedCaller ->
-            "a privileged caller on Darwin asked mknod for a type other than a FIFO, which has not been measured."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : MkNodRefusal) : RefusalKind =
@@ -125,7 +125,6 @@ module internal MkNodRefusal =
         | MkNodRefusal.Socket -> RefusalKind.Unmodelled
         | MkNodRefusal.CharacterDevice _ -> RefusalKind.Unmodelled
         | MkNodRefusal.BlockDevice _ -> RefusalKind.Unmodelled
-        | MkNodRefusal.UnmeasuredPrivilegedCaller -> RefusalKind.Unmodelled
 
 /// What a `mknod(2)` does before it reads its path.
 [<RequireQualifiedAccess>]
@@ -176,31 +175,47 @@ module internal MkNodRules =
             | NodeTypeField.SymbolicLink
             | NodeTypeField.Unnamed _ -> MkNodScreen.Fails UnixError.EINVAL
         | MkNodRules.PrivilegeBeforePath ->
-            match field with
-            | NodeTypeField.Fifo -> MkNodScreen.Refused MkNodRefusal.Fifo
-            | NodeTypeField.Unset
-            | NodeTypeField.Regular
-            | NodeTypeField.Socket
-            | NodeTypeField.CharacterDevice
-            | NodeTypeField.BlockDevice
-            | NodeTypeField.Directory
-            | NodeTypeField.SymbolicLink
-            | NodeTypeField.Unnamed _ ->
-                match Credentials.privilege credentials with
-                | CallerPrivilege.Unprivileged -> MkNodScreen.Fails UnixError.EPERM
-                | CallerPrivilege.Privileged -> MkNodScreen.Refused MkNodRefusal.UnmeasuredPrivilegedCaller
+            match Credentials.privilege credentials with
+            | CallerPrivilege.Unprivileged ->
+                match field with
+                | NodeTypeField.Fifo -> MkNodScreen.Refused MkNodRefusal.Fifo
+                | NodeTypeField.Unset
+                | NodeTypeField.Regular
+                | NodeTypeField.Socket
+                | NodeTypeField.CharacterDevice
+                | NodeTypeField.BlockDevice
+                | NodeTypeField.Directory
+                | NodeTypeField.SymbolicLink
+                | NodeTypeField.Unnamed _ -> MkNodScreen.Fails UnixError.EPERM
+            | CallerPrivilege.Privileged ->
+                // Measured as root on Darwin 27.0 (`docs/probes/darwin-root/root-files.c`,
+                // MKNOD): every type field at an existing name is EEXIST, at a
+                // missing parent, a trailing separator or the empty path
+                // ENOENT, and at NULL EFAULT; at a free name a FIFO, a
+                // character device and a block device are made, and every
+                // other type, 0 and S_IFREG included, is EINVAL.
+                match field with
+                | NodeTypeField.Fifo -> MkNodScreen.Walks MkNodNode.Fifo
+                | NodeTypeField.CharacterDevice -> MkNodScreen.Walks (MkNodNode.CharacterDevice dev)
+                | NodeTypeField.BlockDevice -> MkNodScreen.Walks (MkNodNode.BlockDevice dev)
+                | NodeTypeField.Unset
+                | NodeTypeField.Regular
+                | NodeTypeField.Socket
+                | NodeTypeField.Directory
+                | NodeTypeField.SymbolicLink
+                | NodeTypeField.Unnamed _ -> MkNodScreen.Walks MkNodNode.Invalid
 
-    /// What a Linux `mknod(2)` of `node`, by a caller with `credentials`,
-    /// owes, given what `CreatingOpenRules.verdict` decided for an
-    /// `O_CREAT|O_EXCL` open of the path it walked.
+    /// What a `mknod(2)` of `node`, by a caller with `credentials`, owes,
+    /// given what `CreatingOpenRules.verdict` decided for an `O_CREAT|O_EXCL`
+    /// open of the path it walked.
     ///
     /// Every refusal that verdict gives is `mknod`'s too, in its order: an
     /// existing name or a path naming no final component is EEXIST, a free
     /// name with a trailing separator is ENOENT, an orphaned directory is
     /// ENOENT, and an unwritable directory EACCES. Only then does the type
     /// matter: a regular file is made, a character or block device by a
-    /// caller without privilege is EPERM, and anything else is a node this
-    /// library does not model.
+    /// caller without privilege is EPERM, an invalid type is EINVAL, and
+    /// anything else is a node this library does not model.
     let verdict (credentials : Credentials) (node : MkNodNode) (creation : CreatingOpenVerdict) : MkNodVerdict =
         // Measured by `mknodat-rules.c` (PATH, PATHTYPE, TYPE) on Linux 6.18.5,
         // root and uid 1000, ext4 and tmpfs: every type gets the same errno as
@@ -227,3 +242,4 @@ module internal MkNodRules =
             match Credentials.privilege credentials with
             | CallerPrivilege.Unprivileged -> MkNodVerdict.Refuse UnixError.EPERM
             | CallerPrivilege.Privileged -> MkNodVerdict.Refused (MkNodRefusal.BlockDevice dev)
+        | MkNodNode.Invalid -> MkNodVerdict.Refuse UnixError.EINVAL
