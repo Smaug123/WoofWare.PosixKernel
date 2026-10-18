@@ -69,9 +69,8 @@ module internal DescriptionReleaseRefusal =
 [<RequireQualifiedAccess>]
 module ObjectLifetime =
 
-    /// `pinnedInodes` of `machine`, with `graph` as the filesystem the closure
-    /// climbs.
-    let private pinnedOn (graph : VirtualFileSystem) (machine : UnixMachineState) : Set<InodeNumber> =
+    /// `frontier` closed under `DirectoryContent.Parent` in `graph`.
+    let private climb (graph : VirtualFileSystem) (frontier : InodeNumber list) : Set<InodeNumber> =
         let rec climb (frontier : InodeNumber list) (seen : Set<InodeNumber>) : Set<InodeNumber> =
             match frontier with
             | [] -> seen
@@ -95,16 +94,37 @@ module ObjectLifetime =
                 | Some (InodeContent.Symlink _)
                 | None -> climb rest seen
 
-        climb (Set.toList (UnixMachineState.heldInodes machine)) Set.empty
+        climb frontier Set.empty
 
-    /// `pinnedInodes` of `system`'s machine, with `graph` as the filesystem the
-    /// closure climbs.
-    let private pinnedIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
-        (graph : VirtualFileSystem)
-        (system : ProcessView<'Thread, 'Handler>)
-        : Set<InodeNumber>
-        =
-        pinnedOn graph system.Machine
+    /// `pinnedInodes` of `machine`, with `graph` as the filesystem the closure
+    /// climbs.
+    let private pinnedOn (graph : VirtualFileSystem) (machine : UnixMachineState) : Set<InodeNumber> =
+        climb graph (Set.toList (UnixMachineState.heldInodes machine))
+
+    /// Whether `inode` is in `pinnedInodes` of `machine`, with `graph` as the
+    /// filesystem the closure climbs: in time logarithmic in what the machine
+    /// holds, but for a directory it does not hold directly, for which linear
+    /// in the directories it holds and their ancestors.
+    let internal isPinned (graph : VirtualFileSystem) (inode : InodeNumber) (machine : UnixMachineState) : bool =
+        UnixMachineState.holdsDirectly inode machine
+        // The closure climbs from a held inode only through directories, so a
+        // directory not held itself is pinned exactly when some held
+        // directory's ancestors include it. Every directory held directly is
+        // among `heldDirectories`, since a description onto a directory is a
+        // `Directory` one and a process stands only in a directory
+        // (`UnixSystemDefect.DescriptionKindMismatch`,
+        // `UnixSystemDefect.CurrentDirectoryIsNotADirectory`).
+        || (
+            match VirtualFileSystem.tryGetContent inode graph with
+            | Some (InodeContent.Directory _) ->
+                Set.contains inode (climb graph (UnixMachineState.heldDirectories machine))
+            | Some (InodeContent.RegularFile _)
+            | Some (InodeContent.Socket _)
+            | Some (InodeContent.Fifo _)
+            | Some (InodeContent.CharacterDevice _)
+            | Some (InodeContent.Symlink _)
+            | None -> false
+        )
 
     /// Every inode that must not be freed: every process's current directory
     /// and every open file description's inode, closed under
@@ -146,7 +166,7 @@ module ObjectLifetime =
         inode <> VirtualFileSystem.root graph
         && (VirtualFileSystem.tryGet inode graph).IsSome
         && VirtualFileSystem.bindingCount inode graph = 0
-        && not (Set.contains inode (pinnedIn graph system))
+        && not (isPinned graph inode system.Machine)
 
     /// The directory `inode` records as its parent in `graph`, whose ".."
     /// reference it holds; `None` for anything else.
@@ -311,8 +331,14 @@ module ObjectLifetime =
             // inotify, when the graph forgets it.
             let system =
                 match destroyed.Target, destroyedDescription.OpenedThrough with
-                | (OpenFileTarget.File _ | OpenFileTarget.CharacterDevice _), Some (ReachedThrough.Name (_, true)) when
-                    not (OpenFileTable.nameHeldElsewhere destroyedDescription system.Machine.OpenFiles)
+                | (OpenFileTarget.File _ | OpenFileTarget.CharacterDevice _),
+                  Some (ReachedThrough.Name (_, true) as through) when
+                    not (
+                        OpenFileTable.nameHeldElsewhere
+                            through
+                            destroyedDescription.NameIdentity
+                            system.Machine.OpenFiles
+                    )
                     ->
                     { system with
                         Machine =
