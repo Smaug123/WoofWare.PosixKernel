@@ -325,6 +325,15 @@ type internal SocketOptionRefusal =
     /// and its `TIME_WAIT` record holding the port, and with this refusal
     /// their flags agree; that is inferred from Linux's source, not measured.
     | LinuxReuseAddressInTimeWait of socket : SocketId
+    /// A Linux `IPV6_V6ONLY` set turning on a dual-mode socket whose refused
+    /// connect gave back a port no `bind(2)` chose.
+    ///
+    /// Linux takes it (measured, `docs/probes/v6only-after-refusal`), and the
+    /// socket it leaves is IPv6-only while it still reports, and keeps the
+    /// address of, the v4-mapped binding its connect resolved. This kernel
+    /// keeps an IPv6-only socket's binding only for an address it could bind,
+    /// so it cannot represent that socket.
+    | Ipv6OnlyOnGivenBackPort of socket : SocketId
 
 [<RequireQualifiedAccess>]
 module internal SocketOptionRefusal =
@@ -337,6 +346,8 @@ module internal SocketOptionRefusal =
             $"socket %O{socket} was asked about option %d{optionName} at level %d{level}. This kernel models SO_REUSEADDR, SO_LINGER (and Darwin's SO_LINGER_SEC) at SOL_SOCKET, TCP_NODELAY at IPPROTO_TCP and IPV6_V6ONLY at IPPROTO_IPV6 for setsockopt(2) and getsockopt(2), and SO_ERROR at SOL_SOCKET for getsockopt(2) alone. A real kernel either knows this option, in which case its value is socket state nothing here holds, or answers an errno nobody has measured for it; ENOPROTOOPT would be a guess either way. Model the option before asking for it."
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait socket ->
             $"socket %O{socket} is one end of a TCP connection in TIME_WAIT, and the call would change its SO_REUSEADDR. Measured on Linux, a bind of the endpoint is judged by the flag the end had when it entered TIME_WAIT, whether the socket stays open or closes, and a later change does not reach it. This kernel does not keep that copy: it judges the end by the socket's flag, which agrees only while the flag is unchanged."
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socket ->
+            $"socket %O{socket} is a dual-mode IPv6 socket whose refused connect gave back a port no bind(2) chose, and the call would set IPV6_V6ONLY. Linux takes it (measured), leaving an IPv6-only socket that still holds the v4-mapped address its connect resolved, which this kernel cannot represent."
         | SocketOptionRefusal.NegativeLingerTime (socket, seconds) ->
             $"socket %O{socket} was asked to linger for %d{seconds} seconds. Linux reads l_linger as unsigned and stores its largest timeout for this, and what getsockopt(2) then reads back is that timeout over the kernel's tick rate, CONFIG_HZ, which this library does not model."
 
@@ -347,6 +358,7 @@ module internal SocketOptionRefusal =
         | SocketOptionRefusal.Buffer refusal -> BufferRefusal.kind refusal
         | SocketOptionRefusal.NegativeLingerTime _ -> RefusalKind.Unmodelled
         | SocketOptionRefusal.LinuxReuseAddressInTimeWait _ -> RefusalKind.Unmodelled
+        | SocketOptionRefusal.Ipv6OnlyOnGivenBackPort _ -> RefusalKind.Unmodelled
 
 /// Whether a `setsockopt(2)` reaches the point at which the kernel copies the
 /// option's value in, as `UnixSocket.tryAdmitSetSockOpt` answers it: the step
@@ -2600,7 +2612,24 @@ module UnixSocket =
                            // A connect binds its source before it sends.
                            | SocketPhase.Connecting _ -> true
 
+                    // A port a refused connect gave back. Linux judges the
+                    // option by the port the socket holds (`inet_num`), so it
+                    // takes the option then (measured,
+                    // `docs/probes/v6only-after-refusal`); Darwin answers
+                    // EINVAL there too, but at the admission, which refuses
+                    // every option on a refused socket, so only a Linux
+                    // socket reaches here with such a port.
+                    let portGivenBack =
+                        socket.Ipv4Binding
+                        |> Option.exists (fun binding -> not (PortHold.isHeld binding.PortHold))
+
                     match socket.Addressing with
+                    | SocketAddressing.Inet6DualMode _ when portGivenBack ->
+                        if field 0 <> 0 then
+                            Error (Error (SocketOptionRefusal.Ipv6OnlyOnGivenBackPort socketId))
+                        else
+                            // Dual-mode it was, and dual-mode it stays.
+                            Ok socket
                     | SocketAddressing.Inet6DualMode _
                     | SocketAddressing.Inet6V6Only _ when hasAddress -> Error (Ok UnixError.EINVAL)
                     // Unbound, so the move between the two cases carries no

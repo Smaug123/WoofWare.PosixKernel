@@ -1,0 +1,34 @@
+Linux 6.18.5 aarch64
+listener at 127.0.0.1:45201
+C1 fresh | IPV6_V6ONLY=1 -> OK, reads 1
+C2 bind=OK getsockname=[::ffff:127.0.0.1]:47737 | IPV6_V6ONLY=1 -> EINVAL, reads 0
+Ib1 bind=OK connect=ECONNREFUSED getsockname=[::]:32812 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::]:32812 | connect v4-mapped listener=ENETUNREACH getsockname=[::]:32812 | again=ENETUNREACH getsockname=[::]:32812
+Ib0 bind=OK connect=ECONNREFUSED getsockname=[::]:32824 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::]:32824 | connect v4-mapped listener=OK getsockname=[::ffff:127.0.0.1]:58914 | again=EISCONN getsockname=[::ffff:127.0.0.1]:58914
+In1 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:32838 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:32838 | connect v4-mapped listener=ECONNREFUSED getsockname=[::]:32838 | again=ENETUNREACH getsockname=[::]:32838
+In0 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:32846 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:32846 | connect v4-mapped listener=ECONNREFUSED getsockname=[::]:32846 | again=OK getsockname=[::ffff:127.0.0.1]:58924
+Is1 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:32854 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:32854 | connect v4-mapped listener=ECONNABORTED getsockname=[::]:32854 | again=ENETUNREACH getsockname=[::]:32854
+Is0 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:32868 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:32868 | connect v4-mapped listener=ECONNABORTED getsockname=[::]:32868 | again=OK getsockname=[::ffff:127.0.0.1]:58930
+Zb1 bind=OK connect=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:35479 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:35479 | connect v4-mapped listener=ENETUNREACH getsockname=[::ffff:127.0.0.1]:35479 | again=ENETUNREACH getsockname=[::ffff:127.0.0.1]:35479
+Zb0 bind=OK connect=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:58647 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:58647 | connect v4-mapped listener=OK getsockname=[::ffff:127.0.0.1]:58944 | again=EISCONN getsockname=[::ffff:127.0.0.1]:58944
+Zn1 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:40769 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:40769 | connect v4-mapped listener=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:40769 | again=ENETUNREACH getsockname=[::ffff:127.0.0.1]:40769
+Zn0 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:58045 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:58045 | connect v4-mapped listener=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:58045 | again=OK getsockname=[::ffff:127.0.0.1]:58948
+Zs1 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:38191 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:38191 | connect v4-mapped listener=ECONNABORTED getsockname=[::ffff:127.0.0.1]:38191 | again=ENETUNREACH getsockname=[::ffff:127.0.0.1]:38191
+Zs0 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:46151 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:46151 | connect v4-mapped listener=ECONNABORTED getsockname=[::ffff:127.0.0.1]:46151 | again=OK getsockname=[::ffff:127.0.0.1]:58964
+Wb1 bind=OK connect=ECONNREFUSED getsockname=[::]:39387 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::]:39387 | connect v4-mapped listener=ENETUNREACH getsockname=[::]:39387 | again=ENETUNREACH getsockname=[::]:39387
+Wb0 bind=OK connect=ECONNREFUSED getsockname=[::]:53289 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::]:53289 | connect v4-mapped listener=OK getsockname=[::ffff:127.0.0.1]:58966 | again=EISCONN getsockname=[::ffff:127.0.0.1]:58966
+Wn1 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:41695 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:41695 | connect v4-mapped listener=ECONNREFUSED getsockname=[::]:41695 | again=ENETUNREACH getsockname=[::]:41695
+Wn0 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:47847 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:47847 | connect v4-mapped listener=ECONNREFUSED getsockname=[::]:47847 | again=OK getsockname=[::ffff:127.0.0.1]:58970
+Ws1 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:59803 | IPV6_V6ONLY=1 -> OK, reads 1, getsockname=[::ffff:127.0.0.1]:59803 | connect v4-mapped listener=ECONNABORTED getsockname=[::]:59803 | again=ENETUNREACH getsockname=[::]:59803
+Ws0 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:43019 | IPV6_V6ONLY=0 -> OK, reads 0, getsockname=[::ffff:127.0.0.1]:43019 | connect v4-mapped listener=ECONNABORTED getsockname=[::]:43019 | again=OK getsockname=[::ffff:127.0.0.1]:58976
+Xb1 bind=OK connect=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45301 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45301
+Xb0 bind=OK connect=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45302 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45302
+Xn1 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:45303 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45303
+Xn0 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:45304 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45304
+Xs1 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45305 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45305
+Xs0 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45306 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45306
+Yb1 bind=OK connect=ECONNREFUSED getsockname=[::]:45307 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::]:45307
+Yb0 bind=OK connect=ECONNREFUSED getsockname=[::]:45308 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::]:45308
+Yn1 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:45309 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45309
+Yn0 bind=OK connect=EINPROGRESS poll=1/0x1c getsockname=[::ffff:127.0.0.1]:45310 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45310
+Ys1 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45311 | IPV6_V6ONLY=1 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45311
+Ys0 bind=OK connect=EINPROGRESS poll=1/0x1c SO_ERROR=ECONNREFUSED getsockname=[::ffff:127.0.0.1]:45312 | IPV6_V6ONLY=0 -> EINVAL, reads 0, getsockname=[::ffff:127.0.0.1]:45312
