@@ -407,8 +407,8 @@ module internal UnixParkState =
     let private moveQueue
         (released : ThreadPark option)
         (taken : ThreadPark option)
-        (queues : Map<PollQueueId, PollQueue>)
-        : Map<PollQueueId, PollQueue>
+        (queues : PollQueueTable)
+        : PollQueueTable
         =
         let queueOf (park : ThreadPark option) : PollQueueId option =
             match park with
@@ -419,7 +419,7 @@ module internal UnixParkState =
             | None -> None
 
         match queueOf released with
-        | Some queue when queueOf taken <> Some queue -> Map.remove queue queues
+        | Some queue when queueOf taken <> Some queue -> PollQueueTable.remove queue queues
         | Some _
         | None -> queues
 

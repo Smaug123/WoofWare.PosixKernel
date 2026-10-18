@@ -60,6 +60,7 @@ module TestBind =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     let private withSocket

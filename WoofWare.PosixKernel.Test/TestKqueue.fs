@@ -335,6 +335,7 @@ module TestKqueue =
                     ReuseAddress = false
                     Options = SocketOptions.initial
                     Phase = SocketPhase.Idle
+                    Uid = UserId.root
                 }
 
             let fd, registry =
@@ -957,7 +958,8 @@ module TestKqueue =
 
     [<Test>]
     let ``a drain and an expired deadline together are refused, as is a signal beside either`` () : unit =
-        // Darwin answers whichever reached the sleeper first, which nothing records.
+        // Darwin answers whichever reached the sleeper first, which a wake that
+        // found both does not say.
         let k, system = createKqueue darwin
         let d, system = dup k system
         let kqueue = idOf k system

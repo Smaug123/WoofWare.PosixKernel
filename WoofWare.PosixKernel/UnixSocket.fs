@@ -1099,6 +1099,11 @@ module UnixSocket =
                 ReuseAddress = false
                 Options = SocketOptions.initial
                 Phase = SocketPhase.Idle
+                // Measured (`docs/probes/socket-creator-uid`, CREATE rows on
+                // Linux; `docs/probes/darwin-root/bind-uids.c`, CRED rows on
+                // Darwin): the effective uid at socket(2), which a later change
+                // of the process's credentials leaves alone.
+                Uid = system.Process.Credentials.EffectiveUser
             }
 
         fd,

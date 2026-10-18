@@ -96,6 +96,7 @@ module TestAccept =
             ReuseAddress = false
             Options = SocketOptions.initial
             Phase = phase
+            Uid = UserId.root
         }
 
     /// Enter `count` completed connections into the machine's connection table,

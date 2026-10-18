@@ -35,8 +35,8 @@ type internal TcpTimeWaitSysctls =
     /// Darwin's `net.inet.tcp.msl`, in nanoseconds: TIME_WAIT lasts twice it.
     | Darwin of msl : int64
 
-/// Why this kernel cannot say whether an end in TIME_WAIT stands in a port's
-/// or a four-tuple's way.
+/// Why this kernel cannot say whether a TCP end, in TIME_WAIT or with its
+/// socket closed, stands in a port's or a four-tuple's way.
 [<RequireQualifiedAccess>]
 type internal TimeWaitRefusal =
     /// The end at `local`, towards `remote`, entered TIME_WAIT `elapsed` ns
@@ -57,6 +57,12 @@ type internal TimeWaitRefusal =
     /// machine's first second of uptime, which a search never takes over;
     /// what such a connect does is unmeasured.
     | EnteredInFirstSecond of local : Ipv4Endpoint * remote : Ipv4Endpoint
+    /// Under Darwin, a `bind(2)` by a socket carrying `binder`, not root,
+    /// meets the end at `local` whose socket has closed carrying root's uid,
+    /// at addresses that are not both the wildcard. Beside an open socket of
+    /// root's, or a closed end of another uid that is not root's, such a bind
+    /// is refused; beside a closed end of root's it is unmeasured.
+    | RootClosedEnd of local : Ipv4Endpoint * binder : UserId
 
 [<RequireQualifiedAccess>]
 module internal TimeWaitRefusal =
@@ -71,6 +77,8 @@ module internal TimeWaitRefusal =
             $"a connect would take over the four-tuple of the connection end in TIME_WAIT at %s{Ipv4Endpoint.toString local}, towards %s{Ipv4Endpoint.toString remote}, which is not on loopback, and whether Linux's tcp_tw_reuse lets it off loopback is unmeasured."
         | TimeWaitRefusal.EnteredInFirstSecond (local, remote) ->
             $"a connect from a socket bound at %s{Ipv4Endpoint.toString local} would take over the four-tuple of a connection end that entered TIME_WAIT towards %s{Ipv4Endpoint.toString remote} in the machine's first second of uptime. Linux's search never takes such a four-tuple over (measured), and what a connect from a bound socket does is unmeasured."
+        | TimeWaitRefusal.RootClosedEnd (local, binder) ->
+            $"a bind by a socket of uid %O{binder} meets the connection end at %s{Ipv4Endpoint.toString local}, whose socket has closed carrying root's uid. Darwin refuses a bind beside an open socket of another uid, root's included, and beside a closed end of uid 502, at addresses that are not both the wildcard; beside a closed end of root's it is unmeasured: the one probe row that might have shown it is undecided, since which end of its connection was left holding the port is a race."
 
     /// Which exception a public entry point raises this refusal as.
     let kind (refusal : TimeWaitRefusal) : RefusalKind =
@@ -78,7 +86,8 @@ module internal TimeWaitRefusal =
         | TimeWaitRefusal.OutlivedWindow _
         | TimeWaitRefusal.NearReuseDelay _
         | TimeWaitRefusal.OffLoopback _
-        | TimeWaitRefusal.EnteredInFirstSecond _ -> RefusalKind.Unmodelled
+        | TimeWaitRefusal.EnteredInFirstSecond _
+        | TimeWaitRefusal.RootClosedEnd _ -> RefusalKind.Unmodelled
 
 /// Whether a holder stands in a port's or a four-tuple's way, once the time an
 /// end in TIME_WAIT has spent there is counted.
@@ -148,6 +157,20 @@ module internal PortClaim =
         | PortHold.Connected -> PortClaim.Connected
         | PortHold.GivenBack -> PortClaim.Released
 
+/// Whose a port holder is, as Darwin's `bind(2)` asks: the uid it carries
+/// (`SocketDescription.Uid`), and whether its socket is still open.
+[<RequireQualifiedAccess>]
+type internal PortHolderOwner =
+    /// An open socket, carrying `uid`.
+    | Socket of uid : UserId
+    /// A TCP end whose socket has closed, carrying the uid that socket
+    /// carried: an end still in its connection, or one in TIME_WAIT.
+    | ClosedSocket of uid : UserId
+    /// A TCP end with no socket that never had one of its own: a server end
+    /// in an accept queue, or an end a reset reached. It holds no port
+    /// (`PortClaim.Released`).
+    | NoSocket
+
 /// Something on the machine that holds a port, a TCP four-tuple, or both,
 /// against a `bind(2)`, a `listen(2)`, a search for an ephemeral port, or a
 /// `connect(2)`: a bound socket, or one end of a TCP connection, with or
@@ -168,6 +191,8 @@ type internal PortHolder =
         /// reset has reached the connection: it occupies the four-tuple from
         /// `Endpoint` to there.
         Peer : Ipv4Endpoint option
+        /// Whose it is.
+        Owner : PortHolderOwner
     }
 
 /// How each flavour judges a port, or a four-tuple, against one port holder:
@@ -213,15 +238,16 @@ module internal PortHolderRules =
         holder.Endpoint = source && holder.Peer = Some destination
 
     /// Whether `holder` stands in the way of `bind(2)` of `candidate` by a
-    /// socket carrying `SO_REUSEADDR` if `candidateReuse`: `EADDRINUSE`.
+    /// socket carrying `SO_REUSEADDR` if `candidateReuse`, where the two
+    /// carry one uid or the candidate's is root's: `EADDRINUSE`.
     ///
     /// Both flavours refuse two holders one port at overlapping addresses,
     /// and both relax that for `SO_REUSEADDR`, in opposite directions:
     /// Linux only while the holder is not listening and both carry the flag;
     /// Darwin, keyed on the candidate's flag alone, for addresses that differ,
-    /// or for the very address a holder with a peer holds. Neither asks the
-    /// two sockets' owners.
-    let bindMeets
+    /// or for the very address a holder with a peer holds. Darwin's rule for
+    /// two uids is `bindVerdict`'s.
+    let bindMeetsAtOneUid
         (flavour : SimulatedUnixFlavour)
         (holder : PortHolder)
         (candidate : Ipv4Endpoint)
@@ -250,12 +276,7 @@ module internal PortHolderRules =
             //
             // Measured on Darwin 27.0 as root (`docs/probes/darwin-root/bind-uids.c`):
             // the rule holds between sockets of one uid, and whenever the
-            // binder is root. A binder that is not root meeting a holder made by
-            // another uid, at overlapping addresses that are not both the
-            // wildcard, is EADDRINUSE even with SO_REUSEADDR. This kernel keeps
-            // no owner for a socket, so it answers that case as if the holder
-            // were the binder's own, which is wrong (`TestBindUidsMeasured`
-            // pins the rows).
+            // binder is root.
             match flavour with
             | SimulatedUnixFlavour.Linux ->
                 not (holder.ReuseAddress && candidateReuse)
@@ -286,7 +307,7 @@ module internal PortHolderRules =
         // measured, and a socket already listening is asked nothing on either
         // (`relisten-held.c` in docs/plans/2026-10-08-tcp-shutdown-linger).
         match flavour with
-        | SimulatedUnixFlavour.Linux -> bindMeets flavour holder bound reuse
+        | SimulatedUnixFlavour.Linux -> bindMeetsAtOneUid flavour holder bound reuse
         | SimulatedUnixFlavour.Darwin -> false
 
     /// Whether `holder` stands in the way of a search for an ephemeral port
@@ -317,7 +338,7 @@ module internal PortHolderRules =
         // sockets carrying it share a port. Darwin's is taken to ask the same
         // question, which is unmeasured.
         | SocketKind.Datagram
-        | SocketKind.SeqPacket -> bindMeets flavour holder candidate candidateReuse
+        | SocketKind.SeqPacket -> bindMeetsAtOneUid flavour holder candidate candidateReuse
 
     /// Whether `holder` stands in the way of a search for the port a
     /// connect's implicit bind takes, from `source` towards `destination`, for
@@ -354,7 +375,7 @@ module internal PortHolderRules =
             // and Hr, and every row of `docs/probes/connect-search-holders`).
             | SocketKind.Stream, SimulatedUnixFlavour.Darwin -> holdsAt holder source.Port
             | SocketKind.Datagram, _
-            | SocketKind.SeqPacket, _ -> bindMeets flavour holder source sourceReuse
+            | SocketKind.SeqPacket, _ -> bindMeetsAtOneUid flavour holder source sourceReuse
         )
 
     /// Whether `holder` makes Darwin drop a SYN towards `destination`, where
@@ -422,16 +443,56 @@ module internal PortHolderRules =
             | Some refusal -> PortVerdict.Undetermined refusal
             | None -> PortVerdict.InTheWay
 
-    /// `bindMeets`, once time is counted.
+    /// Whether `holder` stands in the way of `bind(2)` of `candidate` by a
+    /// socket carrying `SO_REUSEADDR` if `candidateReuse` and the uid
+    /// `candidateUid`, once time is counted.
+    ///
+    /// `bindMeetsAtOneUid`'s rule, and on Darwin one more: a candidate that is
+    /// not root's meeting a holder of another uid, an open socket or an end
+    /// whose socket has closed, at overlapping addresses that are not both the
+    /// wildcard, is in the way whatever either's `SO_REUSEADDR`. Where that
+    /// holder is a closed end of root's, the answer is undetermined
+    /// (`TimeWaitRefusal.RootClosedEnd`).
+    /// Linux asks no owner here: it compares uids only for `SO_REUSEPORT`,
+    /// which this kernel does not model.
     let bindVerdict
         (flavour : SimulatedUnixFlavour)
         (clock : TimeWaitClock)
         (holder : PortHolder)
         (candidate : Ipv4Endpoint)
         (candidateReuse : bool)
+        (candidateUid : UserId)
         : PortVerdict
         =
-        judged clock holder (bindMeets flavour holder candidate candidateReuse)
+        // Measured on Darwin 27.0 as root (`docs/probes/darwin-root/bind-uids.c`,
+        // 96 rows): a binder that is not root, beside an idle or listening
+        // socket of another uid, TCP or UDP, is EADDRINUSE with and without
+        // SO_REUSEADDR on either side unless both addresses are the wildcard;
+        // the uids compared are each socket's own, fixed when it was made
+        // (CRED rows). `docs/probes/socket-creator-uid` (ACCEPT rows): the
+        // same beside an accepted socket, and (control rows) beside that
+        // socket's end of uid 502 once it had closed, which alone could hold
+        // the port then. The control row beside an end of root's admitted the
+        // binder, but its two sockets closed at once, and `close-order.c`
+        // there finds the client's end alone left holding its address in about
+        // one close in six, freeing the port; so that row decides nothing.
+        let otherUid (uid : UserId) : bool =
+            match flavour with
+            | SimulatedUnixFlavour.Linux -> false
+            | SimulatedUnixFlavour.Darwin ->
+                candidateUid <> UserId.root
+                && uid <> candidateUid
+                && holdsOver holder candidate
+                && not (holder.Endpoint.Address = Ipv4Address.any && candidate.Address = Ipv4Address.any)
+
+        match holder.Owner with
+        | PortHolderOwner.ClosedSocket uid when otherUid uid && uid = UserId.root ->
+            PortVerdict.Undetermined (TimeWaitRefusal.RootClosedEnd (holder.Endpoint, candidateUid))
+        | PortHolderOwner.Socket uid
+        | PortHolderOwner.ClosedSocket uid when otherUid uid -> judged clock holder true
+        | PortHolderOwner.ClosedSocket _
+        | PortHolderOwner.Socket _
+        | PortHolderOwner.NoSocket -> judged clock holder (bindMeetsAtOneUid flavour holder candidate candidateReuse)
 
     /// `listenMeets`, once time is counted.
     let listenVerdict

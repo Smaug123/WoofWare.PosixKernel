@@ -765,7 +765,12 @@ module TestUnixWait =
                 parks
                 |> List.choose (fun parked ->
                     let stated = statedQueues linux pipeOf parked
-                    let derived = Parking.exclusiveQueuesOfPark system.Machine parked
+
+                    let derived =
+                        WakeCondition.ofPark parked
+                        |> WakeCondition.primitives
+                        |> List.choose (Parking.exclusiveQueueOf system.Machine)
+                        |> List.distinct
 
                     if derived <> stated then
                         Some $"%O{platform}: %A{parked} waits on %A{derived}, where wakes states %A{stated}"

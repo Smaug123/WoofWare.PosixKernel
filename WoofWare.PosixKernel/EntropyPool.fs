@@ -54,13 +54,22 @@ module EntropyDraw =
         count
 
     /// The `length` bytes of the draw that start `offset` bytes into it.
-    /// Both must be non-negative, and the range must lie within the draw.
+    /// Throws `ArgumentOutOfRangeException` unless both are non-negative and
+    /// the range lies within the draw.
     let range (offset : int) (length : int) (draw : EntropyDraw) : ImmutableArray<byte> =
         let (EntropyDraw (start, count)) = draw
 
-        if offset < 0 || length < 0 || int64 offset + int64 length > int64 count then
-            failwith
-                $"EntropyDraw.range: %d{length} bytes at offset %d{offset} do not lie within a draw of %d{count} bytes"
+        let outside (parameter : string) : exn =
+            Refusal.exceptionOf
+                "EntropyDraw.range"
+                (RefusalKind.OutOfRange parameter)
+                $"%d{length} bytes at offset %d{offset} do not lie within a draw of %d{count} bytes"
+
+        if offset < 0 || offset > count then
+            raise (outside "offset")
+
+        if length < 0 || length > count - offset then
+            raise (outside "length")
 
         let bytes = Array.zeroCreate<byte> length
         // Output k of the draw has state `start + (k + 1) * Gamma`, and supplies

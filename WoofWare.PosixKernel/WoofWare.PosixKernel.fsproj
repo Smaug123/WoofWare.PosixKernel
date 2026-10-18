@@ -70,6 +70,7 @@
         <Compile Include="WakePrimitive.fs" />
         <Compile Include="InterruptedCall.fs" />
         <Compile Include="UnixThread.fs" />
+        <Compile Include="PollQueueTable.fs" />
         <Compile Include="Sockaddr.fs" />
         <Compile Include="MessageFlag.fs" />
         <Compile Include="NewNameRules.fs" />

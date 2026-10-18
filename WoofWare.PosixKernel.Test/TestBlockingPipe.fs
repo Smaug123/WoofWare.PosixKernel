@@ -163,6 +163,13 @@ module TestBlockingPipe =
             Ordinal : int
             /// The client has woken it, and not yet finished it.
             Woken : bool
+            /// A signal was pending for it as it was woken.
+            WokenBySignal : bool
+            /// The far end had no descriptor open as it was woken.
+            WokenByClose : bool
+            /// The pipe held bytes for it to read, or room for it to write, as
+            /// it was woken: on Linux, it holds the queue of its kind.
+            WokenByOwn : bool
             /// How many reads had taken bytes when it parked.
             ReadsSeen : int
         }
@@ -228,6 +235,9 @@ module TestBlockingPipe =
                         Through = Some fd
                         Ordinal = r.NextOrdinal
                         Woken = false
+                        WokenBySignal = false
+                        WokenByClose = false
+                        WokenByOwn = false
                         ReadsSeen = r.Reads
                     }
                     r.Parks
@@ -344,11 +354,13 @@ module TestBlockingPipe =
     let private referenceWakes (r : Reference) : int list =
         let asleep = r.Parks |> Map.toList |> List.filter (fun (_, park) -> not park.Woken)
 
+        // A woken sleeper stands for what woke it: bytes or room, but not a
+        // signal or a close alone (`docs/probes/first-wake`).
         let readerWoken =
             r.Parks
             |> Map.exists (fun _ park ->
                 match park.Call with
-                | Call.Reading _ -> park.Woken
+                | Call.Reading _ -> park.Woken && park.WokenByOwn
                 | Call.Writing _ -> false
             )
 
@@ -356,12 +368,13 @@ module TestBlockingPipe =
             r.Parks
             |> Map.exists (fun _ park ->
                 match park.Call with
-                | Call.Writing _ -> park.Woken
+                | Call.Writing _ -> park.Woken && park.WokenByOwn
                 | Call.Reading _ -> false
             )
 
         // On Linux the one sleeper that bytes or room wake: the first to park
-        // of those it would satisfy, unless one of its kind is woken already.
+        // of those it would satisfy, unless one of its kind woken by bytes or
+        // room has yet to finish.
         let first (wants : Call -> bool) (blocked : bool) : int option =
             if blocked || not r.Linux then
                 None
@@ -444,8 +457,10 @@ module TestBlockingPipe =
         | Call.Writing _ when park.Through.IsNone -> Seen.Failed UnixError.EPIPE, answered thread r
         | Call.Reading (_, count, mapped) ->
             if held r.Buffer > 0 || not (endOpen PipeEnd.Write r) then
+                // A pending signal beats bytes and end of file on Darwin
+                // (`docs/probes/first-wake`).
                 if signalled && not r.Linux then
-                    Seen.Refused, r
+                    interrupted r, answered thread r
                 elif held r.Buffer = 0 then
                     Seen.ReadBytes [], answered thread r
                 elif not mapped then
@@ -470,15 +485,26 @@ module TestBlockingPipe =
             let count = List.length payload
 
             if not (endOpen PipeEnd.Read r) then
+                // On Darwin the close waits for the writer to leave its call,
+                // so what woke it decides; woken by room, or by both, nothing
+                // says which came first (`docs/probes/first-wake`).
                 if signalled && not r.Linux then
-                    Seen.Refused, r
+                    match park.WokenByClose, park.WokenBySignal with
+                    | true, false -> Seen.Failed UnixError.EPIPE, answered thread r
+                    | false, true when written > 0 -> Seen.Wrote (int64 written), answered thread r
+                    | false, true -> interrupted r, answered thread r
+                    | _ -> Seen.Refused, r
                 elif r.Linux && written > 0 then
                     Seen.Wrote (int64 written), answered thread r
                 else
                     Seen.Failed UnixError.EPIPE, answered thread r
             elif wouldResume payload written r > 0 then
-                if signalled && not r.Linux then
-                    Seen.Refused, r
+                // A pending signal beats room on Darwin
+                // (`docs/probes/first-wake`).
+                if signalled && not r.Linux && written > 0 then
+                    Seen.Wrote (int64 written), answered thread r
+                elif signalled && not r.Linux then
+                    interrupted r, answered thread r
                 elif not mapped then
                     Seen.Failed UnixError.EFAULT, answered thread r
                 else
@@ -1162,6 +1188,17 @@ module TestBlockingPipe =
                                         thread
                                         { parks.[thread] with
                                             Woken = true
+                                            WokenBySignal = Set.contains thread reference.Signalled
+                                            WokenByClose =
+                                                match parks.[thread].Call with
+                                                | Call.Reading _ -> not (endOpen PipeEnd.Write reference)
+                                                | Call.Writing _ -> not (endOpen PipeEnd.Read reference)
+                                            WokenByOwn =
+                                                parks.[thread].Through.IsSome
+                                                && match parks.[thread].Call with
+                                                   | Call.Reading _ -> held reference.Buffer > 0
+                                                   | Call.Writing (_, payload, written, _) ->
+                                                       wouldResume payload written reference > 0
                                         }
                                         parks
                                 )
@@ -1329,7 +1366,6 @@ module TestBlockingPipe =
                 "Linux close: the last descriptor onto a sleeping call's description"
                 "Linux finish: the call's return releases its description"
                 "Linux wake: fewer than could proceed"
-                "Darwin finish read: refused"
                 "Darwin finish write: refused"
                 // A write with nothing in, signalled once its description has
                 // become non-blocking (`nonBlockingInterruptedWrite`).
@@ -1508,9 +1544,17 @@ module TestBlockingPipe =
             | Some false
             | None -> Seen.Failed UnixError.EINTR
 
-        // Darwin answers whichever reached the sleeper first (section J).
+        // On Darwin a pending signal beats bytes, end of file and room
+        // (`docs/probes/first-wake`); a close of the read end waits for the
+        // writer to leave its call, so what woke the writer decides, and a
+        // wake that found both the close and the signal says nothing of which
+        // came first.
         if signalled && change <> Change.Nothing && not linux then
-            Seen.Refused
+            match sleep, change with
+            | Sleep.WritesIntoFull _, Change.OtherEndCloses
+            | Sleep.WritesPartly, Change.OtherEndCloses -> Seen.Refused
+            | Sleep.WritesPartly, _ -> Seen.Wrote 65536L
+            | _ -> interrupted
         else
 
         match sleep, change with

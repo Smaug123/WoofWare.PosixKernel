@@ -407,6 +407,10 @@ module SimulatedUnixPlatform =
                 Release = release
             }
 
+    /// `create`, throwing for what it refuses, with `context` in the message:
+    /// `ArgumentException` for a release string no `uname -r` could print, and
+    /// `UnmodelledException` for a combination of kernel, architecture and
+    /// page size that nobody has measured.
     let createOrFail
         (context : string)
         (kernel : SimulatedUnixKernel)
@@ -417,7 +421,13 @@ module SimulatedUnixPlatform =
         =
         match create kernel architecture pageSize release with
         | Ok platform -> platform
-        | Error error -> failwith $"%s{context}: %s{describeError error}"
+        | Error error ->
+            let kind =
+                match error with
+                | SimulatedUnixPlatformError.Release _ -> RefusalKind.Contradictory "release"
+                | SimulatedUnixPlatformError.UnmeasuredKernel _ -> RefusalKind.Unmodelled
+
+            raise (Refusal.exceptionOf context kind (describeError error))
 
     /// 64-bit x86 Linux with 4 KiB pages, at a kernel release a real machine was running (a
     /// GitHub Actions Ubuntu runner's): the release this reports, and the
@@ -501,22 +511,31 @@ module SimulatedUnixPlatform =
     /// Re-check the invariant of a value that may not have come from `create`.
     /// See `FileName.assertValid`: the only value this can reject is
     /// `Unchecked.defaultof` / C# `default`, whose null release would otherwise
-    /// be handed to a process as its `uname -r`.
+    /// be handed to a process as its `uname -r`. That value is null, and
+    /// throws `ArgumentNullException`, with `context` in the message.
     let assertValid (context : string) (platform : SimulatedUnixPlatform) : SimulatedUnixPlatform =
         // A record is a reference type, so the forged value is `null` itself
         // rather than a record with a null field — and reading `Flavour` off it
         // would throw a `NullReferenceException` naming nothing useful.
         match box platform with
         | null ->
-            failwith
-                $"%s{context}: the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Null "platform")
+                    "the platform is null, which it can only be if it came from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create, or use the linuxX64 / linuxArm64 / macOsArm64 presets."
+            )
         | _ ->
 
         match create platform.Kernel platform.Architecture platform.PageSize platform.Release with
         | Ok _ -> platform
         | Error error ->
-            failwith
-                $"%s{context}: %s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "platform")
+                    $"%s{describeError error}. A SimulatedUnixPlatform that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with SimulatedUnixPlatform.create instead."
+            )
 
     /// Whose `<errno.h>` numbering this platform reports, for the errors where
     /// the two Unixes disagree.
@@ -745,6 +764,8 @@ module SimulatedUnixPlatform =
         // every caller standing over every mode and every kind of ID named;
         // Darwin 27.0 at uid 501 for its owner over every mode it could set,
         // and for a non-owner on other users' inodes. Its output is beside it.
+        // Darwin's root, and uid 501 against inodes with set-ID bits, by
+        // `docs/probes/darwin-root/root-files.c` (CHOWN).
         match flavour platform with
         | SimulatedUnixFlavour.Linux -> OwnerChangeRule.ClearsSetIdFromNonDirectories
         | SimulatedUnixFlavour.Darwin -> OwnerChangeRule.ClearsSetIdWhenAnIdIsNamed
@@ -1623,13 +1644,24 @@ module SimulatedUnixPlatform =
     /// the family field `sockaddrFamilyField` places: as many as it is wide, in
     /// the machine's own byte order.
     ///
-    /// Any other number of bytes is not a family field, and is refused.
+    /// Any other number of bytes is not a family field: it, and the default
+    /// `ImmutableArray`, throw `ArgumentException`.
     let decodeSockaddrFamily (platform : SimulatedUnixPlatform) (field : ImmutableArray<byte>) : int =
         let width = SockaddrFamilyField.width (sockaddrFamilyField platform)
 
         if field.IsDefault || field.Length <> width then
-            failwith
-                $"SimulatedUnixPlatform.decodeSockaddrFamily: this platform's family field is %d{width} bytes wide, and the caller passed %d{(if field.IsDefault then 0 else field.Length)} (this is a bug in the caller)."
+            let passed =
+                if field.IsDefault then
+                    "the default ImmutableArray"
+                else
+                    $"%d{field.Length} bytes"
+
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeSockaddrFamily"
+                    (RefusalKind.Contradictory "field")
+                    $"this platform's family field is %d{width} bytes wide, and the caller passed %s{passed}."
+            )
 
         match width with
         | 1 -> int field.[0]
@@ -1671,10 +1703,28 @@ module SimulatedUnixPlatform =
 
     /// The C `int` in the four bytes of `bytes` from `offset`, as `encodeCInt`
     /// lays one out.
+    ///
+    /// Throws `ArgumentException` if `bytes` is the default `ImmutableArray`,
+    /// and `ArgumentOutOfRangeException` if it holds no four bytes from
+    /// `offset`.
     let decodeCInt (platform : SimulatedUnixPlatform) (bytes : ImmutableArray<byte>) (offset : int) : int =
-        if bytes.IsDefault || offset < 0 || bytes.Length < offset + 4 then
-            failwith
-                $"SimulatedUnixPlatform.decodeCInt: no four bytes at offset %d{offset} of %d{(if bytes.IsDefault then 0 else bytes.Length)} (this is a bug in the caller)."
+        if bytes.IsDefault then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.Contradictory "bytes")
+                    "bytes is the default ImmutableArray, whose underlying array is null."
+            )
+
+        // Subtracted rather than added, so that an offset near Int32.MaxValue
+        // does not wrap onto one that passes.
+        if offset < 0 || offset > bytes.Length - 4 then
+            raise (
+                Refusal.exceptionOf
+                    "SimulatedUnixPlatform.decodeCInt"
+                    (RefusalKind.OutOfRange "offset")
+                    $"no four bytes at offset %d{offset} of %d{bytes.Length}."
+            )
 
         let span = bytes.AsSpan().Slice (offset, 4)
 

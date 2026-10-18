@@ -887,6 +887,9 @@ type UnixSystemDefect<'Thread> =
     /// signal. A real thread takes a signal deliverable to it before it runs
     /// more of its own code.
     | SignalDeliverableWithoutOwedReturn of thread : Caller<'Thread> * signal : Signal
+    /// The machine's record of the sleeping Darwin polls' kqueues registering
+    /// through each descriptor of each process is not what the kqueues say.
+    | StalePollQueueIndex
 
 [<RequireQualifiedAccess>]
 module UnixSystemDefect =
@@ -1320,7 +1323,7 @@ module UnixSystem =
         (system : UnixSystem<'Thread, 'Handler>)
         : PollQueue option
         =
-        Map.tryFind queue system.Machine.PollQueues
+        PollQueueTable.tryFind queue system.Machine.PollQueues
 
     /// The pipe `pipeId` names. Loudly partial, as `UnixMachineState.pipe` is.
     let internal pipe<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -2597,7 +2600,7 @@ module UnixSystem =
                 |> List.countBy id
                 |> Map.ofList
 
-            machine.PollQueues
+            PollQueueTable.all machine.PollQueues
             |> Map.toList
             |> List.choose (fun (queue, _) ->
                 match Map.tryFind queue parks |> Option.defaultValue 0 with
@@ -2606,10 +2609,16 @@ module UnixSystem =
             )
 
         let pollQueueFreshness =
-            machine.PollQueues
+            PollQueueTable.all machine.PollQueues
             |> Map.toList
             |> List.filter (fun (queue, _) -> queue >= machine.NextPollQueueId)
             |> List.map (fun (queue, _) -> UnixSystemDefect.PollQueueIdNotFresh (machine.NextPollQueueId, queue))
+
+        let pollQueueIndex =
+            if PollQueueTable.indexFresh machine.PollQueues then
+                []
+            else
+                [ UnixSystemDefect.StalePollQueueIndex ]
 
 
         let parkOrdinals =
@@ -3132,6 +3141,7 @@ module UnixSystem =
         @ holdCounts
         @ pollQueueParks
         @ pollQueueFreshness
+        @ pollQueueIndex
         @ parkOrdinalFreshness
         @ parkOrdinalDuplicates
         @ bindings
@@ -3414,7 +3424,7 @@ module UnixSystem =
                                 target @ rebound
                     )
                 | Some (ParkedSyscall.KqueuePoll poll) ->
-                    match Map.tryFind poll.Queue system.Machine.PollQueues with
+                    match PollQueueTable.tryFind poll.Queue system.Machine.PollQueues with
                     | None -> [ UnixSystemDefect.ParkedOnAbsentPollQueue (caller thread, poll.Queue) ]
                     | Some queue when queue.Owner <> system.Process.ProcessId ->
                         [
@@ -4123,6 +4133,9 @@ module UnixSystem =
     /// depth rather than of its kernel. All of these are configuration a
     /// caller overrides with the setters in `UnixBootImage`, which is also how
     /// a caller supplies a non-empty filesystem or a different address list.
+    ///
+    /// Throws `ArgumentNullException` for a null `platform`, which only
+    /// `Unchecked.defaultof` or C# `default` makes.
     let initial<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
         (platform : SimulatedUnixPlatform)
         : UnixBootImage<'Thread, 'Handler>
@@ -4178,7 +4191,7 @@ module UnixSystem =
                     NextConnectionId = ConnectionId 0L
                     NextEventRegistrationOrdinal = 0L
                     NextParkOrdinal = ParkOrdinal 0L
-                    PollQueues = Map.empty
+                    PollQueues = PollQueueTable.empty
                     NextPollQueueId = PollQueueId 0L
                     ThreadIds = threadIds
                     ProcessIds = processIds

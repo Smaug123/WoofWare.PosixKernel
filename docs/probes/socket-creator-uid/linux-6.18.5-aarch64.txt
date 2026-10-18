@@ -1,0 +1,9 @@
+Linux 6.18.5 aarch64
+# socket-creator-uid: Linux
+ACCEPT	listener=u1000	acceptor=u1001	client=u1002	proc-uid	listening=1000	accepted=1001
+ACCEPT	listener=root	acceptor=u1001	client=u1002	proc-uid	listening=0	accepted=1001
+ACCEPT	listener=u1000	acceptor=root	client=u1002	proc-uid	listening=1000	accepted=0
+CREATE	made=u1000	later=u1001	proc-uid=1000
+CREATE	made=u1000	later=root	proc-uid=1000
+CREATE	made=root	later=u1000	proc-uid=0
+DONE	failures=0

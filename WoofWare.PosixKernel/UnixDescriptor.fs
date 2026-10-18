@@ -1597,12 +1597,14 @@ module UnixDescriptor =
         // the description, which goes too if no descriptor names it any more
         // (`open-file-references.c` sections D and F: the lock it was granted
         // goes with it).
-        let finished () =
-            let unparked = (UnixParkState.unpark thread advanced)
+        let finishedFrom (system : ProcessView<'Thread, 'Handler>) : ProcessView<'Thread, 'Handler> =
+            let unparked = UnixParkState.unpark thread system
 
             // A socket has one description, so no other description's lock can
             // obstruct an `flock` of one, and such a call never sleeps.
             ObjectLifetime.releaseUnreferencedUnrefusable "UnixDescriptor.flockAcquire" [ requester ] unparked
+
+        let finished () = finishedFrom advanced
 
         match error with
         | Some FlockError.BadFd ->
@@ -1628,11 +1630,17 @@ module UnixDescriptor =
                 Ok (SyscallOutcome.WouldBlock (WakeCondition.ofPark parked), Parking.parkWaiting thread parked advanced)
         | None ->
             // Measured on Linux 6.18.5 (`signal-interrupt-requeue.c`, section
-            // D): a lock that can be granted beats a pending signal. Darwin
-            // answers whichever came first, which `beforeCompleting` refuses.
+            // D): a lock that can be granted beats a pending signal. On Darwin
+            // a pending signal beats it (`SyscallInterruption.beforeCompleting`),
+            // and the lock is not taken.
             match SyscallInterruption.beforeCompleting thread advanced with
             | Error refusal -> Error (FLockRefusal.Interruption refusal)
-            | Ok () -> Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), finished ())
+            | Ok SyscallInterruption.Completion.Completes ->
+                Ok (SyscallOutcome.Answered (SyscallAnswer.Completed 0L), finished ())
+            | Ok (SyscallInterruption.Completion.Interrupted interruption) ->
+                // Darwin refuses a conversion (`DarwinConversion`), so the
+                // description held no lock to have dropped, and takes none.
+                Ok (SyscallOutcome.Interrupted, OwedReturns.interrupt thread interruption (finishedFrom system))
 
     /// `flockAcquire`, with a refusal answered as the `Error` rather than raised.
     let internal tryFlockAcquire<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
@@ -1667,8 +1675,9 @@ module UnixDescriptor =
     /// an edge one: a release wakes every waiter and they race, so all but one
     /// of them find it gone.
     ///
-    /// When the lock cannot be granted and the thread would take a signal as
-    /// it returned to user mode, the signal interrupts the call
+    /// When the lock cannot be granted, or under Darwin even when it can, and
+    /// the thread would take a signal as it returned to user mode, the signal
+    /// interrupts the call
     /// (`SyscallOutcome.Interrupted`): the park is cleared, a conversion's old
     /// lock stays dropped, as it is while the call sleeps, and the thread's
     /// return to user mode (`UnixSignal.onReturnToUser`) says whether the call
@@ -1998,12 +2007,24 @@ module UnixDescriptor =
             (terminalAttributesIn fd)
             system
 
+    /// Which of the closing process's parked calls a close looks at.
+    [<RequireQualifiedAccess>]
+    type internal ParksExamined =
+        /// Those holding the description the closed descriptor names
+        /// (`ParkedSyscall.descriptions`), which are the only ones a close can
+        /// act on, found without visiting the threads when no call holds it.
+        | Holding
+        /// Every one: what `Holding` must answer the same as.
+        | Every
+
     // `FileDescriptorRegistry.dropDescriptor` cannot do this itself: the
     // socket table is the machine's rather than the process's, whether an
     // inode is still named is a question about the filesystem, and what a
     // sleeping call holds is the thread table's.
-    /// `tryClose` once `Entry` has admitted its caller.
-    let private tryCloseIn<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+    /// `tryClose` once `Entry` has admitted its caller, looking at the parked
+    /// calls `examined` names.
+    let internal tryCloseExamining<'Thread, 'Handler when 'Thread : comparison and 'Handler : equality>
+        (examined : ParksExamined)
         (fd : int)
         (system : ProcessView<'Thread, 'Handler>)
         : Result<SyscallAnswer * ProcessView<'Thread, 'Handler>, CloseRefusal<'Thread>>
@@ -2012,10 +2033,35 @@ module UnixDescriptor =
         | None -> Ok (SyscallAnswer.Failed UnixError.EBADF, system)
         | Some (closingId, closing) ->
 
-        let parks =
+        let parked () : ('Thread * ParkedSyscall) list =
             system.Threads
             |> Map.toList
             |> List.choose (fun (thread, state) -> state.Parked |> Option.map (fun park -> thread, park.Syscall))
+
+        // Every park this close acts on holds the closing description. A
+        // sleep entered through `fd` holds the description it names
+        // (`SleepTarget.Waiting`), as does an flock, `epoll_wait`, `kevent` or
+        // inotify read of it. A Linux poll watching `fd` holds the description
+        // it found there, which is the one `fd` names, since a park whose
+        // watched descriptor names another is a defect
+        // (`UnixSystemDefect.ParkedPollDescriptorRebound`). A Darwin poll
+        // holds nothing, and what a close does to it goes through its kqueue
+        // (`KqueuePoll.dropRegistrationsThrough`), not through `parks`. The
+        // open file table counts the holds (`OpenFileTable.holdCount`, which
+        // `UnixSystem.checkInvariants` keeps equal to the parks'), so with
+        // none there is no park to look at, and no thread to visit.
+        let parks : ('Thread * ParkedSyscall) list =
+            match examined with
+            | ParksExamined.Every -> parked ()
+            | ParksExamined.Holding ->
+                match OpenFileTable.holdCount closingId system.Machine.OpenFiles with
+                | Some 0 -> []
+                | Some _ ->
+                    parked ()
+                    |> List.filter (fun (_, parked) -> List.contains closingId (ParkedSyscall.descriptions parked))
+                | None ->
+                    failwith
+                        $"UnixDescriptor.close: fd %d{fd} names open file description %O{closingId}, which the open file table does not hold (this is a bug in this library)."
 
         let darwin =
             match SimulatedUnixPlatform.flavour system.Machine.UnixPlatform with
@@ -2287,7 +2333,10 @@ module UnixDescriptor =
             | ParkedSyscall.InotifyRead _
             // Reserved: nothing parks a thread in it yet. Darwin's close of a
             // selected descriptor will end it, with EBADF (measured,
-            // `docs/probes/select-park` row E1); Linux's leaves it asleep.
+            // `docs/probes/select-park` row E1); Linux's leaves it asleep. A
+            // Darwin select holds nothing (`ParkedSyscall.descriptions`), so
+            // `parks` never shows it here: ending it needs another way to find
+            // the selects watching `fd`.
             | ParkedSyscall.Select _
             // Reserved too. Darwin's close will end a receive, with EBADF
             // (measured, `docs/probes/datagram-park` row R3); Linux's leaves it
@@ -2608,7 +2657,7 @@ module UnixDescriptor =
             CallerRequirement.Running
             caller
             (Shape.result Shape.withSystem)
-            (tryCloseIn fd)
+            (tryCloseExamining ParksExamined.Holding fd)
             system
 
     /// `close(2)`: drop `fd` from the process's table, together with the
@@ -2965,7 +3014,7 @@ module UnixDescriptor =
             match FileDescriptorRegistry.tryFindId newFd registry with
             | None -> Ok system
             | Some _ ->
-                match tryCloseIn newFd system with
+                match tryCloseExamining ParksExamined.Holding newFd system with
                 | Error refusal -> Error (Dup2Refusal.ClosingTarget refusal)
                 | Ok (SyscallAnswer.Completed _, system) -> Ok system
                 | Ok (SyscallAnswer.Failed error, _) ->

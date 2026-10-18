@@ -291,19 +291,5 @@ module internal KqueuePoll =
         : UnixMachineState
         =
         { machine with
-            PollQueues =
-                machine.PollQueues
-                |> Map.map (fun _ queue ->
-                    if
-                        queue.Owner = owner
-                        && queue.Registrations |> Map.exists (fun (registered, _) _ -> registered = fd)
-                    then
-                        { queue with
-                            Registrations =
-                                queue.Registrations |> Map.filter (fun (registered, _) _ -> registered <> fd)
-                            Active = queue.Active |> List.filter (fun (active, _) -> active <> fd)
-                        }
-                    else
-                        queue
-                )
+            PollQueues = PollQueueTable.dropRegistrationsThrough owner fd machine.PollQueues
         }

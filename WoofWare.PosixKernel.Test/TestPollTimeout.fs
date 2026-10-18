@@ -81,6 +81,7 @@ module TestPollTimeout =
                             Queue = []
                             Drained = false
                         }
+                Uid = UserId.root
             }
 
         let fd, registry =

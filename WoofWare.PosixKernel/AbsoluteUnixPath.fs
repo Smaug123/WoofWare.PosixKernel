@@ -139,7 +139,9 @@ module AbsoluteUnixPath =
     /// Never reports `ContainsNul` or `UnpairedSurrogate`: a `UnixByteString`
     /// can contain neither.
     let ofByteString (candidate : UnixByteString) : Result<AbsoluteUnixPath, AbsoluteUnixPathError> =
-        let candidate = UnixByteString.assertValid "AbsoluteUnixPath.ofByteString" candidate
+        let candidate =
+            UnixByteString.assertValidFor "AbsoluteUnixPath.ofByteString" "candidate" candidate
+
         let bytes = UnixByteString.toBytes candidate
 
         if bytes.Length = 0 then
@@ -191,6 +193,27 @@ module AbsoluteUnixPath =
         | AbsoluteUnixPathError.UnresolvedSegment (segment, index) ->
             $"path contains an unresolved \"%s{segment}\" segment at byte index %d{index}; getcwd returns fully-resolved paths"
 
+    /// `assertValid`, naming `operation` as the function and `parameter` as its
+    /// parameter that the path was passed as.
+    let internal assertValidFor (operation : string) (parameter : string) (path : AbsoluteUnixPath) : AbsoluteUnixPath =
+        // The only value this can actually reject is `Unchecked.defaultof` / C# `default`,
+        // whose payload is a forged `UnixByteString`; the `private` on the union case, plus
+        // the restrictions enforced by the constructors, stops every other route.
+        match path with
+        | AbsoluteUnixPath raw ->
+
+        let raw = UnixByteString.assertValidFor operation parameter raw
+
+        match ofByteString raw with
+        | Ok _ -> path
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    operation
+                    (RefusalKind.Contradictory parameter)
+                    $"%s{describe error}. An AbsoluteUnixPath that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with AbsoluteUnixPath.parse instead."
+            )
+
     /// <summary>
     /// Re-check the invariant of a value that may not have come from <c>parse</c>,
     /// throwing (naming <c>context</c> in the error) if it does not hold.
@@ -200,26 +223,21 @@ module AbsoluteUnixPath =
     /// The <c>parse</c> constructor already ensures the invariant holds, so there's
     /// no need to call this if you know the input came from <c>parse</c>.
     /// </remarks>
-    let assertValid (context : string) (path : AbsoluteUnixPath) : AbsoluteUnixPath =
-        // The only value this can actually reject is `Unchecked.defaultof` / C# `default`,
-        // whose payload is a forged `UnixByteString`; the `private` on the union case, plus
-        // the restrictions enforced by the constructors, stops every other route.
-        match path with
-        | AbsoluteUnixPath raw ->
-
-        let raw = UnixByteString.assertValid context raw
-
-        match ofByteString raw with
-        | Ok _ -> path
-        | Error error ->
-            failwith
-                $"%s{context}: %s{describe error}. An AbsoluteUnixPath that fails its own invariant can only have come from `Unchecked.defaultof` or C# `default`; construct one with AbsoluteUnixPath.parse instead."
+    /// <exception cref="T:System.ArgumentException"><c>path</c> is a forged value, such as <c>Unchecked.defaultof</c>.</exception>
+    let assertValid (context : string) (path : AbsoluteUnixPath) : AbsoluteUnixPath = assertValidFor context "path" path
 
     /// <summary>Parse a string as an absolute path, or throw if it's not valid.</summary>
     /// <remarks>
     /// This is <c>AbsoluteUnixPath.parse</c>, except it throws instead of returning an error description.
     /// </remarks>
+    /// <exception cref="T:System.ArgumentException"><c>candidate</c> is not an absolute path. The message starts with <c>context</c>.</exception>
     let parseOrFail (context : string) (candidate : string) : AbsoluteUnixPath =
         match parse candidate with
         | Ok path -> path
-        | Error error -> failwith $"%s{context}: %s{describe error} (got %s{candidate})"
+        | Error error ->
+            raise (
+                Refusal.exceptionOf
+                    context
+                    (RefusalKind.Contradictory "candidate")
+                    $"%s{describe error} (got %s{candidate})"
+            )
