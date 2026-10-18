@@ -43,6 +43,7 @@ module TestDeviceDescriptors =
             CloseOnExec = false
             Synchronous = false
             DataSynchronous = false
+            NonBlocking = false
             Directory = false
         }
 
@@ -288,6 +289,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     CharacterDevice.Null
@@ -296,6 +298,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted file)
                     file
                     CharacterDevice.Null
@@ -304,6 +307,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     FileAccessMode.ReadOnly
@@ -316,6 +320,7 @@ module TestDeviceDescriptors =
         FileDescriptorRegistry.openCharacterDevice
             (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
             (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+            false
             (ForgedName.ofInode booted urandom)
             urandom
             CharacterDevice.URandom
@@ -346,6 +351,7 @@ module TestDeviceDescriptors =
                 FileDescriptorRegistry.openCharacterDevice
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform booted)))
+                    false
                     (ForgedName.ofInode booted urandom)
                     urandom
                     device

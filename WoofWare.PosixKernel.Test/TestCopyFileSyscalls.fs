@@ -151,6 +151,7 @@ module TestCopyFileSyscalls =
             FileDescriptorRegistry.openFile
                 (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                 (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                false
                 (ForgedName.ofInode system (inodeAt system fileName))
                 (inodeAt system fileName)
                 access
@@ -206,6 +207,7 @@ module TestCopyFileSyscalls =
                 FileDescriptorRegistry.openDirectory
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system (VirtualFileSystem.root (UnixSystem.fileSystem system)))
                     (VirtualFileSystem.root (UnixSystem.fileSystem system))
                     (Lone.fileDescriptors system)
@@ -1183,6 +1185,7 @@ module TestCopyFileRangeLarge =
                 FileDescriptorRegistry.openFile
                     (DescriptorFlags.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
                     (OpenFileStatus.none (SimulatedUnixPlatform.flavour (UnixSystem.platform system)))
+                    false
                     (ForgedName.ofInode system inode)
                     inode
                     FileAccessMode.WriteOnly

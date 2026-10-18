@@ -735,6 +735,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -1214,6 +1215,7 @@ module TestCrossProcess =
                             CloseOnExec = false
                             Synchronous = false
                             DataSynchronous = false
+                            NonBlocking = false
                             Directory = false
                         }
                         0o644
@@ -1798,6 +1800,7 @@ module TestCrossProcess =
                                     CloseOnExec = false
                                     Synchronous = false
                                     DataSynchronous = false
+                                    NonBlocking = false
                                     Directory = false
                                 }
                                 0o644
@@ -1961,6 +1964,7 @@ module TestCrossProcess =
                     CloseOnExec = false
                     Synchronous = false
                     DataSynchronous = false
+                    NonBlocking = false
                     Directory = false
                 }
                 0o644
