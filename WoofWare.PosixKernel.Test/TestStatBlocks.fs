@@ -18,6 +18,9 @@ type FileAllocationOp =
     | Write of offset : int64 * count : int
     /// `ftruncate(2)` to `length`.
     | Truncate of length : int64
+    /// `pwrite(2)` of `count` bytes at `offset` from a NULL buffer, which
+    /// faults as it is copied and answers EFAULT.
+    | FaultedWrite of offset : int64 * count : int
 
 /// `st_blksize` and `st_blocks` as `stat` and `fstat` report them: the rows
 /// `stat-blocks.c` measured (`docs/probes/stat-blocks/`), replayed on both
@@ -87,6 +90,19 @@ module TestStatBlocks =
             match UnixDescriptor.tryFtruncate (Callers.leader system) fd length system with
             | Ok (SyscallAnswer.Completed _, system) -> system
             | other -> failwith $"ftruncate to %d{length}: %A{other}"
+        | FileAllocationOp.FaultedWrite (offset, count) ->
+            match
+                UnixReadWrite.tryPwrite
+                    (Callers.leader system)
+                    fd
+                    (UserBuffer.Unmapped 0UL)
+                    (uint64 count)
+                    offset
+                    system
+                |> CallProgress.resumeWith (fun paused -> UnixReadWrite.tryPwriteWithBytes ImmutableArray.Empty paused)
+            with
+            | Ok (WriteAnswer.Failed UnixError.EFAULT, system) -> system
+            | other -> failwith $"pwrite of %d{count} at %d{offset} from NULL: %A{other}"
 
     let private inodeOf (fd : int) (system : UnixSystem<int, string>) : InodeNumber =
         match FileDescriptorRegistry.tryFindTarget fd (Lone.fileDescriptors system) with
@@ -107,10 +123,12 @@ module TestStatBlocks =
     // ----------------------------------------------------------- reference
 
     /// The length a history leaves the file, and the indices of the 4096-byte
-    /// pages it leaves holding data: a write of at least a byte fills every
-    /// page it touches, and a truncation empties every page wholly past its
-    /// new end.
-    let private reference (ops : FileAllocationOp list) : int64 * Set<int64> =
+    /// pages it leaves allocated: a write of at least a byte fills every page
+    /// it touches; a truncation frees every page from its new end on, even to
+    /// the length the file had; and a faulted write makes the file at least
+    /// its offset long and, on tmpfs, allocates the page holding the offset,
+    /// even one that starts at the end of the file.
+    let private reference (flavour : SimulatedUnixFlavour) (ops : FileAllocationOp list) : int64 * Set<int64> =
         ((0L, Set.empty), ops)
         ||> List.fold (fun (length, held) op ->
             match op with
@@ -121,6 +139,10 @@ module TestStatBlocks =
                 max length last, Set.union held touched
             | FileAllocationOp.Truncate newLength ->
                 newLength, held |> Set.filter (fun index -> index * 4096L < newLength)
+            | FileAllocationOp.FaultedWrite (offset, _) ->
+                match flavour with
+                | SimulatedUnixFlavour.Linux -> max length offset, Set.add (offset / 4096L) held
+                | SimulatedUnixFlavour.Darwin -> max length offset, held
         )
 
     /// What a history leaves `fstat` reporting as `(st_blksize, st_blocks)`
@@ -128,7 +150,7 @@ module TestStatBlocks =
     /// on tmpfs 8 per page holding data; on APFS the same, but only for a file
     /// with no hole.
     let private expected (flavour : SimulatedUnixFlavour) (ops : FileAllocationOp list) : (int64 * int64) option =
-        let length, held = reference ops
+        let length, held = reference flavour ops
         let blocks = 8L * int64 held.Count
 
         match flavour with
@@ -177,6 +199,7 @@ module TestStatBlocks =
             [
                 4, Gen.map2 (fun offset count -> FileAllocationOp.Write (offset, count)) position count
                 1, Gen.map FileAllocationOp.Truncate position
+                1, Gen.map2 (fun offset count -> FileAllocationOp.FaultedWrite (offset, max 1 count)) position count
             ]
 
     let private historyGen : Gen<FileAllocationOp list> =
@@ -395,6 +418,99 @@ module TestStatBlocks =
 
         (status.IoBlockSize, status.AllocatedBlocks) |> shouldEqual (4096L, 0L)
 
+    /// The answer the model gives after `ops`, as `(size, blksize, blocks)`,
+    /// or `None` where Darwin refuses a hole.
+    let private modelFields
+        (platform : SimulatedUnixPlatform)
+        (ops : FileAllocationOp list)
+        : (int64 * int64 * int64) option
+        =
+        let flavour = SimulatedUnixPlatform.flavour platform
+        let fd, system = create "/f" (defaultSystemOn platform)
+        let system = List.fold (applyToModel fd) system ops
+
+        match fstatOf fd system with
+        | Ok (FileStatusAnswer.Reported status) -> Some (fields status)
+        | Error (FStatRefusal.HoleOnApfs _) when flavour = SimulatedUnixFlavour.Darwin -> None
+        | other -> failwith $"%A{ops} on %O{flavour}: %A{other}"
+
+    /// Linux answers every row as measured; Darwin as measured at every
+    /// reading, or refuses.
+    let private agreesWithReadings
+        (flavour : SimulatedUnixFlavour)
+        (what : string)
+        (model : (int64 * int64 * int64) option)
+        (readings : (int64 * int64 * int64) option list)
+        : unit
+        =
+        match model, flavour with
+        | None, SimulatedUnixFlavour.Darwin -> ()
+        | Some model, _ when readings |> List.forall ((=) (Some model)) -> ()
+        | _ -> failwith $"%s{what} on %O{flavour}: measured %A{readings}, the model %A{model}"
+
+    [<Test>]
+    let ``a write whose buffer faults leaves what each kernel did`` () : unit =
+        let shapes =
+            [
+                "empty", 0L, []
+                "dense", 4096L, [ FileAllocationOp.Write (0L, 4096) ]
+                "dense", 5000L, [ FileAllocationOp.Write (0L, 5000) ]
+                "extended", 20000L, [ FileAllocationOp.Truncate 20000L ]
+            ]
+
+        for platform in [ linux ; darwin ] do
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            for shape, size, setup in shapes do
+                for offset in [ 0L ; 1000L ; 4096L ; 5000L ; 8192L ; 12288L ; 100000L ] do
+                    for count in [ 1 ; 10000 ] do
+                        let name = $"%s{shape}_%d{size}_at_%d{offset}_count_%d{count}"
+
+                        // A NULL buffer and a PROT_NONE page measured alike;
+                        // the model is given NULL.
+                        let readings =
+                            [ "null" ; "protnone" ]
+                            |> List.collect (fun buffer ->
+                                [
+                                    measured flavour $"FAULT %s{name}_%s{buffer}_ret=-1_errno=14"
+                                    measured flavour $"FAULT %s{name}_%s{buffer}_fsync"
+                                ]
+                            )
+
+                        let model =
+                            modelFields platform (setup @ [ FileAllocationOp.FaultedWrite (offset, count) ])
+
+                        agreesWithReadings flavour name model readings
+
+    [<Test>]
+    let ``what a faulted write allocated past the end goes as each kernel's did`` () : unit =
+        let step (text : string) : FileAllocationOp =
+            let n = int64 (text.Substring 1)
+
+            match text.[0] with
+            | 'w' -> FileAllocationOp.Write (0L, int n)
+            | 'f' -> FileAllocationOp.FaultedWrite (n, 1)
+            | 't' -> FileAllocationOp.Truncate n
+            | 'p' -> FileAllocationOp.Write (n, 1)
+            | other -> failwith $"no history step starts %c{other}"
+
+        for platform in [ linux ; darwin ] do
+            let flavour = SimulatedUnixPlatform.flavour platform
+
+            let histories =
+                measuredRows flavour
+                |> Map.keys
+                |> Seq.filter (fun label -> label.StartsWith "HISTORY ")
+                |> List.ofSeq
+
+            histories.Length |> shouldEqual 14
+
+            for label in histories do
+                let ops =
+                    label.Substring("HISTORY ".Length).Split ' ' |> Array.map step |> List.ofArray
+
+                agreesWithReadings flavour label (modelFields platform ops) [ measured flavour label ]
+
     // ---------------------------------------------------------------- pipes
 
     let private pipeOn (system : UnixSystem<int, string>) : (int * int) * UnixSystem<int, string> =
@@ -580,6 +696,12 @@ module TestStatBlocks =
                         | FileAllocationOp.Truncate length ->
                             if HostCalls.ftruncate (hostFd, length) <> 0 then
                                 failwith $"host ftruncate failed: errno %d{Marshal.GetLastPInvokeError ()}"
+                        | FileAllocationOp.FaultedWrite (offset, count) ->
+                            if HostCalls.lseek (hostFd, offset, 0) <> offset then
+                                failwith $"host lseek to %d{offset} failed: errno %d{Marshal.GetLastPInvokeError ()}"
+
+                            if HostCalls.writePointer (hostFd, 0n, unativeint count) <> -1n then
+                                failwith $"host write of %d{count} from NULL did not fail"
 
                         let system = applyToModel fd system op
 

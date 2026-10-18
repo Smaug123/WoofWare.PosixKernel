@@ -19,7 +19,9 @@ type FileContents =
             // Page `i` holds bytes `[i * pageSize, (i + 1) * pageSize)`, cut
             // short at `Length`, so that every page's length is a function of
             // its index and `Length` alone. A page absent here is a hole, which
-            // reads as zeroes.
+            // reads as zeroes. When `Length` is a multiple of the page size,
+            // page `Length / pageSize` may be held too, holding no bytes: a
+            // page allocated past the end, which `allocatePage` can leave.
             //
             // A page is a view of memory nothing will change: an array a write
             // made for it alone, or a slice of the array a file was made from,
@@ -192,15 +194,13 @@ module FileContents =
             page.Span.CopyTo (bytes.AsSpan ())
             ReadOnlyMemory<byte> bytes
 
-    // The page the file's last byte is on, if it has one, and if a write has
-    // filled it. Its length is the only one that a change of `Length` changes
-    // without the change touching it.
+    // The page that starts at or before the end of the file and reaches past
+    // it, if one is held: the page the file's last byte is on, or the empty
+    // page just past a page-aligned end. Its length is the only one that a
+    // change of `Length` changes without the change touching it.
     let private finalPage (contents : FileContents) : (int64 * ReadOnlyMemory<byte>) option =
-        if contents.Length = 0L then
-            None
-        else
-            let index = (contents.Length - 1L) / pageSize64
-            Map.tryFind index contents.Pages |> Option.map (fun page -> index, page)
+        let index = contents.Length / pageSize64
+        Map.tryFind index contents.Pages |> Option.map (fun page -> index, page)
 
     // The pages of `contents` at the lengths they have in a file `length` bytes
     // long, which must be no shorter. Only the final page can change.
@@ -270,7 +270,15 @@ module FileContents =
             invalidArg (nameof length) $"FileContents.truncate: length %d{length} is negative."
 
         if length = contents.Length then
-            contents
+            // Measured on tmpfs: a truncation to the file's own length frees a
+            // page allocated past its end.
+            match finalPage contents with
+            | Some (index, page) when page.IsEmpty ->
+                {
+                    Length = length
+                    Pages = Map.remove index contents.Pages
+                }
+            | _ -> contents
         elif length > contents.Length then
             {
                 Length = length
@@ -314,6 +322,29 @@ module FileContents =
                 Pages = Map.add index (resized length index page) shortened.Pages
             }
 
+    // The file after a write whose copy faulted has allocated the page
+    // holding `offset`, which must be at most the file's length: a zeroed
+    // page, empty if it starts at the end of the file. The bytes the file
+    // holds do not change.
+    let internal allocatePage (offset : int64) (contents : FileContents) : FileContents =
+        if offset < 0L || offset > contents.Length then
+            invalidArg
+                (nameof offset)
+                $"FileContents.allocatePage: offset %d{offset} is outside a file %d{contents.Length} bytes long."
+
+        let index = offset / pageSize64
+
+        if contents.Pages.ContainsKey index then
+            contents
+        else
+            { contents with
+                Pages =
+                    Map.add
+                        index
+                        (ReadOnlyMemory<byte> (Array.zeroCreate<byte> (pageLength contents.Length index)))
+                        contents.Pages
+            }
+
     // How many pages hold data rather than a hole.
     let internal heldPageCount (contents : FileContents) : int64 = int64 contents.Pages.Count
 
@@ -321,15 +352,16 @@ module FileContents =
     let internal heldPages (contents : FileContents) : int64 list =
         contents.Pages |> Map.keys |> List.ofSeq
 
-    // What is wrong with the representation, if anything is: every page index
-    // must be inside the file, and every page exactly the length its index has.
+    // What is wrong with the representation, if anything is: every page must
+    // start inside the file, or exactly at a page-aligned end, and be exactly
+    // the length its index has.
     let internal invariantViolation (contents : FileContents) : string option =
         if contents.Length < 0L then
             Some $"the length %d{contents.Length} is negative"
         else
             contents.Pages
             |> Seq.tryPick (fun (KeyValue (index, page)) ->
-                if index < 0L || index * pageSize64 >= contents.Length then
+                if index < 0L || index * pageSize64 > contents.Length then
                     Some $"page %d{index} is outside a file %d{contents.Length} bytes long"
                 elif page.Length <> pageLength contents.Length index then
                     Some

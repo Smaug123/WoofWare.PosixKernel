@@ -275,6 +275,25 @@ module EmulatedFileSystemType =
         // Not measured: no NFS server or mount was available.
         | EmulatedFileSystemType.Nfs -> StatAllocation.ServerDecides
 
+    /// What a write whose copy from the caller's buffer faults leaves
+    /// allocated in a regular file on a mount of this type.
+    let internal faultedWriteAllocation (fsType : EmulatedFileSystemType) : FaultedWriteAllocation =
+        // Measured 2026-10-18 by `stat-blocks.c`: a faulting `pwrite(2)` of 1
+        // or 10000 bytes, from NULL or a PROT_NONE page, at offsets from 0 to
+        // 100000 into an empty, a dense and an `ftruncate`-extended file.
+        match fsType with
+        // Linux 6.18.5 `/dev/shm`: the page holding the offset, and no other,
+        // whatever the count; an empty file faulted at 0 reports 0 bytes and
+        // 8 blocks.
+        | EmulatedFileSystemType.Tmpfs -> FaultedWriteAllocation.PageAtOffset
+        // Darwin 27.0: anything from no page to every page up to the offset,
+        // varying with the count, which the model does not follow. Every row
+        // where it allocated left the file with a hole, which `allocation`
+        // refuses; a file left with no hole reported its own pages.
+        | EmulatedFileSystemType.Apfs -> FaultedWriteAllocation.Untracked
+        // `allocation` refuses every inode on NFS.
+        | EmulatedFileSystemType.Nfs -> FaultedWriteAllocation.Untracked
+
     /// The type a mount reports when a host expresses no preference.
     ///
     /// `Tmpfs` under Linux because this library's filesystem really is in

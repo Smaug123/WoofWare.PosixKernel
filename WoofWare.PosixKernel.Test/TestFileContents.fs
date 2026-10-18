@@ -9,7 +9,8 @@ open NUnit.Framework
 open WoofWare.PosixKernel
 
 /// `FileContents` held to a naive model: the file as one byte array, and the
-/// set of pages a write has filled since a truncation last cut them away.
+/// set of pages a write has filled, or a faulted write allocated, since a
+/// truncation last cut them away.
 [<TestFixture>]
 [<Parallelizable(ParallelScope.All)>]
 module TestFileContents =
@@ -22,12 +23,20 @@ module TestFileContents =
     type private Op =
         | Write of offset : int64 * bytes : byte[]
         | Truncate of length : int64
+        /// What a write whose copy faulted leaves on tmpfs: the file at least
+        /// `offset` long, and the page holding `offset` allocated.
+        | FaultedWrite of offset : int64
+        /// A truncation to whatever length the file has, which a generated
+        /// `Truncate` would rarely hit.
+        | TruncateInPlace
 
         override this.ToString () : string =
             match this with
             | Op.Write (offset, bytes) ->
                 $"Write (%d{offset}, %d{bytes.Length} bytes starting %A{Array.truncate 4 bytes})"
             | Op.Truncate length -> $"Truncate %d{length}"
+            | Op.FaultedWrite offset -> $"FaultedWrite %d{offset}"
+            | Op.TruncateInPlace -> "TruncateInPlace"
 
     /// The model: the bytes, and which pages hold data.
     type private Model =
@@ -48,7 +57,7 @@ module TestFileContents =
             Held = pagesCovering 0L (int64 bytes.Length)
         }
 
-    let private applyModel (model : Model) (op : Op) : Model =
+    let rec private applyModel (model : Model) (op : Op) : Model =
         match op with
         | Op.Write (_, [||]) -> model
         | Op.Write (offset, bytes) ->
@@ -65,15 +74,34 @@ module TestFileContents =
         | Op.Truncate length ->
             let length = int length
 
+            // Every page from the new end on goes, even at the same length:
+            // a page allocated past the end, as `FaultedWrite` can leave one.
             {
                 Bytes = Array.init length (fun i -> if i < model.Bytes.Length then model.Bytes.[i] else 0uy)
                 Held = model.Held |> Set.filter (fun index -> index * int64 page < int64 length)
+            }
+        | Op.TruncateInPlace -> applyModel model (Op.Truncate (int64 model.Bytes.Length))
+        | Op.FaultedWrite offset ->
+            let length = max model.Bytes.Length (int offset)
+
+            {
+                Bytes = Array.init length (fun i -> if i < model.Bytes.Length then model.Bytes.[i] else 0uy)
+                Held = Set.add (offset / int64 page) model.Held
             }
 
     let private apply (contents : FileContents) (op : Op) : FileContents =
         match op with
         | Op.Write (offset, bytes) -> FileContents.write offset (ImmutableArray.CreateRange bytes) contents
         | Op.Truncate length -> FileContents.truncate length contents
+        | Op.FaultedWrite offset ->
+            let contents =
+                if offset > FileContents.length contents then
+                    FileContents.truncate offset contents
+                else
+                    contents
+
+            FileContents.allocatePage offset contents
+        | Op.TruncateInPlace -> FileContents.truncate (FileContents.length contents) contents
 
     /// A position near a page boundary, near the start, or anywhere in the
     /// first few pages, so that every way a range can sit across a boundary
@@ -118,6 +146,8 @@ module TestFileContents =
                     return Op.Write (offset, bytes)
                 }
                 1, position |> Gen.map Op.Truncate
+                1, position |> Gen.map Op.FaultedWrite
+                1, Gen.constant Op.TruncateInPlace
             ]
 
     let private caseGen : Gen<byte[] * Op list> =
@@ -198,6 +228,7 @@ module TestFileContents =
                         return Op.Write (offset, bytes)
                     }
                     1, Gen.elements [ 0L ; 1L ; int64 page ; int64 page + 1L ] |> Gen.map Op.Truncate
+                    1, Gen.elements [ 0L ; 1L ; int64 page ] |> Gen.map Op.FaultedWrite
                 ]
 
         let history = Gen.listOf smallOp |> Gen.resize 4

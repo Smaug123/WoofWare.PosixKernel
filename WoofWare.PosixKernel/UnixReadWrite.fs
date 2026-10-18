@@ -3269,6 +3269,7 @@ module UnixReadWrite =
             count
             (SimulatedUnixPlatform.setGroupIdOnWrite platform)
             (SimulatedUnixPlatform.faultedWriteRule platform)
+            (EmulatedFileSystemType.faultedWriteAllocation (UnixMachineState.fileSystemTypeOf inode system.Machine))
             system.Process.Credentials
             (UnixMachineState.realtime system.Scheduling system.Machine)
             system.Machine.FileSystem

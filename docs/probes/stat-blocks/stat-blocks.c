@@ -1,8 +1,9 @@
 // Measures st_blksize and st_blocks where stat-fields.c
 // (docs/plans/2026-08-23-posix-kernel-extraction/) left them open: a pipe's as
-// its buffer grows and as its ends close, and a regular file's once it has a
+// its buffer grows and as its ends close, a regular file's once it has a
 // hole, before and after fsync(2) and after the kernel has had time to write
-// the file back on its own. Also a symbolic link's around the length where
+// the file back on its own, and a regular file's after a pwrite(2) whose
+// buffer faults. Also a symbolic link's around the length where
 // its blocks change, a directory of many names, a dense file of 16 MiB, and
 // (Darwin) a clonefile(2) copy.
 //
@@ -28,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -238,6 +240,82 @@ static void files(const char *dir, int wait) {
 #endif
 }
 
+// A pwrite(2) from a buffer that faults as it is copied: NULL, or a
+// PROT_NONE page. Each row names the file's shape before the call (its size
+// and how it was made: `dense` one write from 0, `extended` ftruncate(2)
+// alone, `empty` neither), the offset, the count and the buffer, and reports
+// what pwrite returned, then the file's fields at once and after fsync(2).
+static void faults(const char *dir) {
+    static const struct {
+        const char *shape;
+        long long size;
+        int dense;
+    } shapes[] = {{"empty", 0, 0}, {"dense", 4096, 1}, {"dense", 5000, 1}, {"extended", 20000, 0}};
+    static const long long offsets[] = {0, 1000, 4096, 5000, 8192, 12288, 100000};
+    static const int counts[] = {1, 10000};
+    void *protnone = mmap(NULL, 16384, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (protnone == MAP_FAILED) {
+        perror("mmap");
+        exit(1);
+    }
+    for (int s = 0; s < (int)(sizeof shapes / sizeof shapes[0]); s++)
+        for (int o = 0; o < (int)(sizeof offsets / sizeof offsets[0]); o++)
+            for (int c = 0; c < (int)(sizeof counts / sizeof counts[0]); c++)
+                for (int b = 0; b < 2; b++) {
+                    int fd = fresh(dir, "fault");
+                    if (shapes[s].dense) {
+                        if (write(fd, bytes, (size_t)shapes[s].size) != (ssize_t)shapes[s].size)
+                            perror("write");
+                    } else if (shapes[s].size && ftruncate(fd, shapes[s].size) != 0)
+                        perror("ftruncate");
+                    errno = 0;
+                    ssize_t ret = pwrite(fd, b ? protnone : NULL, (size_t)counts[c], offsets[o]);
+                    int error = errno;
+                    char label[256];
+                    snprintf(label, sizeof label, "FAULT	%s_%lld_at_%lld_count_%d_%s_ret=%zd_errno=%d", shapes[s].shape,
+                             shapes[s].size, offsets[o], counts[c], b ? "protnone" : "null", ret, error);
+                    fd_row(label, fd);
+                    fsync(fd);
+                    snprintf(label, sizeof label, "FAULT	%s_%lld_at_%lld_count_%d_%s_fsync", shapes[s].shape,
+                             shapes[s].size, offsets[o], counts[c], b ? "protnone" : "null");
+                    fd_row(label, fd);
+                    close(fd);
+                }
+}
+
+// What becomes of the page a faulting pwrite(2) left at a page-aligned end
+// of file: each row is a history of steps, `wN` a write of N bytes from 0,
+// `fN` a faulting pwrite(2) of 1 byte from NULL at N, `tN` ftruncate(2) to N
+// and `pN` a pwrite(2) of 1 byte at N.
+static void fault_histories(const char *dir) {
+    static const char *histories[] = {
+        "f0",       "f0 t0",    "f0 t100",  "f0 p0",       "w4096 f4096",       "w4096 f4096 t4096",
+        "w4096 f4096 t4095",    "w4096 f4096 t8192",       "w4096 f4096 p8192", "f8192",
+        "f8192 f4096",          "f8192 t8192",             "f8192 t12288",      "f8192 t8191",
+    };
+    for (int h = 0; h < (int)(sizeof histories / sizeof histories[0]); h++) {
+        int fd = fresh(dir, "history");
+        char steps[128];
+        snprintf(steps, sizeof steps, "%s", histories[h]);
+        for (char *step = strtok(steps, " "); step; step = strtok(NULL, " ")) {
+            long long n = atoll(step + 1);
+            int ok;
+            switch (step[0]) {
+            case 'w': ok = write(fd, bytes, (size_t)n) == (ssize_t)n; break;
+            case 'f': ok = pwrite(fd, NULL, 1, n) == -1 && errno == EFAULT; break;
+            case 't': ok = ftruncate(fd, n) == 0; break;
+            default: ok = pwrite(fd, "z", 1, n) == 1; break;
+            }
+            if (!ok)
+                printf("HISTORY\t%s\tstep %s did not do what it names\n", histories[h], step);
+        }
+        char label[256];
+        snprintf(label, sizeof label, "HISTORY\t%s", histories[h]);
+        fd_row(label, fd);
+        close(fd);
+    }
+}
+
 static void symlinks(const char *dir) {
     static const int lengths[] = {126, 127, 128, 129, 1000, 1022, 1023, 1024, 4095};
     char target[4096];
@@ -285,6 +363,8 @@ int main(int argc, char **argv) {
            sysconf(_SC_PAGESIZE), argv[1]);
     pipes();
     files(argv[1], atoi(argv[2]));
+    faults(argv[1]);
+    fault_histories(argv[1]);
     symlinks(argv[1]);
     directory(argv[1]);
     return 0;

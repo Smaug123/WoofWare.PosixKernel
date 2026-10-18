@@ -86,8 +86,9 @@ type FileStatus =
         /// is less than its size covers when it has holes.
         ///
         /// On tmpfs a regular file has 8 for each 4096-byte page that holds
-        /// data, a hole holding none, and a symbolic link 8 once its target is
-        /// 128 bytes or longer. On APFS a regular file without holes has 8 per
+        /// data, a hole holding none, and for the page a write allocated
+        /// before its buffer faulted, even one past the end of the file; a
+        /// symbolic link has 8 once its target is 128 bytes or longer. On APFS a regular file without holes has 8 per
         /// page; `stat` refuses one with a hole, since APFS fills some holes when
         /// it writes the file back, whenever that is. A Darwin pipe has 1 while
         /// it holds bytes. Everything else has 0.
