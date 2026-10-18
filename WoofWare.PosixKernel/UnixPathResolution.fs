@@ -476,7 +476,7 @@ type FileStatusAnswer =
 /// The success value of a real `getcwd` is the caller's own buffer pointer,
 /// which this library never possesses; the client composes that from the
 /// pointer it already holds.
-[<RequireQualifiedAccess>]
+[<RequireQualifiedAccess ; NoComparison>]
 type GetCwdAnswer =
     /// Place these bytes in the caller's buffer. They are NUL-terminated
     /// already, because terminating is `getcwd`'s job rather than its caller's,
